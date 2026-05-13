@@ -174,6 +174,7 @@ export type ViewportTransactionKind =
   | 'bootstrap'
   | 'prepend'
   | 'append'
+  | 'followBottom'
   | 'jump'
   | 'restore'
   | 'resize'
@@ -244,4 +245,5 @@ export type MessageViewportRuntimeOptions = {
   }>
   bottomLockThresholdPx?: number
   bottomUnlockThresholdPx?: number
+  edgeLoadThresholdPx?: number
 }

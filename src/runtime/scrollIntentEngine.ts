@@ -51,9 +51,8 @@ export class ScrollIntentEngine {
   updateBottomLockFromDistance(
     distanceToBottom: number,
     currentFrame: number,
+    source = this.classifyScroll(currentFrame),
   ): boolean {
-    const source = this.classifyScroll(currentFrame)
-
     if (source === 'recovery' || source === 'followBottom') {
       return false
     }

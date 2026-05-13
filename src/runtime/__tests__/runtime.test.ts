@@ -85,6 +85,7 @@ function mountProjection(
   container: HTMLElement,
   snapshot: MessageViewportSnapshot<TestMessage>,
   topOffset = 0,
+  heightByMessageId: Record<string, number> = {},
 ): void {
   container.replaceChildren()
 
@@ -97,7 +98,8 @@ function mountProjection(
 
   for (const item of snapshot.items) {
     const row = document.createElement('div')
-    const height = item.estimatedHeight ?? 50
+    const messageId = item.key.kind === 'committed' ? item.key.messageId : ''
+    const height = heightByMessageId[messageId] ?? item.estimatedHeight ?? 50
     row.dataset.messageRow = serializeRuntimeItemKey(item.key)
     setElementMetrics(row, {
       top,
@@ -139,6 +141,30 @@ async function flushBootstrap(
     generation: snapshot.generation,
     revision: snapshot.revision,
   })
+}
+
+async function flushFramesWithMicrotasks(
+  scheduler: FakeScheduler,
+  count: number,
+): Promise<void> {
+  for (let index = 0; index < count; index += 1) {
+    await Promise.resolve()
+    scheduler.flushFrame()
+    await Promise.resolve()
+  }
+}
+
+function createHeightMap(
+  start: number,
+  end: number,
+  height: number,
+): Record<string, number> {
+  return Object.fromEntries(
+    Array.from({ length: end - start + 1 }, (_, index) => [
+      `m-${start + index}`,
+      height,
+    ]),
+  )
 }
 
 describe('MessageViewportRuntime', () => {
@@ -209,12 +235,58 @@ describe('MessageViewportRuntime', () => {
       revision: snapshot.revision,
     })
     await Promise.resolve()
+    await Promise.resolve()
     scheduler.flushFrame()
+    await Promise.resolve()
     await Promise.resolve()
     scheduler.flushFrame()
     await Promise.resolve()
     snapshot = runtime.getSnapshot()
 
+    expect(snapshot.bottomLockState).toBe('LOCKED')
+    expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight)
+  })
+
+  it('waits for latest projection before following bottom manually', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const tallLatestRows = createHeightMap(31, 40, 100)
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 40, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    runtime.dispatch({ type: 'jump', target: { messageId: 'm-10' } })
+    await Promise.resolve()
+    let snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    snapshot = runtime.getSnapshot()
+    expect(snapshot.renderWindow.endIndex).toBeLessThan(39)
+
+    runtime.dispatch({ type: 'followBottom' })
+    await Promise.resolve()
+    await Promise.resolve()
+    snapshot = runtime.getSnapshot()
+    expect(snapshot.bottomLockState).toBe('RECOVERING')
+    mountProjection(runtime, container, snapshot, 0, tallLatestRows)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await flushFramesWithMicrotasks(scheduler, 3)
+
+    snapshot = runtime.getSnapshot()
+    expect(snapshot.renderWindow.endIndex).toBe(39)
     expect(snapshot.bottomLockState).toBe('LOCKED')
     expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight)
   })
@@ -267,5 +339,135 @@ describe('MessageViewportRuntime', () => {
 
     expect(runtime.getSnapshot().feedId).toBe('next-feed')
     expect(runtime.getDebugSnapshot().heightCacheSize).toBe(0)
+  })
+
+  it('does not request history while only approaching render overscan', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: string[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event.type)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    container.scrollTop = runtime.getSnapshot().topSpacer + 10
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    await Promise.resolve()
+
+    expect(events).not.toContain('needMoreBefore')
+  })
+
+  it('latches top edge loading until the user leaves the edge', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: string[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event.type)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 10, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    container.scrollTop = 0
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    await Promise.resolve()
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    await Promise.resolve()
+
+    expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
+
+    container.scrollTop = 400
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    await Promise.resolve()
+    container.scrollTop = 0
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    await Promise.resolve()
+
+    expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(2)
+  })
+
+  it('does not release top edge latch for recovery scroll after prepend', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: string[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event.type)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 10, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    container.scrollTop = 0
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    await Promise.resolve()
+    expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
+
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 2, effect: 'prepend', start: -19 }))
+    await Promise.resolve()
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot, 400)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    await Promise.resolve()
+    container.scrollTop = 0
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    await Promise.resolve()
+
+    expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
+  })
+
+  it('keeps anchor visual top during item height refresh', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    container.scrollTop = 100
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    await Promise.resolve()
+
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 2, effect: 'items-change' }))
+    await Promise.resolve()
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot, 40)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(container.scrollTop).toBe(140)
   })
 })

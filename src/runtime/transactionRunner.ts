@@ -54,6 +54,14 @@ export class TransactionRunner {
     this.queue.length = 0
   }
 
+  dropBySupersedeKey(supersedeKey: string): void {
+    for (let index = this.queue.length - 1; index >= 0; index -= 1) {
+      if (this.queue[index]?.supersedeKey === supersedeKey) {
+        this.queue.splice(index, 1)
+      }
+    }
+  }
+
   stop(): void {
     this.stopped = true
     this.clear()

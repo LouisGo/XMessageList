@@ -57,6 +57,7 @@ type PublishResult<TMessage, TOptimistic> = {
 const BOOTSTRAP_STABLE_FRAMES = 2
 const BOOTSTRAP_HEIGHT_EPSILON_PX = 1
 const BOOTSTRAP_SETTLE_TIMEOUT_MS = 300
+const DEFAULT_EDGE_LOAD_THRESHOLD_PX = 96
 
 /**
  * MessageViewportRuntime 是独立于 React 的 IM viewport engine。
@@ -96,6 +97,8 @@ export class MessageViewportRuntime<
     NonNullable<MessageViewportRuntimeOptions['commitTimeoutMs']>
   >
 
+  private readonly edgeLoadThresholdPx: number
+
   private state: RuntimeState = 'INITIAL'
 
   private dataSnapshot: MessageDataSnapshot<TMessage, TOptimistic> | null = null
@@ -112,6 +115,14 @@ export class MessageViewportRuntime<
   private resizeRaf: number | null = null
 
   private currentFrame = 0
+
+  private beforeEdgeRequestLatched = false
+
+  private afterEdgeRequestLatched = false
+
+  private lastUserScrollTop = 0
+
+  private lastUserDistanceToBottom = 0
 
   private containerResizeObserver: ResizeObserver | null = null
 
@@ -141,6 +152,8 @@ export class MessageViewportRuntime<
       normal: options.commitTimeoutMs?.normal ?? 500,
       jump: options.commitTimeoutMs?.jump ?? 800,
     }
+    this.edgeLoadThresholdPx =
+      options.edgeLoadThresholdPx ?? DEFAULT_EDGE_LOAD_THRESHOLD_PX
 
     this.store = new ProjectionStore(
       createEmptySnapshot<TMessage, TOptimistic>(feedId, generation),
@@ -240,6 +253,10 @@ export class MessageViewportRuntime<
 
     this.dataSnapshot = snapshot
 
+    if (snapshot.change.viewportEffect !== 'none') {
+      this.transactions.dropBySupersedeKey('window-slide')
+    }
+
     if (this.tryRunPendingBootstrap()) {
       return
     }
@@ -276,7 +293,7 @@ export class MessageViewportRuntime<
         this.tryRunPendingBootstrap()
         break
       case 'followBottom':
-        this.followBottom()
+        this.enqueueFollowBottomTransaction()
         break
       case 'jump':
         this.enqueueJumpTransaction(command.target.messageId)
@@ -386,6 +403,8 @@ export class MessageViewportRuntime<
     this.cancelPendingCommit()
     this.cancelScheduledWork()
     this.heightCache.clear()
+    this.beforeEdgeRequestLatched = false
+    this.afterEdgeRequestLatched = false
     this.scrollIntent.setBottomLockState('UNLOCKED')
     this.store.setSnapshot(createEmptySnapshot<TMessage, TOptimistic>(feedId, generation))
     this.state = this.registry.getContainer() ? 'ATTACHED' : 'INITIAL'
@@ -433,6 +452,7 @@ export class MessageViewportRuntime<
     this.scrollToBottom('followBottom')
     await this.waitForBootstrapSettle(data.feedId, data.generation)
     this.measureCurrentWindow()
+    this.scrollToBottom('followBottom')
     this.scrollIntent.setBottomLockState('LOCKED')
     this.state = 'READY'
     this.publishProjection({
@@ -565,26 +585,63 @@ export class MessageViewportRuntime<
   }
 
   private enqueueProjectionRefresh(): void {
-    this.transactions.enqueue('resize', async () => {
-      const data = this.dataSnapshot
+    this.transactions.enqueue('resize', () => this.runProjectionRefreshTransaction())
+  }
 
-      if (!data) {
-        return
-      }
+  private async runProjectionRefreshTransaction(): Promise<void> {
+    const data = this.dataSnapshot
+    const container = this.registry.getContainer()
 
-      const snapshot = this.store.getSnapshot()
-      const renderWindow =
-        snapshot.renderWindow.endIndex >= snapshot.renderWindow.startIndex
-          ? this.keepCurrentWindow(data.items)
-          : this.renderWindow.computeLatestWindow(data.items)
+    if (!data || !container) {
+      return
+    }
 
-      this.publishProjection({
+    const snapshot = this.store.getSnapshot()
+    const renderWindow =
+      snapshot.renderWindow.endIndex >= snapshot.renderWindow.startIndex
+        ? this.keepCurrentWindow(data.items)
+        : this.renderWindow.computeLatestWindow(data.items)
+
+    if (this.scrollIntent.getBottomLockState() === 'LOCKED') {
+      const projection = this.publishProjection({
         data,
         renderWindow,
         bootstrapState: snapshot.bootstrapState,
         bottomLockState: snapshot.bottomLockState,
       })
+
+      await this.waitForCommitIfChanged(projection, 'resize')
+      this.measureCurrentWindow()
+      this.scrollToBottom('followBottom')
+      return
+    }
+
+    const anchor = this.captureViewportAnchor()
+    const anchorElementBefore = anchor ? this.registry.getRow(anchor.key) : null
+    const anchorTopBefore = anchorElementBefore?.getBoundingClientRect().top
+    const projection = this.publishProjection({
+      data,
+      renderWindow,
+      bootstrapState: snapshot.bootstrapState,
+      bottomLockState: snapshot.bottomLockState,
     })
+
+    await this.waitForCommitIfChanged(projection, 'resize')
+
+    if (anchor && typeof anchorTopBefore === 'number') {
+      const anchorElementAfter = this.registry.getRow(anchor.key)
+      const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
+
+      if (typeof anchorTopAfter === 'number') {
+        const delta = anchorTopAfter - anchorTopBefore
+
+        if (Math.abs(delta) > 0.5) {
+          this.writeScrollTop(container.scrollTop + delta, 'recovery')
+        }
+      }
+    }
+
+    this.measureCurrentWindow()
   }
 
   private enqueueJumpTransaction(messageId: string): void {
@@ -666,22 +723,47 @@ export class MessageViewportRuntime<
     )
   }
 
-  private followBottom(): void {
+  private enqueueFollowBottomTransaction(): void {
+    this.transactions.enqueue(
+      'followBottom',
+      () => this.runFollowBottomTransaction(),
+      'followBottom',
+    )
+  }
+
+  private async runFollowBottomTransaction(): Promise<void> {
     const data = this.dataSnapshot
     const container = this.registry.getContainer()
 
-    if (!data || !container || this.state !== 'READY') {
+    if (!data || !container) {
       return
     }
 
+    const renderWindow = this.renderWindow.computeLatestWindow(data.items)
+
+    this.state = 'TRANSACTING'
+    // follow-bottom 必须先切到 latest projection，再基于 commit 后的真实 DOM 吸底；
+    // 如果先写 scrollTop，旧窗口 bottom spacer 的估算误差会把最终位置留在底部上方。
+    this.scrollIntent.setBottomLockState('RECOVERING')
+    const projection = this.publishProjection({
+      data,
+      renderWindow,
+      bootstrapState: 'READY',
+      bottomLockState: 'RECOVERING',
+    })
+
+    await this.waitForCommitIfChanged(projection, 'followBottom')
+    this.measureCurrentWindow()
+    await this.nextFrame(data.feedId, data.generation)
     this.scrollToBottom('followBottom')
     this.scrollIntent.setBottomLockState('LOCKED')
     this.publishProjection({
       data,
-      renderWindow: this.renderWindow.computeLatestWindow(data.items),
+      renderWindow,
       bootstrapState: 'READY',
       bottomLockState: 'LOCKED',
     })
+    this.state = 'READY'
   }
 
   private publishProjection(input: {
@@ -874,9 +956,11 @@ export class MessageViewportRuntime<
     }
 
     const distance = getDistanceToBottom(container)
+    const scrollSource = this.scrollIntent.classifyScroll(this.currentFrame)
     const changed = this.scrollIntent.updateBottomLockFromDistance(
       distance,
       this.currentFrame,
+      scrollSource,
     )
 
     if (changed) {
@@ -888,7 +972,117 @@ export class MessageViewportRuntime<
       })
     }
 
-    this.emitEdgeNeeds(container, data)
+    this.emitEdgeNeeds(container, data, scrollSource)
+
+    if (scrollSource === 'user') {
+      this.lastUserScrollTop = container.scrollTop
+      this.lastUserDistanceToBottom = distance
+    }
+
+    if (this.state === 'READY') {
+      this.maybeSlideWindow(container, data)
+    }
+  }
+
+  private maybeSlideWindow(
+    container: HTMLElement,
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): void {
+    const snapshot = this.store.getSnapshot()
+    const nearTop = container.scrollTop < snapshot.topSpacer + this.getMinOverscanPx(container)
+    const nearBottom =
+      getDistanceToBottom(container) <
+      snapshot.bottomSpacer + this.getMinOverscanPx(container)
+
+    if (!nearTop && !nearBottom) {
+      return
+    }
+
+    const anchor = this.captureViewportAnchor()
+
+    if (!anchor) {
+      return
+    }
+
+    const anchorIndex = this.renderWindow.findIndexByKey(data.items, anchor.key)
+
+    if (anchorIndex < 0) {
+      return
+    }
+
+    const nextWindow = this.renderWindow.computeWindowAroundAnchor({
+      items: data.items,
+      anchorIndex,
+      viewportHeight: container.clientHeight,
+      viewportWidth: container.clientWidth,
+    })
+
+    if (this.isRenderWindowEqual(snapshot.renderWindow, nextWindow)) {
+      return
+    }
+
+    this.transactions.enqueue(
+      'resize',
+      () =>
+        this.runWindowSlideTransaction(anchor.key, nextWindow, {
+          feedId: data.feedId,
+          generation: data.generation,
+          revision: data.revision,
+        }),
+      'window-slide',
+    )
+  }
+
+  private async runWindowSlideTransaction(
+    anchorKey: MessageRuntimeItemKey,
+    nextWindow: RenderWindow,
+    expectedData: { feedId: string; generation: number; revision: number },
+  ): Promise<void> {
+    const data = this.dataSnapshot
+    const container = this.registry.getContainer()
+
+    if (!data || !container) {
+      return
+    }
+
+    // window slide 是滚动派生计划；如果数据窗口已经变化，旧计划必须丢弃，
+    // 否则会用旧 index 套到 prepend 后的新数据上，造成阅读 anchor 跳动。
+    if (
+      data.feedId !== expectedData.feedId ||
+      data.generation !== expectedData.generation ||
+      data.revision !== expectedData.revision
+    ) {
+      return
+    }
+
+    const anchorElementBefore = this.registry.getRow(anchorKey)
+    const anchorTopBefore = anchorElementBefore?.getBoundingClientRect().top
+
+    if (typeof anchorTopBefore !== 'number') {
+      return
+    }
+
+    const projection = this.publishProjection({
+      data,
+      renderWindow: nextWindow,
+      bootstrapState: 'READY',
+      bottomLockState: this.scrollIntent.getBottomLockState(),
+    })
+
+    await this.waitForCommitIfChanged(projection, 'resize')
+
+    const anchorElementAfter = this.registry.getRow(anchorKey)
+    const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
+
+    if (typeof anchorTopAfter === 'number') {
+      const delta = anchorTopAfter - anchorTopBefore
+
+      if (Math.abs(delta) > 0.5) {
+        this.writeScrollTop(container.scrollTop + delta, 'recovery')
+      }
+    }
+
+    this.measureCurrentWindow()
   }
 
   private scheduleHeightStabilization(): void {
@@ -992,7 +1186,7 @@ export class MessageViewportRuntime<
       (entries) => this.handleIntersectionEntries(entries),
       {
         root: container,
-        rootMargin: `${Math.max(0, container.clientHeight * 2)}px 0px`,
+        rootMargin: `${this.edgeLoadThresholdPx}px 0px`,
         threshold: 0,
       },
     )
@@ -1028,7 +1222,13 @@ export class MessageViewportRuntime<
         continue
       }
 
-      if (entry.target === this.registry.getTopSentinel() && data.hasMoreBefore) {
+      if (
+        entry.target === this.registry.getTopSentinel() &&
+        data.hasMoreBefore &&
+        this.isAtBeforeDataEdge() &&
+        !this.beforeEdgeRequestLatched
+      ) {
+        this.beforeEdgeRequestLatched = true
         this.emitEvent({
           type: 'needMoreBefore',
           feedId: data.feedId,
@@ -1037,7 +1237,13 @@ export class MessageViewportRuntime<
         })
       }
 
-      if (entry.target === this.registry.getBottomSentinel() && data.hasMoreAfter) {
+      if (
+        entry.target === this.registry.getBottomSentinel() &&
+        data.hasMoreAfter &&
+        this.isAtAfterDataEdge(data) &&
+        !this.afterEdgeRequestLatched
+      ) {
+        this.afterEdgeRequestLatched = true
         this.emitEvent({
           type: 'needMoreAfter',
           feedId: data.feedId,
@@ -1051,14 +1257,37 @@ export class MessageViewportRuntime<
   private emitEdgeNeeds(
     container: HTMLElement,
     data: MessageDataSnapshot<TMessage, TOptimistic>,
+    scrollSource: ScrollSource,
   ): void {
-    const snapshot = this.store.getSnapshot()
-    const nearTop = container.scrollTop < snapshot.topSpacer + this.getMinOverscanPx(container)
+    const nearTop =
+      this.isAtBeforeDataEdge() &&
+      container.scrollTop <= this.edgeLoadThresholdPx
     const nearBottom =
-      getDistanceToBottom(container) <
-      snapshot.bottomSpacer + this.getMinOverscanPx(container)
+      this.isAtAfterDataEdge(data) &&
+      getDistanceToBottom(container) <= this.edgeLoadThresholdPx
+    const distanceToBottom = getDistanceToBottom(container)
 
-    if (nearTop && data.hasMoreBefore) {
+    const topReleaseThreshold = this.edgeLoadThresholdPx * 3
+    const bottomReleaseThreshold = this.edgeLoadThresholdPx * 3
+    const userMovedDownAwayFromTop =
+      scrollSource === 'user' &&
+      container.scrollTop > topReleaseThreshold &&
+      container.scrollTop >= this.lastUserScrollTop
+    const userMovedUpAwayFromBottom =
+      scrollSource === 'user' &&
+      distanceToBottom > bottomReleaseThreshold &&
+      distanceToBottom >= this.lastUserDistanceToBottom
+
+    if (userMovedDownAwayFromTop) {
+      this.beforeEdgeRequestLatched = false
+    }
+
+    if (userMovedUpAwayFromBottom) {
+      this.afterEdgeRequestLatched = false
+    }
+
+    if (nearTop && data.hasMoreBefore && !this.beforeEdgeRequestLatched) {
+      this.beforeEdgeRequestLatched = true
       this.emitEvent({
         type: 'needMoreBefore',
         feedId: data.feedId,
@@ -1067,7 +1296,8 @@ export class MessageViewportRuntime<
       })
     }
 
-    if (nearBottom && data.hasMoreAfter) {
+    if (nearBottom && data.hasMoreAfter && !this.afterEdgeRequestLatched) {
+      this.afterEdgeRequestLatched = true
       this.emitEvent({
         type: 'needMoreAfter',
         feedId: data.feedId,
@@ -1075,6 +1305,20 @@ export class MessageViewportRuntime<
         reason: 'near-bottom',
       })
     }
+  }
+
+  /**
+   * 数据加载事件必须表示“当前已加载 DataWindow 的边界快到了”，
+   * 不能用 render overscan 判断；overscan 只服务于 window sliding。
+   */
+  private isAtBeforeDataEdge(): boolean {
+    return this.store.getSnapshot().renderWindow.startIndex === 0
+  }
+
+  private isAtAfterDataEdge(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): boolean {
+    return this.store.getSnapshot().renderWindow.endIndex >= data.items.length - 1
   }
 
   private getMinOverscanPx(container: HTMLElement): number {

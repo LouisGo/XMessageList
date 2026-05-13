@@ -12,6 +12,7 @@ import type {
   MessageDataItem,
   MessageRuntimeItemKey,
   MessageViewportRuntime,
+  MessageViewportSnapshot,
 } from '../runtime'
 import { useMessageViewportRuntime } from './useMessageViewportRuntime'
 
@@ -22,6 +23,7 @@ export type MessageRowProjectionProps<
   item: MessageDataItem<TMessage, TOptimistic>
   runtime: MessageViewportRuntime<TMessage, TOptimistic>
   children: ReactNode
+  testId?: string
 }
 
 /**
@@ -35,6 +37,7 @@ export function MessageRowProjection<
   item,
   runtime,
   children,
+  testId,
 }: MessageRowProjectionProps<TMessage, TOptimistic>) {
   const key = getRuntimeItemKey(item)
   const serializedKey = serializeRuntimeItemKey(key)
@@ -49,6 +52,7 @@ export function MessageRowProjection<
     <div
       ref={setRef}
       data-message-row={serializedKey}
+      data-testid={testId}
       style={normalFlowRowStyle}
     >
       {children}
@@ -65,6 +69,9 @@ export type MessageViewportProps<
   className?: string
   style?: CSSProperties
   bottomSlot?: ReactNode
+  renderOverlay?: (
+    snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
+  ) => ReactNode
 }
 
 /**
@@ -81,6 +88,7 @@ export function MessageViewport<
   className,
   style,
   bottomSlot,
+  renderOverlay,
 }: MessageViewportProps<TMessage, TOptimistic>) {
   const snapshot = useMessageViewportRuntime(runtime)
   const viewportStyle = useMemo<CSSProperties>(
@@ -128,46 +136,61 @@ export function MessageViewport<
 
   return (
     <div
-      ref={setContainerRef}
       className={className}
       data-message-viewport
+      data-testid="message-viewport"
       data-bottom-lock-state={snapshot.bottomLockState}
       style={viewportStyle}
     >
-      <div ref={setTopSentinel} data-top-sentinel />
       <div
-        ref={setTopSpacer}
-        data-top-spacer
-        style={{ height: snapshot.topSpacer }}
-      />
-      <div data-message-window style={messageWindowStyle}>
-        {snapshot.items.map((item) => {
-          const key: MessageRuntimeItemKey = getRuntimeItemKey(item)
-          const serializedKey = serializeRuntimeItemKey(key)
+        ref={setContainerRef}
+        data-message-scroll-container
+        data-testid="message-scroll-container"
+        style={scrollContainerStyle}
+      >
+        <div ref={setTopSentinel} data-top-sentinel />
+        <div
+          ref={setTopSpacer}
+          data-top-spacer
+          style={{ height: snapshot.topSpacer }}
+        />
+        <div data-message-window style={messageWindowStyle}>
+          {snapshot.items.map((item) => {
+            const key: MessageRuntimeItemKey = getRuntimeItemKey(item)
+            const serializedKey = serializeRuntimeItemKey(key)
 
-          return (
+            return (
             <MessageRowProjection
               key={serializedKey}
               item={item}
               runtime={runtime}
+              testId={`message-row-${serializedKey}`}
             >
-              {renderMessage(item)}
-            </MessageRowProjection>
-          )
-        })}
+                {renderMessage(item)}
+              </MessageRowProjection>
+            )
+          })}
+        </div>
+        <div
+          ref={setBottomSpacer}
+          data-bottom-spacer
+          style={{ height: snapshot.bottomSpacer }}
+        />
+        <div ref={setBottomSentinel} data-bottom-sentinel />
       </div>
-      <div
-        ref={setBottomSpacer}
-        data-bottom-spacer
-        style={{ height: snapshot.bottomSpacer }}
-      />
-      <div ref={setBottomSentinel} data-bottom-sentinel />
       {bottomSlot}
+      {renderOverlay?.(snapshot)}
     </div>
   )
 }
 
 const baseViewportStyle: CSSProperties = {
+  overflow: 'hidden',
+  position: 'relative',
+}
+
+const scrollContainerStyle: CSSProperties = {
+  height: '100%',
   overflowY: 'auto',
   overflowAnchor: 'none',
   position: 'relative',
