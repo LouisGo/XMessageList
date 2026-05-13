@@ -8,6 +8,8 @@ export type DemoMessageKind = 'text' | 'longText' | 'image' | 'video' | 'album'
 
 export type DemoMessage = {
   id: string
+  feedId: string
+  sequence: number
   author: string
   body: string
   tone: 'self' | 'peer' | 'system'
@@ -20,8 +22,13 @@ export type DemoMessage = {
   }
 }
 
-let newestMessageNumber = 1
-let oldestMessageNumber = 0
+export type DemoMessageCreateOptions = {
+  feedId?: string
+  sequence?: number
+  beforeSequence?: number
+}
+
+const DEFAULT_FEED_ID = 'feed-runtime'
 
 const AUTHORS = ['Lin', 'Rae', 'Mo', 'Kai', 'Nora', 'Sam']
 
@@ -35,51 +42,128 @@ const SHORT_TEXTS = [
 const LONG_TEXT =
   '这里模拟一个真实 IM 场景里突然出现的长篇大论：用户可能连续粘贴一段排查记录、会议纪要、错误堆栈、方案说明，甚至把多个上下文合并到一条消息里。消息高度会显著超过普通气泡，且它可能出现在 anchor 上方、下方或刚刚 prepend 进来的历史窗口中。runtime 不能假设消息高度稳定，也不能把 index 当成滚动坐标；它只能依赖 item identity、commit ack 后的同步测量和后续 ResizeObserver dirty batching 来维持视口稳定。'
 
-export function createDemoMessages(count: number): DemoMessage[] {
-  return Array.from({ length: count }, () => createNewestMessage())
+const feedCursors = new Map<string, { oldest: number; newest: number }>()
+
+/**
+ * Demo 消息生成器以 feedId + sequence 作为稳定身份来源。
+ * 这样切换会话后即使消息数量相同，runtime 也不会复用另一条会话的 DOM 身份。
+ */
+export function createDemoMessages(
+  count: number,
+  feedId = DEFAULT_FEED_ID,
+  startSequence = 1,
+): DemoMessage[] {
+  const messages = Array.from({ length: count }, (_, index) =>
+    createMessage(feedId, startSequence + index),
+  )
+
+  syncFeedCursor(feedId, messages)
+  return messages
 }
 
-export function createNewestMessage(): DemoMessage {
-  const number = newestMessageNumber
-  newestMessageNumber += 1
-  oldestMessageNumber = Math.min(oldestMessageNumber, number)
-  return createMessage(number, 'new')
+export function createNewestMessage(
+  options: DemoMessageCreateOptions = {},
+): DemoMessage {
+  const feedId = options.feedId ?? DEFAULT_FEED_ID
+  const sequence = options.sequence ?? getFallbackNextSequence(feedId)
+  const message = createMessage(feedId, sequence)
+
+  syncFeedCursor(feedId, [message])
+  return message
 }
 
-export function createOutgoingMessage(body: string): DemoMessage {
-  const number = newestMessageNumber
-  newestMessageNumber += 1
-
-  return {
-    id: `m-${number}`,
+export function createOutgoingMessage(
+  body: string,
+  options: DemoMessageCreateOptions = {},
+): DemoMessage {
+  const feedId = options.feedId ?? DEFAULT_FEED_ID
+  const sequence = options.sequence ?? getFallbackNextSequence(feedId)
+  const message: DemoMessage = {
+    id: createMessageId(feedId, sequence),
+    feedId,
+    sequence,
     author: 'You',
     body,
     tone: 'self',
     kind: body.length > 180 ? 'longText' : 'text',
     expanded: false,
   }
+
+  syncFeedCursor(feedId, [message])
+  return message
 }
 
-export function createOlderMessages(count: number): DemoMessage[] {
-  const messages: DemoMessage[] = []
+/**
+ * prepend 使用当前最小 sequence 之前的连续区间，模拟服务端返回的一页历史快照。
+ * 生成结果按时间升序返回，保证正常文档流中的 DOM 顺序不需要二次修正。
+ */
+export function createOlderMessages(
+  count: number,
+  options: DemoMessageCreateOptions = {},
+): DemoMessage[] {
+  const feedId = options.feedId ?? DEFAULT_FEED_ID
+  const beforeSequence =
+    options.beforeSequence ?? getFallbackPreviousBoundary(feedId)
+  const startSequence = beforeSequence - count
+  const messages = Array.from({ length: count }, (_, index) =>
+    createMessage(feedId, startSequence + index),
+  )
 
-  for (let index = 0; index < count; index += 1) {
-    oldestMessageNumber -= 1
-    messages.push(createMessage(oldestMessageNumber, 'old'))
-  }
-
-  return messages.reverse()
+  syncFeedCursor(feedId, messages)
+  return messages
 }
 
-function createMessage(number: number, direction: 'new' | 'old'): DemoMessage {
-  const absolute = Math.abs(number)
+export function getNextMessageSequence(messages: DemoMessage[]): number {
+  return messages.reduce(
+    (next, message) => Math.max(next, message.sequence + 1),
+    1,
+  )
+}
+
+export function getFirstMessageSequence(messages: DemoMessage[]): number {
+  return messages.reduce(
+    (first, message) => Math.min(first, message.sequence),
+    messages[0]?.sequence ?? 1,
+  )
+}
+
+/**
+ * 旧的本地持久化文件可能缺少 feedId / sequence。
+ * 这里只补齐 demo 运行需要的最小字段，不尝试做服务端数据迁移。
+ */
+export function normalizeDemoMessages(
+  feedId: string,
+  messages: DemoMessage[],
+): DemoMessage[] {
+  const normalized = messages.map((message, index) => {
+    const sequence =
+      typeof message.sequence === 'number' ? message.sequence : index + 1
+
+    return {
+      ...message,
+      id: message.id || createMessageId(feedId, sequence),
+      feedId: message.feedId || feedId,
+      sequence,
+      expanded: Boolean(message.expanded),
+    }
+  })
+
+  syncFeedCursor(feedId, normalized)
+  return normalized
+}
+
+function createMessage(feedId: string, sequence: number): DemoMessage {
+  const feedOffset = Math.abs(hashCode(feedId)) % 23
+  const absolute = Math.abs(sequence) + feedOffset
   const kind = pickKind(absolute)
   const author = AUTHORS[absolute % AUTHORS.length] ?? 'Lin'
   const tone = absolute % 11 === 0 ? 'system' : absolute % 3 === 0 ? 'self' : 'peer'
-  const id = direction === 'old' ? `h-${absolute}` : `m-${number}`
+  const id = createMessageId(feedId, sequence)
 
   return {
     id,
+    feedId,
+    sequence,
     author,
     body: createBody(kind, id),
     tone,
@@ -87,6 +171,11 @@ function createMessage(number: number, direction: 'new' | 'old'): DemoMessage {
     expanded: absolute % 8 === 0,
     media: createMedia(kind, absolute),
   }
+}
+
+function createMessageId(feedId: string, sequence: number): string {
+  const channel = sequence > 0 ? 'm' : 'h'
+  return `${feedId}-${channel}-${Math.abs(sequence)}`
 }
 
 function pickKind(number: number): DemoMessageKind {
@@ -166,6 +255,8 @@ export function toCommittedItem(
 }
 
 export function createDemoSnapshot(input: {
+  feedId: string
+  generation: number
   messages: DemoMessage[]
   revision: number
   effect: ViewportEffect
@@ -174,21 +265,49 @@ export function createDemoSnapshot(input: {
   hasMoreAfter?: boolean
 }): MessageDataSnapshot<DemoMessage> {
   return {
-    feedId: 'demo-feed',
-    generation: 1,
+    feedId: input.feedId,
+    generation: input.generation,
     revision: input.revision,
     items: input.messages.map(toCommittedItem),
     anchor: input.messages.at(-1)
       ? { messageId: input.messages.at(-1)?.id ?? '' }
       : undefined,
     anchorStatus: 'normal',
-    hasMoreBefore: input.hasMoreBefore ?? true,
+    hasMoreBefore: input.hasMoreBefore ?? input.messages.length > 0,
     hasMoreAfter: input.hasMoreAfter ?? false,
     change: {
       kind: input.kind ?? 'patch',
       viewportEffect: input.effect,
     },
   }
+}
+
+function syncFeedCursor(feedId: string, messages: DemoMessage[]): void {
+  if (messages.length === 0) {
+    return
+  }
+
+  const current = feedCursors.get(feedId)
+  const oldest = Math.min(
+    current?.oldest ?? messages[0]?.sequence ?? 1,
+    ...messages.map((message) => message.sequence),
+  )
+  const newest = Math.max(
+    current?.newest ?? messages[0]?.sequence ?? 1,
+    ...messages.map((message) => message.sequence),
+  )
+
+  feedCursors.set(feedId, { oldest, newest })
+}
+
+function getFallbackNextSequence(feedId: string): number {
+  const cursor = feedCursors.get(feedId)
+  return cursor ? cursor.newest + 1 : 1
+}
+
+function getFallbackPreviousBoundary(feedId: string): number {
+  const cursor = feedCursors.get(feedId)
+  return cursor ? cursor.oldest : 1
 }
 
 function hashCode(value: string): number {

@@ -120,6 +120,8 @@ export class MessageViewportRuntime<
 
   private afterEdgeRequestLatched = false
 
+  private lastScrollSource: ScrollSource | null = null
+
   private lastUserScrollTop = 0
 
   private lastUserDistanceToBottom = 0
@@ -405,6 +407,7 @@ export class MessageViewportRuntime<
     this.heightCache.clear()
     this.beforeEdgeRequestLatched = false
     this.afterEdgeRequestLatched = false
+    this.lastScrollSource = null
     this.scrollIntent.setBottomLockState('UNLOCKED')
     this.store.setSnapshot(createEmptySnapshot<TMessage, TOptimistic>(feedId, generation))
     this.state = this.registry.getContainer() ? 'ATTACHED' : 'INITIAL'
@@ -957,6 +960,7 @@ export class MessageViewportRuntime<
 
     const distance = getDistanceToBottom(container)
     const scrollSource = this.scrollIntent.classifyScroll(this.currentFrame)
+    this.lastScrollSource = scrollSource
     const changed = this.scrollIntent.updateBottomLockFromDistance(
       distance,
       this.currentFrame,
@@ -1217,6 +1221,10 @@ export class MessageViewportRuntime<
       return
     }
 
+    if (!this.canEmitEdgeNeedForSource(this.lastScrollSource)) {
+      return
+    }
+
     for (const entry of entries) {
       if (!entry.isIntersecting) {
         continue
@@ -1286,6 +1294,12 @@ export class MessageViewportRuntime<
       this.afterEdgeRequestLatched = false
     }
 
+    // 历史分页是用户接近数据边界的意图，不能由 followBottom / recovery 等
+    // runtime 写入 scrollTop 的副作用触发，否则短列表吸底时会误拉历史。
+    if (!this.canEmitEdgeNeedForSource(scrollSource)) {
+      return
+    }
+
     if (nearTop && data.hasMoreBefore && !this.beforeEdgeRequestLatched) {
       this.beforeEdgeRequestLatched = true
       this.emitEvent({
@@ -1313,6 +1327,10 @@ export class MessageViewportRuntime<
    */
   private isAtBeforeDataEdge(): boolean {
     return this.store.getSnapshot().renderWindow.startIndex === 0
+  }
+
+  private canEmitEdgeNeedForSource(source: ScrollSource | null): boolean {
+    return source === 'user' || source === 'momentum'
   }
 
   private isAtAfterDataEdge(

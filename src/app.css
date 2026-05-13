@@ -12,6 +12,7 @@
 
 body {
   margin: 0;
+  overflow: hidden;
 }
 
 button {
@@ -27,10 +28,11 @@ button {
 .demo-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 22px;
   border-right: 1px solid #d7e0e3;
   background: #ffffff;
   padding: 24px;
+  min-height: 0;
 }
 
 .eyebrow {
@@ -47,6 +49,12 @@ h1 {
   font-size: 28px;
   line-height: 1.1;
   letter-spacing: 0;
+}
+
+.active-feed-title {
+  margin: 10px 0 0;
+  color: #506067;
+  font-size: 13px;
 }
 
 .demo-actions {
@@ -68,9 +76,15 @@ h1 {
   background: #e8f1ef;
 }
 
+.demo-actions button:disabled,
+.message-composer button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 .demo-stats {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   margin: 0;
 }
 
@@ -87,8 +101,115 @@ h1 {
 
 .demo-stats dd {
   margin: 0;
+  max-width: 145px;
   font-size: 13px;
   font-weight: 700;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.feed-list {
+  display: grid;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.feed-list h2 {
+  margin: 0 0 2px;
+  color: #607077;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.feed-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 58px;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #d5e0e3;
+  border-radius: 8px;
+  background: #f8fbfb;
+  padding: 4px;
+}
+
+.feed-item.active {
+  border-color: #84b7a8;
+  background: #eaf6f2;
+}
+
+.feed-select-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 48px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #172126;
+  padding: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.feed-select-button:hover {
+  background: #edf5f3;
+}
+
+.feed-clear-button {
+  min-height: 34px;
+  border: 1px solid #d1dddf;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #7a3d3d;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.feed-clear-button:hover {
+  border-color: #d6b7b7;
+  background: #fff4f3;
+}
+
+.feed-clear-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.feed-list span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.feed-list strong,
+.feed-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feed-list strong {
+  font-size: 13px;
+}
+
+.feed-list small {
+  color: #607077;
+  font-size: 12px;
+}
+
+.feed-list em {
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #14745d;
+  color: #ffffff;
+  font-size: 12px;
+  font-style: normal;
 }
 
 .chat-surface {

@@ -154,6 +154,18 @@ async function flushFramesWithMicrotasks(
   }
 }
 
+async function flushScrollFrames(
+  container: HTMLElement,
+  scheduler: FakeScheduler,
+  count: number,
+): Promise<void> {
+  for (let index = 0; index < count; index += 1) {
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    await Promise.resolve()
+  }
+}
+
 function createHeightMap(
   start: number,
   end: number,
@@ -363,6 +375,62 @@ describe('MessageViewportRuntime', () => {
     expect(events).not.toContain('needMoreBefore')
   })
 
+  it('does not request history from sentinel intersection before user edge intent', async () => {
+    const { runtime, scheduler, observers } = createRuntime()
+    const container = createContainer({ height: 900 })
+    const events: string[] = []
+    const topSentinel = document.createElement('div')
+
+    runtime.subscribeEvent((event) => {
+      events.push(event.type)
+    })
+    runtime.attach(container)
+    runtime.registerTopSentinel(topSentinel)
+    runtime.setDataSnapshot(createSnapshot({ count: 9, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    events.length = 0
+
+    observers.intersectionObservers[0]?.trigger(topSentinel, true)
+
+    expect(events).not.toContain('needMoreBefore')
+  })
+
+  it('does not request history from follow-bottom scroll on an underfilled list', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 900 })
+    const events: string[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event.type)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 9, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    events.length = 0
+
+    runtime.dispatch({ type: 'followBottom' })
+    await Promise.resolve()
+    await Promise.resolve()
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await flushFramesWithMicrotasks(scheduler, 3)
+
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    await Promise.resolve()
+
+    expect(events).not.toContain('needMoreBefore')
+  })
+
   it('latches top edge loading until the user leaves the edge', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
@@ -376,25 +444,18 @@ describe('MessageViewportRuntime', () => {
     runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
+    container.scrollTop = 400
+    await flushScrollFrames(container, scheduler, 3)
 
     container.scrollTop = 0
-    container.dispatchEvent(new Event('scroll'))
-    scheduler.flushFrame()
-    await Promise.resolve()
-    container.dispatchEvent(new Event('scroll'))
-    scheduler.flushFrame()
-    await Promise.resolve()
+    await flushScrollFrames(container, scheduler, 1)
 
     expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
 
     container.scrollTop = 400
-    container.dispatchEvent(new Event('scroll'))
-    scheduler.flushFrame()
-    await Promise.resolve()
+    await flushScrollFrames(container, scheduler, 1)
     container.scrollTop = 0
-    container.dispatchEvent(new Event('scroll'))
-    scheduler.flushFrame()
-    await Promise.resolve()
+    await flushScrollFrames(container, scheduler, 1)
 
     expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(2)
   })
@@ -412,11 +473,11 @@ describe('MessageViewportRuntime', () => {
     runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
+    container.scrollTop = 400
+    await flushScrollFrames(container, scheduler, 3)
 
     container.scrollTop = 0
-    container.dispatchEvent(new Event('scroll'))
-    scheduler.flushFrame()
-    await Promise.resolve()
+    await flushScrollFrames(container, scheduler, 1)
     expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
 
     runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 2, effect: 'prepend', start: -19 }))
@@ -431,13 +492,9 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    container.dispatchEvent(new Event('scroll'))
-    scheduler.flushFrame()
-    await Promise.resolve()
+    await flushScrollFrames(container, scheduler, 1)
     container.scrollTop = 0
-    container.dispatchEvent(new Event('scroll'))
-    scheduler.flushFrame()
-    await Promise.resolve()
+    await flushScrollFrames(container, scheduler, 1)
 
     expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
   })

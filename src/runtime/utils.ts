@@ -9,8 +9,8 @@ import type {
 export const DEFAULT_WINDOW_CONFIG: WindowConfig = {
   minOverscanPx: 0,
   maxOverscanPx: 0,
-  minMountedItems: 120,
-  maxMountedItems: 800,
+  minMountedItems: 40,
+  maxMountedItems: 200,
   trimMarginPx: 0,
   defaultItemHeight: 72,
 }
