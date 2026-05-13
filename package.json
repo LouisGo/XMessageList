@@ -1,0 +1,52 @@
+{
+  "name": "x-message-list",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Deterministic IM message viewport runtime prototype for TypeX.",
+  "main": "./dist/x-message-list.umd.cjs",
+  "module": "./dist/x-message-list.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/x-message-list.js",
+      "require": "./dist/x-message-list.umd.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "docs"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "test": "vitest run --config vitest.config.ts --passWithNoTests",
+    "typecheck": "tsc -b"
+  },
+  "peerDependencies": {
+    "react": ">=18.3.1 <19",
+    "react-dom": ">=18.3.1 <19"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.2",
+    "@types/node": "^24.12.3",
+    "@types/react": "18.3.18",
+    "@types/react-dom": "18.3.5",
+    "@vitejs/plugin-react": "6.0.1",
+    "eslint": "9.39.2",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.6.0",
+    "jsdom": "26.1.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "typescript": "5.7.3",
+    "typescript-eslint": "8.46.3",
+    "vite": "8.0.12",
+    "vite-plugin-dts": "5.0.0",
+    "vitest": "3.2.4"
+  }
+}

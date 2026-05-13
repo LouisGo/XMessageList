@@ -1,0 +1,183 @@
+import {
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useMemo,
+} from 'react'
+import {
+  getRuntimeItemKey,
+  serializeRuntimeItemKey,
+} from '../runtime'
+import type {
+  MessageDataItem,
+  MessageRuntimeItemKey,
+  MessageViewportRuntime,
+} from '../runtime'
+import { useMessageViewportRuntime } from './useMessageViewportRuntime'
+
+export type MessageRowProjectionProps<
+  TMessage = unknown,
+  TOptimistic = unknown,
+> = {
+  item: MessageDataItem<TMessage, TOptimistic>
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
+  children: ReactNode
+}
+
+/**
+ * Row wrapper 的职责只有 DOM 注册和正常文档流渲染。
+ * 它不能测量、不能 dispatch command，也不能读写 scrollTop。
+ */
+export function MessageRowProjection<
+  TMessage = unknown,
+  TOptimistic = unknown,
+>({
+  item,
+  runtime,
+  children,
+}: MessageRowProjectionProps<TMessage, TOptimistic>) {
+  const key = getRuntimeItemKey(item)
+  const serializedKey = serializeRuntimeItemKey(key)
+  const setRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      runtime.registerRow(key, element)
+    },
+    [runtime, key],
+  )
+
+  return (
+    <div
+      ref={setRef}
+      data-message-row={serializedKey}
+      style={normalFlowRowStyle}
+    >
+      {children}
+    </div>
+  )
+}
+
+export type MessageViewportProps<
+  TMessage = unknown,
+  TOptimistic = unknown,
+> = {
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
+  renderMessage: (item: MessageDataItem<TMessage, TOptimistic>) => ReactNode
+  className?: string
+  style?: CSSProperties
+  bottomSlot?: ReactNode
+}
+
+/**
+ * MessageViewport 是 runtime projection shell。
+ * DOM 顺序固定为 sentinel -> spacer -> flow rows -> spacer -> sentinel，
+ * 方便 runtime 做 commit 后测量和 anchor correction。
+ */
+export function MessageViewport<
+  TMessage = unknown,
+  TOptimistic = unknown,
+>({
+  runtime,
+  renderMessage,
+  className,
+  style,
+  bottomSlot,
+}: MessageViewportProps<TMessage, TOptimistic>) {
+  const snapshot = useMessageViewportRuntime(runtime)
+  const viewportStyle = useMemo<CSSProperties>(
+    () => ({
+      ...baseViewportStyle,
+      ...style,
+    }),
+    [style],
+  )
+  const setContainerRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      if (element) {
+        runtime.attach(element)
+        return
+      }
+
+      runtime.detach()
+    },
+    [runtime],
+  )
+  const setTopSentinel = useCallback(
+    (element: HTMLDivElement | null) => {
+      runtime.registerTopSentinel(element)
+    },
+    [runtime],
+  )
+  const setBottomSentinel = useCallback(
+    (element: HTMLDivElement | null) => {
+      runtime.registerBottomSentinel(element)
+    },
+    [runtime],
+  )
+  const setTopSpacer = useCallback(
+    (element: HTMLDivElement | null) => {
+      runtime.registerTopSpacer(element)
+    },
+    [runtime],
+  )
+  const setBottomSpacer = useCallback(
+    (element: HTMLDivElement | null) => {
+      runtime.registerBottomSpacer(element)
+    },
+    [runtime],
+  )
+
+  return (
+    <div
+      ref={setContainerRef}
+      className={className}
+      data-message-viewport
+      data-bottom-lock-state={snapshot.bottomLockState}
+      style={viewportStyle}
+    >
+      <div ref={setTopSentinel} data-top-sentinel />
+      <div
+        ref={setTopSpacer}
+        data-top-spacer
+        style={{ height: snapshot.topSpacer }}
+      />
+      <div data-message-window style={messageWindowStyle}>
+        {snapshot.items.map((item) => {
+          const key: MessageRuntimeItemKey = getRuntimeItemKey(item)
+          const serializedKey = serializeRuntimeItemKey(key)
+
+          return (
+            <MessageRowProjection
+              key={serializedKey}
+              item={item}
+              runtime={runtime}
+            >
+              {renderMessage(item)}
+            </MessageRowProjection>
+          )
+        })}
+      </div>
+      <div
+        ref={setBottomSpacer}
+        data-bottom-spacer
+        style={{ height: snapshot.bottomSpacer }}
+      />
+      <div ref={setBottomSentinel} data-bottom-sentinel />
+      {bottomSlot}
+    </div>
+  )
+}
+
+const baseViewportStyle: CSSProperties = {
+  overflowY: 'auto',
+  overflowAnchor: 'none',
+  position: 'relative',
+}
+
+const messageWindowStyle: CSSProperties = {
+  display: 'block',
+}
+
+const normalFlowRowStyle: CSSProperties = {
+  display: 'block',
+  position: 'static',
+}
