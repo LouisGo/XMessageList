@@ -426,6 +426,8 @@ export class MessageViewportRuntime<
     }
 
     const data = this.dataSnapshot
+    const token = this.lifecycle.getCurrent()
+    const previousSnapshot = this.store.getSnapshot()
     this.state = 'BOOTSTRAPPING'
 
     if (data.items.length === 0) {
@@ -443,28 +445,43 @@ export class MessageViewportRuntime<
     }
 
     const renderWindow = this.renderWindow.computeLatestWindow(data.items)
-    const projection = this.publishProjection({
-      data,
-      renderWindow,
-      bootstrapState: 'MOUNTING',
-      bottomLockState: 'UNLOCKED',
-    })
 
-    await this.waitForCommitIfChanged(projection, 'bootstrap')
-    this.measureCurrentWindow()
-    this.scrollToBottom('followBottom')
-    await this.waitForBootstrapSettle(data.feedId, data.generation)
-    this.measureCurrentWindow()
-    this.scrollToBottom('followBottom')
-    this.scrollIntent.setBottomLockState('LOCKED')
-    this.state = 'READY'
-    this.publishProjection({
-      data,
-      renderWindow,
-      bootstrapState: 'READY',
-      bottomLockState: 'LOCKED',
-    })
-    this.emitEvent({ type: 'viewportReady', feedId: data.feedId, generation: data.generation })
+    try {
+      const projection = this.publishProjection({
+        data,
+        renderWindow,
+        bootstrapState: 'MOUNTING',
+        bottomLockState: 'UNLOCKED',
+      })
+
+      await this.waitForCommitIfChanged(projection, 'bootstrap')
+      this.measureCurrentWindow()
+      this.scrollToBottom('followBottom')
+      await this.waitForBootstrapSettle(data.feedId, data.generation)
+      this.measureCurrentWindow()
+      this.scrollToBottom('followBottom')
+      this.scrollIntent.setBottomLockState('LOCKED')
+      this.state = 'READY'
+      this.publishProjection({
+        data,
+        renderWindow,
+        bootstrapState: 'READY',
+        bottomLockState: 'LOCKED',
+      })
+      this.emitEvent({
+        type: 'viewportReady',
+        feedId: data.feedId,
+        generation: data.generation,
+      })
+    } catch (error) {
+      this.recoverAfterCommitFailure({
+        token,
+        nextState: this.deriveRuntimeStateFromSnapshot(previousSnapshot),
+        restoreBottomLockState: previousSnapshot.bottomLockState,
+        restoreSnapshot: previousSnapshot,
+      })
+      throw error
+    }
   }
 
   private enqueuePrependTransaction(): void {
@@ -496,6 +513,8 @@ export class MessageViewportRuntime<
 
     const anchorIndex = this.renderWindow.findIndexByKey(data.items, anchor.key)
     const safeAnchorIndex = anchorIndex >= 0 ? anchorIndex : 0
+    const token = this.lifecycle.getCurrent()
+    const previousBottomLockState = this.scrollIntent.getBottomLockState()
     const renderWindow = this.renderWindow.computeWindowAroundAnchor({
       items: data.items,
       anchorIndex: safeAnchorIndex,
@@ -505,39 +524,55 @@ export class MessageViewportRuntime<
 
     this.state = 'TRANSACTING'
     this.scrollIntent.setBottomLockState('RECOVERING')
-    const projection = this.publishProjection({
-      data,
-      renderWindow,
-      bootstrapState: 'READY',
-      bottomLockState: 'RECOVERING',
-    })
 
-    await this.waitForCommitIfChanged(projection, 'prepend')
+    try {
+      const projection = this.publishProjection({
+        data,
+        renderWindow,
+        bootstrapState: 'READY',
+        bottomLockState: 'RECOVERING',
+      })
 
-    const anchorElementAfter = this.registry.getRow(anchor.key)
-    const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
+      await this.waitForCommitIfChanged(projection, 'prepend')
 
-    if (typeof anchorTopAfter !== 'number') {
-      this.emitError('prepend-anchor-after-missing')
+      const anchorElementAfter = this.registry.getRow(anchor.key)
+      const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
+
+      if (typeof anchorTopAfter !== 'number') {
+        this.emitError('prepend-anchor-after-missing')
+        this.state = 'READY'
+        return
+      }
+
+      const delta = anchorTopAfter - anchorTopBefore
+
+      if (Math.abs(delta) > 0.5) {
+        this.writeScrollTop(container.scrollTop + delta, 'recovery')
+      }
+
+      this.measureCurrentWindow()
+      this.scrollIntent.setBottomLockState('UNLOCKED')
       this.state = 'READY'
-      return
+      this.publishProjection({
+        data,
+        renderWindow,
+        bootstrapState: 'READY',
+        bottomLockState: 'UNLOCKED',
+      })
+    } catch (error) {
+      this.recoverAfterCommitFailure({
+        token,
+        nextState: 'READY',
+        restoreBottomLockState: previousBottomLockState,
+        restoreProjection: {
+          data,
+          renderWindow,
+          bootstrapState: 'READY',
+          bottomLockState: previousBottomLockState,
+        },
+      })
+      throw error
     }
-
-    const delta = anchorTopAfter - anchorTopBefore
-
-    if (Math.abs(delta) > 0.5) {
-      this.writeScrollTop(container.scrollTop + delta, 'recovery')
-    }
-
-    this.measureCurrentWindow()
-    this.scrollIntent.setBottomLockState('UNLOCKED')
-    this.state = 'READY'
-    this.publishProjection({
-      data,
-      renderWindow,
-      bootstrapState: 'READY',
-      bottomLockState: 'UNLOCKED',
-    })
   }
 
   private enqueueAppendTransaction(effect: 'append' | 'auto-scroll-to-bottom'): void {
@@ -557,34 +592,43 @@ export class MessageViewportRuntime<
     const shouldFollow =
       effect === 'auto-scroll-to-bottom' ||
       this.scrollIntent.getBottomLockState() === 'LOCKED'
+    const token = this.lifecycle.getCurrent()
     const renderWindow = shouldFollow
       ? this.renderWindow.computeLatestWindow(data.items)
       : this.keepCurrentWindow(data.items)
 
     this.state = 'TRANSACTING'
-    const projection = this.publishProjection({
-      data,
-      renderWindow,
-      bootstrapState: 'READY',
-      bottomLockState: this.scrollIntent.getBottomLockState(),
-    })
-
-    await this.waitForCommitIfChanged(projection, 'append')
-    this.measureCurrentWindow()
-
-    if (shouldFollow) {
-      await this.nextFrame(data.feedId, data.generation)
-      this.scrollToBottom('followBottom')
-      this.scrollIntent.setBottomLockState('LOCKED')
-      this.publishProjection({
+    try {
+      const projection = this.publishProjection({
         data,
         renderWindow,
         bootstrapState: 'READY',
-        bottomLockState: 'LOCKED',
+        bottomLockState: this.scrollIntent.getBottomLockState(),
       })
-    }
 
-    this.state = 'READY'
+      await this.waitForCommitIfChanged(projection, 'append')
+      this.measureCurrentWindow()
+
+      if (shouldFollow) {
+        await this.nextFrame(data.feedId, data.generation)
+        this.scrollToBottom('followBottom')
+        this.scrollIntent.setBottomLockState('LOCKED')
+        this.publishProjection({
+          data,
+          renderWindow,
+          bootstrapState: 'READY',
+          bottomLockState: 'LOCKED',
+        })
+      }
+
+      this.state = 'READY'
+    } catch (error) {
+      this.recoverAfterCommitFailure({
+        token,
+        nextState: 'READY',
+      })
+      throw error
+    }
   }
 
   private enqueueProjectionRefresh(): void {
@@ -673,43 +717,61 @@ export class MessageViewportRuntime<
       return
     }
 
+    const token = this.lifecycle.getCurrent()
+    const previousBottomLockState = this.scrollIntent.getBottomLockState()
     const renderWindow = this.renderWindow.computeWindowAroundAnchor({
       items: data.items,
       anchorIndex: targetIndex,
       viewportHeight: container.clientHeight,
       viewportWidth: container.clientWidth,
     })
-    const projection = this.publishProjection({
-      data,
-      renderWindow,
-      bootstrapState: 'READY',
-      bottomLockState: 'RECOVERING',
-    })
 
-    await this.waitForCommitIfChanged(projection, 'jump')
-    const target = this.registry.getRow({ kind: 'committed', messageId })
+    try {
+      const projection = this.publishProjection({
+        data,
+        renderWindow,
+        bootstrapState: 'READY',
+        bottomLockState: 'RECOVERING',
+      })
 
-    if (!target) {
-      this.emitError('jump-target-dom-missing')
-      return
+      await this.waitForCommitIfChanged(projection, 'jump')
+      const target = this.registry.getRow({ kind: 'committed', messageId })
+
+      if (!target) {
+        this.emitError('jump-target-dom-missing')
+        return
+      }
+
+      const containerRect = container.getBoundingClientRect()
+      const targetRect = target.getBoundingClientRect()
+      const centerDelta =
+        targetRect.top -
+        containerRect.top -
+        Math.max(0, (container.clientHeight - targetRect.height) / 2)
+
+      this.writeScrollTop(container.scrollTop + centerDelta, 'programmatic')
+      this.scrollIntent.setBottomLockState('UNLOCKED')
+      this.state = 'READY'
+      this.publishProjection({
+        data,
+        renderWindow,
+        bootstrapState: 'READY',
+        bottomLockState: 'UNLOCKED',
+      })
+    } catch (error) {
+      this.recoverAfterCommitFailure({
+        token,
+        nextState: 'READY',
+        restoreBottomLockState: previousBottomLockState,
+        restoreProjection: {
+          data,
+          renderWindow,
+          bootstrapState: 'READY',
+          bottomLockState: previousBottomLockState,
+        },
+      })
+      throw error
     }
-
-    const containerRect = container.getBoundingClientRect()
-    const targetRect = target.getBoundingClientRect()
-    const centerDelta =
-      targetRect.top -
-      containerRect.top -
-      Math.max(0, (container.clientHeight - targetRect.height) / 2)
-
-    this.writeScrollTop(container.scrollTop + centerDelta, 'programmatic')
-    this.scrollIntent.setBottomLockState('UNLOCKED')
-    this.state = 'READY'
-    this.publishProjection({
-      data,
-      renderWindow,
-      bootstrapState: 'READY',
-      bottomLockState: 'UNLOCKED',
-    })
   }
 
   private enqueueResetTransaction(reason: string): void {
@@ -743,30 +805,47 @@ export class MessageViewportRuntime<
     }
 
     const renderWindow = this.renderWindow.computeLatestWindow(data.items)
+    const token = this.lifecycle.getCurrent()
+    const previousBottomLockState = this.scrollIntent.getBottomLockState()
 
     this.state = 'TRANSACTING'
     // follow-bottom 必须先切到 latest projection，再基于 commit 后的真实 DOM 吸底；
     // 如果先写 scrollTop，旧窗口 bottom spacer 的估算误差会把最终位置留在底部上方。
     this.scrollIntent.setBottomLockState('RECOVERING')
-    const projection = this.publishProjection({
-      data,
-      renderWindow,
-      bootstrapState: 'READY',
-      bottomLockState: 'RECOVERING',
-    })
+    try {
+      const projection = this.publishProjection({
+        data,
+        renderWindow,
+        bootstrapState: 'READY',
+        bottomLockState: 'RECOVERING',
+      })
 
-    await this.waitForCommitIfChanged(projection, 'followBottom')
-    this.measureCurrentWindow()
-    await this.nextFrame(data.feedId, data.generation)
-    this.scrollToBottom('followBottom')
-    this.scrollIntent.setBottomLockState('LOCKED')
-    this.publishProjection({
-      data,
-      renderWindow,
-      bootstrapState: 'READY',
-      bottomLockState: 'LOCKED',
-    })
-    this.state = 'READY'
+      await this.waitForCommitIfChanged(projection, 'followBottom')
+      this.measureCurrentWindow()
+      await this.nextFrame(data.feedId, data.generation)
+      this.scrollToBottom('followBottom')
+      this.scrollIntent.setBottomLockState('LOCKED')
+      this.publishProjection({
+        data,
+        renderWindow,
+        bootstrapState: 'READY',
+        bottomLockState: 'LOCKED',
+      })
+      this.state = 'READY'
+    } catch (error) {
+      this.recoverAfterCommitFailure({
+        token,
+        nextState: 'READY',
+        restoreBottomLockState: previousBottomLockState,
+        restoreProjection: {
+          data,
+          renderWindow,
+          bootstrapState: 'READY',
+          bottomLockState: previousBottomLockState,
+        },
+      })
+      throw error
+    }
   }
 
   private publishProjection(input: {
@@ -875,6 +954,57 @@ export class MessageViewportRuntime<
     this.scheduler.clearTimeout(this.pendingCommit.timeoutId)
     this.pendingCommit.reject(new Error('Projection commit cancelled'))
     this.pendingCommit = null
+  }
+
+  /**
+   * commit timeout / cancel 后不能把 runtime 留在中间态。
+   * 这里只恢复当前 generation 仍有效的事务，避免旧事务覆盖 feed 切换或 detach 后的新状态。
+   */
+  private recoverAfterCommitFailure(input: {
+    token: { feedId: string; generation: number }
+    nextState: RuntimeState
+    restoreBottomLockState?: MessageViewportSnapshot['bottomLockState']
+    restoreProjection?: {
+      data: MessageDataSnapshot<TMessage, TOptimistic>
+      renderWindow: RenderWindow
+      bootstrapState: BootstrapState
+      bottomLockState: MessageViewportSnapshot['bottomLockState']
+    }
+    restoreSnapshot?: MessageViewportSnapshot<TMessage, TOptimistic>
+  }): void {
+    if (!this.lifecycle.isCurrent(input.token.feedId, input.token.generation)) {
+      return
+    }
+
+    // 先恢复 runtime 内部状态，再发布 projection；这样订阅者拿到新 snapshot 时，
+    // debug state / 后续 command 判断都已经脱离失败事务的中间态。
+    this.state = input.nextState
+
+    if (typeof input.restoreBottomLockState === 'string') {
+      this.scrollIntent.setBottomLockState(input.restoreBottomLockState)
+    }
+
+    if (input.restoreSnapshot) {
+      this.store.setSnapshot(input.restoreSnapshot)
+    } else if (input.restoreProjection) {
+      this.publishProjection(input.restoreProjection)
+    }
+  }
+
+  /**
+   * timeout recovery 需要让 runtime.state 与回滚后的 snapshot 语义保持一致。
+   * READY / READY_EMPTY 仍然表示可交互稳定态，其余 bootstrap 中间态统一回到 ATTACHED/INITIAL。
+   */
+  private deriveRuntimeStateFromSnapshot(
+    snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
+  ): RuntimeState {
+    if (!this.registry.getContainer()) {
+      return 'INITIAL'
+    }
+
+    return snapshot.bootstrapState === 'READY' || snapshot.bootstrapState === 'READY_EMPTY'
+      ? 'READY'
+      : 'ATTACHED'
   }
 
   private measureCurrentWindow(): HeightDelta[] {

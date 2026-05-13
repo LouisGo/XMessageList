@@ -113,6 +113,10 @@ export function DemoMessageViewport() {
             <dd>{scenario.messageCount}</dd>
           </div>
           <div>
+            <dt>Loaded</dt>
+            <dd>{scenario.loadedMessageCount}</dd>
+          </div>
+          <div>
             <dt>History</dt>
             <dd>{scenario.loadingBefore ? 'loading' : 'idle'}</dd>
           </div>

@@ -15,9 +15,7 @@ import {
   createDemoMessages,
   createDemoSnapshot,
   createNewestMessage,
-  createOlderMessages,
   createOutgoingMessage,
-  getFirstMessageSequence,
   getNextMessageSequence,
   normalizeDemoMessages,
 } from './demoData'
@@ -27,6 +25,10 @@ import {
   type DemoFeedDefinition,
 } from './demoFeeds'
 import {
+  getLatestMessages,
+  getMessagesAround,
+} from './demoMessageApi'
+import {
   createDemoRequestId,
   type DemoLogEntry,
   type DemoOperationName,
@@ -35,7 +37,7 @@ import {
   writeDemoLog,
 } from './demoLocalStoreClient'
 
-const HISTORY_BATCH_SIZE = 20
+const PAGE_SIZE = 20
 const FEED_LOAD_DELAY_MS = 180
 
 const OPERATION_DELAYS: Record<
@@ -71,15 +73,20 @@ type RunLoggedOperationInput = {
   operation: keyof typeof OPERATION_DELAYS
   startEvent: string
   details?: Record<string, unknown>
-  apply: (feedId: string) => LoggedOperationResult
+  apply: (feedId: string) => LoggedOperationResult | Promise<LoggedOperationResult>
   onFinally?: () => void
+  /** 为 true 时跳过 apply 后的 persistCurrentFeed（apply 自行处理持久化）。 */
+  skipPersist?: boolean
 }
 
 export type DemoMessageScenario = {
   feeds: DemoFeedDefinition[]
   activeFeedId: string
   activeFeed: DemoFeedDefinition
+  // 整个 feed 的持久化总数，不等于 runtime 当前已加载窗口大小。
   messageCount: number
+  // 当前已经加载进 runtime data snapshot 的消息数。
+  loadedMessageCount: number
   loadingBefore: boolean
   feedLoading: boolean
   pendingOperation: string
@@ -104,6 +111,7 @@ export function useDemoMessageScenario(
   const initialFeedId = DEMO_FEEDS[0]?.id ?? 'feed-runtime'
   const [activeFeedId, setActiveFeedId] = useState(initialFeedId)
   const [messageCount, setMessageCount] = useState(0)
+  const [loadedMessageCount, setLoadedMessageCount] = useState(0)
   const [loadingBefore, setLoadingBefore] = useState(false)
   const [feedLoading, setFeedLoading] = useState(true)
   const [pendingOperation, setPendingOperation] = useState('idle')
@@ -112,7 +120,10 @@ export function useDemoMessageScenario(
   )
 
   const activeFeedIdRef = useRef(activeFeedId)
+  // 当前交给 runtime 的 data window。
   const messagesRef = useRef<DemoMessage[]>([])
+  // 当前 feed 在本地持久化层的完整消息集。
+  const feedMessagesRef = useRef<DemoMessage[]>([])
   const revisionRef = useRef(1)
   const generationRef = useRef(1)
   const hasMoreBeforeRef = useRef(false)
@@ -131,6 +142,11 @@ export function useDemoMessageScenario(
   }, [activeFeedId])
 
   const log = useCallback((entry: DemoLogEntry) => writeDemoLog(entry), [])
+
+  const syncDisplayedCounts = useCallback(() => {
+    setMessageCount(feedMessagesRef.current.length)
+    setLoadedMessageCount(messagesRef.current.length)
+  }, [])
 
   const beginPendingOperation = useCallback((operation: string) => {
     pendingOperationCountRef.current += 1
@@ -151,13 +167,14 @@ export function useDemoMessageScenario(
   /**
    * 所有会改动消息数组的 demo 请求都通过这一层发布给 runtime。
    * revision 只表达数据快照版本，feed/generation 则用于切会话时隔离 runtime 生命周期。
+   * Demo 需要同时维护“完整 feed”与“当前 loaded window”两层状态，不能混用。
    */
   const publishCurrentMessages = useCallback((
     effect: ViewportEffect,
     kind: DemoSnapshotKind,
   ) => {
     revisionRef.current += 1
-    setMessageCount(messagesRef.current.length)
+    syncDisplayedCounts()
     runtime.setDataSnapshot(
       createDemoSnapshot({
         feedId: activeFeedIdRef.current,
@@ -169,7 +186,7 @@ export function useDemoMessageScenario(
         hasMoreBefore: hasMoreBeforeRef.current,
       }),
     )
-  }, [runtime])
+  }, [runtime, syncDisplayedCounts])
 
   const persistCurrentFeed = useCallback(async () => {
     await savePersistedDemoFeed({
@@ -177,7 +194,7 @@ export function useDemoMessageScenario(
       feedId: activeFeedIdRef.current,
       revision: revisionRef.current,
       hasMoreBefore: hasMoreBeforeRef.current,
-      messages: messagesRef.current,
+      messages: feedMessagesRef.current,
       updatedAt: new Date().toISOString(),
     })
   }, [])
@@ -226,10 +243,14 @@ export function useDemoMessageScenario(
         return
       }
 
-      const result = input.apply(feedId)
+      const result = await input.apply(feedId)
 
       publishCurrentMessages(result.effect, result.kind)
-      await persistCurrentFeed()
+
+      if (!input.skipPersist) {
+        await persistCurrentFeed()
+      }
+
       setLastEvent(result.eventText)
 
       await log({
@@ -295,23 +316,52 @@ export function useDemoMessageScenario(
     void runLoggedOperation({
       operation: 'history.prepend',
       startEvent: 'loading history...',
-      details: { batchSize: HISTORY_BATCH_SIZE, source },
-      apply: (feedId) => {
-        const older = createOlderMessages(HISTORY_BATCH_SIZE, {
+      details: { batchSize: PAGE_SIZE, source },
+      apply: async (feedId) => {
+        // 先同步完整持久化 feed。分页边界必须由 BFF + 持久化数据共同决定，
+        // demo 不能在触顶后私自再造更老消息，否则会把一个有限 feed 伪装成无限历史。
+        const storeFeed = await loadPersistedDemoFeed(feedId)
+        feedMessagesRef.current = storeFeed
+          ? normalizeDemoMessages(feedId, storeFeed.messages)
+          : []
+
+        const oldestViewportMsg = messagesRef.current[0]
+        if (!oldestViewportMsg) {
+          return {
+            effect: 'none' as ViewportEffect,
+            kind: 'patch' as DemoSnapshotKind,
+            eventText: 'no messages in viewport',
+          }
+        }
+
+        const resp = await getMessagesAround({
           feedId,
-          beforeSequence: getFirstMessageSequence(messagesRef.current),
+          anchor: { messageId: oldestViewportMsg.id },
+          before: PAGE_SIZE,
+          after: 0,
         })
 
-        messagesRef.current = [...older, ...messagesRef.current]
+        if (!resp.ok) {
+          throw new Error(resp.errorMessage)
+        }
+
+        // BFF 返回 anchor 之前的消息，前端与当前视口合并
+        const olderInView = resp.messages.filter(
+          (message) => message.id !== oldestViewportMsg.id,
+        )
+        messagesRef.current = [...olderInView, ...messagesRef.current]
+        // 是否还能继续向上分页只能信任 BFF；不能再做“非空 feed 就还有历史”的本地推断。
+        hasMoreBeforeRef.current = resp.hasMoreBefore
 
         return {
-          effect: 'prepend',
-          kind: 'prepend',
-          eventText: `loaded ${HISTORY_BATCH_SIZE} older messages`,
+          effect: 'prepend' as ViewportEffect,
+          kind: 'prepend' as DemoSnapshotKind,
+          eventText: `loaded ${olderInView.length} older messages`,
           details: {
-            added: older.length,
-            firstAddedId: older[0]?.id,
-            lastAddedId: older.at(-1)?.id,
+            total: resp.total,
+            hasMoreBefore: resp.hasMoreBefore,
+            added: olderInView.length,
+            anchor: resp.anchor,
           },
         }
       },
@@ -319,6 +369,7 @@ export function useDemoMessageScenario(
         loadingBeforeRef.current = false
         setLoadingBefore(false)
       },
+      skipPersist: true, // prepend 只改变 loaded window，不应覆写完整持久化 feed
     })
   }, [log, runLoggedOperation])
 
@@ -330,9 +381,10 @@ export function useDemoMessageScenario(
       apply: (feedId) => {
         const message = createNewestMessage({
           feedId,
-          sequence: getNextMessageSequence(messagesRef.current),
+          sequence: getNextMessageSequence(feedMessagesRef.current),
         })
 
+        feedMessagesRef.current = [...feedMessagesRef.current, message]
         messagesRef.current = [...messagesRef.current, message]
 
         return {
@@ -351,7 +403,7 @@ export function useDemoMessageScenario(
       startEvent: 'appending long burst...',
       details: { burstSize: 4 },
       apply: (feedId) => {
-        const startSequence = getNextMessageSequence(messagesRef.current)
+        const startSequence = getNextMessageSequence(feedMessagesRef.current)
         const next = Array.from({ length: 4 }, (_, index) =>
           createNewestMessage({ feedId, sequence: startSequence + index }),
         ).map((message, index) =>
@@ -365,6 +417,7 @@ export function useDemoMessageScenario(
             : message,
         )
 
+        feedMessagesRef.current = [...feedMessagesRef.current, ...next]
         messagesRef.current = [...messagesRef.current, ...next]
 
         return {
@@ -386,8 +439,18 @@ export function useDemoMessageScenario(
       startEvent: 'resizing latest messages...',
       details: { affectedTailCount: 10 },
       apply: () => {
-        messagesRef.current = messagesRef.current.map((message, index, list) =>
-          index >= list.length - 10
+        const toggledIds = new Set<string>()
+
+        messagesRef.current = messagesRef.current.map((message, index, list) => {
+          if (index < list.length - 10) {
+            return message
+          }
+
+          toggledIds.add(message.id)
+          return { ...message, expanded: !message.expanded }
+        })
+        feedMessagesRef.current = feedMessagesRef.current.map((message) =>
+          toggledIds.has(message.id)
             ? { ...message, expanded: !message.expanded }
             : message,
         )
@@ -416,9 +479,10 @@ export function useDemoMessageScenario(
       apply: (feedId) => {
         const message = createOutgoingMessage(trimmed, {
           feedId,
-          sequence: getNextMessageSequence(messagesRef.current),
+          sequence: getNextMessageSequence(feedMessagesRef.current),
         })
 
+        feedMessagesRef.current = [...feedMessagesRef.current, message]
         messagesRef.current = [...messagesRef.current, message]
 
         return {
@@ -512,8 +576,9 @@ export function useDemoMessageScenario(
         if (isActiveAfterDelay) {
           revisionRef.current = nextRevision
           hasMoreBeforeRef.current = false
+          feedMessagesRef.current = []
           messagesRef.current = []
-          setMessageCount(0)
+          syncDisplayedCounts()
           runtime.setDataSnapshot(
             createDemoSnapshot({
               feedId,
@@ -557,7 +622,7 @@ export function useDemoMessageScenario(
         endPendingOperation()
       }
     })()
-  }, [beginPendingOperation, endPendingOperation, log, runtime])
+  }, [beginPendingOperation, endPendingOperation, log, runtime, syncDisplayedCounts])
 
   useEffect(() => {
     const token = loadTokenRef.current + 1
@@ -581,33 +646,29 @@ export function useDemoMessageScenario(
       try {
         await sleep(FEED_LOAD_DELAY_MS)
 
-        const persisted = await loadPersistedDemoFeed(activeFeedId)
-        const messages = persisted
-          ? normalizeDemoMessages(activeFeedId, persisted.messages)
-          : createDemoMessages(feed.seedCount, activeFeedId)
-        const revision = persisted?.revision ?? 1
-        const hasMoreBefore =
-          persisted?.hasMoreBefore ?? (persisted ? messages.length > 0 : true)
+        // 通过 BFF 获取最新消息；若 store 中不存在则先 seed 再重试
+        const firstResp = await getLatestMessages({
+          feedId: activeFeedId,
+          limit: PAGE_SIZE,
+        })
 
-        if (loadTokenRef.current !== token) {
-          await log({
-            requestId,
-            operation: 'feed.load',
-            phase: 'cancel',
-            feedId: activeFeedId,
-            messageCount: messages.length,
-            details: { reason: 'stale-load' },
-          })
-          return
-        }
+        let resp = firstResp.ok
+          ? firstResp
+          : undefined
 
-        if (!persisted) {
+        if (!firstResp.ok) {
+          if (firstResp.errorCode !== 'feed-not-found') {
+            throw new Error(firstResp.errorMessage)
+          }
+
+          const seedMessages = createDemoMessages(feed.seedCount, activeFeedId)
+          feedMessagesRef.current = seedMessages
           await savePersistedDemoFeed({
             version: 1,
             feedId: activeFeedId,
-            revision,
-            hasMoreBefore,
-            messages,
+            revision: 1,
+            hasMoreBefore: true,
+            messages: seedMessages,
             updatedAt: new Date().toISOString(),
           })
           await log({
@@ -615,37 +676,75 @@ export function useDemoMessageScenario(
             operation: 'feed.seed',
             phase: 'success',
             feedId: activeFeedId,
-            messageCount: messages.length,
-            details: { seedCount: feed.seedCount, hasMoreBefore },
+            messageCount: seedMessages.length,
+            details: { seedCount: feed.seedCount },
           })
+          const retryResp = await getLatestMessages({
+            feedId: activeFeedId,
+            limit: PAGE_SIZE,
+          })
+
+          if (!retryResp.ok) {
+            throw new Error(retryResp.errorMessage)
+          }
+
+          resp = retryResp
+        }
+
+        const persistedFeed = await loadPersistedDemoFeed(activeFeedId)
+
+        if (!persistedFeed) {
+          throw new Error(`feed ${activeFeedId} missing after load`)
+        }
+
+        if (loadTokenRef.current !== token) {
+          await log({
+            requestId,
+            operation: 'feed.load',
+            phase: 'cancel',
+            feedId: activeFeedId,
+            messageCount: resp ? resp.messages.length : 0,
+            details: { reason: 'stale-load' },
+          })
+          return
         }
 
         generationRef.current += 1
-        revisionRef.current = revision
-        hasMoreBeforeRef.current = hasMoreBefore
-        messagesRef.current = messages
-        setMessageCount(messages.length)
+        revisionRef.current += 1
+        hasMoreBeforeRef.current = resp.hasMoreBefore
+        feedMessagesRef.current = normalizeDemoMessages(
+          activeFeedId,
+          persistedFeed.messages,
+        )
+        messagesRef.current = resp.messages
+        syncDisplayedCounts()
         runtime.setDataSnapshot(
           createDemoSnapshot({
             feedId: activeFeedId,
             generation: generationRef.current,
-            messages,
-            revision,
+            messages: resp.messages,
+            revision: revisionRef.current,
             effect: 'reset',
             kind: 'initial',
-            hasMoreBefore,
+            hasMoreBefore: resp.hasMoreBefore,
           }),
         )
         runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
-        setLastEvent(persisted ? `loaded ${feed.title}` : `seeded ${feed.title}`)
+        setLastEvent(
+          resp.messages.length > 0 ? `loaded ${feed.title}` : `seeded ${feed.title}`,
+        )
 
         await log({
           requestId,
           operation: 'feed.load',
           phase: 'success',
           feedId: activeFeedId,
-          messageCount: messages.length,
-          details: { persisted: Boolean(persisted), revision, hasMoreBefore },
+          messageCount: resp.messages.length,
+          details: {
+            total: resp.total,
+            hasMoreBefore: resp.hasMoreBefore,
+            anchor: resp.anchor,
+          },
         })
       } catch (error) {
         setLastEvent('feed load failed')
@@ -665,7 +764,7 @@ export function useDemoMessageScenario(
     }
 
     void loadFeed()
-  }, [activeFeedId, log, runtime])
+  }, [activeFeedId, log, runtime, syncDisplayedCounts])
 
   useEffect(() => {
     const unsubscribe = runtime.subscribeEvent((event) => {
@@ -696,6 +795,7 @@ export function useDemoMessageScenario(
     activeFeedId,
     activeFeed,
     messageCount,
+    loadedMessageCount,
     loadingBefore,
     feedLoading,
     pendingOperation,

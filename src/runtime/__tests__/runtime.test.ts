@@ -154,6 +154,12 @@ async function flushFramesWithMicrotasks(
   }
 }
 
+async function flushTransactionTimeout(scheduler: FakeScheduler): Promise<void> {
+  scheduler.flushTimers()
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
 async function flushScrollFrames(
   container: HTMLElement,
   scheduler: FakeScheduler,
@@ -202,6 +208,32 @@ describe('MessageViewportRuntime', () => {
     expect(snapshot.bootstrapState).toBe('READY')
     expect(snapshot.bottomLockState).toBe('LOCKED')
     expect(container.scrollTop).toBeGreaterThan(0)
+  })
+
+  it('recovers from bootstrap commit timeout and allows retry', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+
+    expect(runtime.getSnapshot().bootstrapState).toBe('MOUNTING')
+
+    await flushTransactionTimeout(scheduler)
+
+    expect(runtime.getDebugSnapshot().state).toBe('ATTACHED')
+    expect(runtime.getSnapshot().bootstrapState).toBe('INITIAL')
+    expect(runtime.getSnapshot().items).toHaveLength(0)
+
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    const snapshot = runtime.getSnapshot()
+    expect(snapshot.bootstrapState).toBe('READY')
+    expect(snapshot.bottomLockState).toBe('LOCKED')
   })
 
   it('does not measure projection before matching commit ack', async () => {
@@ -329,6 +361,40 @@ describe('MessageViewportRuntime', () => {
     expect(container.scrollTop).toBeGreaterThan(100)
   })
 
+  it('recovers from prepend commit timeout without staying in RECOVERING', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset', start: 20 }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    runtime.dispatch({ type: 'jump', target: { messageId: 'm-25' } })
+    await Promise.resolve()
+    let snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+
+    runtime.setDataSnapshot(createSnapshot({ count: 35, revision: 2, effect: 'prepend', start: 15 }))
+    await Promise.resolve()
+    snapshot = runtime.getSnapshot()
+    expect(snapshot.bottomLockState).toBe('RECOVERING')
+
+    await flushTransactionTimeout(scheduler)
+
+    expect(runtime.getDebugSnapshot().state).toBe('READY')
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+  })
+
   it('discards stale commit ack after generation changes', async () => {
     const { runtime } = createRuntime()
     const container = createContainer({ height: 300 })
@@ -429,6 +495,55 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
 
     expect(events).not.toContain('needMoreBefore')
+  })
+
+  it('recovers from follow-bottom commit timeout and can follow again', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 40, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    runtime.dispatch({ type: 'jump', target: { messageId: 'm-10' } })
+    await Promise.resolve()
+    let snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+
+    runtime.dispatch({ type: 'followBottom' })
+    await Promise.resolve()
+    snapshot = runtime.getSnapshot()
+    expect(snapshot.bottomLockState).toBe('RECOVERING')
+
+    await flushTransactionTimeout(scheduler)
+
+    expect(runtime.getDebugSnapshot().state).toBe('READY')
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+
+    runtime.dispatch({ type: 'followBottom' })
+    await Promise.resolve()
+    snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await flushFramesWithMicrotasks(scheduler, 3)
+
+    snapshot = runtime.getSnapshot()
+    expect(snapshot.bottomLockState).toBe('LOCKED')
+    expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight)
   })
 
   it('latches top edge loading until the user leaves the edge', async () => {
