@@ -24,11 +24,28 @@ export class RenderWindowEngine {
     private readonly spacer: SpacerEngine,
   ) {}
 
-  computeLatestWindow(items: MessageDataItem[]): RenderWindow {
+  computeLatestWindow(
+    items: MessageDataItem[],
+    viewportHeight: number,
+    viewportWidth: number,
+  ): RenderWindow {
     if (items.length === 0) {
       return this.createEmptyWindow()
     }
 
+    if (viewportHeight > 0 && viewportWidth > 0) {
+      return this.computeWindowAroundAnchor({
+        items,
+        anchorIndex: items.length - 1,
+        viewportHeight,
+        viewportWidth,
+      })
+    }
+
+    return this.computeLatestWindowByCount(items)
+  }
+
+  private computeLatestWindowByCount(items: MessageDataItem[]): RenderWindow {
     const mountedCount = Math.min(items.length, this.config.minMountedItems)
     const startIndex = Math.max(0, items.length - mountedCount)
     const endIndex = items.length - 1
@@ -145,10 +162,20 @@ export class RenderWindowEngine {
     const count = end - start + 1
 
     if (count < this.config.minMountedItems) {
-      const missing = this.config.minMountedItems - count
-      const before = Math.min(start, Math.floor(missing / 2))
-      start -= before
-      end = Math.min(items.length - 1, end + (missing - before))
+      let remaining = Math.min(items.length, this.config.minMountedItems) - count
+      const preferredBefore = Math.min(start, Math.floor(remaining / 2))
+      start -= preferredBefore
+      remaining -= preferredBefore
+
+      const afterRoom = items.length - 1 - end
+      const expandAfter = Math.min(afterRoom, remaining)
+      end += expandAfter
+      remaining -= expandAfter
+
+      if (remaining > 0) {
+        start = Math.max(0, start - remaining)
+      }
+
       start = Math.max(0, Math.min(start, anchorIndex))
     }
 

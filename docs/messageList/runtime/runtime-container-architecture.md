@@ -194,6 +194,8 @@ type MessageViewportRuntimeEvent =
 
 这些事件只能表达 viewport 需求，不携带 SDK query 细节。
 
+当前实现实际发出的 edge reason 只有 `near-top` / `near-bottom`。`prepend-recovery` / `bottom-follow` 仍保留在事件类型里，作为更细分恢复语义的扩展位，但不应被当前接入方当作已实现行为依赖。
+
 ## 9. Implementation Order
 
 推荐顺序：

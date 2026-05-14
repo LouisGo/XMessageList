@@ -25,18 +25,18 @@ type WindowConfig = {
 };
 ```
 
-推荐初始配置：
+当前原型默认配置：
 
 | Field               | Value                |
 | ------------------- | -------------------- |
-| `minOverscanPx`     | `2 * viewportHeight` |
-| `maxOverscanPx`     | `6 * viewportHeight` |
-| `minMountedItems`   | 120                  |
-| `maxMountedItems`   | 800                  |
-| `trimMarginPx`      | `3 * viewportHeight` |
+| `minOverscanPx`     | `0` -> fallback to `2 * viewportHeight` |
+| `maxOverscanPx`     | `0` -> fallback to `6 * viewportHeight` |
+| `minMountedItems`   | 40                   |
+| `maxMountedItems`   | 200                  |
+| `trimMarginPx`      | `0`（保留字段，当前实现未接入） |
 | `defaultItemHeight` | 72                   |
 
-这些值是起点。真实项目应通过消息密度、图片比例和 Electron 性能数据调整。
+这些值是当前 repo 里的保守默认值。demo / test 可以覆盖它们；真实项目如果需要把 mounted row 提高到更大的量级，必须基于消息密度、图片比例和 Electron 性能数据复测，而不是直接套旧文档里的 120 / 800。
 
 ## 3. Window Sliding Trigger
 
@@ -93,9 +93,13 @@ function computeWindowAroundAnchor(input: {
 
 规则：
 
+- `latest bootstrap`、`followBottom`、bottom locked append 不再只依赖固定条数窗口；当前实现会把最后一条 item 作为局部 anchor，走同一套 viewport-aware window 计算。
+- 如果 container 暂时拿不到有效 viewport 尺寸，latest window 会退回到“尾部 `minMountedItems` 条”的保守 fallback。
+- `minMountedItems` / `maxMountedItems` 约束的是 mounted projection rows，不承诺等于业务 message 条数。
 - `anchorIndex` 只是当前 DataSnapshot 内的派生值。
 - 持久恢复和跨层定位不能使用 index。
 - 如果当前 anchor 不存在，先使用 nearest visible item，再必要时 reset bootstrap。
+- 当 anchor 靠近数据边界、窗口条数仍低于 `minMountedItems` 时，缺少的 quota 会尽量向还有剩余数据的一侧补齐。
 
 ## 5. Trim Order
 
@@ -142,11 +146,11 @@ Cache key 使用 `MessageRuntimeItemKey`。
 - density / font / theme 影响布局。
 - optimistic rebind 后内容不等价。
 
-容量策略：
+当前原型里的 cache trim 比较保守：
 
-- 保留当前 RenderWindow 全部 items。
-- 保留 window 前后最近 200~500 条。
-- 其余按 LRU 删除。
+- 只在 `heightCache.size > 1000` 时触发删除。
+- 优先删除已经不在当前 data snapshot 里的 key。
+- 尚未实现文档草案里的 window-adjacent LRU 分层回收。
 
 ## 7. Spacer Estimation
 
@@ -216,16 +220,9 @@ const delta = newAnchorTop - oldAnchorTop;
 container.scrollTop += delta;
 ```
 
-之后用实测 prepended rows 更新 height cache，再修正 topSpacer：
+之后用实测 prepended rows 更新 height cache。
 
-```ts
-const estimatedPrependedHeight = previousTopSpacer - nextTopSpacerBeforeMeasure;
-const measuredPrependedHeight = sumMeasuredPrependedRows();
-const correction = measuredPrependedHeight - estimatedPrependedHeight;
-topSpacer = Math.max(0, topSpacer + correction);
-```
-
-如果 anchor rect correction 已经消除了视觉漂移，spacer correction 只更新 projection，不再次改变用户可见位置，除非该 spacer 变化位于 anchor 上方且会改变 scrollHeight 中间态。
+当前实现不会在同一个 prepend transaction 里再额外 publish 一次 spacer-correction projection；measured height 会写回 cache，并在后续 projection 重算 `topSpacer` / `bottomSpacer` 时生效。prepend 当帧的视觉稳定仍然主要依赖 anchor rect correction。
 
 ## 9. Append Spacer Correction
 

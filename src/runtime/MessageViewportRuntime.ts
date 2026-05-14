@@ -426,6 +426,7 @@ export class MessageViewportRuntime<
     }
 
     const data = this.dataSnapshot
+    const container = this.registry.getContainer() as HTMLElement
     const token = this.lifecycle.getCurrent()
     const previousSnapshot = this.store.getSnapshot()
     this.state = 'BOOTSTRAPPING'
@@ -433,7 +434,11 @@ export class MessageViewportRuntime<
     if (data.items.length === 0) {
       this.publishProjection({
         data,
-        renderWindow: this.renderWindow.computeLatestWindow(data.items),
+        renderWindow: this.renderWindow.computeLatestWindow(
+          data.items,
+          container.clientHeight,
+          container.clientWidth,
+        ),
         topSpacer: 0,
         bottomSpacer: 0,
         bootstrapState: 'READY_EMPTY',
@@ -444,7 +449,11 @@ export class MessageViewportRuntime<
       return
     }
 
-    const renderWindow = this.renderWindow.computeLatestWindow(data.items)
+    const renderWindow = this.renderWindow.computeLatestWindow(
+      data.items,
+      container.clientHeight,
+      container.clientWidth,
+    )
 
     try {
       const projection = this.publishProjection({
@@ -594,7 +603,11 @@ export class MessageViewportRuntime<
       this.scrollIntent.getBottomLockState() === 'LOCKED'
     const token = this.lifecycle.getCurrent()
     const renderWindow = shouldFollow
-      ? this.renderWindow.computeLatestWindow(data.items)
+      ? this.renderWindow.computeLatestWindow(
+          data.items,
+          container.clientHeight,
+          container.clientWidth,
+        )
       : this.keepCurrentWindow(data.items)
 
     this.state = 'TRANSACTING'
@@ -647,7 +660,11 @@ export class MessageViewportRuntime<
     const renderWindow =
       snapshot.renderWindow.endIndex >= snapshot.renderWindow.startIndex
         ? this.keepCurrentWindow(data.items)
-        : this.renderWindow.computeLatestWindow(data.items)
+        : this.renderWindow.computeLatestWindow(
+            data.items,
+            container.clientHeight,
+            container.clientWidth,
+          )
 
     if (this.scrollIntent.getBottomLockState() === 'LOCKED') {
       const projection = this.publishProjection({
@@ -804,7 +821,11 @@ export class MessageViewportRuntime<
       return
     }
 
-    const renderWindow = this.renderWindow.computeLatestWindow(data.items)
+    const renderWindow = this.renderWindow.computeLatestWindow(
+      data.items,
+      container.clientHeight,
+      container.clientWidth,
+    )
     const token = this.lifecycle.getCurrent()
     const previousBottomLockState = this.scrollIntent.getBottomLockState()
 

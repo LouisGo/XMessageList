@@ -161,13 +161,14 @@ Runtime 不吞掉不可恢复错误。它发布 `viewportError`，由上层决�
 推荐场景：
 
 1. latest bootstrap 后处于 bottom locked。
-2. prepend 50 条动态高度消息，目标 anchor 视觉位置不变。
-3. 图片 decode 后高度增长，anchor 上方变化时 scrollTop 补偿。
-4. bottom locked 时 append 新消息，1 frame 内追底。
-5. user scroll up 后 append 新消息，不追底。
-6. jump 到历史消息，目标消息可见且有上下文。
-7. feed 切换后旧 ResizeObserver 回调不污染新 feed。
-8. StrictMode 下 attach/detach/attach 不重复 observer。
+2. 高视口 + 稀疏消息时，latest / followBottom window 不应退化成只挂 `minMountedItems` 条。
+3. prepend 50 条动态高度消息，目标 anchor 视觉位置不变。
+4. 图片 decode 后高度增长，anchor 上方变化时 scrollTop 补偿。
+5. bottom locked 时 append 新消息，1 frame 内追底。
+6. user scroll up 后 append 新消息，不追底。
+7. jump 到历史消息，目标消息可见且有上下文。
+8. feed 切换后旧 ResizeObserver 回调不污染新 feed。
+9. StrictMode 下 attach/detach/attach 不重复 observer。
 
 ## 10. Test Assertions
 
@@ -215,7 +216,7 @@ Debug snapshot 不进入 React projection snapshot。
 | prepend correction       | same frame after commit |
 | bottom follow            | <= 1 rAF after commit   |
 | row ResizeObserver batch | coalesced per rAF       |
-| mounted DOM rows         | normally < 800          |
+| mounted DOM rows         | prototype default <= 200; raise only after profiling |
 
 超过预算时优先检查：
 

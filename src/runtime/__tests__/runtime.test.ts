@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   MessageViewportRuntime,
   type MessageDataSnapshot,
+  type WindowConfig,
   type MessageViewportSnapshot,
   serializeRuntimeItemKey,
 } from '..'
@@ -27,8 +28,10 @@ function createSnapshot(input: {
     | 'auto-scroll-to-bottom'
     | 'items-change'
   start?: number
+  estimatedHeight?: number
 }): MessageDataSnapshot<TestMessage> {
   const start = input.start ?? 1
+  const estimatedHeight = input.estimatedHeight ?? 50
 
   return {
     feedId: 'feed',
@@ -43,7 +46,7 @@ function createSnapshot(input: {
         message: { id, text: id },
         version: 1,
         contentVersion: 1,
-        estimatedHeight: 50,
+        estimatedHeight,
       }
     }),
     anchor: { messageId: `m-${start + input.count - 1}` },
@@ -62,7 +65,9 @@ function createSnapshot(input: {
   }
 }
 
-function createRuntime() {
+function createRuntime(input?: {
+  window?: Partial<WindowConfig>
+}) {
   const scheduler = new FakeScheduler()
   const observers = createFakeObservers()
   const runtime = new MessageViewportRuntime<TestMessage>({
@@ -74,6 +79,7 @@ function createRuntime() {
       minMountedItems: 10,
       maxMountedItems: 20,
       defaultItemHeight: 50,
+      ...input?.window,
     },
   })
 
@@ -333,6 +339,86 @@ describe('MessageViewportRuntime', () => {
     expect(snapshot.renderWindow.endIndex).toBe(39)
     expect(snapshot.bottomLockState).toBe('LOCKED')
     expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight)
+  })
+
+  it('sizes latest bootstrap window from viewport height instead of only minMountedItems', async () => {
+    const { runtime } = createRuntime({
+      window: {
+        maxMountedItems: 40,
+      },
+    })
+    const container = createContainer({ height: 600 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 60, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+
+    const snapshot = runtime.getSnapshot()
+    expect(snapshot.renderWindow.endIndex).toBe(59)
+    expect(snapshot.renderWindow.itemKeys).toHaveLength(37)
+    expect(snapshot.renderWindow.itemKeys.length).toBeGreaterThan(10)
+  })
+
+  it('keeps the minMountedItems floor when latest anchor is at the data tail', async () => {
+    const { runtime } = createRuntime({
+      window: {
+        defaultItemHeight: 400,
+      },
+    })
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(
+      createSnapshot({
+        count: 30,
+        revision: 1,
+        effect: 'reset',
+        estimatedHeight: 400,
+      }),
+    )
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+
+    const snapshot = runtime.getSnapshot()
+    expect(snapshot.renderWindow.startIndex).toBe(20)
+    expect(snapshot.renderWindow.endIndex).toBe(29)
+    expect(snapshot.renderWindow.itemKeys).toHaveLength(10)
+  })
+
+  it('recomputes follow-bottom with the viewport-aware latest window', async () => {
+    const { runtime, scheduler } = createRuntime({
+      window: {
+        maxMountedItems: 40,
+      },
+    })
+    const container = createContainer({ height: 600 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 60, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    runtime.dispatch({ type: 'jump', target: { messageId: 'm-10' } })
+    await Promise.resolve()
+    let snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    runtime.dispatch({ type: 'followBottom' })
+    await Promise.resolve()
+
+    snapshot = runtime.getSnapshot()
+    expect(snapshot.bottomLockState).toBe('RECOVERING')
+    expect(snapshot.renderWindow.endIndex).toBe(59)
+    expect(snapshot.renderWindow.itemKeys).toHaveLength(37)
   })
 
   it('keeps anchor visual top during prepend transaction', async () => {

@@ -52,10 +52,10 @@ const OPERATION_DELAYS: Record<
   >,
   number
 > = {
-  'history.prepend': 300,
-  'message.append': 100,
-  'message.longBurst': 320,
-  'message.resize': 240,
+  'history.prepend': 200,
+  'message.append': 80,
+  'message.longBurst': 620,
+  'message.resize': 200,
   'message.send': 60,
   'feed.clear': 220,
 }
@@ -131,6 +131,7 @@ export function useDemoMessageScenario(
   const feedLoadingRef = useRef(false)
   const loadTokenRef = useRef(0)
   const pendingOperationCountRef = useRef(0)
+  const activeOperationsRef = useRef(new Map<string, number>())
 
   const activeFeed = useMemo(
     () => getDemoFeedDefinition(activeFeedId),
@@ -150,18 +151,32 @@ export function useDemoMessageScenario(
 
   const beginPendingOperation = useCallback((operation: string) => {
     pendingOperationCountRef.current += 1
-    setPendingOperation(operation)
+    const nextCount = (activeOperationsRef.current.get(operation) ?? 0) + 1
+    activeOperationsRef.current.set(operation, nextCount)
+    setPendingOperation(formatPendingOperations(activeOperationsRef.current))
   }, [])
 
-  const endPendingOperation = useCallback(() => {
+  const endPendingOperation = useCallback((operation: string) => {
     pendingOperationCountRef.current = Math.max(
       0,
       pendingOperationCountRef.current - 1,
     )
 
+    const currentCount = activeOperationsRef.current.get(operation) ?? 0
+
+    if (currentCount <= 1) {
+      activeOperationsRef.current.delete(operation)
+    } else {
+      activeOperationsRef.current.set(operation, currentCount - 1)
+    }
+
     if (pendingOperationCountRef.current === 0) {
       setPendingOperation('idle')
+      activeOperationsRef.current.clear()
+      return
     }
+
+    setPendingOperation(formatPendingOperations(activeOperationsRef.current))
   }, [])
 
   /**
@@ -274,7 +289,7 @@ export function useDemoMessageScenario(
       })
     } finally {
       input.onFinally?.()
-      endPendingOperation()
+      endPendingOperation(input.operation)
     }
   }, [
     beginPendingOperation,
@@ -619,7 +634,7 @@ export function useDemoMessageScenario(
           error: getErrorMessage(error),
         })
       } finally {
-        endPendingOperation()
+        endPendingOperation('feed.clear')
       }
     })()
   }, [beginPendingOperation, endPendingOperation, log, runtime, syncDisplayedCounts])
@@ -819,4 +834,18 @@ function sleep(timeoutMs: number): Promise<void> {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function formatPendingOperations(operations: Map<string, number>): string {
+  const active = Array.from(operations.entries())
+
+  if (active.length === 0) {
+    return 'idle'
+  }
+
+  return active
+    .map(([operation, count]) =>
+      count > 1 ? `${operation} ×${count}` : operation,
+    )
+    .join(' + ')
 }

@@ -216,9 +216,11 @@ index 禁止作为：
 | ---------------- | -------- |
 | visible messages | 20~80    |
 | overscan         | 100~300  |
-| total mounted    | 300~1500 |
+| total mounted    | 原型默认 40~200；仅在 profiling 后再提高 |
 
-Electron + Chromium 下无需极限优化。
+这些 count 指的是 mounted projection rows，不保证等于业务消息条数。如果后续引入 sender / date grouping，仍然应该以 runtime 的 row unit 为窗口、trim 和 anchor 的稳定单位。
+
+Electron + Chromium 下无需极限优化，但也不要把“调大 mounted 上限”误当成默认正确答案。
 
 ---
 

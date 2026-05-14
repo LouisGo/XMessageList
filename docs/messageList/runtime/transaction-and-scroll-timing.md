@@ -283,9 +283,9 @@ IO 不直接：
 ```ts
 new IntersectionObserver(callback, {
   root: container,
-  rootMargin: `${viewportHeight * 2}px 0px`,
+  rootMargin: `${edgeLoadThresholdPx}px 0px`,
   threshold: 0,
 });
 ```
 
-rootMargin 随 viewport height 变化时重建 observer。
+当前实现默认 `edgeLoadThresholdPx = 96`，也允许外部覆盖。`needMoreBefore` / `needMoreAfter` 只会在 user / momentum scroll source 下发出，并且会在用户离开边缘前保持 latch，避免 recovery / followBottom 写入 `scrollTop` 时误触发历史加载。

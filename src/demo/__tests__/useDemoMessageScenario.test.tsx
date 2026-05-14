@@ -149,4 +149,40 @@ describe('useDemoMessageScenario', () => {
     expect(scenario?.lastEvent).toBe('no older messages')
     expect(store.get('feed-release')?.messages).toHaveLength(300)
   })
+
+  it('keeps overlapping append operations visible instead of overwriting pending state', async () => {
+    const runtime = createRuntimeStub()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    await act(async () => {
+      root.render(
+        <TestHarness runtime={runtime} onScenario={(next) => {
+          scenario = next
+        }}
+        />,
+      )
+    })
+
+    await flushTimers(180)
+    expect(scenario?.activeFeedId).toBe('feed-runtime')
+    expect(scenario?.pendingOperation).toBe('idle')
+
+    await act(async () => {
+      scenario?.appendLongBurst()
+      scenario?.appendMessage()
+    })
+
+    expect(scenario?.pendingOperation).toBe('message.longBurst + message.append')
+
+    await flushTimers(100)
+    expect(scenario?.pendingOperation).toBe('message.longBurst')
+
+    await flushTimers(220)
+    expect(scenario?.pendingOperation).toBe('idle')
+    expect(scenario?.messageCount).toBe(45)
+    expect(scenario?.loadedMessageCount).toBe(25)
+    expect(store.get('feed-runtime')?.messages).toHaveLength(45)
+  })
 })
