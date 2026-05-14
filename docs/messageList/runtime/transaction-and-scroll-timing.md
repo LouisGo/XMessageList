@@ -246,7 +246,8 @@ enter READY or RECOVERING->READY
 
 - 检查 data snapshot 是否包含 target。
 - 如果包含但 DOM 未注册，等待一次 commit retry。
-- 如果仍不可测量，执行 nearest visible fallback。
+- 如果仍不可测量，执行当前 projection 内的 nearest measurable fallback。
+- fallback 或失败恢复后必须退出 `RECOVERING` projection，不得让 UI 停在中间态。
 
 ## 12. Resize Transaction
 
@@ -263,6 +264,11 @@ schedule full stabilization
 ```
 
 ResizeObserver 观察 container 时需要与 row ResizeObserver 区分。Container resize 可以触发 cache invalidation，row resize 只触发 local delta stabilization。
+
+Container height 变化即使没有 width bucket 变化，也会改变 viewport-aware
+window threshold。它必须进入 resize transaction：基于新 viewport height 重算
+window，publish 后等待 commit，再按 captured anchor 修正 scrollTop。不能直接
+忽略纯高度变化。
 
 ## 13. IntersectionObserver Usage
 

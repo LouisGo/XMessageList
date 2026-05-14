@@ -195,6 +195,13 @@ type MessageViewportRuntimeEvent =
       generation: number;
       reason: 'near-bottom' | 'bottom-follow';
     }
+  | {
+      type: 'viewportAnchorChanged';
+      feedId: string;
+      generation: number;
+      reason: 'scroll-idle' | 'transaction-settle';
+      anchor: AnchorState | null;
+    }
   | { type: 'viewportReady'; feedId: string; generation: number }
   | { type: 'viewportError'; feedId: string; generation: number; code: string };
 ```
@@ -209,6 +216,11 @@ type MessageViewportRuntimeEvent =
 React/demo 层不得用 raw `scrollTop` / `scrollHeight` 自行重建向下分页判断；
 否则会绕过 runtime 的 scroll source classification、edge latch 和 transaction
 时序，导致吸底与向下分页相互打架。
+
+React/demo 层也不得 query projection DOM 或注册 raw scroll listener 来保存
+恢复位点。Runtime 在 scroll rAF / transaction settle 后发出
+`viewportAnchorChanged`，React adapter 把它透传给接入方；是否持久化、持久化到
+哪里属于 data/demo/app 层。
 
 ## 9. Implementation Order
 

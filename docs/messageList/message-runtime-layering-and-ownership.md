@@ -195,7 +195,10 @@ React 负责：
 
 - render message row
 - render unread divider
-- render bottom indicator
+- render edge loading / exhausted indicator
+- render bottom follow affordance
+- dispatch semantic viewport command from standard viewport UI
+- expose viewport anchor persistence callback from runtime event
 - render selection UI
 - 处理局部交互态
 
@@ -206,6 +209,8 @@ React 负责：
 - 直接写 scrollTop
 - 在 effect 中重建 viewport timing
 - 直接发起 SDK message range 读取
+- query runtime DOM 结构
+- 监听 raw scroll event 来判断分页或持久化 anchor
 
 React 接收：
 

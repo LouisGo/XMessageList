@@ -37,7 +37,7 @@ export async function getLatestMessages(
 
   const all = feed.messages
   const total = all.length
-  const limit = req.limit ?? DEFAULT_LATEST_LIMIT
+  const limit = req.count ?? DEFAULT_LATEST_LIMIT
 
   if (total === 0) {
     return {

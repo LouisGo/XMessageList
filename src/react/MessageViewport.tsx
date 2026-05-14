@@ -2,6 +2,7 @@ import {
   type CSSProperties,
   type ReactNode,
   useCallback,
+  useLayoutEffect,
   useMemo,
 } from 'react'
 import {
@@ -9,6 +10,7 @@ import {
   serializeRuntimeItemKey,
 } from '../runtime'
 import type {
+  AnchorState,
   MessageDataItem,
   MessageRuntimeItemKey,
   MessageViewportRuntime,
@@ -69,6 +71,20 @@ export type MessageViewportProps<
   className?: string
   style?: CSSProperties
   bottomSlot?: ReactNode
+  renderTopEdge?: (
+    snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
+  ) => ReactNode
+  renderBottomEdge?: (
+    snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
+  ) => ReactNode
+  renderFollowBottom?: (input: {
+    snapshot: MessageViewportSnapshot<TMessage, TOptimistic>
+    followBottom: () => void
+  }) => ReactNode
+  onViewportAnchorChange?: (
+    anchor: AnchorState | null,
+    reason: 'scroll-idle' | 'transaction-settle',
+  ) => void
   renderOverlay?: (
     snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
   ) => ReactNode
@@ -88,8 +104,26 @@ export function MessageViewport<
   className,
   style,
   bottomSlot,
+  renderTopEdge,
+  renderBottomEdge,
+  renderFollowBottom,
+  onViewportAnchorChange,
   renderOverlay,
 }: MessageViewportProps<TMessage, TOptimistic>) {
+  useLayoutEffect(() => {
+    if (!onViewportAnchorChange) {
+      return undefined
+    }
+
+    return runtime.subscribeEvent((event) => {
+      if (event.type !== 'viewportAnchorChanged') {
+        return
+      }
+
+      onViewportAnchorChange(event.anchor, event.reason)
+    })
+  }, [onViewportAnchorChange, runtime])
+
   const snapshot = useMessageViewportRuntime(runtime)
   const viewportStyle = useMemo<CSSProperties>(
     () => ({
@@ -109,6 +143,9 @@ export function MessageViewport<
     },
     [runtime],
   )
+  const followBottom = useCallback(() => {
+    runtime.dispatch({ type: 'followBottom' })
+  }, [runtime])
   const setTopSentinel = useCallback(
     (element: HTMLDivElement | null) => {
       runtime.registerTopSentinel(element)
@@ -133,6 +170,22 @@ export function MessageViewport<
     },
     [runtime],
   )
+  const followBottomNode =
+    snapshot.bottomLockState === 'UNLOCKED'
+      ? renderFollowBottom
+        ? renderFollowBottom({ snapshot, followBottom })
+        : (
+            <button
+              type="button"
+              className="follow-bottom-button"
+              data-message-follow-bottom
+              data-testid="follow-bottom-button"
+              onClick={followBottom}
+            >
+              Bottom
+            </button>
+          )
+      : null
 
   return (
     <div
@@ -179,6 +232,9 @@ export function MessageViewport<
         <div ref={setBottomSentinel} data-bottom-sentinel />
       </div>
       {bottomSlot}
+      {renderTopEdge?.(snapshot)}
+      {renderBottomEdge?.(snapshot)}
+      {followBottomNode}
       {renderOverlay?.(snapshot)}
     </div>
   )

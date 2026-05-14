@@ -12,6 +12,18 @@ React 负责渲染，runtime 负责 viewport。
 
 React 不拥有 scroll recovery、measurement、window state machine。
 
+React projection 也不能薄到把标准 IM viewport SOP 推给 demo。`src/react`
+应该承接不涉及滚动算法的标准 shell 行为：
+
+- 渲染 edge loading / exhausted / follow-bottom affordance。
+- 把 follow-bottom 点击转换成 `runtime.dispatch({ type: 'followBottom' })`。
+- 通过 runtime event 或 runtime-provided throttled signal 暴露 viewport anchor
+  persistence callback。
+- 保持 DOM 结构、data attributes、ref registry 和 commit ack 的标准化。
+
+Demo / app 只提供业务 message JSX、文案/slot 和数据加载响应，不监听 raw scroll，
+不 query projection DOM，不基于 `scrollTop` 判断分页。
+
 ## 2. Adapter Shape
 
 推荐 hook：
@@ -152,6 +164,7 @@ React projection 允许：
 - 渲染 unread marker。
 - 渲染 loading edge。
 - 渲染 bottom follow button。
+- 订阅 runtime 的 view-level events 并把 anchor persistence signal 交给接入方。
 - 处理 hover、selection、context menu 等局部交互。
 
 React projection 禁止：
@@ -161,6 +174,8 @@ React projection 禁止：
 - 自己根据 scrollTop 触发 prepend。
 - 在 effect 里修正 scrollTop。
 - 把 measured height 放进 React state。
+- query runtime DOM 结构来持久化 anchor。
+- 注册 raw scroll listener 来重建 scroll-idle / pagination timing。
 
 ## 7. Snapshot Granularity
 
@@ -193,9 +208,31 @@ React event handler
 DOM scroll event
 -> runtime scroll handler
 -> optional snapshot publish
+-> optional viewportAnchorChanged event
 ```
 
 React 不转发 raw scroll event。Scroll listener 由 runtime 在 `attach` 时注册到 container。
+
+`MessageViewport` 可以接收：
+
+```ts
+type MessageViewportProps = {
+  renderMessage: (item: MessageDataItem) => ReactNode;
+  renderTopEdge?: (snapshot: MessageViewportSnapshot) => ReactNode;
+  renderBottomEdge?: (snapshot: MessageViewportSnapshot) => ReactNode;
+  renderFollowBottom?: (input: {
+    snapshot: MessageViewportSnapshot;
+    followBottom: () => void;
+  }) => ReactNode;
+  onViewportAnchorChange?: (
+    anchor: AnchorState | null,
+    reason: 'scroll-idle' | 'transaction-settle',
+  ) => void;
+};
+```
+
+默认 follow-bottom affordance 只在 `bottomLockState === 'UNLOCKED'` 时出现，
+点击只 dispatch semantic command，不直接写 `scrollTop`。
 
 ## 9. Fallback Policy
 

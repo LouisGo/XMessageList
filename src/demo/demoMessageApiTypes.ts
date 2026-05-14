@@ -25,7 +25,7 @@ export type GetMessagesAroundReq = {
 export type GetLatestMessagesReq = {
   feedId: string
   /** 首屏默认到底窗口大小；未传时按 40 兜底。 */
-  limit?: number
+  count?: number
 }
 
 // ---- Response Types ----

@@ -201,6 +201,13 @@ export type MessageViewportRuntimeEvent =
       generation: number
       reason: 'near-bottom' | 'bottom-follow'
     }
+  | {
+      type: 'viewportAnchorChanged'
+      feedId: string
+      generation: number
+      reason: 'scroll-idle' | 'transaction-settle'
+      anchor: AnchorState | null
+    }
   | { type: 'viewportReady'; feedId: string; generation: number }
   | { type: 'viewportError'; feedId: string; generation: number; code: string }
 

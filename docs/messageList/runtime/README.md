@@ -28,10 +28,20 @@
 React 只拥有：
 
 - message row JSX
-- unread marker / loading indicator / local interaction UI
+- unread marker / loading indicator / bottom-follow affordance / local interaction UI
 - `useSyncExternalStore` 订阅 runtime snapshot
 - 通过 ref callback 把 DOM 节点注册给 runtime
 - commit 后回执 runtime
+
+`src/react` 不是 demo-only 的薄包装。它应该提供标准 IM viewport shell：
+
+- 固定 projection DOM 结构。
+- edge loading / exhausted / follow-bottom 的可插槽渲染。
+- 将 follow-bottom UI 事件转换为 runtime semantic command。
+- 将 runtime 产生的 viewport anchor persistence signal 透传给接入方。
+
+Demo 只负责 fake data、业务消息渲染、调试按钮和日志，不监听 raw scroll，
+不 query runtime DOM，也不重建 viewport timing。
 
 ## 推荐阅读顺序
 
@@ -53,6 +63,11 @@ Runtime 可以持有 message item key、height cache、window index，但不长�
 Runtime 可以发布 projection snapshot，但不调用 React `setState`。React adapter 必须通过 `useSyncExternalStore` 或等价外部 store 语义订阅。
 
 Runtime 可以请求“需要更多数据”的信号，但不直接调 SDK，不解析业务权限，不决定 around query 参数的服务端语义。
+
+Data runtime / BFF 负责把 `MessageIdentityAnchor` 解析为当前
+`MessageDataSnapshot` 内可定位的 anchor，包括 deleted anchor 的 nearest
+neighbor fallback。Viewport runtime 只做 projection 内的 DOM fallback：目标行已
+在 snapshot 中但 commit 后不可测量时 retry 或选择已挂载的 nearest measurable row。
 
 ## 推荐最小代码形态
 

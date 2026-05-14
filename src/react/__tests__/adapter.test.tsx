@@ -12,7 +12,10 @@ type TestMessage = {
   id: string
 }
 
-function createSnapshot(): MessageDataSnapshot<TestMessage> {
+function createSnapshot(input?: {
+  hasMoreBefore?: boolean
+  hasMoreAfter?: boolean
+}): MessageDataSnapshot<TestMessage> {
   return {
     feedId: 'feed',
     generation: 1,
@@ -27,8 +30,8 @@ function createSnapshot(): MessageDataSnapshot<TestMessage> {
     })),
     anchor: { messageId: 'm-11' },
     anchorStatus: 'normal',
-    hasMoreBefore: false,
-    hasMoreAfter: false,
+    hasMoreBefore: input?.hasMoreBefore ?? false,
+    hasMoreAfter: input?.hasMoreAfter ?? false,
     change: {
       kind: 'initial',
       viewportEffect: 'reset',
@@ -38,13 +41,21 @@ function createSnapshot(): MessageDataSnapshot<TestMessage> {
 
 function TestHarness({
   runtime,
+  hasMoreBefore,
+  hasMoreAfter,
+  onViewportAnchorChange,
 }: {
   runtime: MessageViewportRuntime<TestMessage>
+  hasMoreBefore?: boolean
+  hasMoreAfter?: boolean
+  onViewportAnchorChange?: Parameters<
+    typeof MessageViewport<TestMessage>
+  >[0]['onViewportAnchorChange']
 }) {
   useEffect(() => {
-    runtime.setDataSnapshot(createSnapshot())
+    runtime.setDataSnapshot(createSnapshot({ hasMoreBefore, hasMoreAfter }))
     runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
-  }, [runtime])
+  }, [hasMoreAfter, hasMoreBefore, runtime])
 
   return (
     <MessageViewport
@@ -52,9 +63,24 @@ function TestHarness({
       renderMessage={(item) =>
         item.kind === 'committed' ? <span>{item.message.id}</span> : null
       }
+      renderTopEdge={(snapshot) => (
+        <div data-testid="top-edge">{snapshot.edgeState.before}</div>
+      )}
+      onViewportAnchorChange={onViewportAnchorChange}
       style={{ height: 240 }}
     />
   )
+}
+
+async function flushFramesWithMicrotasks(
+  scheduler: FakeScheduler,
+  count: number,
+): Promise<void> {
+  for (let index = 0; index < count; index += 1) {
+    await Promise.resolve()
+    scheduler.flushFrame()
+    await Promise.resolve()
+  }
 }
 
 describe('React adapter', () => {
@@ -93,7 +119,7 @@ describe('React adapter', () => {
       )
     })
     await act(async () => {
-      scheduler.flushFrames(3)
+      await flushFramesWithMicrotasks(scheduler, 4)
     })
 
     expect(notify).toHaveBeenCalled()
@@ -105,5 +131,68 @@ describe('React adapter', () => {
     })
 
     expect(runtime.getDebugSnapshot().state).toBe('DETACHED')
+  })
+
+  it('owns standard follow-bottom UI and anchor event wiring', async () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = new MessageViewportRuntime<TestMessage>({
+      feedId: 'feed',
+      generation: 1,
+      scheduler,
+      observers,
+      window: {
+        minMountedItems: 8,
+        maxMountedItems: 20,
+        defaultItemHeight: 48,
+      },
+    })
+    const dispatch = vi.spyOn(runtime, 'dispatch')
+    const onViewportAnchorChange = vi.fn()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      value: 320,
+    })
+
+    await act(async () => {
+      root.render(
+        <TestHarness
+          runtime={runtime}
+          hasMoreAfter
+          onViewportAnchorChange={onViewportAnchorChange}
+        />,
+      )
+    })
+    await act(async () => {
+      await flushFramesWithMicrotasks(scheduler, 4)
+    })
+
+    const followButton = host.querySelector<HTMLButtonElement>(
+      '[data-message-follow-bottom]',
+    )
+    expect(host.querySelector('[data-testid="top-edge"]')?.textContent).toBe(
+      'exhausted',
+    )
+    expect(followButton).not.toBeNull()
+    expect(onViewportAnchorChange).toHaveBeenCalled()
+    expect(onViewportAnchorChange.mock.calls.at(-1)?.[1]).toBe(
+      'transaction-settle',
+    )
+
+    await act(async () => {
+      followButton?.click()
+    })
+
+    expect(dispatch).toHaveBeenCalledWith({ type: 'followBottom' })
+    await act(async () => {
+      root.unmount()
+    })
   })
 })

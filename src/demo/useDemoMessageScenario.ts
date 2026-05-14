@@ -97,6 +97,12 @@ type RunLoggedOperationInput = {
   skipPersist?: boolean
 }
 
+type ViewportAnchorRememberReason =
+  | 'scroll-idle'
+  | 'transaction-settle'
+  | 'before-feed-switch'
+  | 'before-unmount'
+
 export type DemoMessageScenario = {
   feeds: DemoFeedDefinition[]
   activeFeedId: string
@@ -120,8 +126,9 @@ export type DemoMessageScenario = {
   sendMessage: (body: string) => boolean
   followBottom: (source: 'sidebar' | 'floating') => void
   clearFeed: (feedId: string) => void
-  rememberViewportAnchor: (
-    reason: 'scroll-idle' | 'before-feed-switch' | 'before-unmount',
+  rememberRuntimeViewportAnchor: (
+    anchor: AnchorState | null,
+    reason: 'scroll-idle' | 'transaction-settle',
   ) => void
 }
 
@@ -255,14 +262,13 @@ export function useDemoMessageScenario(
     })
   }, [])
 
-  const rememberViewportAnchor = useCallback((
-    reason: 'scroll-idle' | 'before-feed-switch' | 'before-unmount',
+  const persistViewportAnchor = useCallback((
+    runtimeAnchor: AnchorState | null,
+    reason: ViewportAnchorRememberReason,
   ) => {
     if (feedLoadingRef.current || feedMessagesRef.current.length === 0) {
       return
     }
-
-    const runtimeAnchor = runtime.getViewportAnchorState()
 
     if (!runtimeAnchor) {
       return
@@ -316,7 +322,20 @@ export function useDemoMessageScenario(
         anchor: nextAnchor,
       },
     })
-  }, [log, runtime])
+  }, [log])
+
+  const rememberViewportAnchor = useCallback((
+    reason: 'before-feed-switch' | 'before-unmount',
+  ) => {
+    persistViewportAnchor(runtime.getViewportAnchorState(), reason)
+  }, [persistViewportAnchor, runtime])
+
+  const rememberRuntimeViewportAnchor = useCallback((
+    anchor: AnchorState | null,
+    reason: 'scroll-idle' | 'transaction-settle',
+  ) => {
+    persistViewportAnchor(anchor, reason)
+  }, [persistViewportAnchor])
 
   const updateMessageCollections = useCallback((
     messageId: string,
@@ -887,7 +906,7 @@ export function useDemoMessageScenario(
 
         const latestResp = await getLatestMessages({
           feedId,
-          limit: PAGE_SIZE,
+          count: PAGE_SIZE,
         })
 
         if (isErrorResponse(latestResp)) {
@@ -1144,14 +1163,14 @@ export function useDemoMessageScenario(
         } else {
           resp = await getLatestMessages({
             feedId: activeFeedId,
-            limit: PAGE_SIZE,
+            count: PAGE_SIZE,
           })
         }
 
         if (persistedViewportAnchor && isErrorResponse(resp)) {
           resp = await getLatestMessages({
             feedId: activeFeedId,
-            limit: PAGE_SIZE,
+            count: PAGE_SIZE,
           })
         }
 
@@ -1336,7 +1355,7 @@ export function useDemoMessageScenario(
     sendMessage,
     followBottom,
     clearFeed,
-    rememberViewportAnchor,
+    rememberRuntimeViewportAnchor,
   }
 }
 

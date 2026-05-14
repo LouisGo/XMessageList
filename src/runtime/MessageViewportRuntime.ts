@@ -54,10 +54,21 @@ type PublishResult<TMessage, TOptimistic> = {
   changed: boolean
 }
 
+type ContainerSize = {
+  width: number
+  height: number
+}
+
+type MeasurableRow = {
+  key: MessageRuntimeItemKey
+  element: HTMLElement
+}
+
 const BOOTSTRAP_STABLE_FRAMES = 2
 const BOOTSTRAP_HEIGHT_EPSILON_PX = 1
 const BOOTSTRAP_SETTLE_TIMEOUT_MS = 300
 const DEFAULT_EDGE_LOAD_THRESHOLD_PX = 96
+const VIEWPORT_ANCHOR_IDLE_MS = 180
 
 /**
  * MessageViewportRuntime 是独立于 React 的 IM viewport engine。
@@ -114,6 +125,8 @@ export class MessageViewportRuntime<
 
   private resizeRaf: number | null = null
 
+  private anchorIdleTimer: number | null = null
+
   private currentFrame = 0
 
   private beforeEdgeRequestLatched = false
@@ -129,6 +142,8 @@ export class MessageViewportRuntime<
   private containerResizeObserver: ResizeObserver | null = null
 
   private intersectionObserver: IntersectionObserver | null = null
+
+  private lastContainerSize: ContainerSize | null = null
 
   private readonly handleScroll = (): void => {
     this.scheduleScrollRaf()
@@ -192,6 +207,7 @@ export class MessageViewportRuntime<
     this.lifecycle.resume()
     this.transactions.resume()
     this.registry.attachContainer(container)
+    this.lastContainerSize = this.readContainerSize(container)
     container.addEventListener('scroll', this.handleScroll, { passive: true })
     this.setupContainerObserver(container)
     this.setupIntersectionObserver(container)
@@ -222,6 +238,7 @@ export class MessageViewportRuntime<
     }
 
     this.registry.clearDomRefs()
+    this.lastContainerSize = null
     this.state = 'DETACHED'
   }
 
@@ -289,7 +306,7 @@ export class MessageViewportRuntime<
   }
 
   dispatch(command: MessageRuntimeCommand): void {
-    if (this.state === 'DESTROYED') {
+    if (!this.canAcceptCommand(command)) {
       return
     }
 
@@ -311,6 +328,34 @@ export class MessageViewportRuntime<
         this.enqueueResetTransaction(command.reason)
         break
     }
+  }
+
+  private canAcceptCommand(command: MessageRuntimeCommand): boolean {
+    if (this.state === 'DESTROYED') {
+      return false
+    }
+
+    if (command.type === 'reset') {
+      return true
+    }
+
+    if (this.state === 'INITIAL') {
+      return command.type === 'bootstrap'
+    }
+
+    if (this.state === 'ATTACHED' || this.state === 'DETACHED') {
+      return command.type === 'bootstrap'
+    }
+
+    if (command.type === 'followBottom') {
+      return this.state === 'READY'
+    }
+
+    if (command.type === 'jump' || command.type === 'restore') {
+      return this.state === 'READY' || this.state === 'TRANSACTING'
+    }
+
+    return true
   }
 
   subscribe(listener: RuntimeListener): () => void {
@@ -484,6 +529,7 @@ export class MessageViewportRuntime<
           bootstrapState: 'READY',
           bottomLockState: 'LOCKED',
         })
+        this.emitViewportAnchorChanged('transaction-settle')
         this.emitEvent({
           type: 'viewportReady',
           feedId: data.feedId,
@@ -533,13 +579,17 @@ export class MessageViewportRuntime<
 
         await this.waitForCommitIfChanged(projection, 'bootstrap')
 
-        if (
-          !this.alignToRestoreTarget(
-            container,
-            restoreTarget,
-            'bootstrap-restored-target-dom-missing',
-          )
-        ) {
+        const resolvedRestoreTarget =
+          this.getDirectMeasurableRow(restoreTarget.key) ??
+          (await this.resolveMeasurableRowForTarget({
+            data,
+            targetKey: restoreTarget.key,
+            targetIndex: restoreTarget.index,
+            renderWindow,
+            missingDomErrorCode: 'bootstrap-restored-target-dom-missing',
+          }))
+
+        if (!resolvedRestoreTarget) {
           this.recoverAfterCommitFailure({
             token,
             nextState: this.deriveRuntimeStateFromSnapshot(previousSnapshot),
@@ -549,6 +599,11 @@ export class MessageViewportRuntime<
           return
         }
 
+        this.alignToResolvedRestoreTarget(
+          container,
+          restoreTarget,
+          resolvedRestoreTarget,
+        )
         this.measureCurrentWindow()
         this.scrollIntent.setBottomLockState('UNLOCKED')
         this.state = 'READY'
@@ -558,6 +613,7 @@ export class MessageViewportRuntime<
           bootstrapState: 'READY',
           bottomLockState: 'UNLOCKED',
         })
+        this.emitViewportAnchorChanged('transaction-settle')
         this.emitEvent({
           type: 'viewportReady',
           feedId: data.feedId,
@@ -610,6 +666,7 @@ export class MessageViewportRuntime<
     const safeAnchorIndex = anchorIndex >= 0 ? anchorIndex : 0
     const token = this.lifecycle.getCurrent()
     const previousBottomLockState = this.scrollIntent.getBottomLockState()
+    const previousSnapshot = this.store.getSnapshot()
     const renderWindow = this.renderWindow.computeWindowAroundAnchor({
       items: data.items,
       anchorIndex: safeAnchorIndex,
@@ -635,7 +692,12 @@ export class MessageViewportRuntime<
 
       if (typeof anchorTopAfter !== 'number') {
         this.emitError('prepend-anchor-after-missing')
-        this.state = 'READY'
+        this.recoverAfterCommitFailure({
+          token,
+          nextState: 'READY',
+          restoreBottomLockState: previousBottomLockState,
+          restoreSnapshot: previousSnapshot,
+        })
         return
       }
 
@@ -654,6 +716,7 @@ export class MessageViewportRuntime<
         bootstrapState: 'READY',
         bottomLockState: 'UNLOCKED',
       })
+      this.emitViewportAnchorChanged('transaction-settle')
     } catch (error) {
       this.recoverAfterCommitFailure({
         token,
@@ -724,6 +787,7 @@ export class MessageViewportRuntime<
       }
 
       this.state = 'READY'
+      this.emitViewportAnchorChanged('transaction-settle')
     } catch (error) {
       this.recoverAfterCommitFailure({
         token,
@@ -769,6 +833,7 @@ export class MessageViewportRuntime<
       await this.waitForCommitIfChanged(projection, 'resize')
       this.measureCurrentWindow()
       this.scrollToBottom('followBottom')
+      this.emitViewportAnchorChanged('transaction-settle')
       return
     }
 
@@ -798,6 +863,7 @@ export class MessageViewportRuntime<
     }
 
     this.measureCurrentWindow()
+    this.emitViewportAnchorChanged('transaction-settle')
   }
 
   private enqueueJumpTransaction(messageId: string): void {
@@ -838,12 +904,17 @@ export class MessageViewportRuntime<
 
     const token = this.lifecycle.getCurrent()
     const previousBottomLockState = this.scrollIntent.getBottomLockState()
+    const previousSnapshot = this.store.getSnapshot()
+    const targetKey: MessageRuntimeItemKey = { kind: 'committed', messageId }
     const renderWindow = this.renderWindow.computeWindowAroundAnchor({
       items: data.items,
       anchorIndex: targetIndex,
       viewportHeight: container.clientHeight,
       viewportWidth: container.clientWidth,
     })
+
+    this.state = 'TRANSACTING'
+    this.scrollIntent.setBottomLockState('RECOVERING')
 
     try {
       const projection = this.publishProjection({
@@ -854,15 +925,28 @@ export class MessageViewportRuntime<
       })
 
       await this.waitForCommitIfChanged(projection, 'jump')
-      const target = this.registry.getRow({ kind: 'committed', messageId })
+      const target =
+        this.getDirectMeasurableRow(targetKey) ??
+        (await this.resolveMeasurableRowForTarget({
+          data,
+          targetKey,
+          targetIndex,
+          renderWindow,
+          missingDomErrorCode: 'jump-target-dom-missing',
+        }))
 
       if (!target) {
-        this.emitError('jump-target-dom-missing')
+        this.recoverAfterCommitFailure({
+          token,
+          nextState: 'READY',
+          restoreBottomLockState: previousBottomLockState,
+          restoreSnapshot: previousSnapshot,
+        })
         return
       }
 
       const containerRect = container.getBoundingClientRect()
-      const targetRect = target.getBoundingClientRect()
+      const targetRect = target.element.getBoundingClientRect()
       const centerDelta =
         targetRect.top -
         containerRect.top -
@@ -877,17 +961,13 @@ export class MessageViewportRuntime<
         bootstrapState: 'READY',
         bottomLockState: 'UNLOCKED',
       })
+      this.emitViewportAnchorChanged('transaction-settle')
     } catch (error) {
       this.recoverAfterCommitFailure({
         token,
         nextState: 'READY',
         restoreBottomLockState: previousBottomLockState,
-        restoreProjection: {
-          data,
-          renderWindow,
-          bootstrapState: 'READY',
-          bottomLockState: previousBottomLockState,
-        },
+        restoreSnapshot: previousSnapshot,
       })
       throw error
     }
@@ -912,6 +992,7 @@ export class MessageViewportRuntime<
 
     const token = this.lifecycle.getCurrent()
     const previousBottomLockState = this.scrollIntent.getBottomLockState()
+    const previousSnapshot = this.store.getSnapshot()
     const renderWindow = this.renderWindow.computeWindowAroundAnchor({
       items: data.items,
       anchorIndex: restoreTarget.index,
@@ -932,24 +1013,31 @@ export class MessageViewportRuntime<
 
       await this.waitForCommitIfChanged(projection, 'restore')
 
-      if (
-        !this.alignToRestoreTarget(
-          container,
-          restoreTarget,
-          'restore-target-dom-missing',
-        )
-      ) {
-        this.scrollIntent.setBottomLockState(previousBottomLockState)
-        this.state = 'READY'
-        this.publishProjection({
+      const resolvedRestoreTarget =
+        this.getDirectMeasurableRow(restoreTarget.key) ??
+        (await this.resolveMeasurableRowForTarget({
           data,
+          targetKey: restoreTarget.key,
+          targetIndex: restoreTarget.index,
           renderWindow,
-          bootstrapState: 'READY',
-          bottomLockState: previousBottomLockState,
+          missingDomErrorCode: 'restore-target-dom-missing',
+        }))
+
+      if (!resolvedRestoreTarget) {
+        this.recoverAfterCommitFailure({
+          token,
+          nextState: 'READY',
+          restoreBottomLockState: previousBottomLockState,
+          restoreSnapshot: previousSnapshot,
         })
         return
       }
 
+      this.alignToResolvedRestoreTarget(
+        container,
+        restoreTarget,
+        resolvedRestoreTarget,
+      )
       this.measureCurrentWindow()
       this.scrollIntent.setBottomLockState('UNLOCKED')
       this.state = 'READY'
@@ -959,17 +1047,13 @@ export class MessageViewportRuntime<
         bootstrapState: 'READY',
         bottomLockState: 'UNLOCKED',
       })
+      this.emitViewportAnchorChanged('transaction-settle')
     } catch (error) {
       this.recoverAfterCommitFailure({
         token,
         nextState: 'READY',
         restoreBottomLockState: previousBottomLockState,
-        restoreProjection: {
-          data,
-          renderWindow,
-          bootstrapState: 'READY',
-          bottomLockState: previousBottomLockState,
-        },
+        restoreSnapshot: previousSnapshot,
       })
       throw error
     }
@@ -1050,6 +1134,7 @@ export class MessageViewportRuntime<
         bottomLockState: 'LOCKED',
       })
       this.state = 'READY'
+      this.emitViewportAnchorChanged('transaction-settle')
     } catch (error) {
       this.recoverAfterCommitFailure({
         token,
@@ -1290,31 +1375,103 @@ export class MessageViewportRuntime<
     }
   }
 
-  private alignToRestoreTarget(
+  private alignToResolvedRestoreTarget(
     container: HTMLElement,
     target: {
       key: MessageRuntimeItemKey
       offsetWithinMessage: number
     },
-    missingDomErrorCode: string,
-  ): boolean {
-    const element = this.registry.getRow(target.key)
-
-    if (!element) {
-      this.emitError(missingDomErrorCode)
-      return false
-    }
-
+    resolved: MeasurableRow,
+  ): void {
     const containerTop = container.getBoundingClientRect().top
-    const targetRect = element.getBoundingClientRect()
-    const desiredTop = containerTop - target.offsetWithinMessage
+    const targetRect = resolved.element.getBoundingClientRect()
+    const offsetWithinMessage = areRuntimeItemKeysEqual(resolved.key, target.key)
+      ? target.offsetWithinMessage
+      : 0
+    const desiredTop = containerTop - offsetWithinMessage
     const delta = targetRect.top - desiredTop
 
     if (Math.abs(delta) > 0.5) {
       this.writeScrollTop(container.scrollTop + delta, 'programmatic')
     }
+  }
 
-    return true
+  private getDirectMeasurableRow(key: MessageRuntimeItemKey): MeasurableRow | null {
+    const element = this.registry.getRow(key)
+
+    return element ? { key, element } : null
+  }
+
+  private async resolveMeasurableRowForTarget(input: {
+    data: MessageDataSnapshot<TMessage, TOptimistic>
+    targetKey: MessageRuntimeItemKey
+    targetIndex: number
+    renderWindow: RenderWindow
+    missingDomErrorCode: string
+  }): Promise<MeasurableRow | null> {
+    const direct = this.registry.getRow(input.targetKey)
+
+    if (direct) {
+      return { key: input.targetKey, element: direct }
+    }
+
+    await this.nextFrame(input.data.feedId, input.data.generation)
+
+    const retried = this.registry.getRow(input.targetKey)
+
+    if (retried) {
+      return { key: input.targetKey, element: retried }
+    }
+
+    const fallback = this.findNearestMeasurableRow(
+      input.data.items,
+      input.targetIndex,
+      input.renderWindow,
+    )
+
+    if (fallback) {
+      this.emitError(`${input.missingDomErrorCode}-fallback`)
+      return fallback
+    }
+
+    this.emitError(input.missingDomErrorCode)
+    return null
+  }
+
+  private findNearestMeasurableRow(
+    items: MessageDataItem<TMessage, TOptimistic>[],
+    targetIndex: number,
+    renderWindow: RenderWindow,
+  ): MeasurableRow | null {
+    const start = Math.max(0, renderWindow.startIndex)
+    const end = Math.min(items.length - 1, renderWindow.endIndex)
+
+    for (let distance = 0; distance <= Math.max(targetIndex - start, end - targetIndex); distance += 1) {
+      const before = targetIndex - distance
+      const after = targetIndex + distance
+      const candidates = before === after ? [before] : [before, after]
+
+      for (const index of candidates) {
+        if (index < start || index > end) {
+          continue
+        }
+
+        const item = items[index]
+
+        if (!item) {
+          continue
+        }
+
+        const key = getRuntimeItemKey(item)
+        const element = this.registry.getRow(key)
+
+        if (element) {
+          return { key, element }
+        }
+      }
+    }
+
+    return null
   }
 
   private captureViewportAnchor(): AnchorState | null {
@@ -1397,6 +1554,7 @@ export class MessageViewportRuntime<
     if (scrollSource === 'user') {
       this.lastUserScrollTop = container.scrollTop
       this.lastUserDistanceToBottom = distance
+      this.scheduleViewportAnchorIdleEvent()
     }
 
     if (this.state === 'READY') {
@@ -1502,27 +1660,45 @@ export class MessageViewportRuntime<
       return
     }
 
-    const projection = this.publishProjection({
-      data,
-      renderWindow: nextWindow,
-      bootstrapState: 'READY',
-      bottomLockState: this.scrollIntent.getBottomLockState(),
-    })
+    const token = this.lifecycle.getCurrent()
+    const previousSnapshot = this.store.getSnapshot()
+    const previousBottomLockState = this.scrollIntent.getBottomLockState()
 
-    await this.waitForCommitIfChanged(projection, 'resize')
+    this.state = 'TRANSACTING'
 
-    const anchorElementAfter = this.registry.getRow(anchorKey)
-    const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
+    try {
+      const projection = this.publishProjection({
+        data,
+        renderWindow: nextWindow,
+        bootstrapState: 'READY',
+        bottomLockState: previousBottomLockState,
+      })
 
-    if (typeof anchorTopAfter === 'number') {
-      const delta = anchorTopAfter - anchorTopBefore
+      await this.waitForCommitIfChanged(projection, 'resize')
 
-      if (Math.abs(delta) > 0.5) {
-        this.writeScrollTop(container.scrollTop + delta, 'recovery')
+      const anchorElementAfter = this.registry.getRow(anchorKey)
+      const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
+
+      if (typeof anchorTopAfter === 'number') {
+        const delta = anchorTopAfter - anchorTopBefore
+
+        if (Math.abs(delta) > 0.5) {
+          this.writeScrollTop(container.scrollTop + delta, 'recovery')
+        }
       }
-    }
 
-    this.measureCurrentWindow()
+      this.measureCurrentWindow()
+      this.state = 'READY'
+      this.emitViewportAnchorChanged('transaction-settle')
+    } catch (error) {
+      this.recoverAfterCommitFailure({
+        token,
+        nextState: 'READY',
+        restoreBottomLockState: previousBottomLockState,
+        restoreSnapshot: previousSnapshot,
+      })
+      throw error
+    }
   }
 
   private scheduleHeightStabilization(): void {
@@ -1565,6 +1741,7 @@ export class MessageViewportRuntime<
       !data.hasMoreAfter
     ) {
       this.scrollToBottom('followBottom')
+      this.emitViewportAnchorChanged('transaction-settle')
       return
     }
 
@@ -1583,6 +1760,8 @@ export class MessageViewportRuntime<
     if (Math.abs(deltaAboveAnchor) > 0.5) {
       this.writeScrollTop(container.scrollTop + deltaAboveAnchor, 'recovery')
     }
+
+    this.emitViewportAnchorChanged('transaction-settle')
   }
 
   private setupContainerObserver(container: HTMLElement): void {
@@ -1610,17 +1789,124 @@ export class MessageViewportRuntime<
       const container = this.registry.getContainer()
       const data = this.dataSnapshot
 
-      if (!container || !data || !this.measurement.invalidateForWidth(container.clientWidth)) {
+      if (!container || !data || this.store.getSnapshot().bootstrapState === 'INITIAL') {
         return
       }
 
-      this.publishProjection({
-        data,
-        renderWindow: this.keepCurrentWindow(data.items),
-        bootstrapState: this.store.getSnapshot().bootstrapState,
-        bottomLockState: this.scrollIntent.getBottomLockState(),
-      })
+      const previousSize = this.lastContainerSize ?? this.readContainerSize(container)
+      const nextSize = this.readContainerSize(container)
+
+      this.lastContainerSize = nextSize
+
+      if (
+        previousSize.width === nextSize.width &&
+        previousSize.height === nextSize.height
+      ) {
+        return
+      }
+
+      this.transactions.enqueue(
+        'resize',
+        () => this.runContainerResizeTransaction(previousSize, nextSize),
+        'resize',
+      )
     })
+  }
+
+  private async runContainerResizeTransaction(
+    previousSize: ContainerSize,
+    nextSize: ContainerSize,
+  ): Promise<void> {
+    const data = this.dataSnapshot
+    const container = this.registry.getContainer()
+
+    if (!data || !container) {
+      return
+    }
+
+    const token = this.lifecycle.getCurrent()
+    const previousBottomLockState = this.scrollIntent.getBottomLockState()
+    const previousSnapshot = this.store.getSnapshot()
+    const anchor = this.captureViewportAnchor()
+    const anchorElementBefore = anchor ? this.registry.getRow(anchor.key) : null
+    const anchorTopBefore = anchorElementBefore?.getBoundingClientRect().top
+    const widthInvalidated = this.measurement.invalidateForWidth(nextSize.width)
+    const anchorIndex = anchor
+      ? this.renderWindow.findIndexByKey(data.items, anchor.key)
+      : -1
+    const shouldFollowBottom =
+      previousBottomLockState === 'LOCKED' && !data.hasMoreAfter
+    const renderWindow = shouldFollowBottom
+      ? this.renderWindow.computeLatestWindow(
+          data.items,
+          nextSize.height,
+          nextSize.width,
+        )
+      : anchorIndex >= 0
+        ? this.renderWindow.computeWindowAroundAnchor({
+            items: data.items,
+            anchorIndex,
+            viewportHeight: nextSize.height,
+            viewportWidth: nextSize.width,
+          })
+        : this.keepCurrentWindow(data.items)
+    const sizeChanged =
+      previousSize.width !== nextSize.width || previousSize.height !== nextSize.height
+    const projectionNeeded =
+      widthInvalidated ||
+      sizeChanged ||
+      !this.isRenderWindowEqual(previousSnapshot.renderWindow, renderWindow)
+
+    if (!projectionNeeded) {
+      return
+    }
+
+    this.state = 'TRANSACTING'
+
+    try {
+      const projection = this.publishProjection({
+        data,
+        renderWindow,
+        bootstrapState: previousSnapshot.bootstrapState,
+        bottomLockState: previousBottomLockState,
+      })
+
+      await this.waitForCommitIfChanged(projection, 'resize')
+      this.measureCurrentWindow()
+
+      if (shouldFollowBottom) {
+        this.scrollToBottom('followBottom')
+        this.scrollIntent.setBottomLockState('LOCKED')
+        this.publishProjection({
+          data,
+          renderWindow,
+          bootstrapState: previousSnapshot.bootstrapState,
+          bottomLockState: 'LOCKED',
+        })
+      } else if (anchor && typeof anchorTopBefore === 'number') {
+        const anchorElementAfter = this.registry.getRow(anchor.key)
+        const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
+
+        if (typeof anchorTopAfter === 'number') {
+          const delta = anchorTopAfter - anchorTopBefore
+
+          if (Math.abs(delta) > 0.5) {
+            this.writeScrollTop(container.scrollTop + delta, 'recovery')
+          }
+        }
+      }
+
+      this.state = 'READY'
+      this.emitViewportAnchorChanged('transaction-settle')
+    } catch (error) {
+      this.recoverAfterCommitFailure({
+        token,
+        nextState: 'READY',
+        restoreBottomLockState: previousBottomLockState,
+        restoreSnapshot: previousSnapshot,
+      })
+      throw error
+    }
   }
 
   private setupIntersectionObserver(container: HTMLElement): void {
@@ -1760,6 +2046,43 @@ export class MessageViewportRuntime<
     }
   }
 
+  private scheduleViewportAnchorIdleEvent(): void {
+    if (this.anchorIdleTimer !== null) {
+      this.scheduler.clearTimeout(this.anchorIdleTimer)
+    }
+
+    const token = this.lifecycle.getCurrent()
+    this.anchorIdleTimer = this.scheduler.setTimeout(() => {
+      this.anchorIdleTimer = null
+
+      if (!this.lifecycle.isCurrent(token.feedId, token.generation)) {
+        return
+      }
+
+      this.emitViewportAnchorChanged('scroll-idle')
+    }, VIEWPORT_ANCHOR_IDLE_MS)
+  }
+
+  private emitViewportAnchorChanged(
+    reason: 'scroll-idle' | 'transaction-settle',
+  ): void {
+    const data = this.dataSnapshot
+
+    if (!data || this.state === 'DESTROYED') {
+      return
+    }
+
+    const anchor = this.captureViewportAnchor()
+
+    this.emitEvent({
+      type: 'viewportAnchorChanged',
+      feedId: data.feedId,
+      generation: data.generation,
+      reason,
+      anchor: anchor ? cloneAnchorState(anchor) : null,
+    })
+  }
+
   /**
    * 数据加载事件必须表示“当前已加载 DataWindow 的边界快到了”，
    * 不能用 render overscan 判断；overscan 只服务于 window sliding。
@@ -1782,6 +2105,13 @@ export class MessageViewportRuntime<
     return this.config.minOverscanPx > 0
       ? this.config.minOverscanPx
       : container.clientHeight * 2
+  }
+
+  private readContainerSize(container: HTMLElement): ContainerSize {
+    return {
+      width: container.clientWidth,
+      height: container.clientHeight,
+    }
   }
 
   private scrollToBottom(source: Extract<ScrollSource, 'followBottom'>): void {
@@ -1871,6 +2201,11 @@ export class MessageViewportRuntime<
     if (this.resizeRaf !== null) {
       this.scheduler.cancelAnimationFrame(this.resizeRaf)
       this.resizeRaf = null
+    }
+
+    if (this.anchorIdleTimer !== null) {
+      this.scheduler.clearTimeout(this.anchorIdleTimer)
+      this.anchorIdleTimer = null
     }
   }
 

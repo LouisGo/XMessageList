@@ -82,7 +82,7 @@ describe('getLatestMessages', () => {
     const feed = makeFeed('feed-small', 5)
     mockLoadFeed.mockResolvedValueOnce(feed)
 
-    const resp = await getLatestMessages({ feedId: 'feed-small', limit: 10 })
+    const resp = await getLatestMessages({ feedId: 'feed-small', count: 10 })
 
     expect(resp.ok).toBe(true)
     if (resp.ok) {
@@ -97,7 +97,7 @@ describe('getLatestMessages', () => {
     const feed = makeFeed('feed-large', 80)
     mockLoadFeed.mockResolvedValueOnce(feed)
 
-    const resp = await getLatestMessages({ feedId: 'feed-large', limit: 40 })
+    const resp = await getLatestMessages({ feedId: 'feed-large', count: 40 })
 
     expect(resp.ok).toBe(true)
     if (resp.ok) {

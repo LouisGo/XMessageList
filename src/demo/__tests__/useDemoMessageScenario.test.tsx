@@ -499,7 +499,13 @@ describe('useDemoMessageScenario', () => {
     await flushTimers(180)
 
     await act(async () => {
-      scenario?.rememberViewportAnchor('scroll-idle')
+      scenario?.rememberRuntimeViewportAnchor(
+        {
+          key: { kind: 'committed', messageId: 'feed-runtime-m-22' },
+          offsetWithinMessage: 18,
+        },
+        'scroll-idle',
+      )
       await Promise.resolve()
     })
 

@@ -31,10 +31,7 @@ export function DemoMessageViewport() {
     [],
   )
   const scenario = useDemoMessageScenario(runtime)
-  const { rememberViewportAnchor } = scenario
   const destroyTimerRef = useRef<number | null>(null)
-  const scrollIdleTimerRef = useRef<number | null>(null)
-  const chatSurfaceRef = useRef<HTMLElement | null>(null)
   const [draft, setDraft] = useState('')
 
   useEffect(() => {
@@ -51,38 +48,6 @@ export function DemoMessageViewport() {
       }, 0)
     }
   }, [runtime])
-
-  useEffect(() => {
-    const container = chatSurfaceRef.current?.querySelector<HTMLElement>(
-      '[data-message-scroll-container]',
-    )
-
-    if (!container) {
-      return
-    }
-
-    const clearIdleTimer = () => {
-      if (scrollIdleTimerRef.current !== null) {
-        window.clearTimeout(scrollIdleTimerRef.current)
-        scrollIdleTimerRef.current = null
-      }
-    }
-
-    const handleScroll = () => {
-      clearIdleTimer()
-      scrollIdleTimerRef.current = window.setTimeout(() => {
-        scrollIdleTimerRef.current = null
-        rememberViewportAnchor('scroll-idle')
-      }, 180)
-    }
-
-    container.addEventListener('scroll', handleScroll, { passive: true })
-
-    return () => {
-      container.removeEventListener('scroll', handleScroll)
-      clearIdleTimer()
-    }
-  }, [rememberViewportAnchor])
 
   const sendDraft = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -282,34 +247,29 @@ export function DemoMessageViewport() {
           ))}
         </section>
       </aside>
-      <section
-        ref={chatSurfaceRef}
-        className="chat-surface"
-        aria-label="Message runtime demo"
-      >
-        <MessageViewport
-          runtime={runtime}
-          className="message-viewport"
-          renderMessage={renderDemoItem}
-          renderOverlay={(snapshot) => (
-            <>
-              {scenario.loadingBefore ? (
+        <section className="chat-surface" aria-label="Message runtime demo">
+          <MessageViewport
+            runtime={runtime}
+            className="message-viewport"
+            renderMessage={renderDemoItem}
+            renderTopEdge={() =>
+              scenario.loadingBefore ? (
                 <div className="history-loading">Loading older messages...</div>
-              ) : null}
-              {snapshot.bottomLockState === 'UNLOCKED' ? (
-                <button
-                  type="button"
-                  className="follow-bottom-button"
-                  aria-label="Follow latest messages"
-                  data-testid="follow-bottom-button"
-                  onClick={() => scenario.followBottom('floating')}
-                >
-                  Bottom
-                </button>
-              ) : null}
-            </>
-          )}
-        />
+              ) : null
+            }
+            renderFollowBottom={() => (
+              <button
+                type="button"
+                className="follow-bottom-button"
+                aria-label="Follow latest messages"
+                data-testid="follow-bottom-button"
+                onClick={() => scenario.followBottom('floating')}
+              >
+                Bottom
+              </button>
+            )}
+            onViewportAnchorChange={scenario.rememberRuntimeViewportAnchor}
+          />
         <form className="message-composer" onSubmit={sendDraft}>
           <textarea
             aria-label="Message input"
