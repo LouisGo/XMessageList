@@ -98,6 +98,7 @@ describe('useDemoMessageScenario', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
     vi.clearAllMocks()
   })
 
@@ -179,10 +180,73 @@ describe('useDemoMessageScenario', () => {
     await flushTimers(100)
     expect(scenario?.pendingOperation).toBe('message.longBurst')
 
-    await flushTimers(220)
+    await flushTimers(520)
     expect(scenario?.pendingOperation).toBe('idle')
     expect(scenario?.messageCount).toBe(45)
     expect(scenario?.loadedMessageCount).toBe(25)
     expect(store.get('feed-runtime')?.messages).toHaveLength(45)
+  })
+
+  it('persists edit, delete, and reaction mutations for loaded messages', async () => {
+    const runtime = createRuntimeStub()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+
+    await act(async () => {
+      root.render(
+        <TestHarness runtime={runtime} onScenario={(next) => {
+          scenario = next
+        }}
+        />,
+      )
+    })
+
+    await flushTimers(180)
+
+    const loadedTail = store.get('feed-runtime')?.messages.slice(-20) ?? []
+    const selfMessage = loadedTail.find((message) => message.tone === 'self')
+    const peerMessage = loadedTail.find(
+      (message) => message.id !== selfMessage?.id,
+    )
+
+    expect(selfMessage).toBeDefined()
+    expect(peerMessage).toBeDefined()
+
+    await act(async () => {
+      scenario?.editMessage(selfMessage?.id ?? '', 'edited body from test')
+    })
+    await flushTimers(100)
+
+    const edited = store.get('feed-runtime')?.messages.find(
+      (message) => message.id === selfMessage?.id,
+    )
+    expect(edited?.body).toBe('edited body from test')
+    expect(edited?.editedAt).toBeTruthy()
+
+    await act(async () => {
+      scenario?.reactToMessage(selfMessage?.id ?? '')
+    })
+    await flushTimers(70)
+
+    const reacted = store.get('feed-runtime')?.messages.find(
+      (message) => message.id === selfMessage?.id,
+    )
+    expect(reacted?.reactions).toEqual(['😀'])
+
+    await act(async () => {
+      scenario?.deleteMessage(peerMessage?.id ?? '')
+    })
+    await flushTimers(90)
+
+    expect(
+      store.get('feed-runtime')?.messages.some(
+        (message) => message.id === peerMessage?.id,
+      ),
+    ).toBe(false)
+    expect(scenario?.messageCount).toBe(39)
+    expect(scenario?.loadedMessageCount).toBe(19)
   })
 })

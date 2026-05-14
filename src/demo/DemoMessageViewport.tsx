@@ -57,6 +57,85 @@ export function DemoMessageViewport() {
     }
   }
 
+  const renderDemoItem = (item: MessageDataItem<DemoMessage>) => {
+    if (item.kind === 'tombstone') {
+      return <article className="message-row system">Message unavailable</article>
+    }
+
+    if (item.kind === 'optimistic') {
+      return <article className="message-row system">Sending...</article>
+    }
+
+    const message = item.message
+
+    return (
+      <article className={`message-row ${message.tone} ${message.kind}`}>
+        <header>
+          <strong>{message.author}</strong>
+          <div className="message-row-meta">
+            <span>{message.id}</span>
+            <div className="message-row-actions">
+              {message.tone === 'self' ? (
+                <button
+                  type="button"
+                  className="message-row-action"
+                  data-testid={`edit-message-${message.id}`}
+                  onClick={() => {
+                    const nextBody = window.prompt('Edit message', message.body)
+
+                    if (typeof nextBody === 'string') {
+                      scenario.editMessage(message.id, nextBody)
+                    }
+                  }}
+                >
+                  Edit
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="message-row-action"
+                data-testid={`react-message-${message.id}`}
+                onClick={() => scenario.reactToMessage(message.id)}
+              >
+                React
+              </button>
+              <button
+                type="button"
+                className="message-row-action danger"
+                data-testid={`delete-message-${message.id}`}
+                onClick={() => scenario.deleteMessage(message.id)}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </header>
+        <p>{message.body}</p>
+        {message.media ? <MediaBlock message={message} /> : null}
+        {message.expanded ? (
+          <div className="message-attachment">
+            Async content expanded after the row was projected.
+          </div>
+        ) : null}
+        {message.reactions.length > 0 ? (
+          <div className="message-reactions" aria-label="Reactions">
+            {message.reactions.map((reaction, index) => (
+              <span
+                key={`${message.id}-reaction-${index}`}
+                className="message-reaction-chip"
+              >
+                {reaction}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {message.editedAt ? (
+          <div className="message-edited-flag">(edited)</div>
+        ) : null}
+      </article>
+    )
+  }
+
   return (
     <main className="demo-shell">
       <aside className="demo-sidebar" aria-label="Runtime controls">
@@ -172,7 +251,7 @@ export function DemoMessageViewport() {
         <MessageViewport
           runtime={runtime}
           className="message-viewport"
-          renderMessage={renderDemoMessage}
+          renderMessage={renderDemoItem}
           renderOverlay={(snapshot) => (
             <>
               {scenario.loadingBefore ? (
@@ -218,34 +297,6 @@ export function DemoMessageViewport() {
         </form>
       </section>
     </main>
-  )
-}
-
-function renderDemoMessage(item: MessageDataItem<DemoMessage>) {
-  if (item.kind === 'tombstone') {
-    return <article className="message-row system">Message unavailable</article>
-  }
-
-  if (item.kind === 'optimistic') {
-    return <article className="message-row system">Sending...</article>
-  }
-
-  const message = item.message
-
-  return (
-    <article className={`message-row ${message.tone} ${message.kind}`}>
-      <header>
-        <strong>{message.author}</strong>
-        <span>{message.id}</span>
-      </header>
-      <p>{message.body}</p>
-      {message.media ? <MediaBlock message={message} /> : null}
-      {message.expanded ? (
-        <div className="message-attachment">
-          Async content expanded after the row was projected.
-        </div>
-      ) : null}
-    </article>
   )
 }
 

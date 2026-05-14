@@ -39,6 +39,7 @@ import {
 
 const PAGE_SIZE = 20
 const FEED_LOAD_DELAY_MS = 180
+const REACTION_EMOJIS = ['😀', '😂', '🔥', '👍', '🎉', '😭', '👀', '❤️', '🚀', '🥲']
 
 const OPERATION_DELAYS: Record<
   Extract<
@@ -46,6 +47,9 @@ const OPERATION_DELAYS: Record<
     | 'history.prepend'
     | 'message.append'
     | 'message.longBurst'
+    | 'message.edit'
+    | 'message.delete'
+    | 'message.react'
     | 'message.resize'
     | 'message.send'
     | 'feed.clear'
@@ -55,6 +59,9 @@ const OPERATION_DELAYS: Record<
   'history.prepend': 200,
   'message.append': 80,
   'message.longBurst': 620,
+  'message.edit': 100,
+  'message.delete': 90,
+  'message.react': 70,
   'message.resize': 200,
   'message.send': 60,
   'feed.clear': 220,
@@ -95,6 +102,9 @@ export type DemoMessageScenario = {
   loadHistoryBatch: (source?: 'manual' | 'auto') => void
   appendMessage: () => void
   appendLongBurst: () => void
+  editMessage: (messageId: string, nextBody: string) => void
+  deleteMessage: (messageId: string) => void
+  reactToMessage: (messageId: string) => void
   toggleDynamicHeight: () => void
   sendMessage: (body: string) => boolean
   followBottom: (source: 'sidebar' | 'floating') => void
@@ -189,6 +199,10 @@ export function useDemoMessageScenario(
     kind: DemoSnapshotKind,
   ) => {
     revisionRef.current += 1
+    hasMoreBeforeRef.current = computeHasMoreBefore(
+      feedMessagesRef.current,
+      messagesRef.current,
+    )
     syncDisplayedCounts()
     runtime.setDataSnapshot(
       createDemoSnapshot({
@@ -212,6 +226,41 @@ export function useDemoMessageScenario(
       messages: feedMessagesRef.current,
       updatedAt: new Date().toISOString(),
     })
+  }, [])
+
+  const updateMessageCollections = useCallback((
+    messageId: string,
+    mutate: (message: DemoMessage) => DemoMessage | null,
+  ): { previous: DemoMessage; next: DemoMessage | null } => {
+    let previousMessage: DemoMessage | null = null
+    let nextMessage: DemoMessage | null = null
+
+    feedMessagesRef.current = feedMessagesRef.current.flatMap((message) => {
+      if (message.id !== messageId) {
+        return [message]
+      }
+
+      previousMessage = message
+      nextMessage = mutate(message)
+      return nextMessage ? [nextMessage] : []
+    })
+
+    messagesRef.current = messagesRef.current.flatMap((message) => {
+      if (message.id !== messageId) {
+        return [message]
+      }
+
+      return nextMessage ? [nextMessage] : []
+    })
+
+    if (!previousMessage) {
+      throw new Error(`message ${messageId} not found`)
+    }
+
+    return {
+      previous: previousMessage,
+      next: nextMessage,
+    }
   }, [])
 
   const runLoggedOperation = useCallback(async (input: RunLoggedOperationInput) => {
@@ -447,6 +496,96 @@ export function useDemoMessageScenario(
       },
     })
   }, [runLoggedOperation])
+
+  const editMessage = useCallback((messageId: string, nextBody: string) => {
+    const trimmed = nextBody.trim()
+
+    if (!trimmed) {
+      return
+    }
+
+    const target = messagesRef.current.find((message) => message.id === messageId)
+
+    if (!target || target.tone !== 'self' || target.body === trimmed) {
+      return
+    }
+
+    void runLoggedOperation({
+      operation: 'message.edit',
+      startEvent: `editing ${messageId}...`,
+      details: { messageId, nextBodyLength: trimmed.length },
+      apply: () => {
+        const { next } = updateMessageCollections(messageId, (message) => ({
+          ...message,
+          body: trimmed,
+          kind: getEditedMessageKind(message.kind, trimmed),
+          editedAt: new Date().toISOString(),
+        }))
+
+        if (!next) {
+          throw new Error(`message ${messageId} deleted during edit`)
+        }
+
+        return {
+          effect: 'items-change',
+          kind: 'patch',
+          eventText: `edited ${next.id}`,
+          details: {
+            messageId: next.id,
+            editedAt: next.editedAt,
+            kind: next.kind,
+          },
+        }
+      },
+    })
+  }, [runLoggedOperation, updateMessageCollections])
+
+  const deleteMessage = useCallback((messageId: string) => {
+    void runLoggedOperation({
+      operation: 'message.delete',
+      startEvent: `deleting ${messageId}...`,
+      details: { messageId },
+      apply: () => {
+        const { previous } = updateMessageCollections(messageId, () => null)
+
+        return {
+          effect: 'items-change',
+          kind: 'delete',
+          eventText: `deleted ${previous.id}`,
+          details: { messageId: previous.id },
+        }
+      },
+    })
+  }, [runLoggedOperation, updateMessageCollections])
+
+  const reactToMessage = useCallback((messageId: string) => {
+    void runLoggedOperation({
+      operation: 'message.react',
+      startEvent: `reacting to ${messageId}...`,
+      details: { messageId },
+      apply: () => {
+        const { next } = updateMessageCollections(messageId, (message) => ({
+          ...message,
+          reactions: [...message.reactions, getRandomReaction()],
+        }))
+
+        if (!next) {
+          throw new Error(`message ${messageId} deleted during reaction`)
+        }
+
+        return {
+          effect: 'items-change',
+          kind: 'patch',
+          eventText: `reacted to ${next.id}`,
+          details: {
+            messageId: next.id,
+            reactionCount: next.reactions.length,
+            latestReaction: next.reactions.at(-1),
+          },
+        }
+      },
+    })
+  }, [runLoggedOperation, updateMessageCollections])
 
   const toggleDynamicHeight = useCallback(() => {
     void runLoggedOperation({
@@ -819,6 +958,9 @@ export function useDemoMessageScenario(
     loadHistoryBatch,
     appendMessage,
     appendLongBurst,
+    editMessage,
+    deleteMessage,
+    reactToMessage,
     toggleDynamicHeight,
     sendMessage,
     followBottom,
@@ -848,4 +990,37 @@ function formatPendingOperations(operations: Map<string, number>): string {
       count > 1 ? `${operation} ×${count}` : operation,
     )
     .join(' + ')
+}
+
+function computeHasMoreBefore(
+  feedMessages: DemoMessage[],
+  loadedMessages: DemoMessage[],
+): boolean {
+  const feedFirst = feedMessages[0]
+  const loadedFirst = loadedMessages[0]
+
+  if (!feedFirst || !loadedFirst) {
+    return false
+  }
+
+  return feedFirst.sequence < loadedFirst.sequence
+}
+
+function getEditedMessageKind(
+  currentKind: DemoMessage['kind'],
+  body: string,
+): DemoMessage['kind'] {
+  if (currentKind === 'image' || currentKind === 'video' || currentKind === 'album') {
+    return currentKind
+  }
+
+  return body.length > 180 ? 'longText' : 'text'
+}
+
+function getRandomReaction(): string {
+  return (
+    REACTION_EMOJIS[Math.floor(Math.random() * REACTION_EMOJIS.length)] ??
+    REACTION_EMOJIS[0] ??
+    '😀'
+  )
 }

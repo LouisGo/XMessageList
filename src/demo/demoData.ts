@@ -15,6 +15,8 @@ export type DemoMessage = {
   tone: 'self' | 'peer' | 'system'
   kind: DemoMessageKind
   expanded: boolean
+  editedAt?: string
+  reactions: string[]
   media?: {
     width: number
     height: number
@@ -87,6 +89,7 @@ export function createOutgoingMessage(
     tone: 'self',
     kind: body.length > 180 ? 'longText' : 'text',
     expanded: false,
+    reactions: [],
   }
 
   syncFeedCursor(feedId, [message])
@@ -145,6 +148,15 @@ export function normalizeDemoMessages(
       feedId: message.feedId || feedId,
       sequence,
       expanded: Boolean(message.expanded),
+      reactions: Array.isArray(message.reactions)
+        ? message.reactions.filter((reaction): reaction is string =>
+            typeof reaction === 'string' && reaction.length > 0,
+          )
+        : [],
+      editedAt:
+        typeof message.editedAt === 'string' && message.editedAt.length > 0
+          ? message.editedAt
+          : undefined,
     }
   })
 
@@ -169,6 +181,7 @@ function createMessage(feedId: string, sequence: number): DemoMessage {
     tone,
     kind,
     expanded: absolute % 8 === 0,
+    reactions: [],
     media: createMedia(kind, absolute),
   }
 }
@@ -238,20 +251,43 @@ export function estimateDemoMessageHeight(message: DemoMessage): number {
   const textHeight = message.kind === 'longText' ? 230 : 76
   const mediaHeight = message.media ? message.media.height + 28 : 0
   const expandedHeight = message.expanded ? 78 : 0
-  return textHeight + mediaHeight + expandedHeight
+  const reactionRows =
+    message.reactions.length > 0
+      ? Math.ceil(message.reactions.length / 6)
+      : 0
+  const reactionHeight = reactionRows * 32
+  return textHeight + mediaHeight + expandedHeight + reactionHeight
 }
 
 export function toCommittedItem(
   message: DemoMessage,
 ): CommittedMessageDataItem<DemoMessage> {
+  const contentVersion = getDemoMessageContentVersion(message)
   return {
     kind: 'committed',
     key: { kind: 'committed', messageId: message.id },
     message,
-    version: message.expanded ? 2 : 1,
-    contentVersion: message.expanded ? 2 : 1,
+    version: contentVersion,
+    contentVersion,
     estimatedHeight: estimateDemoMessageHeight(message),
   }
+}
+
+function getDemoMessageContentVersion(message: DemoMessage): number {
+  return (
+    Math.abs(
+      hashCode(
+        JSON.stringify({
+          body: message.body,
+          kind: message.kind,
+          expanded: message.expanded,
+          editedAt: message.editedAt ?? '',
+          reactions: message.reactions,
+          media: message.media ?? null,
+        }),
+      ),
+    ) + 1
+  )
 }
 
 export function createDemoSnapshot(input: {
