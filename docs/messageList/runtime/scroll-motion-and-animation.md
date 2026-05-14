@@ -277,8 +277,9 @@ command followBottom
 -> measure mounted rows
 -> compute real bottom target
 -> bounded-animate to bottom
--> set LOCKED
--> emit viewportAnchorChanged(transaction-settle)
+-> [motion settle callback]:
+     set LOCKED
+     emit viewportAnchorChanged(transaction-settle)
 ```
 
 注意：
@@ -357,8 +358,9 @@ command jump(target identity)
 -> resolve measurable target row
 -> compute targetTop for center/top alignment
 -> bounded-animate final visible segment
--> set UNLOCKED
--> emit viewportAnchorChanged(transaction-settle)
+-> [motion settle callback]:
+     set UNLOCKED
+     emit viewportAnchorChanged(transaction-settle)
 ```
 
 规则：
@@ -368,9 +370,9 @@ command jump(target identity)
 - target DOM fallback 仍按现有 nearest measurable row 逻辑。
 - 如果 command 被新的 jump / followBottom supersede，取消当前 motion。
 - 动画期间 scroll source 是 `jump`。
-- `viewportAnchorChanged(transaction-settle)` 由 motion settle 触发。App 层可用
-  该 anchor 和原始 command identity 决定是否展示 quote / jump 高亮；runtime
-  不直接管理业务高亮样式。
+- `viewportAnchorChanged(transaction-settle)` 由 motion settle callback 触发。
+- 接入方从 `viewportAnchorChanged` 的 anchor 里读取 `targetKey` 并执行高亮，
+  不由 runtime 驱动业务高亮。
 
 ### 6.4 Restore
 

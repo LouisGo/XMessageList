@@ -148,9 +148,21 @@ Locked：
 publish appended window
 wait commit
 measure new rows
-start bounded bottom motion or instant bottom write
+if motion enabled and reduced motion is not requested:
+  start bounded bottom motion
+else:
+  instant bottom write
 keep LOCKED
 ```
+
+`instant bottom write` 只用于 `prefers-reduced-motion` 生效或
+`motionOptions.enabled=false` 的降级路径。距离很短和距离很远都仍走
+`ScrollMotionEngine`：短距离直接 bounded animate，远距离先按 bounded motion
+规则同步预落位，再动画最后可见段。
+
+如果启动 bounded bottom motion，`viewportAnchorChanged(transaction-settle)` 由
+motion settle callback 发出；如果走 instant bottom write，则可在同步写入和
+anchor capture 完成后由 transaction settle 发出。
 
 Append 不应该因为新消息到达而抢走用户向上阅读的位置。
 
@@ -255,8 +267,9 @@ suspend current window
 publish target window with estimated spacer
 wait commit
 measure target row
-scroll target to requested alignment
-capture new anchor
+resolve target alignment
+handoff to motion if enabled, otherwise apply instant correction
+motion settle or sync correction captures new anchor
 enter READY or RECOVERING->READY
 ```
 
