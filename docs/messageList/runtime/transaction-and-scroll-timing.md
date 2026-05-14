@@ -6,9 +6,12 @@
 
 ## 2. Core Pipeline
 
-所有会改变 DOM window、spacer 或 scrollTop 的操作进入 transaction。
+所有会改变 DOM window、spacer，或需要 commit-time scroll correction 的操作进入
+transaction。Commit + measure 之后的 bounded scroll motion 不属于 transaction，
+但任何新 transaction 启动前都必须先取消 active motion。
 
 ```text
+cancel active motion if any
 begin transaction
 -> capture pre-state
 -> compute projection
@@ -22,6 +25,11 @@ begin transaction
 ```
 
 React commit ack 之后，第一轮测量使用同步 DOM read。ResizeObserver 只处理后续异步高度变化。
+
+如果 transaction settle 后需要目的地滚动动画，transaction 先释放
+`TRANSACTING`，再把 scrollTop 写入权交给 `ScrollMotionEngine`。Motion settle
+才负责最终 anchor capture 和 `viewportAnchorChanged(transaction-settle)` emit；
+transaction commit callback 不为同一次目的地滚动提前 emit。
 
 ## 3. Read / Write Discipline
 
@@ -140,7 +148,7 @@ Locked：
 publish appended window
 wait commit
 measure new rows
-requestAnimationFrame(scrollToBottom)
+start bounded bottom motion or instant bottom write
 keep LOCKED
 ```
 
@@ -172,6 +180,10 @@ publish spacer correction if affected
 ```
 
 底部锁定是 anchored stabilization 的例外状态。
+
+如果 `ScrollMotionEngine` 正在运行，ResizeObserver stabilization 不得直接写
+`scrollTop`。它必须把影响 motion target 的 delta 合并给 motion engine，或取消
+motion 后再执行 normal stabilization。任一帧内只能有一个 scrollTop writer。
 
 ## 9. Scroll Event Handling
 
@@ -206,6 +218,7 @@ type ScrollSource =
   | 'programmatic'
   | 'recovery'
   | 'followBottom'
+  | 'jump'
   | 'momentum';
 ```
 
@@ -220,6 +233,20 @@ container.scrollTop += delta;
 ```
 
 scroll handler 在 token 有效期间不把该 scroll 解释成用户主动滚动。
+
+`source` 必须表达真实语义，不得为了复用 correction token 滥用
+`recovery`：
+
+- prepend / resize / commit-time anchor correction 使用 `recovery` 或
+  `programmatic`，取决于是否处于 error recovery。
+- follow-bottom motion 和 far-distance pre-positioning 使用 `followBottom`。
+- quote / jump motion 和 far-distance pre-positioning 使用 `jump`。
+- bottom locked append / send 使用 `programmatic`，并由已有 LOCKED 状态决定
+  settle 后是否继续 LOCKED。
+
+有效 token 只覆盖 runtime 自己的 scroll write。用户 wheel / touch / pointer /
+keyboard intent 到达时必须取消 active motion，并让后续 scroll 重新按 user /
+momentum 分类。
 
 ## 11. Jump Transaction
 

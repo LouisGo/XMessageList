@@ -55,7 +55,8 @@ class MessageViewportRuntime {
 | RenderWindowEngine | 计算 mount item 范围和 trim 计划 | `renderWindow` |
 | SpacerEngine | 估算并修正 spacer 高度 | `topSpacer` / `bottomSpacer` |
 | MeasurementEngine | 同步测量、ResizeObserver、height cache | 不直接可见 |
-| ScrollIntentEngine | 区分 user / programmatic / recovery / follow bottom | `bottomLockState` |
+| ScrollIntentEngine | 区分 user / programmatic / recovery / follow bottom / jump | `bottomLockState` |
+| ScrollMotionEngine | 执行 bounded JS scroll motion、同步取消和 settle 回调 | 不直接可见 |
 | TransactionRunner | 串行执行 bootstrap / prepend / append / jump / resize | 不直接可见 |
 | LifecycleGuard | generation、destroy、detach、异步资源清理 | 不直接可见 |
 
@@ -177,6 +178,24 @@ type RuntimeState =
 
 `detach` 不等同于 `destroy`。React StrictMode 下允许 `attach -> detach -> attach`，runtime 必须保持幂等。
 
+`READY` 可以有 runtime 私有子状态，但这些子状态不进入 public snapshot：
+
+```ts
+type ReadySubstate =
+  | 'READY_IDLE'
+  | 'READY_FOLLOW_BOTTOM_PENDING'
+  | 'READY_MOTION_ACTIVE';
+```
+
+规则：
+
+- `READY_FOLLOW_BOTTOM_PENDING` 表示显式 `followBottom` 已经转成
+  `needMoreAfter(bottom-follow)`，正在等待 newer page；它不是 transaction。
+- `READY_MOTION_ACTIVE` 表示 `ScrollMotionEngine` 正在拥有 `scrollTop` 写入权。
+- 任意新 transaction 启动前，`TransactionRunner` 必须同步取消 active motion。
+- Motion settle 可以保持 public state 为 `READY`，但必须在 settle 后再 emit
+  `viewportAnchorChanged(transaction-settle)`。
+
 ## 8. Public Events
 
 Runtime 可以向外发出 view-level 事件：
@@ -213,6 +232,11 @@ type MessageViewportRuntimeEvent =
 时发出 `reason: 'bottom-follow'`。接入方必须先加载 newer page，直到
 `hasMoreAfter=false` 后再让 runtime 进入真正的 BottomLocked。
 
+显式 `followBottom` 的 `bottom-follow` 语义由 runtime pending command 保持。
+在 pending 期间，runtime 不发普通 `near-bottom`，也不把当前 DataWindow 的物理
+底部解释成 feed latest bottom。用户主动向上滚动、jump / restore / reset、
+generation change 或 detach 会取消 pending command。
+
 React/demo 层不得用 raw `scrollTop` / `scrollHeight` 自行重建向下分页判断；
 否则会绕过 runtime 的 scroll source classification、edge latch 和 transaction
 时序，导致吸底与向下分页相互打架。
@@ -221,6 +245,11 @@ React/demo 层也不得 query projection DOM 或注册 raw scroll listener 来�
 恢复位点。Runtime 在 scroll rAF / transaction settle 后发出
 `viewportAnchorChanged`，React adapter 把它透传给接入方；是否持久化、持久化到
 哪里属于 data/demo/app 层。
+
+如果某次 transaction 之后启动了 scroll motion，`transaction-settle` 事件由
+motion settle callback 发出；transaction commit callback 不得为同一目的地滚动
+提前发出第二次 anchor event。没有 motion 的 transaction 仍可在同步 correction
+完成后发出 `transaction-settle`。
 
 ## 9. Implementation Order
 
