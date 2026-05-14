@@ -53,7 +53,7 @@ export class ScrollIntentEngine {
     currentFrame: number,
     source = this.classifyScroll(currentFrame),
   ): boolean {
-    if (source === 'recovery' || source === 'followBottom') {
+    if (source === 'recovery' || source === 'followBottom' || source === 'jump') {
       return false
     }
 

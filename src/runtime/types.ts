@@ -186,7 +186,54 @@ export type ScrollSource =
   | 'programmatic'
   | 'recovery'
   | 'followBottom'
+  | 'jump'
   | 'momentum'
+
+export type ScrollMotionCancelReason =
+  | 'transaction-supersede'
+  | 'user-scroll'
+  | 'command-supersede'
+  | 'generation-change'
+  | 'detach'
+  | 'destroy'
+  | 'container-missing'
+  | 'commit-timeout'
+  | 'resize-during-motion'
+  | 'reduced-motion-change'
+
+export type ReadySubstate =
+  | 'READY_IDLE'
+  | 'READY_FOLLOW_BOTTOM_PENDING'
+  | 'READY_MOTION_ACTIVE'
+
+export type ActiveMotion = {
+  id: number
+  source: Extract<ScrollSource, 'programmatic' | 'followBottom' | 'jump'>
+  frameId: number | null
+}
+
+export type ScrollMotionStart = {
+  container: HTMLElement
+  source: Extract<ScrollSource, 'programmatic' | 'followBottom' | 'jump'>
+  targetTop: number
+  maxDistancePx: number
+  minDurationMs: number
+  maxDurationMs: number
+  now: () => number
+  requestFrame: RuntimeScheduler['requestAnimationFrame']
+  cancelFrame: RuntimeScheduler['cancelAnimationFrame']
+  onFrameWrite: (nextTop: number, source: ScrollSource) => void
+  onSettle: () => void
+  onCancel: () => void
+}
+
+export type ScrollMotionOptions = {
+  enabled?: boolean
+  respectReducedMotion?: boolean
+  maxDistancePx?: number
+  minDurationMs?: number
+  maxDurationMs?: number
+}
 
 export type MessageViewportRuntimeEvent =
   | {
@@ -253,4 +300,5 @@ export type MessageViewportRuntimeOptions = {
   bottomLockThresholdPx?: number
   bottomUnlockThresholdPx?: number
   edgeLoadThresholdPx?: number
+  motion?: ScrollMotionOptions
 }

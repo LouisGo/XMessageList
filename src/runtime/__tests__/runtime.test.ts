@@ -77,6 +77,7 @@ function createRuntime(input?: {
     generation: 1,
     scheduler,
     observers,
+    motion: { enabled: false },
     window: {
       minMountedItems: 10,
       maxMountedItems: 20,

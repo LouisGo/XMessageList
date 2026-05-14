@@ -138,3 +138,19 @@ export function mergeWindowConfig(
 export function getWidthBucket(width: number): number {
   return Math.round(width / 32)
 }
+
+export function easeOutQuint(t: number): number {
+  return 1 - (1 - t) ** 5
+}
+
+export function getPrefersReducedMotion(): boolean {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  if (typeof window.matchMedia !== 'function') {
+    return false
+  }
+
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}

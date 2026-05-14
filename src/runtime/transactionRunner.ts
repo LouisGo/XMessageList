@@ -20,6 +20,8 @@ export class TransactionRunner {
 
   private stopped = false
 
+  private beforeTransaction: ((kind: ViewportTransactionKind) => void) | null = null
+
   enqueue(
     kind: ViewportTransactionKind,
     run: () => Promise<void>,
@@ -76,6 +78,10 @@ export class TransactionRunner {
     return this.queue.length + (this.active ? 1 : 0)
   }
 
+  setBeforeTransactionHook(hook: (kind: ViewportTransactionKind) => void): void {
+    this.beforeTransaction = hook
+  }
+
   private async drain(): Promise<void> {
     if (this.active || this.stopped) {
       return
@@ -88,6 +94,7 @@ export class TransactionRunner {
     }
 
     this.active = true
+    this.beforeTransaction?.(task.kind)
 
     try {
       await task.run()
