@@ -51,6 +51,7 @@ Demo 只负责 fake data、业务消息渲染、调试按钮和日志，不监�
 | [react-projection-adapter-contract.md](./react-projection-adapter-contract.md) | 写 React adapter / hook / row wrapper 前 | React 如何连接 runtime 而不拥有滚动逻辑 |
 | [window-and-spacer-algorithms.md](./window-and-spacer-algorithms.md) | 实现 RenderWindow、trim、spacer 前 | window 怎么滑动，spacer 怎么估算和修正 |
 | [transaction-and-scroll-timing.md](./transaction-and-scroll-timing.md) | 实现 prepend、append、jump、resize 前 | commit 后何时测量、何时修正 scrollTop |
+| [scroll-motion-and-animation.md](./scroll-motion-and-animation.md) | 实现 follow-bottom / jump 动画前 | 为什么不用原生 smooth，如何做 bounded runtime motion |
 | [lifecycle-and-testing.md](./lifecycle-and-testing.md) | 接入 feed 切换、StrictMode、测试前 | 如何清理异步资源，怎么写可验证测试 |
 | [research-notes.md](./research-notes.md) | 需要理解外部参考如何取舍时 | React Virtuoso 与 Telegram Web 的可借鉴点 |
 

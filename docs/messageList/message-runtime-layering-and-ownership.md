@@ -19,9 +19,11 @@
 
 # 2. Layer Model
 
-新消息架构分为五层。
+新消息架构分为五层，外加 app 侧的 conversation / session host。
 
 ```text
+Conversation / Session Host (app policy)
+  -> active feed selection / runtime cache
 Shared Bridge Contracts
   -> Main Message Data Service
   -> Renderer Message Data Runtime
@@ -58,6 +60,8 @@ Shared Bridge Contracts
 | spacer                       | Renderer Viewport Runtime     |
 | measurement                  | Renderer Viewport Runtime     |
 | scrollTop writes             | Renderer Viewport Runtime     |
+| active feed selection        | Conversation / Session Host   |
+| viewport runtime LRU policy  | Conversation / Session Host   |
 | feed teardown                | Layer owner                   |
 | command queue                | Renderer Viewport Runtime     |
 | message row rendering        | React Projection              |
@@ -65,7 +69,37 @@ Shared Bridge Contracts
 
 ---
 
-# 4. Shared Bridge Contracts
+# 4. Conversation / Session Host
+
+conversation / session host 负责 app policy：
+
+- 当前 active feed。
+- feed scoped viewport runtime cache。
+- runtime cache capacity / LRU 淘汰策略。
+- 页面最终销毁时释放仍在 cache 内的 runtime。
+
+允许：
+
+- 按 `feedId` 创建或复用 `MessageViewportRuntime`。
+- 将 active runtime 传给 React projection。
+- 在 LRU 淘汰或关闭会话时调用 `runtime.destroy()`。
+- 保留每个 feed 的本地 data-window / session state，避免缓存命中后再次强制
+  bootstrap 把稳定 viewport 打回初始态。
+
+禁止：
+
+- 计算 RenderWindow / spacer。
+- 监听 raw scroll 代替 runtime edge event。
+- query projection DOM 结构持久化 anchor。
+- 把 demo / app 的 cache policy 下沉进 runtime core。
+
+feed 切走但仍在 cache 内时，应让 React projection 对旧 runtime `detach()`，
+不应立即 `destroy()`。切回同一 feed 且 runtime 命中时，应恢复该 feed 的 session
+state，而不是重新走 `feed.load`。
+
+---
+
+# 5. Shared Bridge Contracts
 
 Shared contracts 负责：
 
@@ -90,7 +124,7 @@ view-agnostic
 
 ---
 
-# 5. Main Message Data Service
+# 6. Main Message Data Service
 
 main 层负责：
 
@@ -117,7 +151,7 @@ main 层负责：
 
 ---
 
-# 6. Renderer Message Data Runtime
+# 7. Renderer Message Data Runtime
 
 renderer data 层负责：
 
@@ -143,7 +177,7 @@ renderer data 层负责：
 
 ---
 
-# 7. Renderer Viewport Runtime
+# 8. Renderer Viewport Runtime
 
 viewport runtime 负责：
 
@@ -183,7 +217,7 @@ MessageDataRuntime
 
 ---
 
-# 8. React Projection
+# 9. React Projection
 
 React 负责：
 
@@ -226,7 +260,7 @@ viewport runtime
 
 ---
 
-# 9. Actions Boundary
+# 10. Actions Boundary
 
 `@actions` 负责：
 
@@ -268,7 +302,7 @@ action 禁止：
 
 ---
 
-# 10. Synchronization Direction
+# 11. Synchronization Direction
 
 正确方向：
 
@@ -306,9 +340,13 @@ Main process
 
 ---
 
-# 11. Feed Lifecycle
+# 12. Feed Lifecycle
 
-Feed 切换必须显式 teardown。
+Feed 切换必须显式 lifecycle transition。是否 teardown 取决于 owner policy：
+
+- 若 feed runtime 仍在 conversation host 的 cache 内，只 detach projection，保留
+  height cache / anchor / projection snapshot。
+- 若 feed runtime 被 LRU 淘汰、会话关闭或页面最终销毁，调用 `destroy()`。
 
 按层清理：
 
@@ -316,8 +354,8 @@ Feed 切换必须显式 teardown。
 | --- | --- |
 | Main Message Data Service | cancel in-flight / release raw cache |
 | Renderer Message Data Runtime | unsubscribe / clear DataWindow / bump reset revision |
-| Renderer Viewport Runtime | reset AnchorState / BottomLockState / transactions / height cache |
-| React Projection | unmount old projection |
+| Renderer Viewport Runtime | detach or destroy by host policy |
+| React Projection | unmount old projection / attach active runtime |
 
 禁止：
 
@@ -339,7 +377,7 @@ discard
 
 ---
 
-# 12. Error Boundary
+# 13. Error Boundary
 
 Data 错误归 Data Runtime。
 
@@ -357,7 +395,7 @@ reset command
 
 ---
 
-# 13. Ownership Rules
+# 14. Ownership Rules
 
 判断不清时使用以下规则：
 
@@ -368,6 +406,7 @@ reset command
 | 需要知道 DOM 高度？              | viewport runtime      |
 | 需要写 scrollTop？               | viewport runtime      |
 | 需要渲染消息内容？               | React projection      |
+| 需要决定保留几个会话 runtime？   | conversation host     |
 | 需要从按钮 / 菜单 / 快捷键触发？ | `@actions`            |
 
 最终规则：

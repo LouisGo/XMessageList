@@ -43,6 +43,7 @@ if (!lifecycleGuard.isCurrent(feedId, generation)) return;
 
 `detach()`：
 
+- 保存当前 container `scrollTop`，供同一 runtime 再次 attach 时恢复。
 - 移除 scroll listener。
 - disconnect container observer。
 - disconnect row ResizeObserver。
@@ -61,6 +62,28 @@ if (!lifecycleGuard.isCurrent(feedId, generation)) return;
 - 标记 DESTROYED。
 
 `detach` 用于 React projection 临时卸载；`destroy` 用于 runtime 彻底废弃。
+
+## 3.1 Feed Runtime Cache
+
+生产级 IM 页面不应该把 `MessageViewportRuntime` 绑定到单个 viewport 组件的
+`useMemo` 生命周期上。更合理的 ownership 是：
+
+- conversation / session host 按 `feedId` 持有 runtime cache。
+- React projection 只接收当前 active runtime。
+- feed 切走时 projection 对旧 runtime 执行 `detach()`，保留 height cache、
+  anchor、scrollTop 和 projection snapshot。
+- feed 切回且 runtime cache 命中时，不应重新 bootstrap 同一 runtime；host 只恢复
+  该 feed 的本地 data-window/session state。
+- LRU 淘汰、显式关闭会话或页面最终销毁时，host 才调用 `destroy()`。
+
+缓存策略属于 app / demo policy，不属于 viewport runtime core。runtime core 只保证：
+
+- 同一个 runtime 可经历 `attach -> detach -> attach`。
+- `destroy()` 后拒绝继续接收 command / snapshot。
+- 异步回调仍按 `feedId + generation` 丢弃 stale work。
+
+React 18 StrictMode 下，host 如果在 effect cleanup 中释放 cache，必须延后一拍或
+采用等价 guard，避免开发环境的模拟 cleanup 把仍会复用的 runtime 销毁。
 
 ## 4. Cleanup Order
 
@@ -169,6 +192,8 @@ Runtime 不吞掉不可恢复错误。它发布 `viewportError`，由上层决�
 7. jump 到历史消息，目标消息可见且有上下文。
 8. feed 切换后旧 ResizeObserver 回调不污染新 feed。
 9. StrictMode 下 attach/detach/attach 不重复 observer。
+10. LRU 复用 feed runtime 时，切回未淘汰 feed 不丢失 projection/height cache。
+11. LRU 淘汰 feed runtime 时必须调用 `destroy()`，被淘汰 feed 再切回走新 runtime + restore/latest。
 
 ## 10. Test Assertions
 
