@@ -74,6 +74,9 @@ if (!lifecycleGuard.isCurrent(feedId, generation)) return;
   anchor、scrollTop 和 projection snapshot。
 - feed 切回且 runtime cache 命中时，不应重新 bootstrap 同一 runtime；host 只恢复
   该 feed 的本地 data-window/session state。
+- feed 切换但 runtime cache miss 时，host 应采用 staged activation：先保留当前
+  active runtime 和 projection，后台准备目标 feed 的 data window，并对目标 runtime
+  完成 `setDataSnapshot + bootstrap` 后再切换 active runtime。
 - LRU 淘汰、显式关闭会话或页面最终销毁时，host 才调用 `destroy()`。
 
 缓存策略属于 app / demo policy，不属于 viewport runtime core。runtime core 只保证：
@@ -84,6 +87,9 @@ if (!lifecycleGuard.isCurrent(feedId, generation)) return;
 
 React 18 StrictMode 下，host 如果在 effect cleanup 中释放 cache，必须延后一拍或
 采用等价 guard，避免开发环境的模拟 cleanup 把仍会复用的 runtime 销毁。
+
+首次进入页面且没有旧 runtime 可保留时，React projection 可以在数据就绪前呈现空白；
+是否展示 loading 文案或 skeleton 属于 app 视觉策略，不属于 viewport runtime core。
 
 ## 4. Cleanup Order
 

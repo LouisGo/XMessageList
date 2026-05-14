@@ -1,53 +1,19 @@
 import {
   type FormEvent,
-  useEffect,
-  useMemo,
-  useRef,
   useState,
 } from 'react'
 import {
   MessageViewport,
-  MessageViewportRuntime,
   type MessageDataItem,
 } from '../index'
 import { type DemoMessage } from './demoData'
-import { DEMO_FEEDS } from './demoFeeds'
+import { useDemoFeedRuntimeCache } from './useDemoFeedRuntimeCache'
 import { useDemoMessageScenario } from './useDemoMessageScenario'
 
 export function DemoMessageViewport() {
-  const runtime = useMemo(
-    () =>
-      new MessageViewportRuntime<DemoMessage>({
-        feedId: DEMO_FEEDS[0]?.id ?? 'feed-runtime',
-        generation: 1,
-        window: {
-          minMountedItems: 60,
-          maxMountedItems: 180,
-          defaultItemHeight: 104,
-        },
-        bottomUnlockThresholdPx: 200,
-        edgeLoadThresholdPx: 72,
-      }),
-    [],
-  )
-  const scenario = useDemoMessageScenario(runtime)
-  const destroyTimerRef = useRef<number | null>(null)
+  const runtimeCache = useDemoFeedRuntimeCache()
+  const scenario = useDemoMessageScenario(runtimeCache)
   const [draft, setDraft] = useState('')
-
-  useEffect(() => {
-    if (destroyTimerRef.current !== null) {
-      window.clearTimeout(destroyTimerRef.current)
-      destroyTimerRef.current = null
-    }
-
-    return () => {
-      // StrictMode 会立即执行一次 cleanup 再重新 setup；destroy 延后一拍并允许下次 setup 取消，
-      // 避免把仍会复用的 runtime 置为 DESTROYED，导致 bootstrap 和按钮命令全部 no-op。
-      destroyTimerRef.current = window.setTimeout(() => {
-        runtime.destroy()
-      }, 0)
-    }
-  }, [runtime])
 
   const sendDraft = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -217,13 +183,21 @@ export function DemoMessageViewport() {
           {scenario.feeds.map((feed) => (
             <div
               key={feed.id}
-              className={`feed-item ${
-                feed.id === scenario.activeFeedId ? 'active' : ''
-              }`}
+              className={[
+                'feed-item',
+                feed.id === scenario.activeFeedId ? 'active' : '',
+                feed.id === scenario.selectedFeedId &&
+                feed.id !== scenario.activeFeedId
+                  ? 'selected'
+                  : '',
+                feed.id === scenario.pendingFeedId ? 'pending' : '',
+              ].filter(Boolean).join(' ')}
             >
               <button
                 type="button"
                 className="feed-select-button"
+                aria-current={feed.id === scenario.activeFeedId ? 'true' : undefined}
+                aria-busy={feed.id === scenario.pendingFeedId ? true : undefined}
                 data-testid={`feed-button-${feed.id}`}
                 onClick={() => scenario.selectFeed(feed.id)}
               >
@@ -249,7 +223,7 @@ export function DemoMessageViewport() {
       </aside>
         <section className="chat-surface" aria-label="Message runtime demo">
           <MessageViewport
-            runtime={runtime}
+            runtime={scenario.activeRuntime}
             className="message-viewport"
             renderMessage={renderDemoItem}
             renderTopEdge={() =>

@@ -42,6 +42,7 @@ import {
   savePersistedDemoFeed,
   writeDemoLog,
 } from './demoLocalStoreClient'
+import type { DemoFeedRuntimeCache } from './useDemoFeedRuntimeCache'
 
 const PAGE_SIZE = 20
 const FEED_LOAD_DELAY_MS = 180
@@ -103,10 +104,42 @@ type ViewportAnchorRememberReason =
   | 'before-feed-switch'
   | 'before-unmount'
 
+type CachedFeedSessionState = {
+  feedId: string
+  messages: DemoMessage[]
+  feedMessages: DemoMessage[]
+  revision: number
+  generation: number
+  hasMoreBefore: boolean
+  hasMoreAfter: boolean
+  lastViewportAnchor?: PersistedViewportAnchor
+}
+
+type LoadedFeedResponse = Extract<
+  GetLatestMessagesResp<DemoMessage> | GetMessagesAroundResp<DemoMessage>,
+  { ok: true }
+>
+
+type LoadedFeedWindow = {
+  feed: DemoFeedDefinition
+  normalizedFeedMessages: DemoMessage[]
+  messages: DemoMessage[]
+  persistedViewportAnchor?: PersistedViewportAnchor
+  bootstrapMode: 'latest' | 'restored'
+  bootstrapTarget?: AnchorState
+  usedPersistedViewportAnchor: boolean
+  restoreResp: GetMessagesAroundResp<DemoMessage> | null
+  resp: LoadedFeedResponse
+  persistedFeed: NonNullable<Awaited<ReturnType<typeof loadPersistedDemoFeed>>>
+}
+
 export type DemoMessageScenario = {
   feeds: DemoFeedDefinition[]
   activeFeedId: string
+  selectedFeedId: string
+  pendingFeedId: string | null
   activeFeed: DemoFeedDefinition
+  activeRuntime: MessageViewportRuntime<DemoMessage>
   // 整个 feed 的持久化总数，不等于 runtime 当前已加载窗口大小。
   messageCount: number
   // 当前已经加载进 runtime data snapshot 的消息数。
@@ -137,10 +170,12 @@ export type DemoMessageScenario = {
  * runtime 仍然只接收 MessageDataSnapshot 和 command，不知道 demo 的 mock 请求过程。
  */
 export function useDemoMessageScenario(
-  runtime: MessageViewportRuntime<DemoMessage>,
+  runtimeCache: DemoFeedRuntimeCache,
 ): DemoMessageScenario {
   const initialFeedId = DEMO_FEEDS[0]?.id ?? 'feed-runtime'
   const [activeFeedId, setActiveFeedId] = useState(initialFeedId)
+  const [selectedFeedId, setSelectedFeedId] = useState(initialFeedId)
+  const [pendingFeedId, setPendingFeedId] = useState<string | null>(null)
   const [messageCount, setMessageCount] = useState(0)
   const [loadedMessageCount, setLoadedMessageCount] = useState(0)
   const [loadingBefore, setLoadingBefore] = useState(false)
@@ -151,6 +186,7 @@ export function useDemoMessageScenario(
   )
 
   const activeFeedIdRef = useRef(activeFeedId)
+  const activeRuntimeRef = useRef<MessageViewportRuntime<DemoMessage> | null>(null)
   // 当前交给 runtime 的 data window。
   const messagesRef = useRef<DemoMessage[]>([])
   // 当前 feed 在本地持久化层的完整消息集。
@@ -168,6 +204,9 @@ export function useDemoMessageScenario(
     ((source: 'edge-user' | 'follow-bottom') => void) | null
   >(null)
   const loadTokenRef = useRef(0)
+  const feedSessionStateRef = useRef(new Map<string, CachedFeedSessionState>())
+  const nextFeedSwitchRuntimeCacheHitRef = useRef(false)
+  const stagedActivationSkipRef = useRef(new Set<string>())
   const pendingOperationCountRef = useRef(0)
   const activeOperationsRef = useRef(new Map<string, number>())
 
@@ -175,10 +214,17 @@ export function useDemoMessageScenario(
     () => getDemoFeedDefinition(activeFeedId),
     [activeFeedId],
   )
+  const [activeRuntime, setActiveRuntime] = useState(
+    () => runtimeCache.getRuntime(initialFeedId),
+  )
 
   useEffect(() => {
     activeFeedIdRef.current = activeFeedId
   }, [activeFeedId])
+
+  useEffect(() => {
+    activeRuntimeRef.current = activeRuntime
+  }, [activeRuntime])
 
   const log = useCallback((entry: DemoLogEntry) => writeDemoLog(entry), [])
 
@@ -186,6 +232,253 @@ export function useDemoMessageScenario(
     setMessageCount(feedMessagesRef.current.length)
     setLoadedMessageCount(messagesRef.current.length)
   }, [])
+
+  const saveCurrentFeedSessionState = useCallback((feedId = activeFeedIdRef.current) => {
+    feedSessionStateRef.current.set(feedId, {
+      feedId,
+      messages: messagesRef.current,
+      feedMessages: feedMessagesRef.current,
+      revision: revisionRef.current,
+      generation: generationRef.current,
+      hasMoreBefore: hasMoreBeforeRef.current,
+      hasMoreAfter: hasMoreAfterRef.current,
+      lastViewportAnchor: lastViewportAnchorRef.current,
+    })
+  }, [])
+
+  const restoreFeedSessionState = useCallback((
+    state: CachedFeedSessionState,
+  ) => {
+    messagesRef.current = state.messages
+    feedMessagesRef.current = state.feedMessages
+    revisionRef.current = state.revision
+    generationRef.current = state.generation
+    hasMoreBeforeRef.current = state.hasMoreBefore
+    hasMoreAfterRef.current = state.hasMoreAfter
+    lastViewportAnchorRef.current = state.lastViewportAnchor
+    loadingBeforeRef.current = false
+    loadingAfterRef.current = false
+    feedLoadingRef.current = false
+    downwardScrollModeRef.current = 'idle'
+    setLoadingBefore(false)
+    setFeedLoading(false)
+    syncDisplayedCounts()
+  }, [syncDisplayedCounts])
+
+  const loadFeedWindow = useCallback(async (
+    feedId: string,
+    requestId: string,
+  ): Promise<LoadedFeedWindow> => {
+    const feed = getDemoFeedDefinition(feedId)
+
+    await sleep(FEED_LOAD_DELAY_MS)
+
+    let persistedFeed = await loadPersistedDemoFeed(feedId)
+
+    if (!persistedFeed) {
+      const seedMessages = createDemoMessages(feed.seedCount, feedId)
+      persistedFeed = {
+        version: 1,
+        feedId,
+        revision: 1,
+        hasMoreBefore: true,
+        lastViewportAnchor: undefined,
+        messages: seedMessages,
+        updatedAt: new Date().toISOString(),
+      }
+      await savePersistedDemoFeed(persistedFeed)
+      void log({
+        requestId: createDemoRequestId('feed.seed'),
+        operation: 'feed.seed',
+        phase: 'success',
+        feedId,
+        messageCount: seedMessages.length,
+        details: { seedCount: feed.seedCount, parentRequestId: requestId },
+      })
+    }
+
+    const normalizedFeedMessages = normalizeDemoMessages(
+      feedId,
+      persistedFeed.messages,
+    )
+    const persistedViewportAnchor = persistedFeed.lastViewportAnchor
+    let bootstrapMode: 'latest' | 'restored' = 'latest'
+    let bootstrapTarget: AnchorState | undefined
+    let usedPersistedViewportAnchor = false
+    let restoreResp: GetMessagesAroundResp<DemoMessage> | null = null
+    let resp: GetLatestMessagesResp<DemoMessage> | GetMessagesAroundResp<DemoMessage>
+
+    if (persistedViewportAnchor) {
+      restoreResp = await getMessagesAround({
+        feedId,
+        anchor: {
+          messageId: persistedViewportAnchor.messageId,
+          position: persistedViewportAnchor.position,
+        },
+        before: RESTORE_BEFORE_PAGE_SIZE,
+        after: RESTORE_AFTER_PAGE_SIZE,
+      })
+      resp = restoreResp
+      usedPersistedViewportAnchor = restoreResp.ok
+    } else {
+      resp = await getLatestMessages({
+        feedId,
+        count: PAGE_SIZE,
+      })
+    }
+
+    if (persistedViewportAnchor && isErrorResponse(resp)) {
+      resp = await getLatestMessages({
+        feedId,
+        count: PAGE_SIZE,
+      })
+    }
+
+    if (isErrorResponse(resp)) {
+      throw new Error(resp.errorMessage)
+    }
+
+    if (persistedViewportAnchor && usedPersistedViewportAnchor) {
+      bootstrapMode = 'restored'
+      bootstrapTarget = {
+        key: { kind: 'committed', messageId: resp.anchor.messageId },
+        offsetWithinMessage: persistedViewportAnchor.offsetWithinMessage,
+      }
+    }
+
+    return {
+      feed,
+      normalizedFeedMessages,
+      messages: normalizeDemoMessages(feedId, resp.messages),
+      persistedViewportAnchor,
+      bootstrapMode,
+      bootstrapTarget,
+      usedPersistedViewportAnchor,
+      restoreResp,
+      resp,
+      persistedFeed,
+    }
+  }, [log])
+
+  const commitLoadedFeedWindow = useCallback(async ({
+    feedId,
+    runtime,
+    requestId,
+    token,
+    loaded,
+    activate,
+  }: {
+    feedId: string
+    runtime: MessageViewportRuntime<DemoMessage>
+    requestId: string
+    token: number
+    loaded: LoadedFeedWindow
+    activate: boolean
+  }): Promise<boolean> => {
+    if (loadTokenRef.current !== token) {
+      void log({
+        requestId,
+        operation: 'feed.load',
+        phase: 'cancel',
+        feedId,
+        messageCount: loaded.resp.messages.length,
+        details: { reason: 'stale-load' },
+      })
+      return false
+    }
+
+    generationRef.current += 1
+    revisionRef.current += 1
+    activeFeedIdRef.current = feedId
+    lastViewportAnchorRef.current = loaded.usedPersistedViewportAnchor
+      ? loaded.persistedViewportAnchor
+      : undefined
+    feedMessagesRef.current = loaded.normalizedFeedMessages
+    messagesRef.current = loaded.messages
+    hasMoreBeforeRef.current = computeHasMoreBefore(
+      feedMessagesRef.current,
+      messagesRef.current,
+    )
+    hasMoreAfterRef.current = computeHasMoreAfter(
+      feedMessagesRef.current,
+      messagesRef.current,
+    )
+    syncDisplayedCounts()
+    saveCurrentFeedSessionState(feedId)
+
+    if (
+      loaded.persistedViewportAnchor &&
+      !loaded.usedPersistedViewportAnchor
+    ) {
+      await savePersistedDemoFeed({
+        ...loaded.persistedFeed,
+        messages: loaded.normalizedFeedMessages,
+        lastViewportAnchor: undefined,
+        updatedAt: new Date().toISOString(),
+      })
+    }
+
+    runtime.setDataSnapshot(
+      createDemoSnapshot({
+        feedId,
+        generation: generationRef.current,
+        messages: messagesRef.current,
+        revision: revisionRef.current,
+        effect: 'reset',
+        kind: 'initial',
+        anchor: loaded.resp.anchor,
+        anchorStatus: loaded.resp.anchorStatus,
+        hasMoreBefore: hasMoreBeforeRef.current,
+        hasMoreAfter: hasMoreAfterRef.current,
+      }),
+    )
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: loaded.bootstrapMode,
+      target: loaded.bootstrapTarget,
+    })
+
+    if (activate) {
+      stagedActivationSkipRef.current.add(feedId)
+      setActiveRuntime(runtime)
+      setActiveFeedId(feedId)
+      setSelectedFeedId(feedId)
+      setPendingFeedId(null)
+    }
+
+    setLastEvent(
+      loaded.bootstrapMode === 'restored'
+        ? `restored ${loaded.feed.title}`
+        : loaded.resp.messages.length > 0
+          ? `loaded ${loaded.feed.title}`
+          : `seeded ${loaded.feed.title}`,
+    )
+
+    void log({
+      requestId,
+      operation: 'feed.load',
+      phase: 'success',
+      feedId,
+      messageCount: loaded.resp.messages.length,
+      details: {
+        total: loaded.resp.total,
+        hasMoreBefore: hasMoreBeforeRef.current,
+        hasMoreAfter: hasMoreAfterRef.current,
+        anchor: loaded.resp.anchor,
+        anchorStatus: loaded.resp.anchorStatus,
+        mode: loaded.bootstrapMode,
+        restoreInput: loaded.persistedViewportAnchor,
+        restoreApplied: loaded.usedPersistedViewportAnchor,
+        restoreFallbackError:
+          loaded.restoreResp && isErrorResponse(loaded.restoreResp)
+            ? loaded.restoreResp.errorCode
+            : undefined,
+        activation: activate ? 'staged' : 'active',
+      },
+    })
+
+    return true
+  }, [log, saveCurrentFeedSessionState, syncDisplayedCounts])
 
   const beginPendingOperation = useCallback((operation: string) => {
     pendingOperationCountRef.current += 1
@@ -236,7 +529,7 @@ export function useDemoMessageScenario(
       messagesRef.current,
     )
     syncDisplayedCounts()
-    runtime.setDataSnapshot(
+    activeRuntime.setDataSnapshot(
       createDemoSnapshot({
         feedId: activeFeedIdRef.current,
         generation: generationRef.current,
@@ -248,7 +541,8 @@ export function useDemoMessageScenario(
         hasMoreAfter: hasMoreAfterRef.current,
       }),
     )
-  }, [runtime, syncDisplayedCounts])
+    saveCurrentFeedSessionState()
+  }, [activeRuntime, saveCurrentFeedSessionState, syncDisplayedCounts])
 
   const persistCurrentFeed = useCallback(async () => {
     await savePersistedDemoFeed({
@@ -327,8 +621,8 @@ export function useDemoMessageScenario(
   const rememberViewportAnchor = useCallback((
     reason: 'before-feed-switch' | 'before-unmount',
   ) => {
-    persistViewportAnchor(runtime.getViewportAnchorState(), reason)
-  }, [persistViewportAnchor, runtime])
+    persistViewportAnchor(activeRuntime.getViewportAnchorState(), reason)
+  }, [activeRuntime, persistViewportAnchor])
 
   const rememberRuntimeViewportAnchor = useCallback((
     anchor: AnchorState | null,
@@ -646,12 +940,12 @@ export function useDemoMessageScenario(
           return
         }
 
-        runtime.dispatch({ type: 'followBottom' })
+        activeRuntime.dispatch({ type: 'followBottom' })
         downwardScrollModeRef.current = 'idle'
       },
       skipPersist: true,
     })
-  }, [log, runLoggedOperation, runtime])
+  }, [activeRuntime, log, runLoggedOperation])
 
   useEffect(() => {
     loadFutureBatchRef.current = loadFutureBatch
@@ -958,30 +1252,118 @@ export function useDemoMessageScenario(
       return
     }
 
-    runtime.dispatch({ type: 'followBottom' })
+    activeRuntime.dispatch({ type: 'followBottom' })
     downwardScrollModeRef.current = 'idle'
-  }, [loadFutureBatch, log, runtime])
+  }, [activeRuntime, loadFutureBatch, log])
 
   const selectFeed = useCallback((feedId: string) => {
-    if (feedId === activeFeedIdRef.current) {
+    if (feedId === selectedFeedId) {
       return
     }
 
+    const previousFeedId = activeFeedIdRef.current
+    const previousMessageCount = messagesRef.current.length
+    const feed = getDemoFeedDefinition(feedId)
+    const feedLoadRequestId = createDemoRequestId('feed.load')
+
     rememberViewportAnchor('before-feed-switch')
+    saveCurrentFeedSessionState()
+    setSelectedFeedId(feedId)
+
+    const cachedState = feedSessionStateRef.current.get(feedId)
+    const runtimeCacheHit = runtimeCache.hasRuntime(feedId) && !!cachedState
+    const nextRuntime = runtimeCache.getRuntime(feedId)
+    nextFeedSwitchRuntimeCacheHitRef.current = runtimeCacheHit
+
+    if (runtimeCacheHit && cachedState) {
+      activeFeedIdRef.current = feedId
+      restoreFeedSessionState(cachedState)
+    }
 
     void log({
       requestId: createDemoRequestId('feed.select'),
       operation: 'feed.select',
       phase: 'start',
-      feedId: activeFeedIdRef.current,
-      messageCount: messagesRef.current.length,
-      details: { nextFeedId: feedId },
+      feedId: previousFeedId,
+      messageCount: previousMessageCount,
+      details: { nextFeedId: feedId, runtimeCacheHit },
     })
+
+    const token = loadTokenRef.current + 1
+
+    loadTokenRef.current = token
+
+    if (runtimeCacheHit) {
+      setPendingFeedId(null)
+      stagedActivationSkipRef.current.add(feedId)
+      setLastEvent(`restored cached ${feed.title}`)
+      setActiveRuntime(nextRuntime)
+      setActiveFeedId(feedId)
+      return
+    }
     feedLoadingRef.current = true
+    setPendingFeedId(feedId)
     setFeedLoading(true)
-    setLastEvent(`loading ${getDemoFeedDefinition(feedId).title}...`)
-    setActiveFeedId(feedId)
-  }, [log, rememberViewportAnchor])
+    setLastEvent(`loading ${feed.title}...`)
+    void log({
+      requestId: feedLoadRequestId,
+      operation: 'feed.load',
+      phase: 'start',
+      feedId,
+      messageCount: previousMessageCount,
+      details: { title: feed.title, activation: 'deferred' },
+    })
+
+    void (async () => {
+      try {
+        const loaded = await loadFeedWindow(feedId, feedLoadRequestId)
+        await commitLoadedFeedWindow({
+          feedId,
+          runtime: nextRuntime,
+          requestId: feedLoadRequestId,
+          token,
+          loaded,
+          activate: true,
+        })
+      } catch (error) {
+        if (loadTokenRef.current !== token) {
+          void log({
+            requestId: feedLoadRequestId,
+            operation: 'feed.load',
+            phase: 'cancel',
+            feedId,
+            details: { reason: 'stale-load-before-data' },
+          })
+          return
+        }
+
+        setSelectedFeedId(activeFeedIdRef.current)
+        setLastEvent('feed load failed')
+        void log({
+          requestId: feedLoadRequestId,
+          operation: 'feed.load',
+          phase: 'error',
+          feedId,
+          error: getErrorMessage(error),
+        })
+      } finally {
+        if (loadTokenRef.current === token) {
+          feedLoadingRef.current = false
+          setFeedLoading(false)
+          setPendingFeedId(null)
+        }
+      }
+    })()
+  }, [
+    commitLoadedFeedWindow,
+    loadFeedWindow,
+    log,
+    rememberViewportAnchor,
+    restoreFeedSessionState,
+    runtimeCache,
+    saveCurrentFeedSessionState,
+    selectedFeedId,
+  ])
 
   const clearFeed = useCallback((feedId: string) => {
     const feed = getDemoFeedDefinition(feedId)
@@ -1038,7 +1420,7 @@ export function useDemoMessageScenario(
           feedMessagesRef.current = []
           messagesRef.current = []
           syncDisplayedCounts()
-          runtime.setDataSnapshot(
+          activeRuntime.setDataSnapshot(
             createDemoSnapshot({
               feedId,
               generation: generationRef.current,
@@ -1050,7 +1432,11 @@ export function useDemoMessageScenario(
               hasMoreAfter: false,
             }),
           )
-          runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+          activeRuntime.dispatch({ type: 'bootstrap', mode: 'latest' })
+          saveCurrentFeedSessionState(feedId)
+        } else {
+          feedSessionStateRef.current.delete(feedId)
+          runtimeCache.deleteRuntime(feedId)
         }
 
         setLastEvent(`cleared ${feed.title}`)
@@ -1082,26 +1468,65 @@ export function useDemoMessageScenario(
         endPendingOperation('feed.clear')
       }
     })()
-  }, [beginPendingOperation, endPendingOperation, log, runtime, syncDisplayedCounts])
+  }, [
+    activeRuntime,
+    beginPendingOperation,
+    endPendingOperation,
+    log,
+    runtimeCache,
+    saveCurrentFeedSessionState,
+    syncDisplayedCounts,
+  ])
 
   useEffect(() => {
     return () => {
-      rememberViewportAnchor('before-unmount')
+      const runtime = activeRuntimeRef.current
+
+      if (runtime) {
+        persistViewportAnchor(runtime.getViewportAnchorState(), 'before-unmount')
+      }
+
+      saveCurrentFeedSessionState()
     }
-  }, [rememberViewportAnchor])
+  }, [persistViewportAnchor, saveCurrentFeedSessionState])
 
   useEffect(() => {
-    const token = loadTokenRef.current + 1
     const feed = getDemoFeedDefinition(activeFeedId)
     const requestId = createDemoRequestId('feed.load')
+    const runtimeCacheHit = nextFeedSwitchRuntimeCacheHitRef.current
+    const stagedActivationSkip = stagedActivationSkipRef.current.delete(activeFeedId)
 
-    loadTokenRef.current = token
+    nextFeedSwitchRuntimeCacheHitRef.current = false
     activeFeedIdRef.current = activeFeedId
-    feedLoadingRef.current = true
     downwardScrollModeRef.current = 'idle'
 
+    if (runtimeCacheHit) {
+      feedLoadingRef.current = false
+      setFeedLoading(false)
+      void log({
+        requestId,
+        operation: 'feed.load',
+        phase: 'skip',
+        feedId: activeFeedId,
+        messageCount: messagesRef.current.length,
+        details: { title: feed.title, reason: 'runtime-cache-hit' },
+      })
+      return
+    }
+
+    if (stagedActivationSkip) {
+      return
+    }
+
+    const token = loadTokenRef.current + 1
+
+    loadTokenRef.current = token
+
+    feedLoadingRef.current = true
+    setFeedLoading(true)
+
     async function loadFeed(): Promise<void> {
-      await log({
+      void log({
         requestId,
         operation: 'feed.load',
         phase: 'start',
@@ -1111,170 +1536,42 @@ export function useDemoMessageScenario(
       })
 
       try {
-        await sleep(FEED_LOAD_DELAY_MS)
-
-        let persistedFeed = await loadPersistedDemoFeed(activeFeedId)
-
-        if (!persistedFeed) {
-          const seedMessages = createDemoMessages(feed.seedCount, activeFeedId)
-          persistedFeed = {
-            version: 1,
-            feedId: activeFeedId,
-            revision: 1,
-            hasMoreBefore: true,
-            lastViewportAnchor: undefined,
-            messages: seedMessages,
-            updatedAt: new Date().toISOString(),
-          }
-          await savePersistedDemoFeed(persistedFeed)
-          await log({
-            requestId: createDemoRequestId('feed.seed'),
-            operation: 'feed.seed',
-            phase: 'success',
-            feedId: activeFeedId,
-            messageCount: seedMessages.length,
-            details: { seedCount: feed.seedCount },
-          })
-        }
-
-        const normalizedFeedMessages = normalizeDemoMessages(
-          activeFeedId,
-          persistedFeed.messages,
-        )
-        const persistedViewportAnchor = persistedFeed.lastViewportAnchor
-        let bootstrapMode: 'latest' | 'restored' = 'latest'
-        let bootstrapTarget: AnchorState | undefined
-        let usedPersistedViewportAnchor = false
-        let restoreResp: GetMessagesAroundResp<DemoMessage> | null = null
-        let resp: GetLatestMessagesResp<DemoMessage> | GetMessagesAroundResp<DemoMessage>
-
-        if (persistedViewportAnchor) {
-          restoreResp = await getMessagesAround({
-            feedId: activeFeedId,
-            anchor: {
-              messageId: persistedViewportAnchor.messageId,
-              position: persistedViewportAnchor.position,
-            },
-            before: RESTORE_BEFORE_PAGE_SIZE,
-            after: RESTORE_AFTER_PAGE_SIZE,
-          })
-          resp = restoreResp
-          usedPersistedViewportAnchor = restoreResp.ok
-        } else {
-          resp = await getLatestMessages({
-            feedId: activeFeedId,
-            count: PAGE_SIZE,
-          })
-        }
-
-        if (persistedViewportAnchor && isErrorResponse(resp)) {
-          resp = await getLatestMessages({
-            feedId: activeFeedId,
-            count: PAGE_SIZE,
-          })
-        }
-
-        if (isErrorResponse(resp)) {
-          throw new Error(resp.errorMessage)
-        }
-
-        if (persistedViewportAnchor && usedPersistedViewportAnchor) {
-          bootstrapMode = 'restored'
-          bootstrapTarget = {
-            key: { kind: 'committed', messageId: resp.anchor.messageId },
-            offsetWithinMessage: persistedViewportAnchor.offsetWithinMessage,
-          }
-        }
+        const loaded = await loadFeedWindow(activeFeedId, requestId)
 
         if (loadTokenRef.current !== token) {
-          await log({
+          void log({
             requestId,
             operation: 'feed.load',
             phase: 'cancel',
             feedId: activeFeedId,
-            messageCount: resp ? resp.messages.length : 0,
+            messageCount: loaded.resp.messages.length,
             details: { reason: 'stale-load' },
           })
           return
         }
 
-        generationRef.current += 1
-        revisionRef.current += 1
-        lastViewportAnchorRef.current = usedPersistedViewportAnchor
-          ? persistedViewportAnchor
-          : undefined
-        feedMessagesRef.current = normalizedFeedMessages
-        messagesRef.current = normalizeDemoMessages(activeFeedId, resp.messages)
-        hasMoreBeforeRef.current = computeHasMoreBefore(
-          feedMessagesRef.current,
-          messagesRef.current,
-        )
-        hasMoreAfterRef.current = computeHasMoreAfter(
-          feedMessagesRef.current,
-          messagesRef.current,
-        )
-        syncDisplayedCounts()
-
-        if (persistedViewportAnchor && !usedPersistedViewportAnchor) {
-          await savePersistedDemoFeed({
-            ...persistedFeed,
-            messages: normalizedFeedMessages,
-            lastViewportAnchor: undefined,
-            updatedAt: new Date().toISOString(),
-          })
-        }
-
-        runtime.setDataSnapshot(
-          createDemoSnapshot({
-            feedId: activeFeedId,
-            generation: generationRef.current,
-            messages: messagesRef.current,
-            revision: revisionRef.current,
-            effect: 'reset',
-            kind: 'initial',
-            anchor: resp.anchor,
-            anchorStatus: resp.anchorStatus,
-            hasMoreBefore: hasMoreBeforeRef.current,
-            hasMoreAfter: hasMoreAfterRef.current,
-          }),
-        )
-        runtime.dispatch({
-          type: 'bootstrap',
-          mode: bootstrapMode,
-          target: bootstrapTarget,
-        })
-        setLastEvent(
-          bootstrapMode === 'restored'
-            ? `restored ${feed.title}`
-            : resp.messages.length > 0
-              ? `loaded ${feed.title}`
-              : `seeded ${feed.title}`,
-        )
-
-        await log({
-          requestId,
-          operation: 'feed.load',
-          phase: 'success',
+        await commitLoadedFeedWindow({
           feedId: activeFeedId,
-          messageCount: resp.messages.length,
-          details: {
-            total: resp.total,
-            hasMoreBefore: hasMoreBeforeRef.current,
-            hasMoreAfter: hasMoreAfterRef.current,
-            anchor: resp.anchor,
-            anchorStatus: resp.anchorStatus,
-            mode: bootstrapMode,
-            restoreInput: persistedViewportAnchor,
-            restoreApplied: usedPersistedViewportAnchor,
-            restoreFallbackError:
-              restoreResp && isErrorResponse(restoreResp)
-                ? restoreResp.errorCode
-                : undefined,
-          },
+          runtime: activeRuntime,
+          requestId,
+          token,
+          loaded,
+          activate: false,
         })
       } catch (error) {
+        if (loadTokenRef.current !== token) {
+          void log({
+            requestId,
+            operation: 'feed.load',
+            phase: 'cancel',
+            feedId: activeFeedId,
+            details: { reason: 'stale-load-before-data' },
+          })
+          return
+        }
+
         setLastEvent('feed load failed')
-        await log({
+        void log({
           requestId,
           operation: 'feed.load',
           phase: 'error',
@@ -1290,10 +1587,16 @@ export function useDemoMessageScenario(
     }
 
     void loadFeed()
-  }, [activeFeedId, log, runtime, syncDisplayedCounts])
+  }, [
+    activeFeedId,
+    activeRuntime,
+    commitLoadedFeedWindow,
+    loadFeedWindow,
+    log,
+  ])
 
   useEffect(() => {
-    const unsubscribe = runtime.subscribeEvent((event) => {
+    const unsubscribe = activeRuntime.subscribeEvent((event) => {
       void log({
         requestId: createDemoRequestId('runtime.event'),
         operation: 'runtime.event',
@@ -1332,12 +1635,15 @@ export function useDemoMessageScenario(
     })
 
     return unsubscribe
-  }, [loadFutureBatch, loadHistoryBatch, log, runtime])
+  }, [activeRuntime, loadFutureBatch, loadHistoryBatch, log])
 
   return {
     feeds: DEMO_FEEDS,
     activeFeedId,
+    selectedFeedId,
+    pendingFeedId,
     activeFeed,
+    activeRuntime,
     messageCount,
     loadedMessageCount,
     loadingBefore,

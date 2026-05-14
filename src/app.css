@@ -140,6 +140,15 @@ h1 {
   background: #eaf6f2;
 }
 
+.feed-item.selected {
+  border-color: #9db2ba;
+  background: #f3f8f9;
+}
+
+.feed-item.pending {
+  border-style: dashed;
+}
+
 .feed-select-button {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

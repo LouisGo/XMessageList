@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -19,6 +19,7 @@ import {
   type DemoMessageScenario,
   useDemoMessageScenario,
 } from '../useDemoMessageScenario'
+import type { DemoFeedRuntimeCache } from '../useDemoFeedRuntimeCache'
 
 vi.mock('../demoLocalStoreClient', () => ({
   loadPersistedDemoFeed: vi.fn(),
@@ -39,6 +40,16 @@ type RuntimeStub = Pick<
 type RuntimeStubController = {
   runtime: RuntimeStub
   emitEvent: (event: MessageViewportRuntimeEvent) => void
+}
+
+function createRuntimeCacheStub(runtime: RuntimeStub): DemoFeedRuntimeCache {
+  return {
+    getRuntime: vi.fn(() => runtime as MessageViewportRuntime<DemoMessage>),
+    hasRuntime: vi.fn(() => true),
+    deleteRuntime: vi.fn(() => true),
+    getCachedFeedIds: vi.fn(() => []),
+    destroyAll: vi.fn(),
+  }
 }
 
 function makeFeed(
@@ -84,20 +95,32 @@ function createRuntimeStub(
 
 function TestHarness({
   runtime,
+  runtimeCache,
   onScenario,
 }: {
-  runtime: RuntimeStub
+  runtime?: RuntimeStub
+  runtimeCache?: DemoFeedRuntimeCache
   onScenario: (scenario: DemoMessageScenario) => void
 }) {
-  const scenario = useDemoMessageScenario(
-    runtime as MessageViewportRuntime<DemoMessage>,
+  const resolvedRuntimeCache = useMemo(
+    () => runtimeCache ?? createRuntimeCacheStub(assertRuntimeStub(runtime)),
+    [runtime, runtimeCache],
   )
+  const scenario = useDemoMessageScenario(resolvedRuntimeCache)
 
   useEffect(() => {
     onScenario(scenario)
   }, [onScenario, scenario])
 
   return null
+}
+
+function assertRuntimeStub(runtime: RuntimeStub | undefined): RuntimeStub {
+  if (!runtime) {
+    throw new Error('TestHarness requires runtime or runtimeCache')
+  }
+
+  return runtime
 }
 
 async function flushTimers(timeoutMs: number): Promise<void> {
@@ -180,6 +203,105 @@ describe('useDemoMessageScenario', () => {
 
     expect(scenario?.lastEvent).toBe('no older messages')
     expect(store.get('feed-release')?.messages).toHaveLength(300)
+  })
+
+  it('routes each active feed through its cached runtime', async () => {
+    const runtimeFeed = createRuntimeStub()
+    const runtimeRelease = createRuntimeStub()
+    const runtimeByFeed = new Map<string, RuntimeStub>([
+      ['feed-runtime', runtimeFeed.runtime],
+      ['feed-release', runtimeRelease.runtime],
+    ])
+    const runtimeCache: DemoFeedRuntimeCache = {
+      getRuntime: vi.fn((feedId) => {
+        const runtime = runtimeByFeed.get(feedId)
+
+        if (!runtime) {
+          throw new Error(`missing runtime for ${feedId}`)
+        }
+
+        return runtime as MessageViewportRuntime<DemoMessage>
+      }),
+      hasRuntime: vi.fn((feedId) => runtimeByFeed.has(feedId)),
+      deleteRuntime: vi.fn((feedId) => runtimeByFeed.delete(feedId)),
+      getCachedFeedIds: vi.fn(() => Array.from(runtimeByFeed.keys())),
+      destroyAll: vi.fn(),
+    }
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    await act(async () => {
+      root.render(
+        <TestHarness runtimeCache={runtimeCache} onScenario={(next) => {
+          scenario = next
+        }}
+        />,
+      )
+    })
+    await flushTimers(180)
+
+    expect(scenario?.activeFeedId).toBe('feed-runtime')
+    expect(scenario?.activeRuntime).toBe(runtimeFeed.runtime)
+    expect(runtimeFeed.runtime.setDataSnapshot).toHaveBeenCalled()
+    expect(runtimeFeed.runtime.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'bootstrap', mode: 'latest' }),
+    )
+
+    await act(async () => {
+      scenario?.selectFeed('feed-release')
+    })
+
+    expect(scenario?.selectedFeedId).toBe('feed-release')
+    expect(scenario?.pendingFeedId).toBe('feed-release')
+    expect(scenario?.activeFeedId).toBe('feed-runtime')
+    expect(scenario?.activeRuntime).toBe(runtimeFeed.runtime)
+    expect(runtimeRelease.runtime.setDataSnapshot).not.toHaveBeenCalled()
+
+    await flushTimers(180)
+
+    expect(scenario?.activeFeedId).toBe('feed-release')
+    expect(scenario?.selectedFeedId).toBe('feed-release')
+    expect(scenario?.pendingFeedId).toBeNull()
+    expect(scenario?.activeRuntime).toBe(runtimeRelease.runtime)
+    expect(runtimeRelease.runtime.setDataSnapshot).toHaveBeenCalled()
+    expect(runtimeRelease.runtime.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'bootstrap', mode: 'latest' }),
+    )
+    expect(runtimeCache.getRuntime).toHaveBeenCalledWith('feed-runtime')
+    expect(runtimeCache.getRuntime).toHaveBeenCalledWith('feed-release')
+
+    const feedRuntimeSnapshotCalls = vi.mocked(
+      runtimeFeed.runtime.setDataSnapshot,
+    ).mock.calls.length
+    const feedRuntimeDispatchCalls = vi.mocked(
+      runtimeFeed.runtime.dispatch,
+    ).mock.calls.length
+
+    await act(async () => {
+      scenario?.selectFeed('feed-runtime')
+    })
+
+    expect(scenario?.activeFeedId).toBe('feed-runtime')
+    expect(scenario?.selectedFeedId).toBe('feed-runtime')
+    expect(scenario?.pendingFeedId).toBeNull()
+    expect(scenario?.activeRuntime).toBe(runtimeFeed.runtime)
+    await flushTimers(180)
+
+    expect(runtimeFeed.runtime.setDataSnapshot).toHaveBeenCalledTimes(
+      feedRuntimeSnapshotCalls,
+    )
+    expect(runtimeFeed.runtime.dispatch).toHaveBeenCalledTimes(
+      feedRuntimeDispatchCalls,
+    )
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'feed.load',
+        phase: 'skip',
+        feedId: 'feed-runtime',
+        details: expect.objectContaining({ reason: 'runtime-cache-hit' }),
+      }),
+    )
   })
 
   it('keeps overlapping append operations visible instead of overwriting pending state', async () => {

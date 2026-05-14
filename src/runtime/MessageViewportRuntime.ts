@@ -139,6 +139,8 @@ export class MessageViewportRuntime<
 
   private lastUserDistanceToBottom = 0
 
+  private retainedScrollTop: number | null = null
+
   private containerResizeObserver: ResizeObserver | null = null
 
   private intersectionObserver: IntersectionObserver | null = null
@@ -207,6 +209,8 @@ export class MessageViewportRuntime<
     this.lifecycle.resume()
     this.transactions.resume()
     this.registry.attachContainer(container)
+    container.scrollTop = Math.max(0, this.retainedScrollTop ?? 0)
+    this.lastUserScrollTop = container.scrollTop
     this.lastContainerSize = this.readContainerSize(container)
     container.addEventListener('scroll', this.handleScroll, { passive: true })
     this.setupContainerObserver(container)
@@ -234,6 +238,7 @@ export class MessageViewportRuntime<
     this.transactions.clear()
 
     if (container) {
+      this.retainedScrollTop = container.scrollTop
       container.removeEventListener('scroll', this.handleScroll)
     }
 
@@ -253,6 +258,7 @@ export class MessageViewportRuntime<
     this.heightCache.clear()
     this.eventListeners.clear()
     this.store.clearListeners()
+    this.retainedScrollTop = null
     this.state = 'DESTROYED'
   }
 

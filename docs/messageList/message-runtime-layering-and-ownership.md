@@ -85,6 +85,8 @@ conversation / session host 负责 app policy：
 - 在 LRU 淘汰或关闭会话时调用 `runtime.destroy()`。
 - 保留每个 feed 的本地 data-window / session state，避免缓存命中后再次强制
   bootstrap 把稳定 viewport 打回初始态。
+- cache miss 切 feed 时做 staged activation：目标 feed 数据窗口和目标 runtime
+  bootstrap 就绪前，继续让 React projection 挂在当前 active runtime 上。
 
 禁止：
 
@@ -96,6 +98,10 @@ conversation / session host 负责 app policy：
 feed 切走但仍在 cache 内时，应让 React projection 对旧 runtime `detach()`，
 不应立即 `destroy()`。切回同一 feed 且 runtime 命中时，应恢复该 feed 的 session
 state，而不是重新走 `feed.load`。
+
+切到未缓存 feed 时，host 不应先把空 runtime 交给 React projection；它应先发起目标
+feed 的 data request，向目标 runtime 发布 snapshot / bootstrap，随后再切换 active
+runtime。首次进入页面没有旧 runtime 可保留时，空白等待属于 app 视觉策略。
 
 ---
 
@@ -347,6 +353,8 @@ Feed 切换必须显式 lifecycle transition。是否 teardown 取决于 owner p
 - 若 feed runtime 仍在 conversation host 的 cache 内，只 detach projection，保留
   height cache / anchor / projection snapshot。
 - 若 feed runtime 被 LRU 淘汰、会话关闭或页面最终销毁，调用 `destroy()`。
+- 若目标 feed runtime 不在 cache 内，先保持旧 projection，等目标 data window
+  和 bootstrap 就绪后再切换 projection。
 
 按层清理：
 

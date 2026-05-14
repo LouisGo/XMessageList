@@ -72,6 +72,22 @@ function TestHarness({
   )
 }
 
+function ViewportOnlyHarness({
+  runtime,
+}: {
+  runtime: MessageViewportRuntime<TestMessage>
+}) {
+  return (
+    <MessageViewport
+      runtime={runtime}
+      renderMessage={(item) =>
+        item.kind === 'committed' ? <span>{item.message.id}</span> : null
+      }
+      style={{ height: 240 }}
+    />
+  )
+}
+
 async function flushFramesWithMicrotasks(
   scheduler: FakeScheduler,
   count: number,
@@ -194,5 +210,98 @@ describe('React adapter', () => {
     await act(async () => {
       root.unmount()
     })
+  })
+
+  it('detaches the old runtime and attaches the new one when runtime changes', async () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtimeA = new MessageViewportRuntime<TestMessage>({
+      feedId: 'feed-a',
+      generation: 1,
+      scheduler,
+      observers,
+      window: {
+        minMountedItems: 8,
+        maxMountedItems: 20,
+        defaultItemHeight: 48,
+      },
+    })
+    const runtimeB = new MessageViewportRuntime<TestMessage>({
+      feedId: 'feed-b',
+      generation: 1,
+      scheduler,
+      observers,
+      window: {
+        minMountedItems: 8,
+        maxMountedItems: 20,
+        defaultItemHeight: 48,
+      },
+    })
+    const attachA = vi.spyOn(runtimeA, 'attach')
+    const detachA = vi.spyOn(runtimeA, 'detach')
+    const attachB = vi.spyOn(runtimeB, 'attach')
+    const detachB = vi.spyOn(runtimeB, 'detach')
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      value: 320,
+    })
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtimeA} />)
+    })
+
+    expect(attachA).toHaveBeenCalled()
+    expect(detachA).not.toHaveBeenCalled()
+
+    const scrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    expect(scrollContainer).not.toBeNull()
+    if (scrollContainer) {
+      scrollContainer.scrollTop = 123
+    }
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtimeB} />)
+    })
+
+    expect(detachA).toHaveBeenCalled()
+    expect(attachB).toHaveBeenCalled()
+    expect(detachB).not.toHaveBeenCalled()
+    expect(
+      host.querySelector<HTMLElement>('[data-message-scroll-container]')
+        ?.scrollTop,
+    ).toBe(0)
+
+    const nextScrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    if (nextScrollContainer) {
+      nextScrollContainer.scrollTop = 45
+    }
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtimeA} />)
+    })
+
+    expect(detachB).toHaveBeenCalled()
+    expect(attachA).toHaveBeenCalledTimes(2)
+    expect(
+      host.querySelector<HTMLElement>('[data-message-scroll-container]')
+        ?.scrollTop,
+    ).toBe(123)
+
+    await act(async () => {
+      root.unmount()
+    })
+
+    expect(detachA).toHaveBeenCalledTimes(2)
   })
 })
