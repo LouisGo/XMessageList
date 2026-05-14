@@ -97,11 +97,9 @@ export async function getMessagesAround(
     }
   }
 
-  const anchorIndex = all.findIndex(
-    (message) => message.id === req.anchor.messageId,
-  )
+  const resolvedAnchor = resolveAnchor(all, req.anchor)
 
-  if (anchorIndex === -1) {
+  if (!resolvedAnchor) {
     return {
       ok: false,
       feedId: req.feedId,
@@ -110,11 +108,10 @@ export async function getMessagesAround(
     }
   }
 
-  const startIndex = Math.max(0, anchorIndex - req.before)
-  const endIndex = Math.min(total - 1, anchorIndex + req.after)
+  const startIndex = Math.max(0, resolvedAnchor.index - req.before)
+  const endIndex = Math.min(total - 1, resolvedAnchor.index + req.after)
   const messages = all.slice(startIndex, endIndex + 1)
-
-  const anchorMessage = all[anchorIndex]
+  const anchorMessage = all[resolvedAnchor.index]
 
   return {
     ok: true,
@@ -122,7 +119,7 @@ export async function getMessagesAround(
       messageId: anchorMessage.id,
       position: anchorMessage.sequence,
     },
-    anchorStatus: 'normal',
+    anchorStatus: resolvedAnchor.status,
     feedId: req.feedId,
     hasMoreAfter: endIndex < total - 1,
     hasMoreBefore: startIndex > 0,
@@ -188,4 +185,47 @@ export function getDemoRespAnchor(
   return lastMessage
     ? { messageId: lastMessage.id, position: lastMessage.sequence }
     : resp.anchor
+}
+
+function resolveAnchor(
+  messages: DemoMessage[],
+  anchor: MessageIdentityAnchor,
+): { index: number; status: MessagesAroundOkResp['anchorStatus'] } | null {
+  const directIndex = messages.findIndex(
+    (message) => message.id === anchor.messageId,
+  )
+
+  if (directIndex >= 0) {
+    return {
+      index: directIndex,
+      status: 'normal',
+    }
+  }
+
+  if (!Number.isFinite(anchor.position)) {
+    return null
+  }
+
+  const targetPosition = anchor.position as number
+  let nearestIndex = -1
+  let nearestDistance = Number.POSITIVE_INFINITY
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]
+    const distance = Math.abs(message.sequence - targetPosition)
+
+    if (distance < nearestDistance) {
+      nearestIndex = index
+      nearestDistance = distance
+    }
+  }
+
+  if (nearestIndex < 0) {
+    return null
+  }
+
+  return {
+    index: nearestIndex,
+    status: 'deleted',
+  }
 }

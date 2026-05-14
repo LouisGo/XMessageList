@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   MessageViewportRuntime,
   type MessageDataSnapshot,
+  type MessageViewportRuntimeEvent,
   type WindowConfig,
   type MessageViewportSnapshot,
   serializeRuntimeItemKey,
@@ -29,6 +30,7 @@ function createSnapshot(input: {
     | 'items-change'
   start?: number
   estimatedHeight?: number
+  hasMoreAfter?: boolean
 }): MessageDataSnapshot<TestMessage> {
   const start = input.start ?? 1
   const estimatedHeight = input.estimatedHeight ?? 50
@@ -52,7 +54,7 @@ function createSnapshot(input: {
     anchor: { messageId: `m-${start + input.count - 1}` },
     anchorStatus: 'normal',
     hasMoreBefore: true,
-    hasMoreAfter: false,
+    hasMoreAfter: input.hasMoreAfter ?? false,
     change: {
       kind:
         input.effect === 'prepend'
@@ -191,6 +193,29 @@ function createHeightMap(
   )
 }
 
+function getExpectedRestoreScrollTop(
+  snapshot: MessageViewportSnapshot<TestMessage>,
+  messageId: string,
+  offsetWithinMessage: number,
+  heightByMessageId: Record<string, number> = {},
+): number {
+  let top = snapshot.topSpacer
+
+  for (const item of snapshot.items) {
+    const currentMessageId =
+      item.key.kind === 'committed' ? item.key.messageId : ''
+    const height = heightByMessageId[currentMessageId] ?? item.estimatedHeight ?? 50
+
+    if (currentMessageId === messageId) {
+      return top + offsetWithinMessage
+    }
+
+    top += height
+  }
+
+  throw new Error(`message ${messageId} not found in snapshot`)
+}
+
 describe('MessageViewportRuntime', () => {
   it('keeps snapshot reference stable when projection does not change', () => {
     const { runtime } = createRuntime()
@@ -214,6 +239,55 @@ describe('MessageViewportRuntime', () => {
     expect(snapshot.bootstrapState).toBe('READY')
     expect(snapshot.bottomLockState).toBe('LOCKED')
     expect(container.scrollTop).toBeGreaterThan(0)
+  })
+
+  it('exports the current viewport anchor state', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot, -(snapshot.topSpacer + 135))
+
+    expect(runtime.getViewportAnchorState()).toEqual({
+      key: snapshot.items[2]?.key ?? { kind: 'committed', messageId: '' },
+      offsetWithinMessage: 35,
+    })
+  })
+
+  it('bootstraps restored data using top plus offset alignment', async () => {
+    const { runtime } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const restoreTarget = {
+      key: { kind: 'committed' as const, messageId: 'm-20' },
+      offsetWithinMessage: 18,
+    }
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 40, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'restored', target: restoreTarget })
+    await Promise.resolve()
+
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(runtime.getSnapshot().bootstrapState).toBe('READY')
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+    expect(container.scrollTop).toBe(
+      getExpectedRestoreScrollTop(snapshot, 'm-20', 18),
+    )
   })
 
   it('recovers from bootstrap commit timeout and allows retry', async () => {
@@ -339,6 +413,41 @@ describe('MessageViewportRuntime', () => {
     expect(snapshot.renderWindow.endIndex).toBe(39)
     expect(snapshot.bottomLockState).toBe('LOCKED')
     expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight)
+  })
+
+  it('restores to top plus offset instead of centering the target row', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const restoreTarget = {
+      key: { kind: 'committed' as const, messageId: 'm-10' },
+      offsetWithinMessage: 24,
+    }
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 40, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    runtime.dispatch({ type: 'restore', target: restoreTarget })
+    await Promise.resolve()
+
+    const snapshot = runtime.getSnapshot()
+    expect(snapshot.bottomLockState).toBe('RECOVERING')
+
+    mountProjection(runtime, container, snapshot, -container.scrollTop)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+    expect(container.scrollTop).toBe(
+      getExpectedRestoreScrollTop(snapshot, 'm-10', 24),
+    )
   })
 
   it('sizes latest bootstrap window from viewport height instead of only minMountedItems', async () => {
@@ -581,6 +690,117 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
 
     expect(events).not.toContain('needMoreBefore')
+  })
+
+  it('does not enter bottom lock at the bottom of a partial data window', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(
+      createSnapshot({
+        count: 30,
+        revision: 1,
+        effect: 'reset',
+        hasMoreAfter: true,
+      }),
+    )
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'restored',
+      target: { messageId: 'm-30' },
+    })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+    await flushScrollFrames(container, scheduler, 3)
+
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+  })
+
+  it('does not follow bottom for append pages while newer data still exists', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(
+      createSnapshot({
+        count: 30,
+        revision: 1,
+        effect: 'reset',
+        hasMoreAfter: true,
+      }),
+    )
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'restored',
+      target: { messageId: 'm-30' },
+    })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+    const scrollTopBeforeAppend = container.scrollTop
+
+    runtime.setDataSnapshot(
+      createSnapshot({
+        count: 50,
+        revision: 2,
+        effect: 'append',
+        hasMoreAfter: true,
+      }),
+    )
+    await Promise.resolve()
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await flushFramesWithMicrotasks(scheduler, 2)
+
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+    expect(container.scrollTop).toBe(scrollTopBeforeAppend)
+  })
+
+  it('turns follow-bottom on a partial data window into a newer-page request', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(
+      createSnapshot({
+        count: 30,
+        revision: 1,
+        effect: 'reset',
+        hasMoreAfter: true,
+      }),
+    )
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'restored',
+      target: { messageId: 'm-30' },
+    })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    events.length = 0
+
+    runtime.dispatch({ type: 'followBottom' })
+    await Promise.resolve()
+
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'needMoreAfter',
+        reason: 'bottom-follow',
+      }),
+    )
   })
 
   it('recovers from follow-bottom commit timeout and can follow again', async () => {

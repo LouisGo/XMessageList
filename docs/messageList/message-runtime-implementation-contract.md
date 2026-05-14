@@ -31,7 +31,9 @@ class MessageViewportRuntime {
   dispatch(command: MessageRuntimeCommand): void;
 
   subscribe(listener: RuntimeListener): () => void;
+  subscribeEvent(listener: RuntimeEventListener): () => void;
   getSnapshot(): MessageViewportSnapshot;
+  getViewportAnchorState(): AnchorState | null;
 
   notifyProjectionCommitted(commit: ProjectionCommit): void;
 }
@@ -167,7 +169,7 @@ type MessageRuntimeCommand =
   | {
       type: 'bootstrap';
       mode: 'latest' | 'unread' | 'restored';
-      target?: MessageIdentityAnchor;
+      target?: AnchorState | MessageIdentityAnchor;
     }
   | { type: 'jump'; target: MessageIdentityAnchor }
   | { type: 'restore'; target: AnchorState | MessageIdentityAnchor }
@@ -191,6 +193,11 @@ Supersede 规则：
 - reset cancels all pending commands
 - feed generation change cancels all old commands
 - followBottom is ignored when not READY
+
+当前 prototype 状态：
+
+- `bootstrap(latest)`、`bootstrap(restored)`、`restore` 已落地。
+- `bootstrap(unread)` 仍保留在合同中，但当前实现会显式返回 `not-implemented`，不能当作已完成能力依赖。
 
 ---
 

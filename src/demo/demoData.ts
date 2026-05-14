@@ -1,5 +1,6 @@
 import type {
   CommittedMessageDataItem,
+  MessageIdentityAnchor,
   MessageDataSnapshot,
   ViewportEffect,
 } from '../runtime'
@@ -297,6 +298,8 @@ export function createDemoSnapshot(input: {
   revision: number
   effect: ViewportEffect
   kind?: MessageDataSnapshot['change']['kind']
+  anchor?: MessageIdentityAnchor
+  anchorStatus?: MessageDataSnapshot['anchorStatus']
   hasMoreBefore?: boolean
   hasMoreAfter?: boolean
 }): MessageDataSnapshot<DemoMessage> {
@@ -305,10 +308,12 @@ export function createDemoSnapshot(input: {
     generation: input.generation,
     revision: input.revision,
     items: input.messages.map(toCommittedItem),
-    anchor: input.messages.at(-1)
-      ? { messageId: input.messages.at(-1)?.id ?? '' }
-      : undefined,
-    anchorStatus: 'normal',
+    anchor:
+      input.anchor ??
+      (input.messages.at(-1)
+        ? { messageId: input.messages.at(-1)?.id ?? '' }
+        : undefined),
+    anchorStatus: input.anchorStatus ?? 'normal',
     hasMoreBefore: input.hasMoreBefore ?? input.messages.length > 0,
     hasMoreAfter: input.hasMoreAfter ?? false,
     change: {

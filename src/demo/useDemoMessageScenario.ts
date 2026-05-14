@@ -6,6 +6,7 @@ import {
   useState,
 } from 'react'
 import type {
+  AnchorState,
   MessageDataSnapshot,
   MessageViewportRuntime,
   ViewportEffect,
@@ -28,23 +29,31 @@ import {
   getLatestMessages,
   getMessagesAround,
 } from './demoMessageApi'
+import type {
+  GetLatestMessagesResp,
+  GetMessagesAroundResp,
+} from './demoMessageApiTypes'
 import {
   createDemoRequestId,
   type DemoLogEntry,
   type DemoOperationName,
   loadPersistedDemoFeed,
+  type PersistedViewportAnchor,
   savePersistedDemoFeed,
   writeDemoLog,
 } from './demoLocalStoreClient'
 
 const PAGE_SIZE = 20
 const FEED_LOAD_DELAY_MS = 180
+const RESTORE_BEFORE_PAGE_SIZE = Math.max(1, Math.floor(PAGE_SIZE / 2))
+const RESTORE_AFTER_PAGE_SIZE = PAGE_SIZE
 const REACTION_EMOJIS = ['😀', '😂', '🔥', '👍', '🎉', '😭', '👀', '❤️', '🚀', '🥲']
 
 const OPERATION_DELAYS: Record<
   Extract<
     DemoOperationName,
     | 'history.prepend'
+    | 'history.append'
     | 'message.append'
     | 'message.longBurst'
     | 'message.edit'
@@ -57,6 +66,7 @@ const OPERATION_DELAYS: Record<
   number
 > = {
   'history.prepend': 200,
+  'history.append': 200,
   'message.append': 80,
   'message.longBurst': 620,
   'message.edit': 100,
@@ -82,6 +92,7 @@ type RunLoggedOperationInput = {
   details?: Record<string, unknown>
   apply: (feedId: string) => LoggedOperationResult | Promise<LoggedOperationResult>
   onFinally?: () => void
+  onSuccess?: (result: LoggedOperationResult) => void
   /** 为 true 时跳过 apply 后的 persistCurrentFeed（apply 自行处理持久化）。 */
   skipPersist?: boolean
 }
@@ -109,6 +120,9 @@ export type DemoMessageScenario = {
   sendMessage: (body: string) => boolean
   followBottom: (source: 'sidebar' | 'floating') => void
   clearFeed: (feedId: string) => void
+  rememberViewportAnchor: (
+    reason: 'scroll-idle' | 'before-feed-switch' | 'before-unmount',
+  ) => void
 }
 
 /**
@@ -137,8 +151,15 @@ export function useDemoMessageScenario(
   const revisionRef = useRef(1)
   const generationRef = useRef(1)
   const hasMoreBeforeRef = useRef(false)
+  const hasMoreAfterRef = useRef(false)
+  const lastViewportAnchorRef = useRef<PersistedViewportAnchor | undefined>(undefined)
   const loadingBeforeRef = useRef(false)
+  const loadingAfterRef = useRef(false)
   const feedLoadingRef = useRef(false)
+  const downwardScrollModeRef = useRef<'idle' | 'follow-bottom'>('idle')
+  const loadFutureBatchRef = useRef<
+    ((source: 'edge-user' | 'follow-bottom') => void) | null
+  >(null)
   const loadTokenRef = useRef(0)
   const pendingOperationCountRef = useRef(0)
   const activeOperationsRef = useRef(new Map<string, number>())
@@ -203,6 +224,10 @@ export function useDemoMessageScenario(
       feedMessagesRef.current,
       messagesRef.current,
     )
+    hasMoreAfterRef.current = computeHasMoreAfter(
+      feedMessagesRef.current,
+      messagesRef.current,
+    )
     syncDisplayedCounts()
     runtime.setDataSnapshot(
       createDemoSnapshot({
@@ -213,6 +238,7 @@ export function useDemoMessageScenario(
         effect,
         kind,
         hasMoreBefore: hasMoreBeforeRef.current,
+        hasMoreAfter: hasMoreAfterRef.current,
       }),
     )
   }, [runtime, syncDisplayedCounts])
@@ -223,10 +249,74 @@ export function useDemoMessageScenario(
       feedId: activeFeedIdRef.current,
       revision: revisionRef.current,
       hasMoreBefore: hasMoreBeforeRef.current,
+      lastViewportAnchor: lastViewportAnchorRef.current,
       messages: feedMessagesRef.current,
       updatedAt: new Date().toISOString(),
     })
   }, [])
+
+  const rememberViewportAnchor = useCallback((
+    reason: 'scroll-idle' | 'before-feed-switch' | 'before-unmount',
+  ) => {
+    if (feedLoadingRef.current || feedMessagesRef.current.length === 0) {
+      return
+    }
+
+    const runtimeAnchor = runtime.getViewportAnchorState()
+
+    if (!runtimeAnchor) {
+      return
+    }
+
+    const { key } = runtimeAnchor
+
+    if (key.kind !== 'committed') {
+      return
+    }
+
+    const anchorMessage = feedMessagesRef.current.find(
+      (message) => message.id === key.messageId,
+    )
+
+    if (!anchorMessage) {
+      return
+    }
+
+    const nextAnchor: PersistedViewportAnchor = {
+      messageId: anchorMessage.id,
+      position: anchorMessage.sequence,
+      offsetWithinMessage: runtimeAnchor.offsetWithinMessage,
+    }
+
+    if (isSameViewportAnchor(lastViewportAnchorRef.current, nextAnchor)) {
+      return
+    }
+
+    lastViewportAnchorRef.current = nextAnchor
+
+    void savePersistedDemoFeed({
+      version: 1,
+      feedId: activeFeedIdRef.current,
+      revision: revisionRef.current,
+      hasMoreBefore: hasMoreBeforeRef.current,
+      lastViewportAnchor: nextAnchor,
+      messages: feedMessagesRef.current,
+      updatedAt: new Date().toISOString(),
+    })
+
+    void log({
+      requestId: createDemoRequestId('runtime.event'),
+      operation: 'runtime.event',
+      phase: 'info',
+      feedId: activeFeedIdRef.current,
+      messageCount: messagesRef.current.length,
+      details: {
+        type: 'viewportAnchorRemembered',
+        reason,
+        anchor: nextAnchor,
+      },
+    })
+  }, [log, runtime])
 
   const updateMessageCollections = useCallback((
     messageId: string,
@@ -315,6 +405,7 @@ export function useDemoMessageScenario(
         await persistCurrentFeed()
       }
 
+      input.onSuccess?.(result)
       setLastEvent(result.eventText)
 
       await log({
@@ -405,7 +496,7 @@ export function useDemoMessageScenario(
           after: 0,
         })
 
-        if (!resp.ok) {
+        if (isErrorResponse(resp)) {
           throw new Error(resp.errorMessage)
         }
 
@@ -437,25 +528,144 @@ export function useDemoMessageScenario(
     })
   }, [log, runLoggedOperation])
 
+  const loadFutureBatch = useCallback((
+    source: 'edge-user' | 'follow-bottom',
+  ) => {
+    if (!hasMoreAfterRef.current) {
+      void log({
+        requestId: createDemoRequestId('history.append'),
+        operation: 'history.append',
+        phase: 'skip',
+        feedId: activeFeedIdRef.current,
+        messageCount: messagesRef.current.length,
+        details: { reason: 'future-unavailable', source },
+      })
+      return
+    }
+
+    if (loadingAfterRef.current) {
+      void log({
+        requestId: createDemoRequestId('history.append'),
+        operation: 'history.append',
+        phase: 'skip',
+        feedId: activeFeedIdRef.current,
+        messageCount: messagesRef.current.length,
+        details: { reason: 'already-loading', source },
+      })
+      return
+    }
+
+    loadingAfterRef.current = true
+    const requestFeedId = activeFeedIdRef.current
+
+    void runLoggedOperation({
+      operation: 'history.append',
+      startEvent: 'loading newer messages...',
+      details: { batchSize: PAGE_SIZE, source },
+      apply: async (feedId) => {
+        const storeFeed = await loadPersistedDemoFeed(feedId)
+        feedMessagesRef.current = storeFeed
+          ? normalizeDemoMessages(feedId, storeFeed.messages)
+          : []
+
+        const newestViewportMsg = messagesRef.current.at(-1)
+        if (!newestViewportMsg) {
+          return {
+            effect: 'none' as ViewportEffect,
+            kind: 'patch' as DemoSnapshotKind,
+            eventText: 'no messages in viewport',
+          }
+        }
+
+        const resp = await getMessagesAround({
+          feedId,
+          anchor: { messageId: newestViewportMsg.id },
+          before: 0,
+          after: PAGE_SIZE,
+        })
+
+        if (isErrorResponse(resp)) {
+          throw new Error(resp.errorMessage)
+        }
+
+        const newerInView = resp.messages.filter(
+          (message) => message.id !== newestViewportMsg.id,
+        )
+        const previousLoadedLastId = newestViewportMsg.id
+        messagesRef.current = [...messagesRef.current, ...newerInView]
+        hasMoreAfterRef.current = resp.hasMoreAfter
+
+        return {
+          effect: 'append' as ViewportEffect,
+          kind: 'append' as DemoSnapshotKind,
+          eventText: `loaded ${newerInView.length} newer messages`,
+          details: {
+            total: resp.total,
+            source,
+            hasMoreAfter: resp.hasMoreAfter,
+            added: newerInView.length,
+            previousLoadedLastId,
+            nextLoadedLastId: messagesRef.current.at(-1)?.id,
+            anchor: resp.anchor,
+          },
+        }
+      },
+      onFinally: () => {
+        loadingAfterRef.current = false
+
+        if (downwardScrollModeRef.current !== 'follow-bottom') {
+          return
+        }
+
+        if (activeFeedIdRef.current !== requestFeedId) {
+          downwardScrollModeRef.current = 'idle'
+          return
+        }
+
+        if (hasMoreAfterRef.current) {
+          loadFutureBatchRef.current?.('follow-bottom')
+          return
+        }
+
+        runtime.dispatch({ type: 'followBottom' })
+        downwardScrollModeRef.current = 'idle'
+      },
+      skipPersist: true,
+    })
+  }, [log, runLoggedOperation, runtime])
+
+  useEffect(() => {
+    loadFutureBatchRef.current = loadFutureBatch
+  }, [loadFutureBatch])
+
   const appendMessage = useCallback(() => {
     void runLoggedOperation({
       operation: 'message.append',
       startEvent: 'appending mock message...',
       details: { source: 'button' },
       apply: (feedId) => {
+        const projectsIntoCurrentWindow = !hasMoreAfterRef.current
         const message = createNewestMessage({
           feedId,
           sequence: getNextMessageSequence(feedMessagesRef.current),
         })
 
         feedMessagesRef.current = [...feedMessagesRef.current, message]
-        messagesRef.current = [...messagesRef.current, message]
+        if (projectsIntoCurrentWindow) {
+          messagesRef.current = [...messagesRef.current, message]
+        }
 
         return {
-          effect: 'append',
-          kind: 'append',
-          eventText: `appended ${message.id}`,
-          details: { appendedId: message.id, kind: message.kind },
+          effect: projectsIntoCurrentWindow ? 'append' : 'none',
+          kind: projectsIntoCurrentWindow ? 'append' : 'patch',
+          eventText: projectsIntoCurrentWindow
+            ? `appended ${message.id}`
+            : `queued ${message.id} after current window`,
+          details: {
+            appendedId: message.id,
+            kind: message.kind,
+            visibleInCurrentWindow: projectsIntoCurrentWindow,
+          },
         }
       },
     })
@@ -467,6 +677,7 @@ export function useDemoMessageScenario(
       startEvent: 'appending long burst...',
       details: { burstSize: 4 },
       apply: (feedId) => {
+        const projectsIntoCurrentWindow = !hasMoreAfterRef.current
         const startSequence = getNextMessageSequence(feedMessagesRef.current)
         const next = Array.from({ length: 4 }, (_, index) =>
           createNewestMessage({ feedId, sequence: startSequence + index }),
@@ -482,15 +693,20 @@ export function useDemoMessageScenario(
         )
 
         feedMessagesRef.current = [...feedMessagesRef.current, ...next]
-        messagesRef.current = [...messagesRef.current, ...next]
+        if (projectsIntoCurrentWindow) {
+          messagesRef.current = [...messagesRef.current, ...next]
+        }
 
         return {
-          effect: 'append',
-          kind: 'append',
-          eventText: `appended long burst ${next.length}`,
+          effect: projectsIntoCurrentWindow ? 'append' : 'none',
+          kind: projectsIntoCurrentWindow ? 'append' : 'patch',
+          eventText: projectsIntoCurrentWindow
+            ? `appended long burst ${next.length}`
+            : `queued long burst ${next.length} after current window`,
           details: {
             added: next.length,
             ids: next.map((message) => message.id),
+            visibleInCurrentWindow: projectsIntoCurrentWindow,
           },
         }
       },
@@ -630,20 +846,72 @@ export function useDemoMessageScenario(
       operation: 'message.send',
       startEvent: 'sending message...',
       details: { bodyLength: trimmed.length, lineCount: trimmed.split('\n').length },
-      apply: (feedId) => {
+      apply: async (feedId) => {
+        const projectsIntoCurrentWindow = !hasMoreAfterRef.current
         const message = createOutgoingMessage(trimmed, {
           feedId,
           sequence: getNextMessageSequence(feedMessagesRef.current),
         })
 
         feedMessagesRef.current = [...feedMessagesRef.current, message]
-        messagesRef.current = [...messagesRef.current, message]
+        // 用户主动发送消息是明确的 latest intent：旧的中间阅读 anchor 不能继续影响恢复。
+        lastViewportAnchorRef.current = undefined
+
+        if (projectsIntoCurrentWindow) {
+          messagesRef.current = [...messagesRef.current, message]
+
+          return {
+            effect: 'auto-scroll-to-bottom' as ViewportEffect,
+            kind: 'append' as DemoSnapshotKind,
+            eventText: `sent ${message.id}`,
+            details: {
+              sentId: message.id,
+              bodyLength: trimmed.length,
+              visibleInCurrentWindow: true,
+              rebuiltLatestWindow: false,
+            },
+          }
+        }
+
+        // 当前窗口不是 latest 时，send 需要模拟真实 IM：写入后重新请求 latest page，
+        // 让 runtime 从底部重建 projection，而不是把自发消息排在不可见窗口外。
+        await savePersistedDemoFeed({
+          version: 1,
+          feedId,
+          revision: revisionRef.current,
+          hasMoreBefore: hasMoreBeforeRef.current,
+          lastViewportAnchor: undefined,
+          messages: feedMessagesRef.current,
+          updatedAt: new Date().toISOString(),
+        })
+
+        const latestResp = await getLatestMessages({
+          feedId,
+          limit: PAGE_SIZE,
+        })
+
+        if (isErrorResponse(latestResp)) {
+          throw new Error(latestResp.errorMessage)
+        }
+
+        messagesRef.current = normalizeDemoMessages(feedId, latestResp.messages)
+        hasMoreBeforeRef.current = latestResp.hasMoreBefore
+        hasMoreAfterRef.current = latestResp.hasMoreAfter
 
         return {
-          effect: 'auto-scroll-to-bottom',
-          kind: 'append',
-          eventText: `sent ${message.id}`,
-          details: { sentId: message.id, bodyLength: trimmed.length },
+          effect: 'auto-scroll-to-bottom' as ViewportEffect,
+          kind: 'reset' as DemoSnapshotKind,
+          eventText: `sent ${message.id} and rebuilt latest`,
+          details: {
+            sentId: message.id,
+            bodyLength: trimmed.length,
+            visibleInCurrentWindow: true,
+            rebuiltLatestWindow: true,
+            latestTotal: latestResp.total,
+            hasMoreBefore: latestResp.hasMoreBefore,
+            hasMoreAfter: latestResp.hasMoreAfter,
+            anchor: latestResp.anchor,
+          },
         }
       },
     })
@@ -660,13 +928,27 @@ export function useDemoMessageScenario(
       messageCount: messagesRef.current.length,
       details: { source },
     })
+    downwardScrollModeRef.current = 'follow-bottom'
+
+    if (loadingAfterRef.current) {
+      return
+    }
+
+    if (hasMoreAfterRef.current) {
+      void loadFutureBatch('follow-bottom')
+      return
+    }
+
     runtime.dispatch({ type: 'followBottom' })
-  }, [log, runtime])
+    downwardScrollModeRef.current = 'idle'
+  }, [loadFutureBatch, log, runtime])
 
   const selectFeed = useCallback((feedId: string) => {
     if (feedId === activeFeedIdRef.current) {
       return
     }
+
+    rememberViewportAnchor('before-feed-switch')
 
     void log({
       requestId: createDemoRequestId('feed.select'),
@@ -680,7 +962,7 @@ export function useDemoMessageScenario(
     setFeedLoading(true)
     setLastEvent(`loading ${getDemoFeedDefinition(feedId).title}...`)
     setActiveFeedId(feedId)
-  }, [log])
+  }, [log, rememberViewportAnchor])
 
   const clearFeed = useCallback((feedId: string) => {
     const feed = getDemoFeedDefinition(feedId)
@@ -723,6 +1005,7 @@ export function useDemoMessageScenario(
           feedId,
           revision: nextRevision,
           hasMoreBefore: false,
+          lastViewportAnchor: undefined,
           messages: [],
           updatedAt: new Date().toISOString(),
         })
@@ -730,6 +1013,9 @@ export function useDemoMessageScenario(
         if (isActiveAfterDelay) {
           revisionRef.current = nextRevision
           hasMoreBeforeRef.current = false
+          hasMoreAfterRef.current = false
+          lastViewportAnchorRef.current = undefined
+          downwardScrollModeRef.current = 'idle'
           feedMessagesRef.current = []
           messagesRef.current = []
           syncDisplayedCounts()
@@ -742,6 +1028,7 @@ export function useDemoMessageScenario(
               effect: 'reset',
               kind: 'reset',
               hasMoreBefore: false,
+              hasMoreAfter: false,
             }),
           )
           runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
@@ -779,6 +1066,12 @@ export function useDemoMessageScenario(
   }, [beginPendingOperation, endPendingOperation, log, runtime, syncDisplayedCounts])
 
   useEffect(() => {
+    return () => {
+      rememberViewportAnchor('before-unmount')
+    }
+  }, [rememberViewportAnchor])
+
+  useEffect(() => {
     const token = loadTokenRef.current + 1
     const feed = getDemoFeedDefinition(activeFeedId)
     const requestId = createDemoRequestId('feed.load')
@@ -786,6 +1079,7 @@ export function useDemoMessageScenario(
     loadTokenRef.current = token
     activeFeedIdRef.current = activeFeedId
     feedLoadingRef.current = true
+    downwardScrollModeRef.current = 'idle'
 
     async function loadFeed(): Promise<void> {
       await log({
@@ -800,31 +1094,20 @@ export function useDemoMessageScenario(
       try {
         await sleep(FEED_LOAD_DELAY_MS)
 
-        // 通过 BFF 获取最新消息；若 store 中不存在则先 seed 再重试
-        const firstResp = await getLatestMessages({
-          feedId: activeFeedId,
-          limit: PAGE_SIZE,
-        })
+        let persistedFeed = await loadPersistedDemoFeed(activeFeedId)
 
-        let resp = firstResp.ok
-          ? firstResp
-          : undefined
-
-        if (!firstResp.ok) {
-          if (firstResp.errorCode !== 'feed-not-found') {
-            throw new Error(firstResp.errorMessage)
-          }
-
+        if (!persistedFeed) {
           const seedMessages = createDemoMessages(feed.seedCount, activeFeedId)
-          feedMessagesRef.current = seedMessages
-          await savePersistedDemoFeed({
+          persistedFeed = {
             version: 1,
             feedId: activeFeedId,
             revision: 1,
             hasMoreBefore: true,
+            lastViewportAnchor: undefined,
             messages: seedMessages,
             updatedAt: new Date().toISOString(),
-          })
+          }
+          await savePersistedDemoFeed(persistedFeed)
           await log({
             requestId: createDemoRequestId('feed.seed'),
             operation: 'feed.seed',
@@ -833,22 +1116,55 @@ export function useDemoMessageScenario(
             messageCount: seedMessages.length,
             details: { seedCount: feed.seedCount },
           })
-          const retryResp = await getLatestMessages({
+        }
+
+        const normalizedFeedMessages = normalizeDemoMessages(
+          activeFeedId,
+          persistedFeed.messages,
+        )
+        const persistedViewportAnchor = persistedFeed.lastViewportAnchor
+        let bootstrapMode: 'latest' | 'restored' = 'latest'
+        let bootstrapTarget: AnchorState | undefined
+        let usedPersistedViewportAnchor = false
+        let restoreResp: GetMessagesAroundResp<DemoMessage> | null = null
+        let resp: GetLatestMessagesResp<DemoMessage> | GetMessagesAroundResp<DemoMessage>
+
+        if (persistedViewportAnchor) {
+          restoreResp = await getMessagesAround({
+            feedId: activeFeedId,
+            anchor: {
+              messageId: persistedViewportAnchor.messageId,
+              position: persistedViewportAnchor.position,
+            },
+            before: RESTORE_BEFORE_PAGE_SIZE,
+            after: RESTORE_AFTER_PAGE_SIZE,
+          })
+          resp = restoreResp
+          usedPersistedViewportAnchor = restoreResp.ok
+        } else {
+          resp = await getLatestMessages({
             feedId: activeFeedId,
             limit: PAGE_SIZE,
           })
-
-          if (!retryResp.ok) {
-            throw new Error(retryResp.errorMessage)
-          }
-
-          resp = retryResp
         }
 
-        const persistedFeed = await loadPersistedDemoFeed(activeFeedId)
+        if (persistedViewportAnchor && isErrorResponse(resp)) {
+          resp = await getLatestMessages({
+            feedId: activeFeedId,
+            limit: PAGE_SIZE,
+          })
+        }
 
-        if (!persistedFeed) {
-          throw new Error(`feed ${activeFeedId} missing after load`)
+        if (isErrorResponse(resp)) {
+          throw new Error(resp.errorMessage)
+        }
+
+        if (persistedViewportAnchor && usedPersistedViewportAnchor) {
+          bootstrapMode = 'restored'
+          bootstrapTarget = {
+            key: { kind: 'committed', messageId: resp.anchor.messageId },
+            offsetWithinMessage: persistedViewportAnchor.offsetWithinMessage,
+          }
         }
 
         if (loadTokenRef.current !== token) {
@@ -865,27 +1181,55 @@ export function useDemoMessageScenario(
 
         generationRef.current += 1
         revisionRef.current += 1
-        hasMoreBeforeRef.current = resp.hasMoreBefore
-        feedMessagesRef.current = normalizeDemoMessages(
-          activeFeedId,
-          persistedFeed.messages,
+        lastViewportAnchorRef.current = usedPersistedViewportAnchor
+          ? persistedViewportAnchor
+          : undefined
+        feedMessagesRef.current = normalizedFeedMessages
+        messagesRef.current = normalizeDemoMessages(activeFeedId, resp.messages)
+        hasMoreBeforeRef.current = computeHasMoreBefore(
+          feedMessagesRef.current,
+          messagesRef.current,
         )
-        messagesRef.current = resp.messages
+        hasMoreAfterRef.current = computeHasMoreAfter(
+          feedMessagesRef.current,
+          messagesRef.current,
+        )
         syncDisplayedCounts()
+
+        if (persistedViewportAnchor && !usedPersistedViewportAnchor) {
+          await savePersistedDemoFeed({
+            ...persistedFeed,
+            messages: normalizedFeedMessages,
+            lastViewportAnchor: undefined,
+            updatedAt: new Date().toISOString(),
+          })
+        }
+
         runtime.setDataSnapshot(
           createDemoSnapshot({
             feedId: activeFeedId,
             generation: generationRef.current,
-            messages: resp.messages,
+            messages: messagesRef.current,
             revision: revisionRef.current,
             effect: 'reset',
             kind: 'initial',
-            hasMoreBefore: resp.hasMoreBefore,
+            anchor: resp.anchor,
+            anchorStatus: resp.anchorStatus,
+            hasMoreBefore: hasMoreBeforeRef.current,
+            hasMoreAfter: hasMoreAfterRef.current,
           }),
         )
-        runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+        runtime.dispatch({
+          type: 'bootstrap',
+          mode: bootstrapMode,
+          target: bootstrapTarget,
+        })
         setLastEvent(
-          resp.messages.length > 0 ? `loaded ${feed.title}` : `seeded ${feed.title}`,
+          bootstrapMode === 'restored'
+            ? `restored ${feed.title}`
+            : resp.messages.length > 0
+              ? `loaded ${feed.title}`
+              : `seeded ${feed.title}`,
         )
 
         await log({
@@ -896,8 +1240,17 @@ export function useDemoMessageScenario(
           messageCount: resp.messages.length,
           details: {
             total: resp.total,
-            hasMoreBefore: resp.hasMoreBefore,
+            hasMoreBefore: hasMoreBeforeRef.current,
+            hasMoreAfter: hasMoreAfterRef.current,
             anchor: resp.anchor,
+            anchorStatus: resp.anchorStatus,
+            mode: bootstrapMode,
+            restoreInput: persistedViewportAnchor,
+            restoreApplied: usedPersistedViewportAnchor,
+            restoreFallbackError:
+              restoreResp && isErrorResponse(restoreResp)
+                ? restoreResp.errorCode
+                : undefined,
           },
         })
       } catch (error) {
@@ -938,11 +1291,29 @@ export function useDemoMessageScenario(
         event.feedId === activeFeedIdRef.current
       ) {
         loadHistoryBatch('auto')
+        return
+      }
+
+      if (
+        event.type === 'needMoreAfter' &&
+        event.feedId === activeFeedIdRef.current
+      ) {
+        if (loadingAfterRef.current) {
+          return
+        }
+
+        // 普通向下分页也必须由 runtime 的 edge event 驱动；
+        // demo 不能再用 scrollTop/scrollHeight 自己判断触底。
+        void loadFutureBatch(
+          downwardScrollModeRef.current === 'follow-bottom'
+            ? 'follow-bottom'
+            : 'edge-user',
+        )
       }
     })
 
     return unsubscribe
-  }, [loadHistoryBatch, log, runtime])
+  }, [loadFutureBatch, loadHistoryBatch, log, runtime])
 
   return {
     feeds: DEMO_FEEDS,
@@ -965,6 +1336,7 @@ export function useDemoMessageScenario(
     sendMessage,
     followBottom,
     clearFeed,
+    rememberViewportAnchor,
   }
 }
 
@@ -992,6 +1364,26 @@ function formatPendingOperations(operations: Map<string, number>): string {
     .join(' + ')
 }
 
+function isSameViewportAnchor(
+  left: PersistedViewportAnchor | undefined,
+  right: PersistedViewportAnchor,
+): boolean {
+  return (
+    left?.messageId === right.messageId &&
+    left?.position === right.position &&
+    left?.offsetWithinMessage === right.offsetWithinMessage
+  )
+}
+
+function isErrorResponse<TMessage>(
+  response: GetLatestMessagesResp<TMessage> | GetMessagesAroundResp<TMessage>,
+): response is Extract<
+  GetLatestMessagesResp<TMessage> | GetMessagesAroundResp<TMessage>,
+  { ok: false }
+> {
+  return response.ok === false
+}
+
 function computeHasMoreBefore(
   feedMessages: DemoMessage[],
   loadedMessages: DemoMessage[],
@@ -1004,6 +1396,20 @@ function computeHasMoreBefore(
   }
 
   return feedFirst.sequence < loadedFirst.sequence
+}
+
+function computeHasMoreAfter(
+  feedMessages: DemoMessage[],
+  loadedMessages: DemoMessage[],
+): boolean {
+  const feedLast = feedMessages.at(-1)
+  const loadedLast = loadedMessages.at(-1)
+
+  if (!feedLast || !loadedLast) {
+    return false
+  }
+
+  return feedLast.sequence > loadedLast.sequence
 }
 
 function getEditedMessageKind(

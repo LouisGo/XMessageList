@@ -255,6 +255,10 @@ export class MessageViewportRuntime<
 
     this.dataSnapshot = snapshot
 
+    if (snapshot.hasMoreAfter && this.scrollIntent.getBottomLockState() === 'LOCKED') {
+      this.scrollIntent.setBottomLockState('UNLOCKED')
+    }
+
     if (snapshot.change.viewportEffect !== 'none') {
       this.transactions.dropBySupersedeKey('window-slide')
     }
@@ -301,7 +305,7 @@ export class MessageViewportRuntime<
         this.enqueueJumpTransaction(command.target.messageId)
         break
       case 'restore':
-        this.enqueueProjectionRefresh()
+        this.enqueueRestoreTransaction(command.target)
         break
       case 'reset':
         this.enqueueResetTransaction(command.reason)
@@ -323,6 +327,11 @@ export class MessageViewportRuntime<
 
   getSnapshot(): MessageViewportSnapshot<TMessage, TOptimistic> {
     return this.store.getSnapshot()
+  }
+
+  getViewportAnchorState(): AnchorState | null {
+    const anchor = this.captureViewportAnchor()
+    return anchor ? cloneAnchorState(anchor) : null
   }
 
   registerRow(key: MessageRuntimeItemKey, element: HTMLElement | null): void {
@@ -393,7 +402,7 @@ export class MessageViewportRuntime<
     this.pendingBootstrap = null
     this.transactions.enqueue(
       'bootstrap',
-      () => this.runBootstrapTransaction(command.mode),
+      () => this.runBootstrapTransaction(command.mode, command.target),
       'bootstrap',
     )
     return true
@@ -415,13 +424,9 @@ export class MessageViewportRuntime<
 
   private async runBootstrapTransaction(
     mode: 'latest' | 'unread' | 'restored',
+    target?: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
   ): Promise<void> {
     if (!this.dataSnapshot || !this.registry.getContainer()) {
-      return
-    }
-
-    if (mode !== 'latest') {
-      this.emitError(`bootstrap-${mode}-not-implemented`)
       return
     }
 
@@ -429,7 +434,6 @@ export class MessageViewportRuntime<
     const container = this.registry.getContainer() as HTMLElement
     const token = this.lifecycle.getCurrent()
     const previousSnapshot = this.store.getSnapshot()
-    this.state = 'BOOTSTRAPPING'
 
     if (data.items.length === 0) {
       this.publishProjection({
@@ -449,48 +453,130 @@ export class MessageViewportRuntime<
       return
     }
 
-    const renderWindow = this.renderWindow.computeLatestWindow(
-      data.items,
-      container.clientHeight,
-      container.clientWidth,
-    )
+    if (mode === 'latest') {
+      const renderWindow = this.renderWindow.computeLatestWindow(
+        data.items,
+        container.clientHeight,
+        container.clientWidth,
+      )
 
-    try {
-      const projection = this.publishProjection({
-        data,
-        renderWindow,
-        bootstrapState: 'MOUNTING',
-        bottomLockState: 'UNLOCKED',
-      })
+      this.state = 'BOOTSTRAPPING'
 
-      await this.waitForCommitIfChanged(projection, 'bootstrap')
-      this.measureCurrentWindow()
-      this.scrollToBottom('followBottom')
-      await this.waitForBootstrapSettle(data.feedId, data.generation)
-      this.measureCurrentWindow()
-      this.scrollToBottom('followBottom')
-      this.scrollIntent.setBottomLockState('LOCKED')
-      this.state = 'READY'
-      this.publishProjection({
-        data,
-        renderWindow,
-        bootstrapState: 'READY',
-        bottomLockState: 'LOCKED',
-      })
-      this.emitEvent({
-        type: 'viewportReady',
-        feedId: data.feedId,
-        generation: data.generation,
-      })
-    } catch (error) {
-      this.recoverAfterCommitFailure({
-        token,
-        nextState: this.deriveRuntimeStateFromSnapshot(previousSnapshot),
-        restoreBottomLockState: previousSnapshot.bottomLockState,
-        restoreSnapshot: previousSnapshot,
-      })
-      throw error
+      try {
+        const projection = this.publishProjection({
+          data,
+          renderWindow,
+          bootstrapState: 'MOUNTING',
+          bottomLockState: 'UNLOCKED',
+        })
+
+        await this.waitForCommitIfChanged(projection, 'bootstrap')
+        this.measureCurrentWindow()
+        this.scrollToBottom('followBottom')
+        await this.waitForBootstrapSettle(data.feedId, data.generation)
+        this.measureCurrentWindow()
+        this.scrollToBottom('followBottom')
+        this.scrollIntent.setBottomLockState('LOCKED')
+        this.state = 'READY'
+        this.publishProjection({
+          data,
+          renderWindow,
+          bootstrapState: 'READY',
+          bottomLockState: 'LOCKED',
+        })
+        this.emitEvent({
+          type: 'viewportReady',
+          feedId: data.feedId,
+          generation: data.generation,
+        })
+      } catch (error) {
+        this.recoverAfterCommitFailure({
+          token,
+          nextState: this.deriveRuntimeStateFromSnapshot(previousSnapshot),
+          restoreBottomLockState: previousSnapshot.bottomLockState,
+          restoreSnapshot: previousSnapshot,
+        })
+        throw error
+      }
+
+      return
     }
+
+    if (mode === 'restored') {
+      const restoreTarget = this.resolveRestoreTarget(
+        data,
+        target ?? data.anchor,
+      )
+
+      if (!restoreTarget) {
+        this.emitError('bootstrap-restored-target-missing')
+        this.state = this.deriveRuntimeStateFromSnapshot(previousSnapshot)
+        return
+      }
+
+      const renderWindow = this.renderWindow.computeWindowAroundAnchor({
+        items: data.items,
+        anchorIndex: restoreTarget.index,
+        viewportHeight: container.clientHeight,
+        viewportWidth: container.clientWidth,
+      })
+
+      this.state = 'BOOTSTRAPPING'
+
+      try {
+        const projection = this.publishProjection({
+          data,
+          renderWindow,
+          bootstrapState: 'MOUNTING',
+          bottomLockState: 'UNLOCKED',
+        })
+
+        await this.waitForCommitIfChanged(projection, 'bootstrap')
+
+        if (
+          !this.alignToRestoreTarget(
+            container,
+            restoreTarget,
+            'bootstrap-restored-target-dom-missing',
+          )
+        ) {
+          this.recoverAfterCommitFailure({
+            token,
+            nextState: this.deriveRuntimeStateFromSnapshot(previousSnapshot),
+            restoreBottomLockState: previousSnapshot.bottomLockState,
+            restoreSnapshot: previousSnapshot,
+          })
+          return
+        }
+
+        this.measureCurrentWindow()
+        this.scrollIntent.setBottomLockState('UNLOCKED')
+        this.state = 'READY'
+        this.publishProjection({
+          data,
+          renderWindow,
+          bootstrapState: 'READY',
+          bottomLockState: 'UNLOCKED',
+        })
+        this.emitEvent({
+          type: 'viewportReady',
+          feedId: data.feedId,
+          generation: data.generation,
+        })
+      } catch (error) {
+        this.recoverAfterCommitFailure({
+          token,
+          nextState: this.deriveRuntimeStateFromSnapshot(previousSnapshot),
+          restoreBottomLockState: previousSnapshot.bottomLockState,
+          restoreSnapshot: previousSnapshot,
+        })
+        throw error
+      }
+
+      return
+    }
+
+    this.emitError(`bootstrap-${mode}-not-implemented`)
   }
 
   private enqueuePrependTransaction(): void {
@@ -598,9 +684,12 @@ export class MessageViewportRuntime<
       return
     }
 
+    // BottomLocked 只代表 feed latest 的底部；hasMoreAfter=true 时，
+    // 当前物理底部只是已加载 DataWindow 的 after edge，不能被 append page 追底。
     const shouldFollow =
-      effect === 'auto-scroll-to-bottom' ||
-      this.scrollIntent.getBottomLockState() === 'LOCKED'
+      !data.hasMoreAfter &&
+      (effect === 'auto-scroll-to-bottom' ||
+        this.scrollIntent.getBottomLockState() === 'LOCKED')
     const token = this.lifecycle.getCurrent()
     const renderWindow = shouldFollow
       ? this.renderWindow.computeLatestWindow(
@@ -666,7 +755,10 @@ export class MessageViewportRuntime<
             container.clientWidth,
           )
 
-    if (this.scrollIntent.getBottomLockState() === 'LOCKED') {
+    if (
+      this.scrollIntent.getBottomLockState() === 'LOCKED' &&
+      !data.hasMoreAfter
+    ) {
       const projection = this.publishProjection({
         data,
         renderWindow,
@@ -713,6 +805,16 @@ export class MessageViewportRuntime<
       'jump',
       () => this.runJumpTransaction(messageId),
       'jump',
+    )
+  }
+
+  private enqueueRestoreTransaction(
+    target: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
+  ): void {
+    this.transactions.enqueue(
+      'restore',
+      () => this.runRestoreTransaction(target),
+      'restore',
     )
   }
 
@@ -791,6 +893,88 @@ export class MessageViewportRuntime<
     }
   }
 
+  private async runRestoreTransaction(
+    target: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
+  ): Promise<void> {
+    const data = this.dataSnapshot
+    const container = this.registry.getContainer()
+
+    if (!data || !container) {
+      return
+    }
+
+    const restoreTarget = this.resolveRestoreTarget(data, target)
+
+    if (!restoreTarget) {
+      this.emitError('restore-target-missing')
+      return
+    }
+
+    const token = this.lifecycle.getCurrent()
+    const previousBottomLockState = this.scrollIntent.getBottomLockState()
+    const renderWindow = this.renderWindow.computeWindowAroundAnchor({
+      items: data.items,
+      anchorIndex: restoreTarget.index,
+      viewportHeight: container.clientHeight,
+      viewportWidth: container.clientWidth,
+    })
+
+    this.state = 'TRANSACTING'
+    this.scrollIntent.setBottomLockState('RECOVERING')
+
+    try {
+      const projection = this.publishProjection({
+        data,
+        renderWindow,
+        bootstrapState: 'READY',
+        bottomLockState: 'RECOVERING',
+      })
+
+      await this.waitForCommitIfChanged(projection, 'restore')
+
+      if (
+        !this.alignToRestoreTarget(
+          container,
+          restoreTarget,
+          'restore-target-dom-missing',
+        )
+      ) {
+        this.scrollIntent.setBottomLockState(previousBottomLockState)
+        this.state = 'READY'
+        this.publishProjection({
+          data,
+          renderWindow,
+          bootstrapState: 'READY',
+          bottomLockState: previousBottomLockState,
+        })
+        return
+      }
+
+      this.measureCurrentWindow()
+      this.scrollIntent.setBottomLockState('UNLOCKED')
+      this.state = 'READY'
+      this.publishProjection({
+        data,
+        renderWindow,
+        bootstrapState: 'READY',
+        bottomLockState: 'UNLOCKED',
+      })
+    } catch (error) {
+      this.recoverAfterCommitFailure({
+        token,
+        nextState: 'READY',
+        restoreBottomLockState: previousBottomLockState,
+        restoreProjection: {
+          data,
+          renderWindow,
+          bootstrapState: 'READY',
+          bottomLockState: previousBottomLockState,
+        },
+      })
+      throw error
+    }
+  }
+
   private enqueueResetTransaction(reason: string): void {
     this.transactions.enqueue(
       'reset',
@@ -818,6 +1002,19 @@ export class MessageViewportRuntime<
     const container = this.registry.getContainer()
 
     if (!data || !container) {
+      return
+    }
+
+    if (data.hasMoreAfter) {
+      // followBottom 的目标是会话最新消息；当前 DataWindow 还缺 newer page 时，
+      // runtime 只能表达分页需求，不能把 partial bottom 锁成 BottomAnchor。
+      this.scrollIntent.setBottomLockState('UNLOCKED')
+      this.emitEvent({
+        type: 'needMoreAfter',
+        feedId: data.feedId,
+        generation: data.generation,
+        reason: 'bottom-follow',
+      })
       return
     }
 
@@ -890,6 +1087,10 @@ export class MessageViewportRuntime<
       input.renderWindow.startIndex,
       input.renderWindow.endIndex + 1,
     )
+    const bottomLockState = this.getProjectedBottomLockState(
+      input.data,
+      input.bottomLockState,
+    )
     const nextRevision = this.isProjectionEqual(current, {
       feedId: input.data.feedId,
       generation: input.data.generation,
@@ -897,7 +1098,7 @@ export class MessageViewportRuntime<
       renderWindow: input.renderWindow,
       topSpacer,
       bottomSpacer,
-      bottomLockState: input.bottomLockState,
+      bottomLockState,
       bootstrapState: input.bootstrapState,
       edgeState: this.createEdgeState(input.data),
     })
@@ -912,7 +1113,7 @@ export class MessageViewportRuntime<
       renderWindow: input.renderWindow,
       topSpacer: Math.max(0, topSpacer),
       bottomSpacer: Math.max(0, bottomSpacer),
-      bottomLockState: input.bottomLockState,
+      bottomLockState,
       bootstrapState: input.bootstrapState,
       edgeState: this.createEdgeState(input.data),
     }
@@ -923,6 +1124,15 @@ export class MessageViewportRuntime<
     }
 
     return { snapshot: current, changed: false }
+  }
+
+  private getProjectedBottomLockState(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+    state: MessageViewportSnapshot['bottomLockState'],
+  ): MessageViewportSnapshot['bottomLockState'] {
+    // Snapshot 不能把 partial DataWindow 的底部暴露成 LOCKED；
+    // 否则 React overlay 和接入层会误以为已经回到会话最新消息。
+    return data.hasMoreAfter && state === 'LOCKED' ? 'UNLOCKED' : state
   }
 
   private async waitForCommitIfChanged(
@@ -1052,6 +1262,61 @@ export class MessageViewportRuntime<
     )
   }
 
+  private resolveRestoreTarget(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+    target: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
+  ): { key: MessageRuntimeItemKey; offsetWithinMessage: number; index: number } | null {
+    if (!target) {
+      return null
+    }
+
+    const key =
+      isAnchorState(target)
+        ? target.key
+        : { kind: 'committed' as const, messageId: target.messageId }
+    const offsetWithinMessage = isAnchorState(target)
+      ? target.offsetWithinMessage
+      : 0
+    const index = this.renderWindow.findIndexByKey(data.items, key)
+
+    if (index < 0) {
+      return null
+    }
+
+    return {
+      key,
+      offsetWithinMessage: Math.max(0, offsetWithinMessage),
+      index,
+    }
+  }
+
+  private alignToRestoreTarget(
+    container: HTMLElement,
+    target: {
+      key: MessageRuntimeItemKey
+      offsetWithinMessage: number
+    },
+    missingDomErrorCode: string,
+  ): boolean {
+    const element = this.registry.getRow(target.key)
+
+    if (!element) {
+      this.emitError(missingDomErrorCode)
+      return false
+    }
+
+    const containerTop = container.getBoundingClientRect().top
+    const targetRect = element.getBoundingClientRect()
+    const desiredTop = containerTop - target.offsetWithinMessage
+    const delta = targetRect.top - desiredTop
+
+    if (Math.abs(delta) > 0.5) {
+      this.writeScrollTop(container.scrollTop + delta, 'programmatic')
+    }
+
+    return true
+  }
+
   private captureViewportAnchor(): AnchorState | null {
     const container = this.registry.getContainer()
     const snapshot = this.store.getSnapshot()
@@ -1112,9 +1377,9 @@ export class MessageViewportRuntime<
     const distance = getDistanceToBottom(container)
     const scrollSource = this.scrollIntent.classifyScroll(this.currentFrame)
     this.lastScrollSource = scrollSource
-    const changed = this.scrollIntent.updateBottomLockFromDistance(
+    const changed = this.updateBottomLockForDataWindow(
+      data,
       distance,
-      this.currentFrame,
       scrollSource,
     )
 
@@ -1137,6 +1402,26 @@ export class MessageViewportRuntime<
     if (this.state === 'READY') {
       this.maybeSlideWindow(container, data)
     }
+  }
+
+  private updateBottomLockForDataWindow(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+    distanceToBottom: number,
+    scrollSource: ScrollSource,
+  ): boolean {
+    // hasMoreAfter=true 说明当前 DOM 底部不是会话最新消息底部，
+    // 只能作为向下分页边界，不能进入 BottomLocked 心智模型。
+    if (data.hasMoreAfter) {
+      return this.scrollIntent.getBottomLockState() === 'RECOVERING'
+        ? false
+        : this.scrollIntent.setBottomLockState('UNLOCKED')
+    }
+
+    return this.scrollIntent.updateBottomLockFromDistance(
+      distanceToBottom,
+      this.currentFrame,
+      scrollSource,
+    )
   }
 
   private maybeSlideWindow(
@@ -1275,7 +1560,10 @@ export class MessageViewportRuntime<
       return
     }
 
-    if (this.scrollIntent.getBottomLockState() === 'LOCKED') {
+    if (
+      this.scrollIntent.getBottomLockState() === 'LOCKED' &&
+      !data.hasMoreAfter
+    ) {
       this.scrollToBottom('followBottom')
       return
     }
@@ -1663,5 +1951,18 @@ export class MessageViewportRuntime<
       generation: token.generation,
       code,
     })
+  }
+}
+
+function isAnchorState(
+  value: AnchorState | { messageId: string; position?: number } | undefined,
+): value is AnchorState {
+  return Boolean(value && 'key' in value)
+}
+
+function cloneAnchorState(anchor: AnchorState): AnchorState {
+  return {
+    key: { ...anchor.key },
+    offsetWithinMessage: anchor.offsetWithinMessage,
   }
 }

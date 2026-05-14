@@ -116,7 +116,7 @@ scrollTop 不是权威状态。
 
 ```ts id="s7s0eo"
 type AnchorState = {
-  messageId: string;
+  key: MessageRuntimeItemKey;
   offsetWithinMessage: number;
 };
 ```
@@ -153,6 +153,7 @@ scrollToMessage(id);
 jumpToUnread();
 followBottom();
 restoreAnchor(anchor);
+getViewportAnchorState();
 ```
 
 原因：

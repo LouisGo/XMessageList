@@ -116,7 +116,7 @@ AnchorState
 
 ```ts
 type AnchorState = {
-  messageId: string;
+  key: MessageRuntimeItemKey;
   offsetWithinMessage: number;
 };
 ```
@@ -147,6 +147,16 @@ main 进程没有 DOM，也不拥有 layout timing。
 如果需要持久化恢复位置，也只能由 renderer 保存和解释。
 
 Data Runtime 只消费其中的 identity 部分。
+
+如果 anchor 需要持久化到会话存储，通常只保存 committed identity：
+
+```ts
+type PersistedViewportAnchor = {
+  messageId: string;
+  position?: number;
+  offsetWithinMessage: number;
+};
+```
 
 ---
 
@@ -179,6 +189,16 @@ Bottom Anchor 只属于：
 ```text
 renderer viewport runtime
 ```
+
+Bottom Anchor 还必须满足一个数据边界前提：
+
+```text
+hasMoreAfter === false
+```
+
+如果 `hasMoreAfter === true`，当前 DOM 底部只是已加载 DataWindow 的 after edge，
+不是会话最新消息底部。此时接近底部只能触发 `needMoreAfter`，不能进入
+`BottomLocked`。
 
 ---
 

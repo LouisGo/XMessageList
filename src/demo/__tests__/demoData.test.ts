@@ -75,4 +75,30 @@ describe('demoData', () => {
 
     expect(snapshot.hasMoreBefore).toBe(true)
   })
+
+  it('keeps an explicit anchor and anchorStatus when restore data resolves to a neighbor', () => {
+    const messages = createDemoMessages(3, 'feed-restore')
+    const snapshot = createDemoSnapshot({
+      feedId: 'feed-restore',
+      generation: 1,
+      messages,
+      revision: 2,
+      effect: 'reset',
+      kind: 'initial',
+      anchor: {
+        messageId: messages[1]?.id ?? '',
+        position: messages[1]?.sequence,
+      },
+      anchorStatus: 'deleted',
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    })
+
+    expect(snapshot.anchor).toEqual({
+      messageId: messages[1]?.id ?? '',
+      position: messages[1]?.sequence,
+    })
+    expect(snapshot.anchorStatus).toBe('deleted')
+    expect(snapshot.hasMoreAfter).toBe(true)
+  })
 })

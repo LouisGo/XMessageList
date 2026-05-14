@@ -6,6 +6,7 @@ export type DemoOperationName =
   | 'feed.select'
   | 'feed.clear'
   | 'history.prepend'
+  | 'history.append'
   | 'message.append'
   | 'message.longBurst'
   | 'message.edit'
@@ -34,11 +35,18 @@ export type DemoLogEntry = {
   error?: string
 }
 
+export type PersistedViewportAnchor = {
+  messageId: string
+  position?: number
+  offsetWithinMessage: number
+}
+
 export type PersistedDemoFeed = {
   version: 1
   feedId: string
   revision: number
   hasMoreBefore?: boolean
+  lastViewportAnchor?: PersistedViewportAnchor
   messages: DemoMessage[]
   updatedAt: string
 }

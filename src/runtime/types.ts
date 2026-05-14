@@ -152,7 +152,7 @@ export type MessageRuntimeCommand =
   | {
       type: 'bootstrap'
       mode: 'latest' | 'unread' | 'restored'
-      target?: MessageIdentityAnchor
+      target?: AnchorState | MessageIdentityAnchor
     }
   | { type: 'jump'; target: MessageIdentityAnchor }
   | { type: 'restore'; target: AnchorState | MessageIdentityAnchor }

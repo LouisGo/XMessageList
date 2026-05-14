@@ -247,9 +247,12 @@ semantic command
 ```ts
 type MessageRuntimeCommand =
   | { type: 'jump'; target: MessageIdentityAnchor }
-  | { type: 'restore'; target: MessageIdentityAnchor }
+  | { type: 'restore'; target: AnchorState | MessageIdentityAnchor }
   | { type: 'followBottom' };
 ```
+
+其中 `restore` 更常见的输入是 renderer 本地保存的 `AnchorState`；
+如果只拿到 `MessageIdentityAnchor`，则说明数据层已经先完成了 around-anchor 读取与 fallback。
 
 action 禁止：
 

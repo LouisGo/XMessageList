@@ -9,6 +9,11 @@ type PersistedDemoFeed = {
   feedId: string
   revision: number
   hasMoreBefore?: boolean
+  lastViewportAnchor?: {
+    messageId: string
+    position?: number
+    offsetWithinMessage: number
+  }
   messages: unknown[]
   updatedAt: string
 }
@@ -144,8 +149,27 @@ function normalizeFeedPayload(
       typeof feed.hasMoreBefore === 'boolean'
         ? feed.hasMoreBefore
         : feed.messages.length > 0,
+    lastViewportAnchor: normalizeViewportAnchor(feed.lastViewportAnchor),
     messages: feed.messages,
     updatedAt: feed.updatedAt || new Date().toISOString(),
+  }
+}
+
+function normalizeViewportAnchor(
+  anchor: PersistedDemoFeed['lastViewportAnchor'],
+): PersistedDemoFeed['lastViewportAnchor'] {
+  if (!anchor || typeof anchor.messageId !== 'string' || anchor.messageId.length === 0) {
+    return undefined
+  }
+
+  if (!Number.isFinite(anchor.offsetWithinMessage)) {
+    return undefined
+  }
+
+  return {
+    messageId: anchor.messageId,
+    position: Number.isFinite(anchor.position) ? anchor.position : undefined,
+    offsetWithinMessage: Math.max(0, anchor.offsetWithinMessage),
   }
 }
 

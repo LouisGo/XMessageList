@@ -9,6 +9,11 @@ type PersistedDemoFeed = {
   feedId: string
   revision: number
   hasMoreBefore?: boolean
+  lastViewportAnchor?: {
+    messageId: string
+    position?: number
+    offsetWithinMessage: number
+  }
   messages: ReturnType<typeof createDemoMessages>
   updatedAt: string
 }

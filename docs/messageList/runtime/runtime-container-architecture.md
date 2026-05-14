@@ -25,7 +25,9 @@ class MessageViewportRuntime {
   dispatch(command: MessageRuntimeCommand): void;
 
   subscribe(listener: RuntimeListener): () => void;
+  subscribeEvent(listener: RuntimeEventListener): () => void;
   getSnapshot(): MessageViewportSnapshot;
+  getViewportAnchorState(): AnchorState | null;
 
   registerRow(key: MessageRuntimeItemKey, element: HTMLElement | null): void;
   registerTopSpacer(element: HTMLElement | null): void;
@@ -38,6 +40,11 @@ class MessageViewportRuntime {
 ```
 
 `register*` 是 React projection 和 runtime 的 DOM 桥。Runtime 不通过 React state 获取 DOM，也不要求 React 传业务 message 对象给 measurement。
+
+说明：
+
+- `getViewportAnchorState()` 是 renderer 本地恢复位点导出能力，只返回当前 viewport 的 `AnchorState`，不跨进程。
+- 诊断辅助（例如 `getDebugSnapshot()`）不属于稳定合同，因此不在这里列为公开 surface。
 
 ## 3. Internal Modules
 
@@ -194,7 +201,14 @@ type MessageViewportRuntimeEvent =
 
 这些事件只能表达 viewport 需求，不携带 SDK query 细节。
 
-当前实现实际发出的 edge reason 只有 `near-top` / `near-bottom`。`prepend-recovery` / `bottom-follow` 仍保留在事件类型里，作为更细分恢复语义的扩展位，但不应被当前接入方当作已实现行为依赖。
+当前实现会在用户接近 after edge 时发出 `reason: 'near-bottom'`，
+也会在外部显式 `followBottom` 但当前 DataWindow 仍有 `hasMoreAfter=true`
+时发出 `reason: 'bottom-follow'`。接入方必须先加载 newer page，直到
+`hasMoreAfter=false` 后再让 runtime 进入真正的 BottomLocked。
+
+React/demo 层不得用 raw `scrollTop` / `scrollHeight` 自行重建向下分页判断；
+否则会绕过 runtime 的 scroll source classification、edge latch 和 transaction
+时序，导致吸底与向下分页相互打架。
 
 ## 9. Implementation Order
 

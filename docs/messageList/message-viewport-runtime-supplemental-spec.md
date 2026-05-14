@@ -109,6 +109,10 @@ bottom locked initial viewport
 ⑧ Enter LOCKED state
 ```
 
+该流程只适用于 latest bootstrap，也就是响应已经确认 `hasMoreAfter=false`。
+如果 restore / jump 落在一个 partial DataWindow 内，即使物理滚到当前 DOM 底部，
+也只能保持 `UNLOCKED` 并通过 `needMoreAfter` 补齐 newer page。
+
 注意：
 
 ```text id="jlwm75"

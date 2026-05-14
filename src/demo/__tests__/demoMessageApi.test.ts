@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createDemoMessages } from '../demoData'
 import type { PersistedDemoFeed } from '../demoLocalStoreClient'
+import type {
+  GetLatestMessagesResp,
+  GetMessagesAroundResp,
+} from '../demoMessageApiTypes'
 import {
   getDemoRespAnchor,
   getLatestMessages,
@@ -33,6 +37,17 @@ function makeFeed(feedId: string, count: number): PersistedDemoFeed {
   }
 }
 
+function expectErrorCode(
+  response: GetLatestMessagesResp | GetMessagesAroundResp,
+  errorCode: string,
+): void {
+  if (response.ok !== false) {
+    throw new Error('expected error response')
+  }
+
+  expect(response.errorCode).toBe(errorCode)
+}
+
 describe('getLatestMessages', () => {
   it('returns feed-not-found when feed does not exist', async () => {
     mockLoadFeed.mockResolvedValueOnce(null)
@@ -40,9 +55,7 @@ describe('getLatestMessages', () => {
     const resp = await getLatestMessages({ feedId: 'feed-missing' })
 
     expect(resp.ok).toBe(false)
-    if (!resp.ok) {
-      expect(resp.errorCode).toBe('feed-not-found')
-    }
+    expectErrorCode(resp, 'feed-not-found')
   })
 
   it('returns empty ok response for empty feed', async () => {
@@ -122,9 +135,7 @@ describe('getMessagesAround', () => {
     })
 
     expect(resp.ok).toBe(false)
-    if (!resp.ok) {
-      expect(resp.errorCode).toBe('feed-not-found')
-    }
+    expectErrorCode(resp, 'feed-not-found')
   })
 
   it('returns empty-feed error for empty feed', async () => {
@@ -144,9 +155,7 @@ describe('getMessagesAround', () => {
     })
 
     expect(resp.ok).toBe(false)
-    if (!resp.ok) {
-      expect(resp.errorCode).toBe('empty-feed')
-    }
+    expectErrorCode(resp, 'empty-feed')
   })
 
   it('returns anchor-not-found when anchor does not exist', async () => {
@@ -161,9 +170,7 @@ describe('getMessagesAround', () => {
     })
 
     expect(resp.ok).toBe(false)
-    if (!resp.ok) {
-      expect(resp.errorCode).toBe('anchor-not-found')
-    }
+    expectErrorCode(resp, 'anchor-not-found')
   })
 
   it('returns window around anchor with correct hasMore flags', async () => {
@@ -186,6 +193,26 @@ describe('getMessagesAround', () => {
       expect(resp.hasMoreBefore).toBe(true) // index 10 - 3 = 7 > 0
       expect(resp.hasMoreAfter).toBe(true) // index 10 + 3 = 13 < 19
       expect(resp.total).toBe(20)
+    }
+  })
+
+  it('falls back to the nearest neighbor when anchor message is deleted but position is known', async () => {
+    const feed = makeFeed('feed-deleted-anchor', 20)
+    mockLoadFeed.mockResolvedValueOnce(feed)
+
+    const resp = await getMessagesAround({
+      feedId: 'feed-deleted-anchor',
+      anchor: { messageId: 'missing-message', position: 12 },
+      before: 1,
+      after: 1,
+    })
+
+    expect(resp.ok).toBe(true)
+    if (resp.ok) {
+      expect(resp.anchor.messageId).toBe('feed-deleted-anchor-m-12')
+      expect(resp.anchor.position).toBe(12)
+      expect(resp.anchorStatus).toBe('deleted')
+      expect(resp.messages.map((message) => message.sequence)).toEqual([11, 12, 13])
     }
   })
 
