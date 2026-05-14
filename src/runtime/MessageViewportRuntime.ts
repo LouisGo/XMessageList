@@ -252,6 +252,10 @@ export class MessageViewportRuntime<
     this.state =
       this.store.getSnapshot().bootstrapState === 'READY' ? 'READY' : 'ATTACHED'
     this.tryRunPendingBootstrap()
+
+    if (this.state === 'READY') {
+      this.scheduleAttachRenderWindowValidation()
+    }
   }
 
   detach(): void {
@@ -326,6 +330,14 @@ export class MessageViewportRuntime<
     }
 
     if (this.state === 'INITIAL' || this.state === 'ATTACHED') {
+      if (
+        this.state === 'INITIAL' &&
+        snapshot.change.viewportEffect === 'reset' &&
+        snapshot.items.length > 0
+      ) {
+        this.publishPlaceholderProjection(snapshot)
+      }
+
       return
     }
 
@@ -496,6 +508,42 @@ export class MessageViewportRuntime<
       'bootstrap',
     )
     return true
+  }
+
+  /**
+   * Publishes a rough latest-window projection before the container is attached.
+   * This prevents React from rendering an empty viewport during feed switch while
+   * the bootstrap transaction is waiting for container attach.
+   */
+  private publishPlaceholderProjection(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): void {
+    const itemCount = Math.min(data.items.length, this.config.minMountedItems)
+    const endIndex = data.items.length - 1
+    const startIndex = Math.max(0, endIndex - itemCount + 1)
+
+    const renderWindow: RenderWindow = {
+      startIndex,
+      endIndex,
+      itemKeys: data.items.slice(startIndex, endIndex + 1).map((item) =>
+        getRuntimeItemKey(item),
+      ),
+    }
+
+    const estimatedHeight = this.config.defaultItemHeight
+    const topSpacer = data.items
+      .slice(0, startIndex)
+      .reduce((sum, item) => sum + (item.estimatedHeight ?? estimatedHeight), 0)
+    const bottomSpacer = 0
+
+    this.publishProjection({
+      data,
+      renderWindow,
+      topSpacer,
+      bottomSpacer,
+      bootstrapState: 'MOUNTING',
+      bottomLockState: 'UNLOCKED',
+    })
   }
 
   private resetForGeneration(feedId: string, generation: number): void {
@@ -2207,6 +2255,32 @@ export class MessageViewportRuntime<
     data: MessageDataSnapshot<TMessage, TOptimistic>,
   ): boolean {
     return this.store.getSnapshot().renderWindow.endIndex >= data.items.length - 1
+  }
+
+  /**
+   * After attach, the runtime may have a stale render window from a previous session
+   * (different viewport size, etc.). Schedule a one-shot validation that slides the
+   * window if it no longer covers the visible area.
+   */
+  private scheduleAttachRenderWindowValidation(): void {
+    const token = this.lifecycle.getCurrent()
+
+    this.scheduler.requestAnimationFrame(() => {
+      this.currentFrame += 1
+
+      if (!this.lifecycle.isCurrent(token.feedId, token.generation)) {
+        return
+      }
+
+      const data = this.dataSnapshot
+      const container = this.registry.getContainer()
+
+      if (!data || !container || this.state !== 'READY') {
+        return
+      }
+
+      this.maybeSlideWindow(container, data)
+    })
   }
 
   private getMinOverscanPx(container: HTMLElement): number {
