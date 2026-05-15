@@ -30,6 +30,12 @@ export class RenderWindowEngine {
     private readonly spacer: SpacerEngine,
   ) {}
 
+  invalidateIndexCache(): void {
+    this.indexedItems = null
+    this.keyToIndex.clear()
+    this.committedMessageIdToIndex.clear()
+  }
+
   computeLatestWindow(
     items: MessageDataItem[],
     viewportHeight: number,

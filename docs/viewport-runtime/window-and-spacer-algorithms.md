@@ -152,6 +152,16 @@ Cache key 使用 `MessageRuntimeItemKey`。
 - 优先删除已经不在当前 data snapshot 里的 key。
 - 尚未实现文档草案里的 window-adjacent LRU 分层回收。
 
+派生缓存必须和持久 height cache 区分：
+
+- height cache 按 `MessageRuntimeItemKey` 跨 projection revision 复用。
+- RenderWindow index、projection slice、spacer range 这类派生缓存只能在同一个
+  `feedId + generation + data.revision` 内复用。
+- `items` 数组引用相同不代表 data 未变化；只要 `revision` 变化，派生缓存就必须
+  失效或切换到新的 revision cache。
+- 派生 range / slice cache 必须有容量上限，避免长 DataWindow 内频繁 window slide
+  把 CPU 优化变成内存增长。
+
 ## 7. Spacer Estimation
 
 单条估算：

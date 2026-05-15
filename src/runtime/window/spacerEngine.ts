@@ -13,12 +13,16 @@ import {
 
 export type HeightCache = Map<string, HeightRecord>
 
+const MAX_RANGE_HEIGHT_CACHE_ENTRIES = 128
+
 /**
  * SpacerEngine 只做“局部估算 + 实测修正”，不建立全局精确 offset。
  * 这符合 IM runtime 的锚点模型：spacer 用来维持连续感，不是权威坐标。
  */
 export class SpacerEngine {
-  private rangeHeightCache = new WeakMap<MessageDataItem[], Map<string, number>>()
+  private rangeHeightCacheIdentity: string | null = null
+
+  private readonly rangeHeightCache = new Map<string, number>()
 
   constructor(
     private readonly config: WindowConfig,
@@ -26,7 +30,17 @@ export class SpacerEngine {
   ) {}
 
   invalidateEstimateCache(): void {
-    this.rangeHeightCache = new WeakMap()
+    this.rangeHeightCacheIdentity = null
+    this.rangeHeightCache.clear()
+  }
+
+  setRangeCacheIdentity(identity: string): void {
+    if (this.rangeHeightCacheIdentity === identity) {
+      return
+    }
+
+    this.rangeHeightCacheIdentity = identity
+    this.rangeHeightCache.clear()
   }
 
   estimateItemHeight(item: MessageDataItem, width: number): number {
@@ -54,14 +68,7 @@ export class SpacerEngine {
     const safeStart = Math.max(0, startIndex)
     const safeEnd = Math.min(items.length, endIndex)
     const cacheKey = `${getWidthBucket(width)}:${safeStart}:${safeEnd}`
-    let itemCache = this.rangeHeightCache.get(items)
-
-    if (!itemCache) {
-      itemCache = new Map()
-      this.rangeHeightCache.set(items, itemCache)
-    }
-
-    const cached = itemCache.get(cacheKey)
+    const cached = this.rangeHeightCache.get(cacheKey)
 
     if (typeof cached === 'number') {
       return cached
@@ -77,7 +84,7 @@ export class SpacerEngine {
     }
 
     const clampedHeight = Math.max(0, height)
-    itemCache.set(cacheKey, clampedHeight)
+    this.setRangeCache(cacheKey, clampedHeight)
     return clampedHeight
   }
 
@@ -95,5 +102,17 @@ export class SpacerEngine {
     width: number,
   ): number {
     return this.estimateRangeHeight(items, endIndex + 1, items.length, width)
+  }
+
+  private setRangeCache(cacheKey: string, height: number): void {
+    if (this.rangeHeightCache.size >= MAX_RANGE_HEIGHT_CACHE_ENTRIES) {
+      const oldest = this.rangeHeightCache.keys().next().value
+
+      if (typeof oldest === 'string') {
+        this.rangeHeightCache.delete(oldest)
+      }
+    }
+
+    this.rangeHeightCache.set(cacheKey, height)
   }
 }

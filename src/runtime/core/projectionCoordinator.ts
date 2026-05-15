@@ -10,6 +10,7 @@ import type {
 } from '../types'
 import {
   areRuntimeItemKeysEqual,
+  getItemContentVersion,
   getRuntimeItemKey,
 } from '../shared/utils'
 import type {
@@ -18,10 +19,14 @@ import type {
   RuntimeDiagnosticEmitter,
 } from './runtimeTypes'
 
+const MAX_PROJECTED_ITEMS_CACHE_ENTRIES = 64
+
 export class ProjectionCoordinator<TMessage, TOptimistic> {
-  private projectedItemsCache = new WeakMap<
-    Array<MessageDataItem<TMessage, TOptimistic>>,
-    Map<string, Array<MessageDataItem<TMessage, TOptimistic>>>
+  private projectedItemsCacheIdentity: string | null = null
+
+  private readonly projectedItemsCache = new Map<
+    string,
+    Array<MessageDataItem<TMessage, TOptimistic>>
   >()
 
   constructor(
@@ -36,6 +41,11 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
   ): PublishResult<TMessage, TOptimistic> {
     const container = this.registry.getContainer()
     const width = container?.clientWidth ?? 0
+    const cacheIdentity = getDataCacheIdentity(input.data)
+
+    this.spacer.setRangeCacheIdentity(cacheIdentity)
+    this.setProjectedItemsCacheIdentity(cacheIdentity)
+
     const topSpacer =
       input.topSpacer ??
       this.spacer.computeTopSpacer(
@@ -153,8 +163,9 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
       return (
         Boolean(next) &&
         areRuntimeItemKeysEqual(getRuntimeItemKey(item), getRuntimeItemKey(next)) &&
-        // version 是业务内容变更信号；key 相同但 version 变化时必须触发 projection commit。
-        item.version === next.version
+        // version/contentVersion 是业务和布局内容变更信号；key 相同但版本变化时必须触发 commit。
+        item.version === next.version &&
+        getItemContentVersion(item) === getItemContentVersion(next)
       )
     })
   }
@@ -165,22 +176,39 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
     endIndex: number,
   ): Array<MessageDataItem<TMessage, TOptimistic>> {
     const cacheKey = `${startIndex}:${endIndex}`
-    let itemCache = this.projectedItemsCache.get(items)
-
-    if (!itemCache) {
-      itemCache = new Map()
-      this.projectedItemsCache.set(items, itemCache)
-    }
-
-    const cached = itemCache.get(cacheKey)
+    const cached = this.projectedItemsCache.get(cacheKey)
 
     if (cached) {
       return cached
     }
 
     const projectedItems = items.slice(startIndex, endIndex)
-    itemCache.set(cacheKey, projectedItems)
+    this.setProjectedItemsCache(cacheKey, projectedItems)
     return projectedItems
+  }
+
+  private setProjectedItemsCacheIdentity(identity: string): void {
+    if (this.projectedItemsCacheIdentity === identity) {
+      return
+    }
+
+    this.projectedItemsCacheIdentity = identity
+    this.projectedItemsCache.clear()
+  }
+
+  private setProjectedItemsCache(
+    cacheKey: string,
+    items: Array<MessageDataItem<TMessage, TOptimistic>>,
+  ): void {
+    if (this.projectedItemsCache.size >= MAX_PROJECTED_ITEMS_CACHE_ENTRIES) {
+      const oldest = this.projectedItemsCache.keys().next().value
+
+      if (typeof oldest === 'string') {
+        this.projectedItemsCache.delete(oldest)
+      }
+    }
+
+    this.projectedItemsCache.set(cacheKey, items)
   }
 
   private emitProjectionDiagnostic(
@@ -213,6 +241,10 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
       }),
     })
   }
+}
+
+function getDataCacheIdentity(data: MessageDataSnapshot<unknown, unknown>): string {
+  return `${data.feedId}:${data.generation}:${data.revision}`
 }
 
 export function createEdgeState(

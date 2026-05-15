@@ -69,6 +69,31 @@ function createSnapshot(input: {
   }
 }
 
+function cloneSnapshotWithItems(
+  snapshot: MessageDataSnapshot<TestMessage>,
+  input: {
+    revision: number
+    items: MessageDataSnapshot<TestMessage>['items']
+    effect?: 'items-change' | 'reset'
+  },
+): MessageDataSnapshot<TestMessage> {
+  const lastItem = input.items.at(-1)
+
+  return {
+    ...snapshot,
+    revision: input.revision,
+    items: input.items,
+    anchor:
+      lastItem?.key.kind === 'committed'
+        ? { messageId: lastItem.key.messageId }
+        : snapshot.anchor,
+    change: {
+      kind: 'patch',
+      viewportEffect: input.effect ?? 'items-change',
+    },
+  }
+}
+
 function createRuntime(input?: {
   window?: Partial<WindowConfig>
   scrollMotion?: Partial<ScrollMotionOptions>
@@ -1930,5 +1955,149 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
 
     expect(container.scrollTop).toBe(140)
+  })
+
+  it('treats contentVersion changes as projection changes even when item version is stable', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    const initial = createSnapshot({ count: 30, revision: 1, effect: 'reset' })
+    runtime.setDataSnapshot(initial)
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    const before = runtime.getSnapshot()
+    const items = initial.items
+    const visibleItem = before.items[0]
+    const targetIndex = items.findIndex((item) => item.key === visibleItem?.key)
+
+    expect(targetIndex).toBeGreaterThanOrEqual(0)
+
+    const target = items[targetIndex]
+
+    if (!target || target.kind !== 'committed') {
+      throw new Error('expected committed test item')
+    }
+
+    items[targetIndex] = {
+      ...target,
+      message: { ...target.message, text: `${target.message.text}-expanded` },
+      version: target.version,
+      contentVersion: (target.contentVersion ?? target.version) + 1,
+      estimatedHeight: (target.estimatedHeight ?? 50) + 30,
+    }
+
+    runtime.setDataSnapshot(
+      cloneSnapshotWithItems(initial, {
+        revision: 2,
+        items,
+      }),
+    )
+    await Promise.resolve()
+    const after = runtime.getSnapshot()
+
+    expect(after.revision).toBeGreaterThan(before.revision)
+    const updatedItem = after.items[0]
+
+    expect(updatedItem && 'contentVersion' in updatedItem
+      ? updatedItem.contentVersion
+      : undefined).toBe((target.contentVersion ?? target.version) + 1)
+  })
+
+  it('invalidates render-window indexes when a new revision reuses the same items array', async () => {
+    const { runtime, scheduler } = createRuntime({
+      window: {
+        minMountedItems: 10,
+        maxMountedItems: 20,
+        defaultItemHeight: 50,
+      },
+    })
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    const initial = createSnapshot({ count: 30, revision: 1, effect: 'reset' })
+    const items = initial.items
+
+    runtime.setDataSnapshot(initial)
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    runtime.dispatch({ type: 'jump', target: { messageId: 'm-1' } })
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+    await flushMotion(scheduler)
+
+    items.reverse()
+    runtime.setDataSnapshot(
+      cloneSnapshotWithItems(initial, {
+        revision: 2,
+        items,
+      }),
+    )
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+
+    runtime.dispatch({ type: 'jump', target: { messageId: 'm-1' } })
+    await Promise.resolve()
+    const jumped = runtime.getSnapshot()
+
+    expect(
+      jumped.items.some(
+        (item) => item.key.kind === 'committed' && item.key.messageId === 'm-1',
+      ),
+    ).toBe(true)
+  })
+
+  it('recomputes spacer estimates when a new revision reuses the same items array', async () => {
+    const { runtime, scheduler } = createRuntime({
+      window: {
+        minMountedItems: 10,
+        maxMountedItems: 20,
+        defaultItemHeight: 50,
+      },
+    })
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    const initial = createSnapshot({
+      count: 40,
+      revision: 1,
+      effect: 'reset',
+      estimatedHeight: 50,
+    })
+    const items = initial.items
+
+    runtime.setDataSnapshot(initial)
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    const before = runtime.getSnapshot()
+
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index]
+
+      if (item && item.kind !== 'tombstone') {
+        items[index] = {
+          ...item,
+          estimatedHeight: 80,
+          contentVersion: (item.contentVersion ?? item.version) + 1,
+        }
+      }
+    }
+
+    runtime.setDataSnapshot(
+      cloneSnapshotWithItems(initial, {
+        revision: 2,
+        items,
+      }),
+    )
+    await Promise.resolve()
+    const after = runtime.getSnapshot()
+
+    expect(after.topSpacer).toBeGreaterThan(before.topSpacer)
   })
 })

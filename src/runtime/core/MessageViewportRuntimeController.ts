@@ -482,10 +482,16 @@ export class MessageViewportRuntimeController<
     const generationChanged =
       previous?.feedId !== snapshot.feedId ||
       previous?.generation !== snapshot.generation
+    const dataIdentityChanged =
+      generationChanged ||
+      previous?.revision !== snapshot.revision
 
     if (generationChanged) {
       // feed/generation 是 runtime 隔离边界；旧 generation 的 measurement、事务和 edge latch 都不能复用。
       this.resetForGeneration(snapshot.feedId, snapshot.generation)
+    } else if (dataIdentityChanged) {
+      // 派生 index/range cache 只能在同一个 data revision 内复用；不能把 items array 引用当作数据身份。
+      this.renderWindow.invalidateIndexCache()
     }
 
     this.dataSnapshot = snapshot
@@ -1179,6 +1185,7 @@ export class MessageViewportRuntimeController<
     this.commit.cancelPendingCommit()
     this.cancelScheduledWork()
     this.heightCache.clear()
+    this.renderWindow.invalidateIndexCache()
     this.spacer.invalidateEstimateCache()
     this.edge.resetLatches()
     this.lastScrollSource = null

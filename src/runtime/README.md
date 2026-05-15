@@ -108,6 +108,7 @@ Runtime event 的边界触发。
 - 所有 DOM 读取必须发生在 projection commit 之后。需要读 row DOM 的事务必须等待 `ProjectionCommit`。
 - `ProjectionCommit` 必须按 `feedId + generation + revision` 精确匹配，旧 commit ack 不能唤醒新事务。
 - `feedId + generation` 是异步工作隔离边界。generation 变化时必须清理 transaction、commit wait、height cache、edge latch 和 pending motion。
+- 派生 index / spacer range / projection slice cache 只能按 data revision 复用，不能把 `items` 数组引用相等当作数据身份未变化。
 - `AnchorState` 是 renderer runtime 内部视觉 anchor，包含 DOM layout offset；跨层合同只能使用 `MessageIdentityAnchor`。
 - `bottomLockState: LOCKED` 只表示已经到达 feed latest。`hasMoreAfter=true` 时，当前物理底部只是已加载 DataWindow 的 after edge。
 - runtime 写入 `scrollTop` 必须通过 scroll intent 标记来源，不能让 recovery / follow-bottom 写入被误判成用户滚动。
