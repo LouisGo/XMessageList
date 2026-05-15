@@ -35,6 +35,16 @@ import type {
   GetMessagesAroundResp,
 } from './demoMessageApiTypes'
 import {
+  type AdvancedMockEventStormState,
+  type AdvancedMockPublishResult,
+  applyBotPushTick,
+  applyEventStormTick,
+  createEventStormState,
+  flushEventStormBuffer,
+  getNextBotPushDelayMs,
+  getNextEventStormDelayMs,
+} from './demoAdvancedMockScenarios'
+import {
   createDemoRequestId,
   type DemoLogEntry,
   type DemoOperationName,
@@ -145,12 +155,16 @@ export type DemoMessageScenario = {
   loadedMessageCount: number
   loadingBefore: boolean
   feedLoading: boolean
+  eventStormRunning: boolean
+  botPushActive: boolean
   pendingOperation: string
   lastEvent: string
   selectFeed: (feedId: string) => void
   loadHistoryBatch: (source?: 'manual' | 'auto') => void
   appendMessage: () => void
   appendLongBurst: () => void
+  toggleEventStorm: () => void
+  toggleBotPush: () => void
   editMessage: (messageId: string, nextBody: string) => void
   deleteMessage: (messageId: string) => void
   reactToMessage: (messageId: string) => void
@@ -176,6 +190,8 @@ export function useDemoMessageScenario(
   const [loadedMessageCount, setLoadedMessageCount] = useState(0)
   const [loadingBefore, setLoadingBefore] = useState(false)
   const [feedLoading, setFeedLoading] = useState(true)
+  const [eventStormRunning, setEventStormRunning] = useState(false)
+  const [botPushActive, setBotPushActive] = useState(false)
   const [pendingOperation, setPendingOperation] = useState('idle')
   const [lastEvent, setLastEvent] = useState(
     `loading ${getDemoFeedDefinition(initialFeedId).title}...`,
@@ -202,6 +218,12 @@ export function useDemoMessageScenario(
   const stagedActivationSkipRef = useRef(new Set<string>())
   const pendingOperationCountRef = useRef(0)
   const activeOperationsRef = useRef(new Map<string, number>())
+  const eventStormRunningRef = useRef(false)
+  const eventStormTimerRef = useRef<number | null>(null)
+  const eventStormTokenRef = useRef(0)
+  const eventStormStateRef = useRef<AdvancedMockEventStormState | null>(null)
+  const botPushActiveRef = useRef(false)
+  const botPushTimerRef = useRef<number | null>(null)
 
   const activeFeed = useMemo(
     () => getDemoFeedDefinition(activeFeedId),
@@ -522,7 +544,7 @@ export function useDemoMessageScenario(
       messagesRef.current,
     )
     syncDisplayedCounts()
-    activeRuntime.setDataSnapshot(
+    activeRuntimeRef.current?.setDataSnapshot(
       createDemoSnapshot({
         feedId: activeFeedIdRef.current,
         generation: generationRef.current,
@@ -535,7 +557,7 @@ export function useDemoMessageScenario(
       }),
     )
     saveCurrentFeedSessionState()
-  }, [activeRuntime, saveCurrentFeedSessionState, syncDisplayedCounts])
+  }, [saveCurrentFeedSessionState, syncDisplayedCounts])
 
   const persistCurrentFeed = useCallback(async () => {
     await savePersistedDemoFeed({
@@ -776,6 +798,383 @@ export function useDemoMessageScenario(
     log,
     persistCurrentFeed,
     publishCurrentMessages,
+  ])
+
+  const clearEventStormTimer = useCallback(() => {
+    if (eventStormTimerRef.current === null) {
+      return
+    }
+
+    window.clearTimeout(eventStormTimerRef.current)
+    eventStormTimerRef.current = null
+  }, [])
+
+  const clearBotPushTimer = useCallback(() => {
+    if (botPushTimerRef.current === null) {
+      return
+    }
+
+    window.clearTimeout(botPushTimerRef.current)
+    botPushTimerRef.current = null
+  }, [])
+
+  const logAdvancedMockOperationSummary = useCallback((
+    source: 'mock.eventStorm' | 'mock.botPush',
+    result: AdvancedMockPublishResult,
+  ) => {
+    const emitOperationLog = (
+      operation: Extract<
+        DemoOperationName,
+        | 'message.append'
+        | 'message.react'
+        | 'message.edit'
+        | 'message.delete'
+      >,
+      count: number,
+      details: Record<string, unknown>,
+    ) => {
+      if (count <= 0) {
+        return
+      }
+
+      void log({
+        requestId: createDemoRequestId(operation),
+        operation,
+        phase: 'success',
+        feedId: activeFeedIdRef.current,
+        messageCount: messagesRef.current.length,
+        details: {
+          source,
+          count,
+          eventText: result.eventText,
+          viewportEffect: result.effect,
+          snapshotKind: result.kind,
+          ...details,
+        },
+      })
+    }
+
+    if (source === 'mock.botPush') {
+      emitOperationLog('message.append', readNumberDetail(result, 'added'), {
+        ids: result.details.ids,
+        visibleInCurrentWindow: result.details.visibleInCurrentWindow,
+      })
+      return
+    }
+
+    emitOperationLog('message.append', readNumberDetail(result, 'append'), {
+      visibleTailAppendCount: result.details.visibleTailAppendCount,
+      visibleOutOfOrderAppendCount: result.details.visibleOutOfOrderAppendCount,
+      feedOnlyChangeCount: result.details.feedOnlyChangeCount,
+      buffered: result.details.buffered,
+      counters: result.details.counters,
+    })
+    emitOperationLog('message.react', readNumberDetail(result, 'reaction'), {
+      visiblePatchCount: result.details.visiblePatchCount,
+      counters: result.details.counters,
+    })
+    emitOperationLog('message.edit', readNumberDetail(result, 'edit'), {
+      visiblePatchCount: result.details.visiblePatchCount,
+      counters: result.details.counters,
+    })
+    emitOperationLog('message.delete', readNumberDetail(result, 'delete'), {
+      visibleDeleteCount: result.details.visibleDeleteCount,
+      counters: result.details.counters,
+    })
+  }, [log])
+
+  const publishAdvancedMockResult = useCallback((
+    result: AdvancedMockPublishResult,
+    source: 'mock.eventStorm' | 'mock.botPush',
+  ) => {
+    feedMessagesRef.current = result.feedMessages
+    messagesRef.current = result.messages
+    publishCurrentMessages(result.effect, result.kind)
+    logAdvancedMockOperationSummary(source, result)
+    void persistCurrentFeed()
+  }, [
+    logAdvancedMockOperationSummary,
+    persistCurrentFeed,
+    publishCurrentMessages,
+  ])
+
+  const finishEventStorm = useCallback((
+    phase: Extract<DemoLogEntry['phase'], 'success' | 'cancel' | 'error'>,
+    details: Record<string, unknown>,
+  ) => {
+    const wasRunning = eventStormRunningRef.current
+
+    clearEventStormTimer()
+    eventStormRunningRef.current = false
+    eventStormStateRef.current = null
+    setEventStormRunning(false)
+
+    if (wasRunning) {
+      endPendingOperation('mock.eventStorm')
+    }
+
+    setLastEvent(
+      phase === 'success'
+        ? 'event storm stopped'
+        : phase === 'cancel'
+          ? 'event storm cancelled'
+          : 'event storm failed',
+    )
+
+    void log({
+      requestId: createDemoRequestId('mock.eventStorm'),
+      operation: 'mock.eventStorm',
+      phase,
+      feedId: activeFeedIdRef.current,
+      messageCount: messagesRef.current.length,
+      details,
+    })
+  }, [clearEventStormTimer, endPendingOperation, log])
+
+  const toggleEventStorm = useCallback(() => {
+    const feedId = activeFeedIdRef.current
+
+    if (eventStormRunningRef.current) {
+      const state = eventStormStateRef.current
+
+      if (state) {
+        const flushResult = flushEventStormBuffer({
+          feedId,
+          feedMessages: feedMessagesRef.current,
+          messages: messagesRef.current,
+          hasMoreAfter: hasMoreAfterRef.current,
+          state,
+        })
+
+        if (flushResult) {
+          publishAdvancedMockResult(flushResult, 'mock.eventStorm')
+          void log({
+            requestId: createDemoRequestId('mock.eventStorm'),
+            operation: 'mock.eventStorm',
+            phase: 'info',
+            feedId,
+            messageCount: messagesRef.current.length,
+            details: flushResult.details,
+          })
+        }
+      }
+
+      finishEventStorm('success', {
+        reason: 'toggle-off',
+        counters: state ? { ...state.counters } : undefined,
+        total: feedMessagesRef.current.length,
+        loaded: messagesRef.current.length,
+      })
+      void log({
+        requestId: createDemoRequestId('mock.eventStorm'),
+        operation: 'mock.eventStorm',
+        phase: 'info',
+        feedId,
+        messageCount: messagesRef.current.length,
+        details: { reason: 'toggle-off' },
+      })
+      return
+    }
+
+    if (feedLoadingRef.current) {
+      setLastEvent('wait for feed before starting event storm')
+      void log({
+        requestId: createDemoRequestId('mock.eventStorm'),
+        operation: 'mock.eventStorm',
+        phase: 'skip',
+        feedId,
+        messageCount: messagesRef.current.length,
+        details: { reason: 'feed-loading' },
+      })
+      return
+    }
+
+    const token = eventStormTokenRef.current + 1
+
+    eventStormTokenRef.current = token
+    eventStormStateRef.current = createEventStormState(feedMessagesRef.current)
+    eventStormRunningRef.current = true
+    setEventStormRunning(true)
+    beginPendingOperation('mock.eventStorm')
+    setLastEvent('event storm started')
+
+    void log({
+      requestId: createDemoRequestId('mock.eventStorm'),
+      operation: 'mock.eventStorm',
+      phase: 'start',
+      feedId,
+      messageCount: messagesRef.current.length,
+      details: {
+        mode: 'toggle',
+        loaded: messagesRef.current.length,
+        total: feedMessagesRef.current.length,
+      },
+    })
+
+    const runTick = () => {
+      if (
+        !eventStormRunningRef.current ||
+        eventStormTokenRef.current !== token
+      ) {
+        return
+      }
+
+      if (activeFeedIdRef.current !== feedId) {
+        finishEventStorm('cancel', {
+          reason: 'feed-switched',
+          startedFeedId: feedId,
+          activeFeedId: activeFeedIdRef.current,
+        })
+        return
+      }
+
+      if (feedLoadingRef.current) {
+        finishEventStorm('cancel', { reason: 'feed-loading', feedId })
+        return
+      }
+
+      const state = eventStormStateRef.current
+
+      if (!state) {
+        finishEventStorm('error', { reason: 'missing-storm-state', feedId })
+        return
+      }
+
+      const result = applyEventStormTick({
+        feedId,
+        feedMessages: feedMessagesRef.current,
+        messages: messagesRef.current,
+        hasMoreAfter: hasMoreAfterRef.current,
+        state,
+      })
+
+      if (result) {
+        publishAdvancedMockResult(result, 'mock.eventStorm')
+        setLastEvent(result.eventText)
+        void log({
+          requestId: createDemoRequestId('mock.eventStorm'),
+          operation: 'mock.eventStorm',
+          phase: 'info',
+          feedId,
+          messageCount: messagesRef.current.length,
+          details: result.details,
+        })
+      }
+
+      eventStormTimerRef.current = window.setTimeout(
+        runTick,
+        getNextEventStormDelayMs(),
+      )
+    }
+
+    eventStormTimerRef.current = window.setTimeout(runTick, 80)
+  }, [
+    beginPendingOperation,
+    finishEventStorm,
+    log,
+    publishAdvancedMockResult,
+  ])
+
+  const publishBotPushTick = useCallback(() => {
+    if (feedLoadingRef.current) {
+      void log({
+        requestId: createDemoRequestId('mock.botPush'),
+        operation: 'mock.botPush',
+        phase: 'skip',
+        feedId: activeFeedIdRef.current,
+        messageCount: messagesRef.current.length,
+        details: { reason: 'feed-loading' },
+      })
+      return
+    }
+
+    const feedId = activeFeedIdRef.current
+    const result = applyBotPushTick({
+      feedId,
+      feedMessages: feedMessagesRef.current,
+      messages: messagesRef.current,
+      hasMoreAfter: hasMoreAfterRef.current,
+    })
+
+    publishAdvancedMockResult(result, 'mock.botPush')
+    setLastEvent(result.eventText)
+    void log({
+      requestId: createDemoRequestId('mock.botPush'),
+      operation: 'mock.botPush',
+      phase: 'info',
+      feedId,
+      messageCount: messagesRef.current.length,
+      details: result.details,
+    })
+  }, [log, publishAdvancedMockResult])
+
+  const toggleBotPush = useCallback(() => {
+    const feedId = activeFeedIdRef.current
+
+    if (botPushActiveRef.current) {
+      clearBotPushTimer()
+      botPushActiveRef.current = false
+      setBotPushActive(false)
+      endPendingOperation('mock.botPush')
+      setLastEvent('bot push stopped')
+      void log({
+        requestId: createDemoRequestId('mock.botPush'),
+        operation: 'mock.botPush',
+        phase: 'success',
+        feedId,
+        messageCount: messagesRef.current.length,
+        details: { reason: 'toggle-off' },
+      })
+      return
+    }
+
+    if (feedLoadingRef.current) {
+      setLastEvent('wait for feed before starting bot push')
+      void log({
+        requestId: createDemoRequestId('mock.botPush'),
+        operation: 'mock.botPush',
+        phase: 'skip',
+        feedId,
+        messageCount: messagesRef.current.length,
+        details: { reason: 'feed-loading' },
+      })
+      return
+    }
+
+    const scheduleNextTick = () => {
+      botPushTimerRef.current = window.setTimeout(() => {
+        botPushTimerRef.current = null
+
+        if (!botPushActiveRef.current) {
+          return
+        }
+
+        publishBotPushTick()
+        scheduleNextTick()
+      }, getNextBotPushDelayMs())
+    }
+
+    botPushActiveRef.current = true
+    setBotPushActive(true)
+    beginPendingOperation('mock.botPush')
+    setLastEvent('bot push started')
+    void log({
+      requestId: createDemoRequestId('mock.botPush'),
+      operation: 'mock.botPush',
+      phase: 'start',
+      feedId,
+      messageCount: messagesRef.current.length,
+      details: { source: 'button' },
+    })
+
+    publishBotPushTick()
+    scheduleNextTick()
+  }, [
+    beginPendingOperation,
+    clearBotPushTimer,
+    endPendingOperation,
+    log,
+    publishBotPushTick,
   ])
 
   const loadHistoryBatch = useCallback((source: 'manual' | 'auto' = 'manual') => {
@@ -1625,6 +2024,15 @@ export function useDemoMessageScenario(
   }, [saveCurrentFeedSessionState])
 
   useEffect(() => {
+    return () => {
+      clearEventStormTimer()
+      clearBotPushTimer()
+      eventStormRunningRef.current = false
+      botPushActiveRef.current = false
+    }
+  }, [clearBotPushTimer, clearEventStormTimer])
+
+  useEffect(() => {
     const feed = getDemoFeedDefinition(activeFeedId)
     const requestId = createDemoRequestId('feed.load')
     const runtimeCacheHit = nextFeedSwitchRuntimeCacheHitRef.current
@@ -1801,12 +2209,16 @@ export function useDemoMessageScenario(
     loadedMessageCount,
     loadingBefore,
     feedLoading,
+    eventStormRunning,
+    botPushActive,
     pendingOperation,
     lastEvent,
     selectFeed,
     loadHistoryBatch,
     appendMessage,
     appendLongBurst,
+    toggleEventStorm,
+    toggleBotPush,
     editMessage,
     deleteMessage,
     reactToMessage,
@@ -1826,6 +2238,14 @@ function sleep(timeoutMs: number): Promise<void> {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function readNumberDetail(
+  result: AdvancedMockPublishResult,
+  key: string,
+): number {
+  const value = result.details[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
 function formatPendingOperations(operations: Map<string, number>): string {

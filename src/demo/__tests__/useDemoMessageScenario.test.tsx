@@ -675,6 +675,140 @@ describe('useDemoMessageScenario', () => {
     expect(store.get('feed-runtime')?.lastViewportAnchor).toBeUndefined()
   })
 
+  it('toggles advanced event storm as a continuous tail event stream', async () => {
+    const { runtime } = createRuntimeStub()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+
+    await act(async () => {
+      root.render(
+        <TestHarness runtime={runtime} onScenario={(next) => {
+          scenario = next
+        }}
+        />,
+      )
+    })
+    await flushTimers(180)
+
+    expect(scenario?.messageCount).toBe(40)
+    expect(scenario?.eventStormRunning).toBe(false)
+
+    await act(async () => {
+      scenario?.toggleEventStorm()
+    })
+
+    expect(scenario?.eventStormRunning).toBe(true)
+    expect(scenario?.pendingOperation).toBe('mock.eventStorm')
+
+    await flushTimers(80)
+
+    expect(scenario?.messageCount).toBeGreaterThan(40)
+    expect(scenario?.loadedMessageCount).toBeGreaterThan(20)
+
+    await flushTimers(1_000)
+
+    expect(scenario?.eventStormRunning).toBe(true)
+
+    await act(async () => {
+      scenario?.toggleEventStorm()
+      await Promise.resolve()
+    })
+
+    expect(scenario?.eventStormRunning).toBe(false)
+    expect(scenario?.pendingOperation).toBe('idle')
+    expect(scenario?.lastEvent).toBe('event storm stopped')
+    expect(scenario?.messageCount).toBeGreaterThan(40)
+    expect(
+      vi.mocked(runtime.setDataSnapshot).mock.calls.some(([snapshot]) =>
+        snapshot.change.viewportEffect === 'append',
+      ),
+    ).toBe(true)
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'mock.eventStorm',
+        phase: 'success',
+        details: expect.objectContaining({ reason: 'toggle-off' }),
+      }),
+    )
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'message.append',
+        phase: 'success',
+        details: expect.objectContaining({ source: 'mock.eventStorm' }),
+      }),
+    )
+  })
+
+  it('toggles bot push as a focused-feed append stream', async () => {
+    const { runtime } = createRuntimeStub()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    vi.spyOn(Math, 'random').mockReturnValue(0.49)
+
+    await act(async () => {
+      root.render(
+        <TestHarness runtime={runtime} onScenario={(next) => {
+          scenario = next
+        }}
+        />,
+      )
+    })
+    await flushTimers(180)
+
+    await act(async () => {
+      scenario?.toggleBotPush()
+      await Promise.resolve()
+    })
+
+    expect(scenario?.botPushActive).toBe(true)
+    expect(scenario?.pendingOperation).toBe('mock.botPush')
+    expect(scenario?.messageCount).toBe(42)
+    expect(scenario?.loadedMessageCount).toBe(22)
+
+    await flushTimers(1_000)
+
+    expect(scenario?.botPushActive).toBe(true)
+    expect(scenario?.messageCount).toBe(44)
+    expect(scenario?.loadedMessageCount).toBe(24)
+    expect(
+      store.get('feed-runtime')?.messages.slice(-4).some(
+        (message) => message.kind !== 'text',
+      ),
+    ).toBe(true)
+
+    await act(async () => {
+      scenario?.toggleBotPush()
+    })
+
+    expect(scenario?.botPushActive).toBe(false)
+    expect(scenario?.pendingOperation).toBe('idle')
+
+    const messageCountAfterStop = scenario?.messageCount
+
+    await flushTimers(3_000)
+
+    expect(scenario?.messageCount).toBe(messageCountAfterStop)
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'mock.botPush',
+        phase: 'success',
+        details: expect.objectContaining({ reason: 'toggle-off' }),
+      }),
+    )
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'message.append',
+        phase: 'success',
+        details: expect.objectContaining({ source: 'mock.botPush' }),
+      }),
+    )
+  })
+
   it('persists the current viewport anchor when requested', async () => {
     const { runtime } = createRuntimeStub({
       key: { kind: 'committed', messageId: 'feed-runtime-m-22' },
