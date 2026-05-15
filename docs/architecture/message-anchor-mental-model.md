@@ -198,7 +198,8 @@ hasMoreAfter === false
 
 如果 `hasMoreAfter === true`，当前 DOM 底部只是已加载 DataWindow 的 after edge，
 不是会话最新消息底部。此时接近底部只能触发 `needMoreAfter`，不能进入
-`BottomLocked`。
+`BottomLocked`。显式 `followBottom` 不是连续向下浏览，runtime 必须发出
+`needLatestMessages`，由接入层直接重建 latest DataWindow。
 
 ---
 

@@ -1,10 +1,9 @@
 # XMessageList Docs
 
-This folder currently mirrors the TypeX PC message runtime design documents needed to bootstrap the standalone runtime repository.
+This folder contains the XMessageList message runtime design and implementation documents.
 
-Primary entry:
+Primary entries:
 
-- `messageList/README.md`
-- `messageList/runtime/README.md`
-
-No implementation-specific API has been added here yet.
+- `architecture/README.md`
+- `viewport-runtime/README.md`
+- `typex-transition/message-list-transition-boundary.md`

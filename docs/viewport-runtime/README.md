@@ -9,7 +9,7 @@
 - Bridge 合同
 - legacy `@messageList` 迁移边界
 
-这些内容继续以 `docs/messageList` 上层文档为准。
+这些内容继续以 `docs/architecture` 和 `docs/typex-transition` 文档为准。
 
 ## Runtime 目标
 

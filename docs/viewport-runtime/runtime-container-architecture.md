@@ -192,13 +192,17 @@ type RuntimeState =
 type ReadySubstate =
   | 'READY_IDLE'
   | 'READY_FOLLOW_BOTTOM_PENDING'
+  | 'READY_DESTINATION_PENDING'
   | 'READY_MOTION_ACTIVE';
 ```
 
 规则：
 
 - `READY_FOLLOW_BOTTOM_PENDING` 表示显式 `followBottom` 已经转成
-  `needMoreAfter(bottom-follow)`，正在等待 newer page；它不是 transaction。
+  `needLatestMessages(bottom-follow)`，正在等待 latest DataWindow；它不是 transaction。
+- `READY_DESTINATION_PENDING` 表示显式 `jump` / `restore` 的目标不在当前
+  DataWindow，runtime 已发出 `needMessagesAround`，正在等待接入层围绕目标
+  重建窗口；它也不是 transaction。
 - `READY_MOTION_ACTIVE` 表示 `ScrollMotionEngine` 正在拥有 `scrollTop` 写入权。
 - 任意新 transaction 启动前，`TransactionRunner` 必须同步取消 active motion。
 - Motion settle 可以保持 public state 为 `READY`，但必须在 settle 后再 emit
@@ -220,7 +224,20 @@ type MessageViewportRuntimeEvent =
       type: 'needMoreAfter';
       feedId: string;
       generation: number;
-      reason: 'near-bottom' | 'bottom-follow';
+      reason: 'near-bottom';
+    }
+  | {
+      type: 'needLatestMessages';
+      feedId: string;
+      generation: number;
+      reason: 'bottom-follow';
+    }
+  | {
+      type: 'needMessagesAround';
+      feedId: string;
+      generation: number;
+      reason: 'jump' | 'restore';
+      target: MessageIdentityAnchor;
     }
   | {
       type: 'viewportAnchorChanged';
@@ -235,15 +252,23 @@ type MessageViewportRuntimeEvent =
 
 这些事件只能表达 viewport 需求，不携带 SDK query 细节。
 
-当前实现会在用户接近 after edge 时发出 `reason: 'near-bottom'`，
-也会在外部显式 `followBottom` 但当前 DataWindow 仍有 `hasMoreAfter=true`
-时发出 `reason: 'bottom-follow'`。接入方必须先加载 newer page，直到
-`hasMoreAfter=false` 后再让 runtime 进入真正的 BottomLocked。
+当前实现会在用户接近 after edge 时发出 `needMoreAfter(reason: 'near-bottom')`。
+这是“用户向下浏览”的逐页分页信号。
+
+外部显式 `followBottom` 但当前 DataWindow 仍有 `hasMoreAfter=true` 时，runtime
+发出 `needLatestMessages(reason: 'bottom-follow')`。接入方必须直接请求 latest
+window 并替换 DataWindow，不能沿当前 after edge 逐页补齐中间空洞。
+
+外部显式 `jump` / `restore` 但目标不在当前 DataWindow 时，runtime 发出
+`needMessagesAround(reason: 'jump' | 'restore', target)`。接入方必须围绕 target
+执行 around query 并替换 DataWindow，不能顺序补齐当前窗口和目标之间的消息。
 
 显式 `followBottom` 的 `bottom-follow` 语义由 runtime pending command 保持。
 在 pending 期间，runtime 不发普通 `near-bottom`，也不把当前 DataWindow 的物理
 底部解释成 feed latest bottom。用户主动向上滚动、jump / restore / reset、
-generation change 或 detach 会取消 pending command。
+generation change 或 detach 会取消 pending command。`jump` / `restore` 的
+around-target pending 由后续 matching snapshot 消费；新的 destination command、
+reset、generation change 或 detach 会取消它。
 
 React/demo 层不得用 raw `scrollTop` / `scrollHeight` 自行重建向下分页判断；
 否则会绕过 runtime 的 scroll source classification、edge latch 和 transaction

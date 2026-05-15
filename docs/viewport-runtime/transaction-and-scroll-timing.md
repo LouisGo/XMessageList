@@ -337,6 +337,9 @@ new IntersectionObserver(callback, {
 当前实现默认 `edgeLoadThresholdPx = 96`，也允许外部覆盖。`needMoreBefore` / `needMoreAfter` 只会在 user / momentum scroll source 下发出，并且会在用户离开边缘前保持 latch，避免 recovery / followBottom 写入 `scrollTop` 时误触发历史加载。
 
 `hasMoreAfter=true` 时，当前物理底部是 DataWindow after edge，不是 feed latest bottom。
-因此 bottom lock hysteresis 必须保持 `UNLOCKED`，普通下滑只能触发一批
-`needMoreAfter`；显式 `followBottom` 也必须先转换为 newer-page request，直到
-`hasMoreAfter=false` 后才能真正 `scrollToBottom()` 并进入 `LOCKED`。
+因此 bottom lock hysteresis 必须保持 `UNLOCKED`。普通下滑只能触发一批
+`needMoreAfter(reason: 'near-bottom')`；显式 `followBottom` 必须转换为
+`needLatestMessages(reason: 'bottom-follow')`，由接入方直接请求 latest window
+并替换 DataWindow，不能沿 after edge 逐页补齐中间空洞。只有后续 snapshot
+确认 `hasMoreAfter=false` 后，runtime 才能真正 `scrollToBottom()` 并进入
+`LOCKED`。

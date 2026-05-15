@@ -110,8 +110,11 @@ bottom locked initial viewport
 ```
 
 该流程只适用于 latest bootstrap，也就是响应已经确认 `hasMoreAfter=false`。
-如果 restore / jump 落在一个 partial DataWindow 内，即使物理滚到当前 DOM 底部，
-也只能保持 `UNLOCKED` 并通过 `needMoreAfter` 补齐 newer page。
+如果 restore / jump 的目标落在当前 DataWindow 外，runtime 必须保持 `UNLOCKED`
+并发出 `needMessagesAround(reason: 'jump' | 'restore', target)`，由接入方围绕
+目标直接重建 DataWindow；不能通过 `needMoreAfter` / `needMoreBefore` 顺序补齐
+当前窗口和目标之间的空洞。如果目标已经在 partial DataWindow 内，即使物理滚到
+当前 DOM 底部，也不能把它解释成 feed latest bottom。
 
 注意：
 

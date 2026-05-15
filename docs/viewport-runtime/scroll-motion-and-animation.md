@@ -146,13 +146,16 @@ Public `RuntimeState` 仍保持 `READY / TRANSACTING / ...`，但 `READY` 内部
 type ReadySubstate =
   | 'READY_IDLE'
   | 'READY_FOLLOW_BOTTOM_PENDING'
+  | 'READY_DESTINATION_PENDING'
   | 'READY_MOTION_ACTIVE';
 ```
 
 这些子状态不进入 public snapshot，只用于规定 runtime 内部所有权：
 
 - `READY_IDLE`：没有 pending command，也没有 active motion。
-- `READY_FOLLOW_BOTTOM_PENDING`：显式 `followBottom` 正在等待 newer page 到达。
+- `READY_FOLLOW_BOTTOM_PENDING`：显式 `followBottom` 正在等待 latest DataWindow 到达。
+- `READY_DESTINATION_PENDING`：显式 `jump` / `restore` 目标不在当前 DataWindow，
+  runtime 正在等待 around-target DataWindow。
 - `READY_MOTION_ACTIVE`：`ScrollMotionEngine` 拥有 `scrollTop` 写入权。
 
 Motion 不是 transaction。Transaction 在 commit + measure 后释放
@@ -269,8 +272,8 @@ function easeOutQuint(t: number): number {
 
 ```text
 command followBottom
--> if hasMoreAfter=true: emit needMoreAfter(bottom-follow), no motion
--> data layer appends newer pages until hasMoreAfter=false
+-> if hasMoreAfter=true: emit needLatestMessages(bottom-follow), no motion
+-> data layer loads latest page/window directly, without filling the gap
 -> runtime computes latest RenderWindow
 -> publish projection
 -> wait commit ack
@@ -309,17 +312,17 @@ Runtime 保留该 command，并进入内部 `READY_FOLLOW_BOTTOM_PENDING`。这�
 
 驱动规则：
 
-- 首次进入 pending 时 emit `needMoreAfter(bottom-follow)`。
+- 首次进入 pending 时 emit `needLatestMessages(bottom-follow)`。
 - 每次 `setDataSnapshot` 到达后，如果 `feedId + generation` 仍匹配且
-  `hasMoreAfter=true`，runtime 继续保持 pending，并在接入层完成上一批请求后
-  允许再次 emit `needMoreAfter(bottom-follow)`；同一个 data revision 最多 emit
-  一次，避免请求风暴。
+  `hasMoreAfter=true`，runtime 继续保持 pending，并允许再次 emit
+  `needLatestMessages(bottom-follow)`；同一个 data revision 最多 emit 一次，
+  避免请求风暴。
 - 当 `hasMoreAfter=false`，runtime 消费 pending command，启动 latest-window
   transaction；commit + measure 后进入 bounded motion。
 - 用户主动向上滚动、显式 `jump` / `restore` / `reset`、generation change、
   detach / destroy 都取消 pending command。
 - Pending 期间普通 near-bottom edge latch 被抑制；runtime 只允许
-  `needMoreAfter(bottom-follow)`，避免同时出现 `near-bottom` 和 `bottom-follow`
+  `needLatestMessages(bottom-follow)`，避免同时出现 `near-bottom` 和 `bottom-follow`
   两种语义。
 - Pending 期间 bottom lock 保持 `UNLOCKED`。只有真正落到 feed latest bottom 并
   motion settle 后才能进入 `LOCKED`。
@@ -351,7 +354,8 @@ append / send while locked
 
 ```text
 command jump(target identity)
--> if target not in DataWindow: data layer loads around target
+-> if target not in DataWindow: emit needMessagesAround(jump, target), no motion
+-> data layer loads around target directly, without filling the gap
 -> runtime computes window around target
 -> publish projection
 -> wait commit
@@ -365,6 +369,8 @@ command jump(target identity)
 
 规则：
 
+- 远距离 jump 是 destination intent，不是连续浏览。目标缺失时只能 around target
+  重建 DataWindow，不能沿当前窗口逐页 append/prepend 到目标。
 - 不尝试从旧 scrollTop 连续动画到远处目标。
 - target row 未挂载时不启动动画。
 - target DOM fallback 仍按现有 nearest measurable row 逻辑。
@@ -537,10 +543,12 @@ type ScrollMotionOptions = {
 
 Runtime unit tests:
 
-- `followBottom` on partial DataWindow emits `needMoreAfter` and starts no motion.
-- pending `followBottom` survives newer-page snapshots until `hasMoreAfter=false`.
+- `followBottom` on partial DataWindow emits `needLatestMessages` and starts no motion.
+- pending `followBottom` survives latest-window snapshots until `hasMoreAfter=false`.
 - user upward scroll cancels pending `followBottom` and suppresses further bottom-follow requests.
-- after newer pages loaded to latest, follow bottom rebuilds latest window before motion.
+- after latest window loads, follow bottom rebuilds latest window before motion.
+- far jump / restore with target outside DataWindow emits `needMessagesAround` and starts no motion.
+- after around-target window loads, pending jump / restore consumes the snapshot and starts the normal destination transaction.
 - far follow bottom writes an immediate near-target scrollTop, then animates bounded final segment.
 - far pre-positioning uses `followBottom` / `jump` source tokens, never `recovery`.
 - jump to far target waits for target window commit and measurable row before motion.
@@ -570,14 +578,15 @@ Integration scenarios:
 1. 添加 `ScrollMotionEngine` 和 fake scheduler 测试。
 2. 接入 transaction-start 前同步 `motionEngine.cancel('transaction-supersede')`。
 3. 接入 scroll write token source：`followBottom` / `jump` / `programmatic`。
-4. 接入 `followBottom` pending 状态和 bottom-follow `needMoreAfter` 循环。
+4. 接入 `followBottom` pending 状态和 bottom-follow `needLatestMessages` 请求。
 5. 接入 `followBottom`，覆盖 `hasMoreAfter=false` 的 latest target。
 6. 接入 bottom locked append / send。
-7. 接入 `jump`，并确保 target row commit + measure 后才启动。
-8. 加用户输入取消和 reduced-motion 降级。
-9. 接入 ResizeObserver during motion 的 target-adjust 或 cancel 降级。
-10. 扩展测试到 far distance、pending followBottom、settle event 和 reduced motion。
-11. 再评估是否实现 delete/collapse 的 preserve-anchor animation loop。
+7. 接入 `jump` / `restore` missing-target 的 `needMessagesAround` pending。
+8. 接入 `jump`，并确保 target row commit + measure 后才启动。
+9. 加用户输入取消和 reduced-motion 降级。
+10. 接入 ResizeObserver during motion 的 target-adjust 或 cancel 降级。
+11. 扩展测试到 far distance、pending followBottom、settle event 和 reduced motion。
+12. 再评估是否实现 delete/collapse 的 preserve-anchor animation loop。
 
 不要在第一版实现：
 
