@@ -16,6 +16,8 @@ export type DemoOperationName =
   | 'message.react'
   | 'message.resize'
   | 'message.send'
+  | 'mock.eventStorm'
+  | 'mock.botPush'
   | 'runtime.command.followBottom'
   | 'runtime.event'
 

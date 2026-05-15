@@ -137,6 +137,30 @@ export function DemoMessageViewport() {
           </button>
           <button
             type="button"
+            className={[
+              'advanced-mock-action',
+              scenario.eventStormRunning ? 'active' : '',
+            ].filter(Boolean).join(' ')}
+            data-testid="event-storm-button"
+            disabled={scenario.feedLoading && !scenario.eventStormRunning}
+            onClick={scenario.toggleEventStorm}
+          >
+            {scenario.eventStormRunning ? 'Stop Storm' : 'Event Storm'}
+          </button>
+          <button
+            type="button"
+            className={[
+              'advanced-mock-action',
+              scenario.botPushActive ? 'active' : '',
+            ].filter(Boolean).join(' ')}
+            data-testid="bot-push-button"
+            disabled={scenario.feedLoading && !scenario.botPushActive}
+            onClick={scenario.toggleBotPush}
+          >
+            {scenario.botPushActive ? 'Stop Bot' : 'Bot Push'}
+          </button>
+          <button
+            type="button"
             data-testid="resize-messages-button"
             disabled={scenario.feedLoading}
             onClick={scenario.toggleDynamicHeight}

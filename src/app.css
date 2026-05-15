@@ -30,6 +30,10 @@ button {
   display: flex;
   flex-direction: column;
   gap: 22px;
+  height: 100svh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   border-right: 1px solid #d7e0e3;
   background: #ffffff;
   padding: 24px;
@@ -75,6 +79,21 @@ h1 {
 
 .demo-actions button:hover {
   background: #e8f1ef;
+}
+
+.demo-actions button.advanced-mock-action {
+  border-color: #b9ced5;
+  background: #f3f8fa;
+}
+
+.demo-actions button.advanced-mock-action:hover {
+  background: #e2eff2;
+}
+
+.demo-actions button.advanced-mock-action.active {
+  border-color: #14745d;
+  background: #14745d;
+  color: #ffffff;
 }
 
 .demo-actions button:disabled,
@@ -494,6 +513,7 @@ h1 {
   }
 
   .demo-sidebar {
+    height: 30svh;
     border-right: 0;
     border-bottom: 1px solid #d7e0e3;
   }
