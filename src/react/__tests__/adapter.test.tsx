@@ -79,8 +79,12 @@ function TestHarness({
 
 function ViewportOnlyHarness({
   runtime,
+  onViewportAnchorChange,
 }: {
   runtime: MessageViewportRuntime<TestMessage>
+  onViewportAnchorChange?: Parameters<
+    typeof MessageViewport<TestMessage>
+  >[0]['onViewportAnchorChange']
 }) {
   return (
     <MessageViewport
@@ -88,6 +92,7 @@ function ViewportOnlyHarness({
       renderMessage={(item) =>
         item.kind === 'committed' ? <span>{item.message.id}</span> : null
       }
+      onViewportAnchorChange={onViewportAnchorChange}
       style={{ height: 240 }}
     />
   )
@@ -260,8 +265,12 @@ describe('React adapter', () => {
     )
     expect(followButton).not.toBeNull()
     expect(onViewportAnchorChange).toHaveBeenCalled()
-    expect(onViewportAnchorChange.mock.calls.at(-1)?.[1]).toBe(
-      'transaction-settle',
+    expect(onViewportAnchorChange.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        type: 'viewportAnchorChanged',
+        feedId: 'feed',
+        reason: 'transaction-settle',
+      }),
     )
 
     await act(async () => {
@@ -394,6 +403,7 @@ describe('React adapter', () => {
     })
     const host = document.createElement('div')
     const root = createRoot(host)
+    const onViewportAnchorChange = vi.fn()
 
     Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
       configurable: true,
@@ -414,13 +424,19 @@ describe('React adapter', () => {
     runtimeB.dispatch({ type: 'bootstrap', mode: 'latest' })
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtimeA} />)
+      root.render(
+        <ViewportOnlyHarness
+          runtime={runtimeA}
+          onViewportAnchorChange={onViewportAnchorChange}
+        />,
+      )
     })
     await act(async () => {
       await flushFramesWithMicrotasks(scheduler, 4)
     })
 
     expect(host.textContent).toContain('a-')
+    onViewportAnchorChange.mockClear()
     const detachDomSnapshots: string[] = []
     const originalDetach = runtimeA.detach.bind(runtimeA)
 
@@ -430,7 +446,12 @@ describe('React adapter', () => {
     })
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtimeB} />)
+      root.render(
+        <ViewportOnlyHarness
+          runtime={runtimeB}
+          onViewportAnchorChange={onViewportAnchorChange}
+        />,
+      )
     })
     await act(async () => {
       await flushFramesWithMicrotasks(scheduler, 4)
@@ -438,6 +459,17 @@ describe('React adapter', () => {
 
     expect(detachDomSnapshots[0]).toContain('a-')
     expect(detachDomSnapshots[0]).not.toContain('b-')
+    expect(onViewportAnchorChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'viewportAnchorChanged',
+        feedId: 'feed-a',
+        generation: 1,
+        reason: 'detach',
+        anchor: expect.objectContaining({
+          key: expect.objectContaining({ kind: 'committed' }),
+        }),
+      }),
+    )
     expect(host.textContent).toContain('b-')
 
     await act(async () => {

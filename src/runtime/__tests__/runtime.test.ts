@@ -271,6 +271,41 @@ describe('MessageViewportRuntime', () => {
     })
   })
 
+  it('emits a detach viewport anchor checkpoint before clearing DOM refs', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    const snapshot = runtime.getSnapshot()
+
+    mountProjection(runtime, container, snapshot, -(snapshot.topSpacer + 135))
+    const anchorBeforeDetach = runtime.getViewportAnchorState()
+
+    events.length = 0
+    runtime.detach()
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'viewportAnchorChanged',
+        feedId: 'feed',
+        generation: 1,
+        reason: 'detach',
+        anchor: anchorBeforeDetach,
+      }),
+    )
+    expect(anchorBeforeDetach).not.toBeNull()
+    expect(runtime.getViewportAnchorState()).toBeNull()
+  })
+
   it('ignores non-bootstrap commands until the runtime is ready', () => {
     const { runtime } = createRuntime()
     const before = runtime.getDebugSnapshot()

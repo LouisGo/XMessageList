@@ -18,6 +18,7 @@ import type {
   MessageViewportSnapshot,
   RenderWindow,
   RuntimeState,
+  ViewportAnchorChangeReason,
 } from '../types'
 import type {
   CommitRecoveryInput,
@@ -57,9 +58,7 @@ export type ViewportTransactionDeps<TMessage, TOptimistic> = {
   deriveRuntimeStateFromSnapshot: (
     snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
   ) => RuntimeState
-  emitViewportAnchorChanged: (
-    reason: 'scroll-idle' | 'transaction-settle',
-  ) => void
+  emitViewportAnchorChanged: (reason: ViewportAnchorChangeReason) => void
   emitEvent: (event: MessageViewportRuntimeEvent) => void
   emitError: (code: string) => void
 }

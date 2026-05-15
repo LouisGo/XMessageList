@@ -42,6 +42,8 @@ if generation is not current -> return
 
 `detach()`：
 
+- 在清理 materialized row handles 前 capture 当前 viewport anchor，并发出
+  `viewportAnchorChanged(reason: detach)`。
 - 保存当前 scroll offset，供同一 runtime 再次 attach 时恢复。
 - 移除 scroll signal。
 - 取消 frame callback。
@@ -225,4 +227,3 @@ Debug snapshot 不进入 projection snapshot。
 - 是否把 height cache 更新推入 projection state。
 - 是否频繁重建 measurement handles。
 - 是否 trim 太激进导致反复 materialize。
-

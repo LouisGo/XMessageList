@@ -696,13 +696,16 @@ describe('useDemoMessageScenario', () => {
     await flushTimers(180)
 
     await act(async () => {
-      scenario?.rememberRuntimeViewportAnchor(
-        {
+      scenario?.rememberRuntimeViewportAnchor({
+        type: 'viewportAnchorChanged',
+        feedId: 'feed-runtime',
+        generation: 2,
+        reason: 'scroll-idle',
+        anchor: {
           key: { kind: 'committed', messageId: 'feed-runtime-m-22' },
           offsetWithinMessage: 18,
         },
-        'scroll-idle',
-      )
+      })
       await Promise.resolve()
     })
 
@@ -712,5 +715,70 @@ describe('useDemoMessageScenario', () => {
       position: 22,
       offsetWithinMessage: 18,
     })
+  })
+
+  it('persists detach anchors to the event feed after the active feed changes', async () => {
+    const runtimeFeed = createRuntimeStub()
+    const runtimeRelease = createRuntimeStub()
+    const runtimeByFeed = new Map<string, RuntimeStub>([
+      ['feed-runtime', runtimeFeed.runtime],
+      ['feed-release', runtimeRelease.runtime],
+    ])
+    const runtimeCache: DemoFeedRuntimeCache = {
+      getRuntime: vi.fn((feedId) => {
+        const runtime = runtimeByFeed.get(feedId)
+
+        if (!runtime) {
+          throw new Error(`missing runtime for ${feedId}`)
+        }
+
+        return runtime as MessageViewportRuntime<DemoMessage>
+      }),
+      hasRuntime: vi.fn((feedId) => runtimeByFeed.has(feedId)),
+      deleteRuntime: vi.fn((feedId) => runtimeByFeed.delete(feedId)),
+      getCachedFeedIds: vi.fn(() => Array.from(runtimeByFeed.keys())),
+      destroyAll: vi.fn(),
+    }
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    await act(async () => {
+      root.render(
+        <TestHarness runtimeCache={runtimeCache} onScenario={(next) => {
+          scenario = next
+        }}
+        />,
+      )
+    })
+    await flushTimers(180)
+
+    await act(async () => {
+      scenario?.selectFeed('feed-release')
+    })
+    await flushTimers(180)
+
+    expect(scenario?.activeFeedId).toBe('feed-release')
+
+    await act(async () => {
+      scenario?.rememberRuntimeViewportAnchor({
+        type: 'viewportAnchorChanged',
+        feedId: 'feed-runtime',
+        generation: 2,
+        reason: 'detach',
+        anchor: {
+          key: { kind: 'committed', messageId: 'feed-runtime-m-22' },
+          offsetWithinMessage: 18,
+        },
+      })
+      await Promise.resolve()
+    })
+
+    expect(store.get('feed-runtime')?.lastViewportAnchor).toEqual({
+      messageId: 'feed-runtime-m-22',
+      position: 22,
+      offsetWithinMessage: 18,
+    })
+    expect(store.get('feed-release')?.lastViewportAnchor).toBeUndefined()
   })
 })

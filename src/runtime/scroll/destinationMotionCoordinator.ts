@@ -13,6 +13,7 @@ import type {
   RuntimeScheduler,
   ScrollMotionOptions,
   ScrollSource,
+  ViewportAnchorChangeReason,
 } from '../types'
 import type {
   DestinationMotionSettle,
@@ -37,7 +38,7 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     private readonly getCurrentFrame: () => number,
     private readonly isDestroyed: () => boolean,
     private readonly emitViewportAnchorChanged: (
-      reason: 'scroll-idle' | 'transaction-settle',
+      reason: ViewportAnchorChangeReason,
     ) => void,
   ) {}
 

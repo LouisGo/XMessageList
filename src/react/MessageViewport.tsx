@@ -12,10 +12,10 @@ import {
   serializeRuntimeItemKey,
 } from '../runtime'
 import type {
-  AnchorState,
   MessageDataItem,
   MessageRuntimeItemKey,
   MessageViewportRuntime,
+  ViewportAnchorChangedEvent,
   MessageViewportSnapshot,
 } from '../runtime'
 import { useMessageViewportRuntime } from './useMessageViewportRuntime'
@@ -83,10 +83,7 @@ export type MessageViewportProps<
     snapshot: MessageViewportSnapshot<TMessage, TOptimistic>
     followBottom: () => void
   }) => ReactNode
-  onViewportAnchorChange?: (
-    anchor: AnchorState | null,
-    reason: 'scroll-idle' | 'transaction-settle',
-  ) => void
+  onViewportAnchorChange?: (event: ViewportAnchorChangedEvent) => void
   renderOverlay?: (
     snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
   ) => ReactNode
@@ -164,7 +161,7 @@ export function MessageViewport<
         return
       }
 
-      onViewportAnchorChange(event.anchor, event.reason)
+      onViewportAnchorChange(event)
     })
   }, [onViewportAnchorChange, runtime])
 

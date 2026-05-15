@@ -157,7 +157,7 @@ needMoreBefore(feedId, generation, reason: nearTop | prependRecovery)
 needMoreAfter(feedId, generation, reason: nearBottom)
 needLatestMessages(feedId, generation, reason: bottomFollow)
 needMessagesAround(feedId, generation, reason: jump | restore, target)
-viewportAnchorChanged(feedId, generation, reason: scrollIdle | transactionSettle, anchor?)
+viewportAnchorChanged(feedId, generation, reason: scrollIdle | transactionSettle | detach, anchor?)
 viewportReady(feedId, generation)
 viewportError(feedId, generation, code)
 ```

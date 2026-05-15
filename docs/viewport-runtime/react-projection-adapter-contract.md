@@ -234,6 +234,11 @@ React 不转发 raw scroll event。Scroll listener 由 runtime 在 `attach` 时�
 `MessageViewport` 可以接收：
 
 ```ts
+type ViewportAnchorChangedEvent = Extract<
+  MessageViewportRuntimeEvent,
+  { type: 'viewportAnchorChanged' }
+>;
+
 type MessageViewportProps = {
   renderMessage: (item: MessageDataItem) => ReactNode;
   renderTopEdge?: (snapshot: MessageViewportSnapshot) => ReactNode;
@@ -242,15 +247,17 @@ type MessageViewportProps = {
     snapshot: MessageViewportSnapshot;
     followBottom: () => void;
   }) => ReactNode;
-  onViewportAnchorChange?: (
-    anchor: AnchorState | null,
-    reason: 'scroll-idle' | 'transaction-settle',
-  ) => void;
+  onViewportAnchorChange?: (event: ViewportAnchorChangedEvent) => void;
 };
 ```
 
 默认 follow-bottom affordance 只在 `bottomLockState === 'UNLOCKED'` 时出现，
 点击只 dispatch semantic command，不直接写 `scrollTop`。
+
+`onViewportAnchorChange` 必须透传 runtime 的完整 `viewportAnchorChanged` event，
+不能只透出 `anchor/reason`。Feed 切换时旧 runtime 会在 pre-mutation `detach()`
+中发出 `reason: 'detach'`，接入方必须依赖 event 自带的 `feedId/generation`
+把 anchor 写回对应 feed/session，不能读取当前 active feed。
 
 ## 9. Fallback Policy
 

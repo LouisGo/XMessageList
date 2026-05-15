@@ -243,7 +243,7 @@ type MessageViewportRuntimeEvent =
       type: 'viewportAnchorChanged';
       feedId: string;
       generation: number;
-      reason: 'scroll-idle' | 'transaction-settle';
+      reason: 'scroll-idle' | 'transaction-settle' | 'detach';
       anchor: AnchorState | null;
     }
   | { type: 'viewportReady'; feedId: string; generation: number }
@@ -285,8 +285,10 @@ React/demo 层不得用 raw `scrollTop` / `scrollHeight` 自行重建向下分�
 
 React/demo 层也不得 query projection DOM 或注册 raw scroll listener 来保存
 恢复位点。Runtime 在 scroll rAF / transaction settle 后发出
-`viewportAnchorChanged`，React adapter 把它透传给接入方；是否持久化、持久化到
-哪里属于 data/demo/app 层。
+`viewportAnchorChanged`，并且在 `detach()` 清掉 DOM refs 前发出
+`viewportAnchorChanged(reason: 'detach')` 作为 viewport deactivation checkpoint。
+React adapter 必须透传完整 event，包括 `feedId` 和 `generation`；是否持久化、
+持久化到哪里属于 data/demo/app 层。
 
 如果某次 transaction 之后启动了 scroll motion，`transaction-settle` 事件由
 motion settle callback 发出；transaction commit callback 不得为同一目的地滚动

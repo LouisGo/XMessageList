@@ -9,6 +9,7 @@ import type {
   AnchorState,
   MessageDataSnapshot,
   MessageViewportRuntime,
+  ViewportAnchorChangedEvent,
   ViewportEffect,
 } from '../runtime'
 import {
@@ -102,12 +103,6 @@ type RunLoggedOperationInput = {
   skipPersist?: boolean
 }
 
-type ViewportAnchorRememberReason =
-  | 'scroll-idle'
-  | 'transaction-settle'
-  | 'before-feed-switch'
-  | 'before-unmount'
-
 type CachedFeedSessionState = {
   feedId: string
   messages: DemoMessage[]
@@ -163,10 +158,7 @@ export type DemoMessageScenario = {
   sendMessage: (body: string) => boolean
   followBottom: (source: 'sidebar' | 'floating') => void
   clearFeed: (feedId: string) => void
-  rememberRuntimeViewportAnchor: (
-    anchor: AnchorState | null,
-    reason: 'scroll-idle' | 'transaction-settle',
-  ) => void
+  rememberRuntimeViewportAnchor: (event: ViewportAnchorChangedEvent) => void
 }
 
 /**
@@ -558,10 +550,41 @@ export function useDemoMessageScenario(
   }, [])
 
   const persistViewportAnchor = useCallback((
-    runtimeAnchor: AnchorState | null,
-    reason: ViewportAnchorRememberReason,
+    event: ViewportAnchorChangedEvent,
   ) => {
-    if (feedLoadingRef.current || feedMessagesRef.current.length === 0) {
+    const { anchor: runtimeAnchor, feedId, generation, reason } = event
+    const isActiveFeed = feedId === activeFeedIdRef.current
+    const cachedState = isActiveFeed
+      ? undefined
+      : feedSessionStateRef.current.get(feedId)
+    const messages = isActiveFeed ? messagesRef.current : cachedState?.messages
+    const feedMessages = isActiveFeed
+      ? feedMessagesRef.current
+      : cachedState?.feedMessages
+    const revision = isActiveFeed ? revisionRef.current : cachedState?.revision
+    const stateGeneration = isActiveFeed
+      ? generationRef.current
+      : cachedState?.generation
+    const hasMoreBefore = isActiveFeed
+      ? hasMoreBeforeRef.current
+      : cachedState?.hasMoreBefore
+    const previousAnchor = isActiveFeed
+      ? lastViewportAnchorRef.current
+      : cachedState?.lastViewportAnchor
+
+    if (isActiveFeed && feedLoadingRef.current && reason !== 'detach') {
+      return
+    }
+
+    if (
+      !messages ||
+      !feedMessages ||
+      feedMessages.length === 0 ||
+      revision === undefined ||
+      stateGeneration === undefined ||
+      hasMoreBefore === undefined ||
+      stateGeneration !== generation
+    ) {
       return
     }
 
@@ -575,7 +598,7 @@ export function useDemoMessageScenario(
       return
     }
 
-    const anchorMessage = feedMessagesRef.current.find(
+    const anchorMessage = feedMessages.find(
       (message) => message.id === key.messageId,
     )
 
@@ -589,19 +612,27 @@ export function useDemoMessageScenario(
       offsetWithinMessage: runtimeAnchor.offsetWithinMessage,
     }
 
-    if (isSameViewportAnchor(lastViewportAnchorRef.current, nextAnchor)) {
+    if (isSameViewportAnchor(previousAnchor, nextAnchor)) {
       return
     }
 
-    lastViewportAnchorRef.current = nextAnchor
+    if (isActiveFeed) {
+      lastViewportAnchorRef.current = nextAnchor
+      saveCurrentFeedSessionState(feedId)
+    } else if (cachedState) {
+      feedSessionStateRef.current.set(feedId, {
+        ...cachedState,
+        lastViewportAnchor: nextAnchor,
+      })
+    }
 
     void savePersistedDemoFeed({
       version: 1,
-      feedId: activeFeedIdRef.current,
-      revision: revisionRef.current,
-      hasMoreBefore: hasMoreBeforeRef.current,
+      feedId,
+      revision,
+      hasMoreBefore,
       lastViewportAnchor: nextAnchor,
-      messages: feedMessagesRef.current,
+      messages: feedMessages,
       updatedAt: new Date().toISOString(),
     })
 
@@ -609,27 +640,21 @@ export function useDemoMessageScenario(
       requestId: createDemoRequestId('runtime.event'),
       operation: 'runtime.event',
       phase: 'info',
-      feedId: activeFeedIdRef.current,
-      messageCount: messagesRef.current.length,
+      feedId,
+      messageCount: messages.length,
       details: {
         type: 'viewportAnchorRemembered',
         reason,
+        generation,
         anchor: nextAnchor,
       },
     })
-  }, [log])
-
-  const rememberViewportAnchor = useCallback((
-    reason: 'before-feed-switch' | 'before-unmount',
-  ) => {
-    persistViewportAnchor(activeRuntime.getViewportAnchorState(), reason)
-  }, [activeRuntime, persistViewportAnchor])
+  }, [log, saveCurrentFeedSessionState])
 
   const rememberRuntimeViewportAnchor = useCallback((
-    anchor: AnchorState | null,
-    reason: 'scroll-idle' | 'transaction-settle',
+    event: ViewportAnchorChangedEvent,
   ) => {
-    persistViewportAnchor(anchor, reason)
+    persistViewportAnchor(event)
   }, [persistViewportAnchor])
 
   const updateMessageCollections = useCallback((
@@ -1383,7 +1408,6 @@ export function useDemoMessageScenario(
     const feed = getDemoFeedDefinition(feedId)
     const feedLoadRequestId = createDemoRequestId('feed.load')
 
-    rememberViewportAnchor('before-feed-switch')
     saveCurrentFeedSessionState()
     setSelectedFeedId(feedId)
 
@@ -1475,7 +1499,6 @@ export function useDemoMessageScenario(
     commitLoadedFeedWindow,
     loadFeedWindow,
     log,
-    rememberViewportAnchor,
     restoreFeedSessionState,
     runtimeCache,
     saveCurrentFeedSessionState,
@@ -1597,15 +1620,9 @@ export function useDemoMessageScenario(
 
   useEffect(() => {
     return () => {
-      const runtime = activeRuntimeRef.current
-
-      if (runtime) {
-        persistViewportAnchor(runtime.getViewportAnchorState(), 'before-unmount')
-      }
-
       saveCurrentFeedSessionState()
     }
-  }, [persistViewportAnchor, saveCurrentFeedSessionState])
+  }, [saveCurrentFeedSessionState])
 
   useEffect(() => {
     const feed = getDemoFeedDefinition(activeFeedId)

@@ -200,6 +200,19 @@ export type ScrollMotionOptions = {
   targetEpsilonPx?: number
 }
 
+export type ViewportAnchorChangeReason =
+  | 'scroll-idle'
+  | 'transaction-settle'
+  | 'detach'
+
+export type ViewportAnchorChangedEvent = {
+  type: 'viewportAnchorChanged'
+  feedId: string
+  generation: number
+  reason: ViewportAnchorChangeReason
+  anchor: AnchorState | null
+}
+
 export type MessageViewportRuntimeEvent =
   | {
       type: 'needMoreBefore'
@@ -226,13 +239,7 @@ export type MessageViewportRuntimeEvent =
       reason: 'jump' | 'restore'
       target: MessageIdentityAnchor
     }
-  | {
-      type: 'viewportAnchorChanged'
-      feedId: string
-      generation: number
-      reason: 'scroll-idle' | 'transaction-settle'
-      anchor: AnchorState | null
-    }
+  | ViewportAnchorChangedEvent
   | { type: 'viewportReady'; feedId: string; generation: number }
   | { type: 'viewportError'; feedId: string; generation: number; code: string }
 

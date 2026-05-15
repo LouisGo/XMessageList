@@ -48,6 +48,7 @@ import type {
   RuntimeState,
   ScrollMotionOptions,
   ScrollSource,
+  ViewportAnchorChangeReason,
   WindowConfig,
 } from '../types'
 import {
@@ -346,6 +347,8 @@ export class MessageViewportRuntimeController<
     this.edge.disconnect()
     this.measurement.disconnect()
     this.transactions.clear()
+
+    this.emitViewportAnchorChanged('detach')
 
     if (container) {
       this.retainedScrollTop = container.scrollTop
@@ -1291,9 +1294,7 @@ export class MessageViewportRuntimeController<
     }, VIEWPORT_ANCHOR_IDLE_MS)
   }
 
-  private emitViewportAnchorChanged(
-    reason: 'scroll-idle' | 'transaction-settle',
-  ): void {
+  private emitViewportAnchorChanged(reason: ViewportAnchorChangeReason): void {
     const data = this.dataSnapshot
 
     if (!data || this.state === 'DESTROYED') {

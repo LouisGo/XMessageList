@@ -120,6 +120,9 @@ platform scroll signal
 ```
 
 Projection shell 不转发 raw scroll signal 给 data runtime，也不据此直接分页。
+Projection shell 必须透传完整 `viewportAnchorChanged` event；feed 切换或卸载时
+旧 runtime 的 `detach` checkpoint 需要带着原始 `feedId/generation` 回到 host，
+不能被 active feed 状态重写。
 
 ## 7. Error Boundary
 

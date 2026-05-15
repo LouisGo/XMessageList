@@ -45,6 +45,8 @@ if (!lifecycleGuard.isCurrent(feedId, generation)) return;
 
 `detach()`：
 
+- 在清理 DOM refs 前 capture 当前 viewport anchor，并发出
+  `viewportAnchorChanged(reason: 'detach')`。
 - 保存当前 container `scrollTop`，供同一 runtime 再次 attach 时恢复。
 - 移除 scroll listener。
 - disconnect container observer。
@@ -74,7 +76,8 @@ if (!lifecycleGuard.isCurrent(feedId, generation)) return;
 - conversation / session host 按 `feedId` 持有 runtime cache。
 - React projection 只接收当前 active runtime。
 - feed 切走时 projection 对旧 runtime 执行 `detach()`，保留 height cache、
-  anchor、scrollTop 和 projection snapshot。
+  anchor、scrollTop 和 projection snapshot；最后一次 anchor 通过
+  `viewportAnchorChanged(reason: 'detach')` 交给 host 持久化。
 - feed 切回且 runtime cache 命中时，不应重新 bootstrap 同一 runtime；host 只恢复
   该 feed 的本地 data-window/session state。
 - feed 切换但 runtime cache miss 时，host 应采用 staged activation：先保留当前
@@ -87,6 +90,8 @@ if (!lifecycleGuard.isCurrent(feedId, generation)) return;
 - 同一个 runtime 可经历 `attach -> detach -> attach`。
 - `destroy()` 后拒绝继续接收 command / snapshot。
 - 异步回调仍按 `feedId + generation` 丢弃 stale work。
+- React adapter 透传完整 `viewportAnchorChanged` event，host 按 event 的
+  `feedId + generation` 写回对应 feed session，不能用当前 active feed 代替。
 
 React 18 StrictMode 下，host 如果在 effect cleanup 中释放 cache，必须延后一拍或
 采用等价 guard，避免开发环境的模拟 cleanup 把仍会复用的 runtime 销毁。

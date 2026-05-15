@@ -33,6 +33,8 @@ export type {
   ScrollMotionOptions,
   ScrollSource,
   TombstoneMessageDataItem,
+  ViewportAnchorChangedEvent,
+  ViewportAnchorChangeReason,
   ViewportEdgeState,
   ViewportEffect,
   WindowConfig,
