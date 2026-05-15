@@ -213,6 +213,21 @@ export type ViewportAnchorChangedEvent = {
   anchor: AnchorState | null
 }
 
+export type ViewportDiagnosticEvent = {
+  type: 'viewportDiagnostic'
+  feedId: string
+  generation: number
+  name:
+    | 'followBottom.pending'
+    | 'followBottom.transaction'
+    | 'followBottom.motionRequest'
+    | 'destinationMotion.start'
+    | 'destinationMotion.settle'
+    | 'destinationMotion.cancel'
+    | 'scrollMotion.decision'
+  details: Record<string, unknown>
+}
+
 export type MessageViewportRuntimeEvent =
   | {
       type: 'needMoreBefore'
@@ -240,6 +255,7 @@ export type MessageViewportRuntimeEvent =
       target: MessageIdentityAnchor
     }
   | ViewportAnchorChangedEvent
+  | ViewportDiagnosticEvent
   | { type: 'viewportReady'; feedId: string; generation: number }
   | { type: 'viewportError'; feedId: string; generation: number; code: string }
 
@@ -276,6 +292,9 @@ export type MessageViewportRuntimeOptions = {
   generation?: number
   window?: Partial<WindowConfig>
   scrollMotion?: Partial<ScrollMotionOptions>
+  debug?: {
+    diagnostics?: boolean
+  }
   scheduler?: RuntimeScheduler
   observers?: Partial<RuntimeObserverFactory>
   commitTimeoutMs?: Partial<{

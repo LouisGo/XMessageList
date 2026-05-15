@@ -539,6 +539,20 @@ type ScrollMotionOptions = {
 
 这些配置只影响内部 motion，不进入 snapshot。
 
+## 8.1 Debug Diagnostics
+
+Runtime 可以通过可选 debug 开关发出 `viewportDiagnostic` event。该 event 只用于
+demo / 开发环境记录 transaction 和 motion 决策现场，不改变 public snapshot，也
+不允许 React 根据它修正滚动。
+
+follow-bottom 关键诊断至少应覆盖：
+
+- pending 建立时的 data revision、item count、`hasMoreAfter` 和当前 `scrollTop`。
+- latest-window transaction commit 后的 `scrollTop`、`targetTop`、distance、
+  `scrollHeight` 和 `clientHeight`。
+- destination motion 选择 engine 还是 instant，以及是否由 reduced motion 降级。
+- `ScrollMotionEngine` 是 epsilon settle、bounded animate，还是远距离预落位后动画。
+
 ## 9. Testing Requirements
 
 Runtime unit tests:

@@ -35,6 +35,7 @@ export type {
   TombstoneMessageDataItem,
   ViewportAnchorChangedEvent,
   ViewportAnchorChangeReason,
+  ViewportDiagnosticEvent,
   ViewportEdgeState,
   ViewportEffect,
   WindowConfig,

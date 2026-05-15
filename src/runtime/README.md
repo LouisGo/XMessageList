@@ -28,6 +28,7 @@ Runtime 拥有：
 - projection snapshot 发布和 revision 管理
 - `needMoreBefore` / `needMoreAfter` / `needLatestMessages` /
   `needMessagesAround` / `viewportAnchorChanged` 等 runtime event
+- 可选 debug diagnostics，用于记录 transaction / motion 决策现场；默认关闭，不参与滚动语义
 
 Runtime 不拥有：
 

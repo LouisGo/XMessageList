@@ -17,6 +17,7 @@ import type {
 } from '../types'
 import type {
   DestinationMotionSettle,
+  RuntimeDiagnosticEmitter,
   ReadySubstate,
 } from '../core/runtimeTypes'
 
@@ -40,6 +41,7 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     private readonly emitViewportAnchorChanged: (
       reason: ViewportAnchorChangeReason,
     ) => void,
+    private readonly emitDiagnostic: RuntimeDiagnosticEmitter,
   ) {}
 
   isActive(): boolean {
@@ -64,13 +66,29 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     const targetTop = Math.max(0, input.targetTop)
     this.destinationMotionSettle = {
       source: input.source,
+      targetTop,
       bottomLockState: input.bottomLockState,
       data: input.data,
       renderWindow: input.renderWindow,
     }
 
+    const instantReason = this.getInstantDestinationMotionReason()
+    this.emitDiagnostic('destinationMotion.start', {
+      source: input.source,
+      decision: instantReason ? 'instant' : 'engine',
+      instantReason,
+      currentTop: container.scrollTop,
+      targetTop,
+      distancePx: targetTop - container.scrollTop,
+      scrollHeight: container.scrollHeight,
+      clientHeight: container.clientHeight,
+      enabled: this.scrollMotionOptions.enabled,
+      respectReducedMotion: this.scrollMotionOptions.respectReducedMotion,
+      reducedMotion: this.isReducedMotionRequested(),
+    })
+
     // motion 完成前先暂存最终 projection 状态，避免动画中途就暴露 LOCKED / jump 完成。
-    if (this.shouldUseInstantDestinationMotion()) {
+    if (instantReason) {
       this.writeScrollTop(targetTop, input.source)
       this.settleDestinationMotion()
       return
@@ -91,6 +109,11 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
       onFrameWrite: (nextTop, source) => this.writeScrollTop(nextTop, source),
       onSettle: () => this.settleDestinationMotion(),
       onCancel: (reason) => this.handleDestinationMotionCancel(reason),
+      onDecision: (decision) =>
+        this.emitDiagnostic('scrollMotion.decision', {
+          source: input.source,
+          ...decision,
+        }),
     })
   }
 
@@ -138,6 +161,14 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     this.destinationMotionSettle = null
     this.setReadySubstate('READY_IDLE')
     this.scrollIntent.setBottomLockState(settle.bottomLockState)
+    const container = this.registry.getContainer()
+    this.emitDiagnostic('destinationMotion.settle', {
+      source: settle.source,
+      targetTop: settle.targetTop,
+      scrollTop: container?.scrollTop ?? null,
+      distancePx: container ? settle.targetTop - container.scrollTop : null,
+      bottomLockState: settle.bottomLockState,
+    })
     // 到达目的地后再发布最终 bottomLockState，外部看到的状态才与真实 scrollTop 一致。
     this.projection.publish({
       data: settle.data,
@@ -159,6 +190,16 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
 
   private handleDestinationMotionCancel(reason: ScrollMotionCancelReason): void {
     const settle = this.destinationMotionSettle
+    const container = this.registry.getContainer()
+
+    this.emitDiagnostic('destinationMotion.cancel', {
+      source: settle?.source ?? null,
+      reason,
+      targetTop: settle?.targetTop ?? null,
+      scrollTop: container?.scrollTop ?? null,
+      distancePx:
+        settle && container ? settle.targetTop - container.scrollTop : null,
+    })
 
     this.clearDestinationMotionSettle()
 
@@ -183,15 +224,22 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     })
   }
 
-  private shouldUseInstantDestinationMotion(): boolean {
+  private getInstantDestinationMotionReason():
+    | 'disabled'
+    | 'reduced-motion'
+    | null {
     if (!this.scrollMotionOptions.enabled) {
-      return true
+      return 'disabled'
     }
 
     if (!this.scrollMotionOptions.respectReducedMotion) {
-      return false
+      return null
     }
 
+    return this.isReducedMotionRequested() ? 'reduced-motion' : null
+  }
+
+  private isReducedMotionRequested(): boolean {
     const ownerWindow = this.registry.getContainer()?.ownerDocument.defaultView
     return Boolean(
       ownerWindow

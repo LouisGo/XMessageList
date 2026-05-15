@@ -16,6 +16,7 @@ import type {
   MessageRuntimeItemKey,
   MessageViewportRuntimeEvent,
   MessageViewportSnapshot,
+  ViewportDiagnosticEvent,
   RenderWindow,
   RuntimeState,
   ViewportAnchorChangeReason,
@@ -67,6 +68,10 @@ export type ViewportTransactionDeps<TMessage, TOptimistic> = {
   ) => void
   invalidateSpacerCache: () => void
   emitEvent: (event: MessageViewportRuntimeEvent) => void
+  emitDiagnostic: (
+    name: ViewportDiagnosticEvent['name'],
+    details: Record<string, unknown>,
+  ) => void
   emitError: (code: string) => void
 }
 
@@ -498,9 +503,27 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       return
     }
 
+    this.deps.emitDiagnostic('followBottom.transaction', {
+      phase: 'begin',
+      revision: data.revision,
+      itemCount: data.items.length,
+      hasMoreBefore: data.hasMoreBefore,
+      hasMoreAfter: data.hasMoreAfter,
+      scrollTop: container.scrollTop,
+      scrollHeight: container.scrollHeight,
+      clientHeight: container.clientHeight,
+      bottomLockState: this.deps.scrollIntent.getBottomLockState(),
+    })
+
     if (data.hasMoreAfter) {
       // followBottom 的目标是会话最新消息；当前 DataWindow 还缺 latest window 时，
       // runtime 只能请求 latest window，不能把 partial bottom 锁成 BottomAnchor。
+      this.deps.emitDiagnostic('followBottom.transaction', {
+        phase: 'latest-needed',
+        revision: data.revision,
+        itemCount: data.items.length,
+        scrollTop: container.scrollTop,
+      })
       this.deps.startPendingFollowBottom(data, container.scrollTop)
       return
     }
@@ -528,9 +551,25 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       await this.deps.commit.waitForChanged(projection, 'followBottom')
       this.deps.measureCurrentWindow()
       this.deps.setState('READY')
+      const targetTop = this.deps.motion.getBottomTargetTop(container)
+      this.deps.emitDiagnostic('followBottom.motionRequest', {
+        revision: data.revision,
+        itemCount: data.items.length,
+        renderWindowStart: renderWindow.startIndex,
+        renderWindowEnd: renderWindow.endIndex,
+        renderedItems: renderWindow.itemKeys.length,
+        scrollTop: container.scrollTop,
+        targetTop,
+        distancePx: targetTop - container.scrollTop,
+        scrollHeight: container.scrollHeight,
+        clientHeight: container.clientHeight,
+        firstRenderedKey: renderWindow.itemKeys[0] ?? null,
+        lastRenderedKey:
+          renderWindow.itemKeys[renderWindow.itemKeys.length - 1] ?? null,
+      })
       this.deps.motion.start({
         source: 'followBottom',
-        targetTop: this.deps.motion.getBottomTargetTop(container),
+        targetTop,
         data,
         renderWindow,
         bottomLockState: 'LOCKED',

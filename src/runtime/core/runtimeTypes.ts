@@ -11,6 +11,7 @@ import type {
   RenderWindow,
   RuntimeState,
   ScrollMotionOptions,
+  ViewportDiagnosticEvent,
 } from '../types'
 import type { ScrollMotionSource } from '../scroll/scrollMotionEngine'
 
@@ -63,10 +64,16 @@ export type PendingDestinationRequest = {
 
 export type DestinationMotionSettle<TMessage, TOptimistic> = {
   source: ScrollMotionSource
+  targetTop: number
   bottomLockState: MessageViewportSnapshot['bottomLockState']
   data: MessageDataSnapshot<TMessage, TOptimistic>
   renderWindow: RenderWindow
 }
+
+export type RuntimeDiagnosticEmitter = (
+  name: ViewportDiagnosticEvent['name'],
+  details: Record<string, unknown>,
+) => void
 
 export type PublishProjectionInput<TMessage, TOptimistic> = {
   data: MessageDataSnapshot<TMessage, TOptimistic>

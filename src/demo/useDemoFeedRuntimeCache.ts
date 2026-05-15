@@ -30,6 +30,7 @@ function createDemoFeedRuntime(feedId: string): MessageViewportRuntime<DemoMessa
     window: DEMO_RUNTIME_WINDOW,
     bottomUnlockThresholdPx: 200,
     edgeLoadThresholdPx: 72,
+    debug: { diagnostics: true },
   })
 }
 

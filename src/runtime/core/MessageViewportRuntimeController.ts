@@ -49,6 +49,7 @@ import type {
   RuntimeState,
   ScrollMotionOptions,
   ScrollSource,
+  ViewportDiagnosticEvent,
   ViewportAnchorChangeReason,
   WindowConfig,
 } from '../types'
@@ -117,6 +118,9 @@ export class MessageViewportRuntimeController<
   private readonly edgeLoadThresholdPx: number
 
   private readonly scrollMotionOptions: Required<ScrollMotionOptions>
+
+  private readonly diagnosticsEnabled: boolean
+
   private state: RuntimeState = 'INITIAL'
 
   private readySubstate: ReadySubstate = 'READY_IDLE'
@@ -188,6 +192,7 @@ export class MessageViewportRuntimeController<
       ...DEFAULT_SCROLL_MOTION_OPTIONS,
       ...options.scrollMotion,
     }
+    this.diagnosticsEnabled = Boolean(options.debug?.diagnostics)
     this.edgeLoadThresholdPx =
       options.edgeLoadThresholdPx ?? DEFAULT_EDGE_LOAD_THRESHOLD_PX
 
@@ -249,6 +254,7 @@ export class MessageViewportRuntimeController<
       () => this.currentFrame,
       () => this.state === 'DESTROYED',
       (reason) => this.emitViewportAnchorChanged(reason),
+      (name, details) => this.emitDiagnostic(name, details),
     )
     this.transactions = new TransactionRunner(() => {
       this.motion.cancel('transaction-supersede')
@@ -286,6 +292,7 @@ export class MessageViewportRuntimeController<
         this.emitViewportAnchorChanged(reason, anchor),
       invalidateSpacerCache: () => this.spacer.invalidateEstimateCache(),
       emitEvent: (event) => this.emitEvent(event),
+      emitDiagnostic: (name, details) => this.emitDiagnostic(name, details),
       emitError: (code) => this.emitError(code),
     })
   }
@@ -804,15 +811,24 @@ export class MessageViewportRuntimeController<
     scrollTop: number,
   ): void {
     this.followBottomCommandCounter += 1
+    const commandId = `follow-bottom-${this.followBottomCommandCounter}`
     this.pendingFollowBottom = {
       feedId: data.feedId,
       generation: data.generation,
-      commandId: `follow-bottom-${this.followBottomCommandCounter}`,
+      commandId,
       emittedAfterRevision: null,
       lastScrollTop: scrollTop,
     }
     this.readySubstate = 'READY_FOLLOW_BOTTOM_PENDING'
     this.scrollIntent.setBottomLockState('UNLOCKED')
+    this.emitDiagnostic('followBottom.pending', {
+      commandId,
+      revision: data.revision,
+      itemCount: data.items.length,
+      hasMoreBefore: data.hasMoreBefore,
+      hasMoreAfter: data.hasMoreAfter,
+      scrollTop,
+    })
     this.emitPendingFollowBottomNeed(data)
   }
 
@@ -1430,6 +1446,33 @@ export class MessageViewportRuntimeController<
     for (const listener of this.eventListeners) {
       listener(event)
     }
+  }
+
+  private emitDiagnostic(
+    name: ViewportDiagnosticEvent['name'],
+    details: Record<string, unknown>,
+  ): void {
+    if (!this.diagnosticsEnabled || this.state === 'DESTROYED') {
+      return
+    }
+
+    const data = this.dataSnapshot
+    const token = data
+      ? { feedId: data.feedId, generation: data.generation }
+      : this.lifecycle.getCurrent()
+
+    this.emitEvent({
+      type: 'viewportDiagnostic',
+      feedId: token.feedId,
+      generation: token.generation,
+      name,
+      details: {
+        state: this.state,
+        readySubstate: this.readySubstate,
+        pendingCommands: this.transactions.getPendingCount(),
+        ...details,
+      },
+    })
   }
 
   private emitError(code: string): void {

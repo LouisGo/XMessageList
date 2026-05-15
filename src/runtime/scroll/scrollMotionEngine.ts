@@ -31,7 +31,29 @@ export type ScrollMotionStart = {
   onFrameWrite: (nextTop: number, source: ScrollMotionSource) => void
   onSettle: () => void
   onCancel: (reason: ScrollMotionCancelReason) => void
+  onDecision?: (decision: ScrollMotionDecisionDiagnostic) => void
 }
+
+export type ScrollMotionDecisionDiagnostic =
+  | {
+      decision: 'epsilon-settle'
+      currentTop: number
+      targetTop: number
+      distancePx: number
+      epsilonPx: number
+    }
+  | {
+      decision: 'bounded-animate'
+      currentTop: number
+      targetTop: number
+      distancePx: number
+      epsilonPx: number
+      maxDistancePx: number
+      prepositionTop: number | null
+      startTop: number
+      remainingDistancePx: number
+      durationMs: number
+    }
 
 type ActiveMotion = {
   id: number
@@ -61,8 +83,16 @@ export class ScrollMotionEngine {
     const targetTop = Math.max(0, input.targetTop)
     const currentTop = input.container.scrollTop
     const epsilon = input.targetEpsilonPx || DEFAULT_EPSILON_PX
+    const distancePx = targetTop - currentTop
 
-    if (Math.abs(targetTop - currentTop) <= epsilon) {
+    if (Math.abs(distancePx) <= epsilon) {
+      input.onDecision?.({
+        decision: 'epsilon-settle',
+        currentTop,
+        targetTop,
+        distancePx,
+        epsilonPx: epsilon,
+      })
       input.onSettle()
       return
     }
@@ -72,11 +102,13 @@ export class ScrollMotionEngine {
     let startTop = currentTop
     const maxDistancePx = Math.max(1, input.maxDistancePx)
     const initialDistance = targetTop - currentTop
+    let prepositionTop: number | null = null
 
     if (Math.abs(initialDistance) > maxDistancePx) {
       // 超长距离先瞬移到目标附近，再做短动画，避免跨几万像素的无意义滚动动画。
       startTop =
         targetTop - Math.sign(initialDistance) * maxDistancePx
+      prepositionTop = startTop
       input.onFrameWrite(startTop, input.source)
     }
 
@@ -86,6 +118,19 @@ export class ScrollMotionEngine {
       maxDistancePx,
       minDurationMs: input.minDurationMs,
       maxDurationMs: input.maxDurationMs,
+    })
+
+    input.onDecision?.({
+      decision: 'bounded-animate',
+      currentTop,
+      targetTop,
+      distancePx: initialDistance,
+      epsilonPx: epsilon,
+      maxDistancePx,
+      prepositionTop,
+      startTop,
+      remainingDistancePx: remainingDistance,
+      durationMs,
     })
 
     const active: ActiveMotion = {
