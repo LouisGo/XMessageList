@@ -73,18 +73,26 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     }
 
     const instantReason = this.getInstantDestinationMotionReason()
-    this.emitDiagnostic('destinationMotion.start', {
-      source: input.source,
-      decision: instantReason ? 'instant' : 'engine',
-      instantReason,
-      currentTop: container.scrollTop,
-      targetTop,
-      distancePx: targetTop - container.scrollTop,
-      scrollHeight: container.scrollHeight,
-      clientHeight: container.clientHeight,
-      enabled: this.scrollMotionOptions.enabled,
-      respectReducedMotion: this.scrollMotionOptions.respectReducedMotion,
-      reducedMotion: this.isReducedMotionRequested(),
+    const motionCorrelationId =
+      `motion:${input.source}:${input.data.feedId}:${input.data.generation}:${input.data.revision}`
+    this.emitDiagnostic({
+      channel: 'motion',
+      severity: 'info',
+      name: 'destinationMotion.start',
+      correlationId: motionCorrelationId,
+      details: () => ({
+        source: input.source,
+        decision: instantReason ? 'instant' : 'engine',
+        instantReason,
+        currentTop: container.scrollTop,
+        targetTop,
+        distancePx: targetTop - container.scrollTop,
+        scrollHeight: container.scrollHeight,
+        clientHeight: container.clientHeight,
+        enabled: this.scrollMotionOptions.enabled,
+        respectReducedMotion: this.scrollMotionOptions.respectReducedMotion,
+        reducedMotion: this.isReducedMotionRequested(),
+      }),
     })
 
     // motion 完成前先暂存最终 projection 状态，避免动画中途就暴露 LOCKED / jump 完成。
@@ -110,9 +118,15 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
       onSettle: () => this.settleDestinationMotion(),
       onCancel: (reason) => this.handleDestinationMotionCancel(reason),
       onDecision: (decision) =>
-        this.emitDiagnostic('scrollMotion.decision', {
-          source: input.source,
-          ...decision,
+        this.emitDiagnostic({
+          channel: 'motion',
+          severity: 'debug',
+          name: 'scrollMotion.decision',
+          correlationId: motionCorrelationId,
+          details: () => ({
+            source: input.source,
+            ...decision,
+          }),
         }),
     })
   }
@@ -162,12 +176,19 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     this.setReadySubstate('READY_IDLE')
     this.scrollIntent.setBottomLockState(settle.bottomLockState)
     const container = this.registry.getContainer()
-    this.emitDiagnostic('destinationMotion.settle', {
-      source: settle.source,
-      targetTop: settle.targetTop,
-      scrollTop: container?.scrollTop ?? null,
-      distancePx: container ? settle.targetTop - container.scrollTop : null,
-      bottomLockState: settle.bottomLockState,
+    this.emitDiagnostic({
+      channel: 'motion',
+      severity: 'info',
+      name: 'destinationMotion.settle',
+      correlationId:
+        `motion:${settle.source}:${settle.data.feedId}:${settle.data.generation}:${settle.data.revision}`,
+      details: () => ({
+        source: settle.source,
+        targetTop: settle.targetTop,
+        scrollTop: container?.scrollTop ?? null,
+        distancePx: container ? settle.targetTop - container.scrollTop : null,
+        bottomLockState: settle.bottomLockState,
+      }),
     })
     // 到达目的地后再发布最终 bottomLockState，外部看到的状态才与真实 scrollTop 一致。
     this.projection.publish({
@@ -192,13 +213,21 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     const settle = this.destinationMotionSettle
     const container = this.registry.getContainer()
 
-    this.emitDiagnostic('destinationMotion.cancel', {
-      source: settle?.source ?? null,
-      reason,
-      targetTop: settle?.targetTop ?? null,
-      scrollTop: container?.scrollTop ?? null,
-      distancePx:
-        settle && container ? settle.targetTop - container.scrollTop : null,
+    this.emitDiagnostic({
+      channel: 'motion',
+      severity: reason === 'user-interrupt' ? 'info' : 'debug',
+      name: 'destinationMotion.cancel',
+      correlationId: settle
+        ? `motion:${settle.source}:${settle.data.feedId}:${settle.data.generation}:${settle.data.revision}`
+        : undefined,
+      details: () => ({
+        source: settle?.source ?? null,
+        reason,
+        targetTop: settle?.targetTop ?? null,
+        scrollTop: container?.scrollTop ?? null,
+        distancePx:
+          settle && container ? settle.targetTop - container.scrollTop : null,
+      }),
     })
 
     this.clearDestinationMotionSettle()

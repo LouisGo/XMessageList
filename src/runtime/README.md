@@ -28,7 +28,8 @@ Runtime 拥有：
 - projection snapshot 发布和 revision 管理
 - `needMoreBefore` / `needMoreAfter` / `needLatestMessages` /
   `needMessagesAround` / `viewportAnchorChanged` 等 runtime event
-- 可选 debug diagnostics，用于记录 transaction / motion 决策现场；默认关闭，不参与滚动语义
+- 可选 debug diagnostics，用于记录 lifecycle / data / transaction / projection /
+  scroll / measurement / motion / recovery 等决策现场；默认关闭，不参与滚动语义
 
 Runtime 不拥有：
 
@@ -51,6 +52,13 @@ Runtime 的生命周期、协调器接线和 projection 边界。
 - `commitCoordinator.ts`：等待 React commit ack，处理 timeout / cancel。
 - `lifecycleGuard.ts`：用 feedId + generation 丢弃过期异步工作。
 - `runtimeTypes.ts`：仅供 runtime 内部共享的派生类型和常量。
+
+### `debug/`
+
+Runtime 内部观测能力。
+
+- `diagnosticRecorder.ts`：channel / severity 过滤、lazy details、ring buffer 和
+  `viewportDiagnostic` event 输出。关闭或过滤命中失败时不构造 details。
 
 ### `transactions/`
 

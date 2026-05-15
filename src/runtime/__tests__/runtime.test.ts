@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   MessageViewportRuntime,
   type MessageDataSnapshot,
+  type MessageViewportRuntimeOptions,
   type ScrollMotionOptions,
   type MessageViewportRuntimeEvent,
   type WindowConfig,
@@ -71,6 +72,7 @@ function createSnapshot(input: {
 function createRuntime(input?: {
   window?: Partial<WindowConfig>
   scrollMotion?: Partial<ScrollMotionOptions>
+  debug?: MessageViewportRuntimeOptions['debug']
 }) {
   const scheduler = new FakeScheduler()
   const observers = createFakeObservers()
@@ -86,6 +88,7 @@ function createRuntime(input?: {
       ...input?.window,
     },
     scrollMotion: input?.scrollMotion,
+    debug: input?.debug,
   })
 
   return { runtime, scheduler, observers }
@@ -234,6 +237,74 @@ describe('MessageViewportRuntime', () => {
     const second = runtime.getSnapshot()
 
     expect(second).toBe(first)
+  })
+
+  it('keeps diagnostics silent by default', () => {
+    const { runtime } = createRuntime()
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.dispatch({ type: 'followBottom' })
+
+    expect(runtime.getDiagnosticRecords()).toEqual([])
+    expect(events.some((event) => event.type === 'viewportDiagnostic')).toBe(false)
+  })
+
+  it('stores diagnostic records without emitting events when configured', async () => {
+    const { runtime, scheduler } = createRuntime({
+      debug: {
+        diagnostics: {
+          channels: ['motion'],
+          emitEvents: false,
+          maxEntries: 10,
+        },
+      },
+    })
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(
+      createSnapshot({
+        count: 30,
+        revision: 1,
+        effect: 'reset',
+        hasMoreAfter: true,
+      }),
+    )
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'restored',
+      target: { messageId: 'm-30' },
+    })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    runtime.dispatch({ type: 'followBottom' })
+    await Promise.resolve()
+
+    const records = runtime.getDiagnosticRecords()
+    const pendingRecord = records.find(
+      (record) => record.name === 'followBottom.pending',
+    )
+
+    expect(pendingRecord).toEqual(
+      expect.objectContaining({
+        channel: 'motion',
+        severity: 'info',
+        correlationId: expect.stringMatching(/^command:follow-bottom-/),
+        details: expect.objectContaining({
+          itemCount: 30,
+          hasMoreAfter: true,
+        }),
+      }),
+    )
+    expect(events.some((event) => event.type === 'viewportDiagnostic')).toBe(false)
   })
 
   it('bootstraps latest data into bottom locked state', async () => {

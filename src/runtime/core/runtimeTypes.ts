@@ -11,8 +11,8 @@ import type {
   RenderWindow,
   RuntimeState,
   ScrollMotionOptions,
-  ViewportDiagnosticEvent,
 } from '../types'
+import type { RuntimeDiagnosticInput } from '../debug/diagnosticRecorder'
 import type { ScrollMotionSource } from '../scroll/scrollMotionEngine'
 
 export type PublishResult<TMessage, TOptimistic> = {
@@ -70,10 +70,7 @@ export type DestinationMotionSettle<TMessage, TOptimistic> = {
   renderWindow: RenderWindow
 }
 
-export type RuntimeDiagnosticEmitter = (
-  name: ViewportDiagnosticEvent['name'],
-  details: Record<string, unknown>,
-) => void
+export type RuntimeDiagnosticEmitter = (input: RuntimeDiagnosticInput) => void
 
 export type PublishProjectionInput<TMessage, TOptimistic> = {
   data: MessageDataSnapshot<TMessage, TOptimistic>

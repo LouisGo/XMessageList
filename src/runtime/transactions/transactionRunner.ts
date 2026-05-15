@@ -7,6 +7,18 @@ type TransactionTask = {
   run: () => Promise<void>
 }
 
+type TransactionRunnerCallbacks = {
+  onEnqueue?: (kind: ViewportTransactionKind, id: string) => void
+  onStart?: (kind: ViewportTransactionKind, id: string) => void
+  onComplete?: (kind: ViewportTransactionKind, id: string) => void
+  onDrop?: (
+    kind: ViewportTransactionKind,
+    id: string,
+    reason: 'reset-supersede' | 'key-supersede' | 'clear' | 'stop',
+  ) => void
+  onError?: (kind: ViewportTransactionKind, id: string, error: unknown) => void
+}
+
 let transactionCounter = 0
 
 /**
@@ -20,12 +32,7 @@ export class TransactionRunner {
 
   private stopped = false
 
-  constructor(
-    private readonly onTransactionStart?: (
-      kind: ViewportTransactionKind,
-      id: string,
-    ) => void,
-  ) {}
+  constructor(private readonly callbacks: TransactionRunnerCallbacks = {}) {}
 
   enqueue(
     kind: ViewportTransactionKind,
@@ -41,6 +48,7 @@ export class TransactionRunner {
     }
 
     if (kind === 'reset') {
+      this.dropQueued('reset-supersede')
       this.queue.length = 0
     } else if (supersedeKey) {
       const firstSameKey = this.queue.findIndex(
@@ -48,22 +56,32 @@ export class TransactionRunner {
       )
 
       if (firstSameKey >= 0) {
+        const dropped = this.queue[firstSameKey]
+        if (dropped) {
+          this.callbacks.onDrop?.(dropped.kind, dropped.id, 'key-supersede')
+        }
         this.queue.splice(firstSameKey, 1)
       }
     }
 
     this.queue.push(task)
+    this.callbacks.onEnqueue?.(kind, id)
     void this.drain()
     return id
   }
 
   clear(): void {
+    this.dropQueued('clear')
     this.queue.length = 0
   }
 
   dropBySupersedeKey(supersedeKey: string): void {
     for (let index = this.queue.length - 1; index >= 0; index -= 1) {
       if (this.queue[index]?.supersedeKey === supersedeKey) {
+        const dropped = this.queue[index]
+        if (dropped) {
+          this.callbacks.onDrop?.(dropped.kind, dropped.id, 'key-supersede')
+        }
         this.queue.splice(index, 1)
       }
     }
@@ -71,7 +89,8 @@ export class TransactionRunner {
 
   stop(): void {
     this.stopped = true
-    this.clear()
+    this.dropQueued('stop')
+    this.queue.length = 0
   }
 
   resume(): void {
@@ -97,13 +116,23 @@ export class TransactionRunner {
     this.active = true
 
     try {
-      this.onTransactionStart?.(task.kind, task.id)
+      this.callbacks.onStart?.(task.kind, task.id)
       await task.run()
+      this.callbacks.onComplete?.(task.kind, task.id)
     } catch (error) {
+      this.callbacks.onError?.(task.kind, task.id, error)
       void error
     } finally {
       this.active = false
       void this.drain()
+    }
+  }
+
+  private dropQueued(
+    reason: 'reset-supersede' | 'key-supersede' | 'clear' | 'stop',
+  ): void {
+    for (const queued of this.queue) {
+      this.callbacks.onDrop?.(queued.kind, queued.id, reason)
     }
   }
 }

@@ -11,6 +11,7 @@ import type {
   RuntimeListener,
   RuntimeState,
   ScrollSource,
+  ViewportDiagnosticRecord,
 } from './types'
 
 /**
@@ -68,6 +69,10 @@ export class MessageViewportRuntime<
 
   getViewportAnchorState(): AnchorState | null {
     return this.controller.getViewportAnchorState()
+  }
+
+  getDiagnosticRecords(): ViewportDiagnosticRecord[] {
+    return this.controller.getDiagnosticRecords()
   }
 
   registerRow(key: MessageRuntimeItemKey, element: HTMLElement | null): void {

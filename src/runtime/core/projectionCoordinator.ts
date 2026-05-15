@@ -15,6 +15,7 @@ import {
 import type {
   PublishProjectionInput,
   PublishResult,
+  RuntimeDiagnosticEmitter,
 } from './runtimeTypes'
 
 export class ProjectionCoordinator<TMessage, TOptimistic> {
@@ -27,6 +28,7 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
     private readonly store: ProjectionStore<TMessage, TOptimistic>,
     private readonly registry: DomRegistry,
     private readonly spacer: SpacerEngine,
+    private readonly emitDiagnostic?: RuntimeDiagnosticEmitter,
   ) {}
 
   publish(
@@ -89,9 +91,11 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
 
     if (nextRevision !== current.revision) {
       this.store.setSnapshot(snapshot)
+      this.emitProjectionDiagnostic(input, snapshot, true)
       return { snapshot, changed: true }
     }
 
+    this.emitProjectionDiagnostic(input, current, false)
     return { snapshot: current, changed: false }
   }
 
@@ -177,6 +181,37 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
     const projectedItems = items.slice(startIndex, endIndex)
     itemCache.set(cacheKey, projectedItems)
     return projectedItems
+  }
+
+  private emitProjectionDiagnostic(
+    input: PublishProjectionInput<TMessage, TOptimistic>,
+    snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
+    changed: boolean,
+  ): void {
+    this.emitDiagnostic?.({
+      channel: 'projection',
+      severity: 'debug',
+      name: 'projection.publish',
+      correlationId:
+        `data:${input.data.feedId}:${input.data.generation}:${input.data.revision}`,
+      details: () => ({
+        changed,
+        dataRevision: input.data.revision,
+        snapshotRevision: snapshot.revision,
+        bootstrapState: snapshot.bootstrapState,
+        bottomLockState: snapshot.bottomLockState,
+        renderWindowStart: snapshot.renderWindow.startIndex,
+        renderWindowEnd: snapshot.renderWindow.endIndex,
+        renderedItems: snapshot.items.length,
+        topSpacer: snapshot.topSpacer,
+        bottomSpacer: snapshot.bottomSpacer,
+        firstKey: snapshot.renderWindow.itemKeys[0] ?? null,
+        lastKey:
+          snapshot.renderWindow.itemKeys[
+            snapshot.renderWindow.itemKeys.length - 1
+          ] ?? null,
+      }),
+    })
   }
 }
 

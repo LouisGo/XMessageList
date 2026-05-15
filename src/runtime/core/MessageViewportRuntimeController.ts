@@ -9,6 +9,10 @@ import { TransactionRunner } from '../transactions/transactionRunner'
 import { CommitCoordinator } from './commitCoordinator'
 import { ProjectionCoordinator } from './projectionCoordinator'
 import {
+  DiagnosticRecorder,
+  type RuntimeDiagnosticInput,
+} from '../debug/diagnosticRecorder'
+import {
   BOOTSTRAP_HEIGHT_EPSILON_PX,
   BOOTSTRAP_SETTLE_TIMEOUT_MS,
   BOOTSTRAP_STABLE_FRAMES,
@@ -49,8 +53,9 @@ import type {
   RuntimeState,
   ScrollMotionOptions,
   ScrollSource,
-  ViewportDiagnosticEvent,
+  ViewportTransactionKind,
   ViewportAnchorChangeReason,
+  ViewportDiagnosticRecord,
   WindowConfig,
 } from '../types'
 import {
@@ -59,6 +64,7 @@ import {
   createDefaultObserverFactory,
   createDefaultScheduler,
   getDistanceToBottom,
+  getRuntimeItemKey,
   mergeWindowConfig,
 } from '../shared/utils'
 
@@ -119,7 +125,7 @@ export class MessageViewportRuntimeController<
 
   private readonly scrollMotionOptions: Required<ScrollMotionOptions>
 
-  private readonly diagnosticsEnabled: boolean
+  private readonly diagnostics: DiagnosticRecorder
 
   private state: RuntimeState = 'INITIAL'
 
@@ -148,6 +154,12 @@ export class MessageViewportRuntimeController<
   private currentFrame = 0
 
   private lastScrollSource: ScrollSource | null = null
+
+  private lastDiagnosticScrollSource: ScrollSource | null = null
+
+  private lastDiagnosticBottomLockState:
+    | MessageViewportSnapshot['bottomLockState']
+    | null = null
 
   private lastUserScrollTop = 0
 
@@ -192,9 +204,14 @@ export class MessageViewportRuntimeController<
       ...DEFAULT_SCROLL_MOTION_OPTIONS,
       ...options.scrollMotion,
     }
-    this.diagnosticsEnabled = Boolean(options.debug?.diagnostics)
     this.edgeLoadThresholdPx =
       options.edgeLoadThresholdPx ?? DEFAULT_EDGE_LOAD_THRESHOLD_PX
+    this.diagnostics = new DiagnosticRecorder(
+      options.debug?.diagnostics,
+      () => this.scheduler.now(),
+      () => this.getDiagnosticContext(),
+      (event) => this.emitEvent(event),
+    )
 
     this.store = new ProjectionStore(
       createEmptySnapshot<TMessage, TOptimistic>(feedId, generation),
@@ -215,6 +232,7 @@ export class MessageViewportRuntimeController<
       this.store,
       this.registry,
       this.spacer,
+      (input) => this.emitDiagnostic(input),
     )
     this.commit = new CommitCoordinator(
       this.scheduler,
@@ -254,10 +272,23 @@ export class MessageViewportRuntimeController<
       () => this.currentFrame,
       () => this.state === 'DESTROYED',
       (reason) => this.emitViewportAnchorChanged(reason),
-      (name, details) => this.emitDiagnostic(name, details),
+      (input) => this.emitDiagnostic(input),
     )
-    this.transactions = new TransactionRunner(() => {
-      this.motion.cancel('transaction-supersede')
+    this.transactions = new TransactionRunner({
+      onEnqueue: (kind, id) =>
+        this.emitTransactionDiagnostic('enqueue', kind, id),
+      onStart: (kind, id) => {
+        this.emitTransactionDiagnostic('start', kind, id)
+        this.motion.cancel('transaction-supersede')
+      },
+      onComplete: (kind, id) =>
+        this.emitTransactionDiagnostic('complete', kind, id),
+      onDrop: (kind, id, reason) =>
+        this.emitTransactionDiagnostic('drop', kind, id, { reason }),
+      onError: (kind, id, error) =>
+        this.emitTransactionDiagnostic('error', kind, id, {
+          error: error instanceof Error ? error.message : String(error),
+        }),
     })
     this.transactionController = new ViewportTransactionController({
       registry: this.registry,
@@ -292,7 +323,7 @@ export class MessageViewportRuntimeController<
         this.emitViewportAnchorChanged(reason, anchor),
       invalidateSpacerCache: () => this.spacer.invalidateEstimateCache(),
       emitEvent: (event) => this.emitEvent(event),
-      emitDiagnostic: (name, details) => this.emitDiagnostic(name, details),
+      emitDiagnostic: (input) => this.emitDiagnostic(input),
       emitError: (code) => this.emitError(code),
     })
   }
@@ -335,6 +366,17 @@ export class MessageViewportRuntimeController<
     this.state =
       this.store.getSnapshot().bootstrapState === 'READY' ? 'READY' : 'ATTACHED'
     this.readySubstate = this.state === 'READY' ? 'READY_IDLE' : this.readySubstate
+    this.emitDiagnostic({
+      channel: 'lifecycle',
+      severity: 'info',
+      name: 'lifecycle.attach',
+      details: () => ({
+        restoredScrollTop: container.scrollTop,
+        clientHeight: container.clientHeight,
+        clientWidth: container.clientWidth,
+        bootstrapState: this.store.getSnapshot().bootstrapState,
+      }),
+    })
     this.tryRunPendingBootstrap()
   }
 
@@ -345,6 +387,15 @@ export class MessageViewportRuntimeController<
 
     const container = this.registry.getContainer()
 
+    this.emitDiagnostic({
+      channel: 'lifecycle',
+      severity: 'info',
+      name: 'lifecycle.detach',
+      details: () => ({
+        scrollTop: container?.scrollTop ?? null,
+        hasContainer: Boolean(container),
+      }),
+    })
     this.lifecycle.suspend()
     this.clearPendingFollowBottom()
     this.clearPendingDestinationRequest()
@@ -381,6 +432,15 @@ export class MessageViewportRuntimeController<
       return
     }
 
+    this.emitDiagnostic({
+      channel: 'lifecycle',
+      severity: 'info',
+      name: 'lifecycle.destroy',
+      details: () => ({
+        heightCacheSize: this.heightCache.size,
+        observedRows: this.registry.getSnapshot().observedRows,
+      }),
+    })
     this.detach()
     this.lifecycle.destroy()
     this.transactions.stop()
@@ -410,6 +470,45 @@ export class MessageViewportRuntimeController<
     }
 
     this.dataSnapshot = snapshot
+    if (generationChanged) {
+      this.emitDiagnostic({
+        channel: 'lifecycle',
+        severity: 'info',
+        name: 'lifecycle.generationReset',
+        correlationId:
+          `data:${snapshot.feedId}:${snapshot.generation}:${snapshot.revision}`,
+        details: () => ({
+          previousFeedId: previous?.feedId ?? null,
+          previousGeneration: previous?.generation ?? null,
+          nextFeedId: snapshot.feedId,
+          nextGeneration: snapshot.generation,
+        }),
+      })
+    }
+    this.emitDiagnostic({
+      channel: 'data',
+      severity: 'debug',
+      name: 'data.setSnapshot',
+      correlationId:
+        `data:${snapshot.feedId}:${snapshot.generation}:${snapshot.revision}`,
+      details: () => ({
+        revision: snapshot.revision,
+        itemCount: snapshot.items.length,
+        effect: snapshot.change.viewportEffect,
+        kind: snapshot.change.kind,
+        hasMoreBefore: snapshot.hasMoreBefore,
+        hasMoreAfter: snapshot.hasMoreAfter,
+        anchor: snapshot.anchor ?? null,
+        anchorStatus: snapshot.anchorStatus ?? null,
+        firstKey: snapshot.items[0]
+          ? getRuntimeItemKey(snapshot.items[0])
+          : null,
+        lastKey: snapshot.items[snapshot.items.length - 1]
+          ? getRuntimeItemKey(snapshot.items[snapshot.items.length - 1])
+          : null,
+        generationChanged,
+      }),
+    })
 
     if (snapshot.hasMoreAfter && this.scrollIntent.getBottomLockState() === 'LOCKED') {
       // 只有真正到达 feed latest 才能保持 LOCKED；partial after window 的物理底部不是会话底部。
@@ -455,6 +554,17 @@ export class MessageViewportRuntimeController<
 
   dispatch(command: MessageRuntimeCommand): void {
     if (!this.canAcceptCommand(command)) {
+      this.emitDiagnostic({
+        channel: 'transaction',
+        severity: 'warn',
+        name: 'command.rejected',
+        correlationId: `command:${command.type}`,
+        details: () => ({
+          commandType: command.type,
+          state: this.state,
+          readySubstate: this.readySubstate,
+        }),
+      })
       return
     }
 
@@ -530,6 +640,10 @@ export class MessageViewportRuntimeController<
   getViewportAnchorState(): AnchorState | null {
     const anchor = this.captureViewportAnchor()
     return anchor ? cloneAnchorState(anchor) : null
+  }
+
+  getDiagnosticRecords(): ViewportDiagnosticRecord[] {
+    return this.diagnostics.getRecords()
   }
 
   registerRow(key: MessageRuntimeItemKey, element: HTMLElement | null): void {
@@ -821,13 +935,18 @@ export class MessageViewportRuntimeController<
     }
     this.readySubstate = 'READY_FOLLOW_BOTTOM_PENDING'
     this.scrollIntent.setBottomLockState('UNLOCKED')
-    this.emitDiagnostic('followBottom.pending', {
-      commandId,
-      revision: data.revision,
-      itemCount: data.items.length,
-      hasMoreBefore: data.hasMoreBefore,
-      hasMoreAfter: data.hasMoreAfter,
-      scrollTop,
+    this.emitDiagnostic({
+      channel: 'motion',
+      severity: 'info',
+      name: 'followBottom.pending',
+      correlationId: `command:${commandId}`,
+      details: () => ({
+        revision: data.revision,
+        itemCount: data.items.length,
+        hasMoreBefore: data.hasMoreBefore,
+        hasMoreAfter: data.hasMoreAfter,
+        scrollTop,
+      }),
     })
     this.emitPendingFollowBottomNeed(data)
   }
@@ -962,6 +1081,26 @@ export class MessageViewportRuntimeController<
     )
   }
 
+  private emitTransactionDiagnostic(
+    phase: 'enqueue' | 'start' | 'complete' | 'drop' | 'error',
+    kind: ViewportTransactionKind,
+    id: string,
+    extra: Record<string, unknown> = {},
+  ): void {
+    this.emitDiagnostic({
+      channel: 'transaction',
+      severity: phase === 'error' ? 'error' : 'debug',
+      name: `transaction.${phase}`,
+      correlationId: `transaction:${id}`,
+      details: () => ({
+        kind,
+        id,
+        queueDepth: this.transactions.getPendingCount(),
+        ...extra,
+      }),
+    })
+  }
+
   /**
    * commit timeout / cancel 后不能把 runtime 留在中间态。
    * 这里只恢复当前 generation 仍有效的事务，避免旧事务覆盖 feed 切换或 detach 后的新状态。
@@ -972,6 +1111,19 @@ export class MessageViewportRuntimeController<
     if (!this.lifecycle.isCurrent(input.token.feedId, input.token.generation)) {
       return
     }
+
+    this.emitDiagnostic({
+      channel: 'recovery',
+      severity: 'warn',
+      name: 'recovery.commitFailure',
+      details: () => ({
+        token: input.token,
+        nextState: input.nextState,
+        restoreBottomLockState: input.restoreBottomLockState ?? null,
+        hasRestoreSnapshot: Boolean(input.restoreSnapshot),
+        hasRestoreProjection: Boolean(input.restoreProjection),
+      }),
+    })
 
     // 先恢复 runtime 内部状态，再发布 projection；这样订阅者拿到新 snapshot 时，
     // debug state / 后续 command 判断都已经脱离失败事务的中间态。
@@ -1020,6 +1172,24 @@ export class MessageViewportRuntimeController<
 
     if (deltas.length > 0) {
       this.spacer.invalidateEstimateCache()
+      this.emitDiagnostic({
+        channel: 'measurement',
+        severity: 'debug',
+        name: 'measurement.mountedRows',
+        correlationId:
+          `data:${snapshot.feedId}:${snapshot.generation}:${snapshot.revision}`,
+        details: () => ({
+          revision: snapshot.revision,
+          deltaCount: deltas.length,
+          totalDelta: deltas.reduce((total, delta) => total + delta.delta, 0),
+          sample: deltas.slice(0, 5).map((delta) => ({
+            key: delta.serializedKey,
+            previousHeight: delta.previousHeight,
+            nextHeight: delta.nextHeight,
+            delta: delta.delta,
+          })),
+        }),
+      })
     }
 
     return deltas
@@ -1067,6 +1237,20 @@ export class MessageViewportRuntimeController<
     const metrics = this.readScrollFrameMetrics(container)
     const scrollSource = this.scrollIntent.classifyScroll(this.currentFrame)
     this.lastScrollSource = scrollSource
+    if (this.lastDiagnosticScrollSource !== scrollSource) {
+      this.lastDiagnosticScrollSource = scrollSource
+      this.emitDiagnostic({
+        channel: 'scroll',
+        severity: 'debug',
+        name: 'scroll.sourceChanged',
+        details: () => ({
+          source: scrollSource,
+          scrollTop: metrics.scrollTop,
+          distanceToBottom: metrics.distanceToBottom,
+        }),
+      })
+    }
+    const previousBottomLockState = this.scrollIntent.getBottomLockState()
     const changed = this.updateBottomLockForDataWindow(
       data,
       metrics.distanceToBottom,
@@ -1074,6 +1258,22 @@ export class MessageViewportRuntimeController<
     )
 
     if (changed) {
+      const nextBottomLockState = this.scrollIntent.getBottomLockState()
+      if (this.lastDiagnosticBottomLockState !== nextBottomLockState) {
+        this.lastDiagnosticBottomLockState = nextBottomLockState
+        this.emitDiagnostic({
+          channel: 'scroll',
+          severity: 'info',
+          name: 'scroll.bottomLockChanged',
+          details: () => ({
+            previousBottomLockState,
+            nextBottomLockState,
+            source: scrollSource,
+            distanceToBottom: metrics.distanceToBottom,
+            hasMoreAfter: data.hasMoreAfter,
+          }),
+        })
+      }
       this.projection.publish({
         data,
         renderWindow: this.keepCurrentWindow(data.items),
@@ -1145,6 +1345,20 @@ export class MessageViewportRuntimeController<
     const anchor = this.captureViewportAnchor()
 
     if (!anchor) {
+      this.emitDiagnostic({
+        channel: 'anchor',
+        severity: 'warn',
+        name: 'anchor.captureMissing',
+        correlationId:
+          `data:${data.feedId}:${data.generation}:${this.store.getSnapshot().revision}`,
+        details: () => ({
+          reason: 'window-slide',
+          scrollTop: metrics.scrollTop,
+          distanceToBottom: metrics.distanceToBottom,
+          topSpacer: snapshot.topSpacer,
+          bottomSpacer: snapshot.bottomSpacer,
+        }),
+      })
       return
     }
 
@@ -1213,6 +1427,7 @@ export class MessageViewportRuntimeController<
       return
     }
 
+    const totalDelta = deltas.reduce((total, delta) => total + delta.delta, 0)
     this.spacer.invalidateEstimateCache()
 
     if (this.motion.isActive()) {
@@ -1224,6 +1439,21 @@ export class MessageViewportRuntimeController<
       this.scrollIntent.getBottomLockState() === 'LOCKED' &&
       !data.hasMoreAfter
     ) {
+      this.emitDiagnostic({
+        channel: 'measurement',
+        severity: 'info',
+        name: 'measurement.heightStabilized',
+        correlationId:
+          `data:${data.feedId}:${data.generation}:${this.store.getSnapshot().revision}`,
+        details: () => ({
+          deltaCount: deltas.length,
+          totalDelta,
+          deltaAboveAnchor: null,
+          anchorKey: null,
+          bottomLockState: this.scrollIntent.getBottomLockState(),
+          action: 'scroll-to-bottom',
+        }),
+      })
       this.motion.scrollToBottom('programmatic')
       this.emitViewportAnchorChanged('transaction-settle')
       return
@@ -1232,6 +1462,18 @@ export class MessageViewportRuntimeController<
     const anchor = this.captureViewportAnchor()
 
     if (!anchor) {
+      this.emitDiagnostic({
+        channel: 'anchor',
+        severity: 'warn',
+        name: 'anchor.captureMissing',
+        correlationId:
+          `data:${data.feedId}:${data.generation}:${this.store.getSnapshot().revision}`,
+        details: () => ({
+          reason: 'height-stabilization',
+          deltaCount: deltas.length,
+          totalDelta,
+        }),
+      })
       return
     }
 
@@ -1241,6 +1483,21 @@ export class MessageViewportRuntimeController<
       const deltaIndex = this.renderWindow.findIndexByKey(data.items, delta.key)
       return deltaIndex >= 0 && deltaIndex < anchorIndex ? total + delta.delta : total
     }, 0)
+
+    this.emitDiagnostic({
+      channel: 'measurement',
+      severity: 'info',
+      name: 'measurement.heightStabilized',
+      correlationId:
+        `data:${data.feedId}:${data.generation}:${this.store.getSnapshot().revision}`,
+      details: () => ({
+        deltaCount: deltas.length,
+        totalDelta,
+        deltaAboveAnchor,
+        anchorKey: anchor.key,
+        bottomLockState: this.scrollIntent.getBottomLockState(),
+      }),
+    })
 
     if (Math.abs(deltaAboveAnchor) > 0.5) {
       this.motion.writeScrollTop(container.scrollTop + deltaAboveAnchor, 'recovery')
@@ -1443,40 +1700,86 @@ export class MessageViewportRuntimeController<
   }
 
   private emitEvent(event: MessageViewportRuntimeEvent): void {
+    if (event.type !== 'viewportDiagnostic') {
+      this.emitEventDiagnostic(event)
+    }
+
     for (const listener of this.eventListeners) {
       listener(event)
     }
   }
 
-  private emitDiagnostic(
-    name: ViewportDiagnosticEvent['name'],
-    details: Record<string, unknown>,
-  ): void {
-    if (!this.diagnosticsEnabled || this.state === 'DESTROYED') {
+  private emitEventDiagnostic(event: MessageViewportRuntimeEvent): void {
+    switch (event.type) {
+      case 'needMoreBefore':
+      case 'needMoreAfter':
+      case 'needLatestMessages':
+      case 'needMessagesAround':
+        this.emitDiagnostic({
+          channel: 'edge',
+          severity: 'info',
+          name: `event.${event.type}`,
+          details: () => ({
+            event,
+          }),
+        })
+        break
+      case 'viewportReady':
+        this.emitDiagnostic({
+          channel: 'lifecycle',
+          severity: 'info',
+          name: 'event.viewportReady',
+          details: () => ({
+            event,
+          }),
+        })
+        break
+      case 'viewportError':
+      case 'viewportAnchorChanged':
+        break
+    }
+  }
+
+  private emitDiagnostic(input: RuntimeDiagnosticInput): void {
+    if (this.state === 'DESTROYED') {
       return
     }
 
+    this.diagnostics.emit(input)
+  }
+
+  private getDiagnosticContext(): {
+    feedId: string
+    generation: number
+    state: RuntimeState
+    readySubstate: ReadySubstate
+    pendingCommands: number
+  } {
     const data = this.dataSnapshot
     const token = data
       ? { feedId: data.feedId, generation: data.generation }
       : this.lifecycle.getCurrent()
 
-    this.emitEvent({
-      type: 'viewportDiagnostic',
+    return {
       feedId: token.feedId,
       generation: token.generation,
-      name,
-      details: {
-        state: this.state,
-        readySubstate: this.readySubstate,
-        pendingCommands: this.transactions.getPendingCount(),
-        ...details,
-      },
-    })
+      state: this.state,
+      readySubstate: this.readySubstate,
+      pendingCommands: this.transactions.getPendingCount(),
+    }
   }
 
   private emitError(code: string): void {
     const token = this.lifecycle.getCurrent()
+    this.emitDiagnostic({
+      channel: 'recovery',
+      severity: 'error',
+      name: 'runtime.error',
+      details: () => ({
+        code,
+        token,
+      }),
+    })
     this.emitEvent({
       type: 'viewportError',
       feedId: token.feedId,

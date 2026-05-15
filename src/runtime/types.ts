@@ -213,19 +213,44 @@ export type ViewportAnchorChangedEvent = {
   anchor: AnchorState | null
 }
 
-export type ViewportDiagnosticEvent = {
-  type: 'viewportDiagnostic'
+export type DiagnosticChannel =
+  | 'lifecycle'
+  | 'data'
+  | 'transaction'
+  | 'projection'
+  | 'scroll'
+  | 'measurement'
+  | 'motion'
+  | 'recovery'
+  | 'anchor'
+  | 'edge'
+
+export type DiagnosticSeverity = 'debug' | 'info' | 'warn' | 'error'
+
+export type RuntimeDiagnosticsOptions =
+  | boolean
+  | {
+      enabled?: boolean
+      channels?: 'all' | DiagnosticChannel[]
+      minSeverity?: DiagnosticSeverity
+      maxEntries?: number
+      emitEvents?: boolean
+      sampleRate?: number
+    }
+
+export type ViewportDiagnosticRecord = {
   feedId: string
   generation: number
-  name:
-    | 'followBottom.pending'
-    | 'followBottom.transaction'
-    | 'followBottom.motionRequest'
-    | 'destinationMotion.start'
-    | 'destinationMotion.settle'
-    | 'destinationMotion.cancel'
-    | 'scrollMotion.decision'
+  channel: DiagnosticChannel
+  severity: DiagnosticSeverity
+  name: string
+  correlationId?: string
+  timestamp: number
   details: Record<string, unknown>
+}
+
+export type ViewportDiagnosticEvent = ViewportDiagnosticRecord & {
+  type: 'viewportDiagnostic'
 }
 
 export type MessageViewportRuntimeEvent =
@@ -293,7 +318,7 @@ export type MessageViewportRuntimeOptions = {
   window?: Partial<WindowConfig>
   scrollMotion?: Partial<ScrollMotionOptions>
   debug?: {
-    diagnostics?: boolean
+    diagnostics?: RuntimeDiagnosticsOptions
   }
   scheduler?: RuntimeScheduler
   observers?: Partial<RuntimeObserverFactory>
