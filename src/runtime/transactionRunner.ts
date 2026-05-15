@@ -20,6 +20,13 @@ export class TransactionRunner {
 
   private stopped = false
 
+  constructor(
+    private readonly onTransactionStart?: (
+      kind: ViewportTransactionKind,
+      id: string,
+    ) => void,
+  ) {}
+
   enqueue(
     kind: ViewportTransactionKind,
     run: () => Promise<void>,
@@ -90,6 +97,7 @@ export class TransactionRunner {
     this.active = true
 
     try {
+      this.onTransactionStart?.(task.kind, task.id)
       await task.run()
     } catch (error) {
       void error

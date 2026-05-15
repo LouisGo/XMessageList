@@ -186,7 +186,17 @@ export type ScrollSource =
   | 'programmatic'
   | 'recovery'
   | 'followBottom'
+  | 'jump'
   | 'momentum'
+
+export type ScrollMotionOptions = {
+  enabled?: boolean
+  respectReducedMotion?: boolean
+  maxDistancePx?: number
+  minDurationMs?: number
+  maxDurationMs?: number
+  targetEpsilonPx?: number
+}
 
 export type MessageViewportRuntimeEvent =
   | {
@@ -243,6 +253,7 @@ export type MessageViewportRuntimeOptions = {
   feedId?: string
   generation?: number
   window?: Partial<WindowConfig>
+  scrollMotion?: Partial<ScrollMotionOptions>
   scheduler?: RuntimeScheduler
   observers?: Partial<RuntimeObserverFactory>
   commitTimeoutMs?: Partial<{

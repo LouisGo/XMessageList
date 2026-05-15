@@ -30,6 +30,7 @@ export type {
   RuntimeObserverFactory,
   RuntimeListener,
   RuntimeScheduler,
+  ScrollMotionOptions,
   ScrollSource,
   TombstoneMessageDataItem,
   ViewportEdgeState,

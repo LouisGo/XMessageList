@@ -39,6 +39,10 @@ export class ScrollIntentEngine {
     }
   }
 
+  markUserIntent(): void {
+    this.currentWrite = null
+  }
+
   classifyScroll(currentFrame: number): ScrollSource {
     if (this.currentWrite && this.currentWrite.expiresAtFrame >= currentFrame) {
       return this.currentWrite.source
@@ -53,7 +57,7 @@ export class ScrollIntentEngine {
     currentFrame: number,
     source = this.classifyScroll(currentFrame),
   ): boolean {
-    if (source === 'recovery' || source === 'followBottom') {
+    if (source !== 'user' && source !== 'momentum') {
       return false
     }
 

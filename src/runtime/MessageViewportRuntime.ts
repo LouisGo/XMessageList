@@ -3,6 +3,11 @@ import { LifecycleGuard } from './lifecycleGuard'
 import { MeasurementEngine, type HeightDelta } from './measurementEngine'
 import { ProjectionStore, createEmptySnapshot } from './projectionStore'
 import { RenderWindowEngine } from './renderWindowEngine'
+import {
+  ScrollMotionEngine,
+  type ScrollMotionCancelReason,
+  type ScrollMotionSource,
+} from './scrollMotionEngine'
 import { ScrollIntentEngine } from './scrollIntentEngine'
 import { SpacerEngine, type HeightCache } from './spacerEngine'
 import { TransactionRunner } from './transactionRunner'
@@ -23,6 +28,7 @@ import type {
   RuntimeObserverFactory,
   RuntimeScheduler,
   RuntimeState,
+  ScrollMotionOptions,
   ScrollSource,
   ViewportEdgeState,
   ViewportTransactionKind,
@@ -64,11 +70,40 @@ type MeasurableRow = {
   element: HTMLElement
 }
 
+type ReadySubstate =
+  | 'READY_IDLE'
+  | 'READY_FOLLOW_BOTTOM_PENDING'
+  | 'READY_MOTION_ACTIVE'
+
+type PendingFollowBottom = {
+  feedId: string
+  generation: number
+  commandId: string
+  emittedAfterRevision: number | null
+  lastScrollTop: number
+}
+
+type DestinationMotionSettle<TMessage, TOptimistic> = {
+  source: ScrollMotionSource
+  bottomLockState: MessageViewportSnapshot['bottomLockState']
+  data: MessageDataSnapshot<TMessage, TOptimistic>
+  renderWindow: RenderWindow
+}
+
 const BOOTSTRAP_STABLE_FRAMES = 2
 const BOOTSTRAP_HEIGHT_EPSILON_PX = 1
 const BOOTSTRAP_SETTLE_TIMEOUT_MS = 300
 const DEFAULT_EDGE_LOAD_THRESHOLD_PX = 96
 const VIEWPORT_ANCHOR_IDLE_MS = 180
+const USER_SCROLL_DIRECTION_EPSILON_PX = 0.5
+const DEFAULT_SCROLL_MOTION_OPTIONS: Required<ScrollMotionOptions> = {
+  enabled: true,
+  respectReducedMotion: true,
+  maxDistancePx: 800,
+  minDurationMs: 180,
+  maxDurationMs: 420,
+  targetEpsilonPx: 1,
+}
 
 /**
  * MessageViewportRuntime 是独立于 React 的 IM viewport engine。
@@ -100,7 +135,11 @@ export class MessageViewportRuntime<
 
   private readonly scrollIntent: ScrollIntentEngine
 
-  private readonly transactions = new TransactionRunner()
+  private readonly motionEngine = new ScrollMotionEngine()
+
+  private readonly transactions = new TransactionRunner(() => {
+    this.cancelActiveMotion('transaction-supersede')
+  })
 
   private readonly eventListeners = new Set<RuntimeEventListener>()
 
@@ -110,12 +149,24 @@ export class MessageViewportRuntime<
 
   private readonly edgeLoadThresholdPx: number
 
+  private readonly scrollMotionOptions: Required<ScrollMotionOptions>
+
   private state: RuntimeState = 'INITIAL'
+
+  private readySubstate: ReadySubstate = 'READY_IDLE'
 
   private dataSnapshot: MessageDataSnapshot<TMessage, TOptimistic> | null = null
 
   private pendingBootstrap: Extract<MessageRuntimeCommand, { type: 'bootstrap' }> | null =
     null
+
+  private pendingFollowBottom: PendingFollowBottom | null = null
+
+  private followBottomCommandCounter = 0
+
+  private destinationMotionSettle:
+    | DestinationMotionSettle<TMessage, TOptimistic>
+    | null = null
 
   private pendingCommit: PendingCommit | null = null
 
@@ -151,6 +202,11 @@ export class MessageViewportRuntime<
     this.scheduleScrollRaf()
   }
 
+  private readonly handleUserScrollIntent = (): void => {
+    this.scrollIntent.markUserIntent()
+    this.cancelActiveMotion('user-interrupt')
+  }
+
   constructor(options: MessageViewportRuntimeOptions = {}) {
     const feedId = options.feedId ?? ''
     const generation = options.generation ?? 0
@@ -170,6 +226,10 @@ export class MessageViewportRuntime<
       bootstrap: options.commitTimeoutMs?.bootstrap ?? 1000,
       normal: options.commitTimeoutMs?.normal ?? 500,
       jump: options.commitTimeoutMs?.jump ?? 800,
+    }
+    this.scrollMotionOptions = {
+      ...DEFAULT_SCROLL_MOTION_OPTIONS,
+      ...options.scrollMotion,
     }
     this.edgeLoadThresholdPx =
       options.edgeLoadThresholdPx ?? DEFAULT_EDGE_LOAD_THRESHOLD_PX
@@ -213,10 +273,17 @@ export class MessageViewportRuntime<
     this.lastUserScrollTop = container.scrollTop
     this.lastContainerSize = this.readContainerSize(container)
     container.addEventListener('scroll', this.handleScroll, { passive: true })
+    container.addEventListener('wheel', this.handleUserScrollIntent, { passive: true })
+    container.addEventListener('touchstart', this.handleUserScrollIntent, {
+      passive: true,
+    })
+    container.addEventListener('pointerdown', this.handleUserScrollIntent)
+    container.addEventListener('keydown', this.handleUserScrollIntent)
     this.setupContainerObserver(container)
     this.setupIntersectionObserver(container)
     this.state =
       this.store.getSnapshot().bootstrapState === 'READY' ? 'READY' : 'ATTACHED'
+    this.readySubstate = this.state === 'READY' ? 'READY_IDLE' : this.readySubstate
     this.tryRunPendingBootstrap()
   }
 
@@ -228,6 +295,8 @@ export class MessageViewportRuntime<
     const container = this.registry.getContainer()
 
     this.lifecycle.suspend()
+    this.clearPendingFollowBottom()
+    this.cancelActiveMotion('detach')
     this.cancelPendingCommit()
     this.cancelScheduledWork()
     this.containerResizeObserver?.disconnect()
@@ -240,10 +309,15 @@ export class MessageViewportRuntime<
     if (container) {
       this.retainedScrollTop = container.scrollTop
       container.removeEventListener('scroll', this.handleScroll)
+      container.removeEventListener('wheel', this.handleUserScrollIntent)
+      container.removeEventListener('touchstart', this.handleUserScrollIntent)
+      container.removeEventListener('pointerdown', this.handleUserScrollIntent)
+      container.removeEventListener('keydown', this.handleUserScrollIntent)
     }
 
     this.registry.clearDomRefs()
     this.lastContainerSize = null
+    this.readySubstate = 'READY_IDLE'
     this.state = 'DETACHED'
   }
 
@@ -255,6 +329,7 @@ export class MessageViewportRuntime<
     this.detach()
     this.lifecycle.destroy()
     this.transactions.stop()
+    this.clearPendingFollowBottom()
     this.heightCache.clear()
     this.eventListeners.clear()
     this.store.clearListeners()
@@ -290,6 +365,10 @@ export class MessageViewportRuntime<
       return
     }
 
+    if (this.drivePendingFollowBottom(snapshot)) {
+      return
+    }
+
     if (this.state === 'INITIAL' || this.state === 'ATTACHED') {
       return
     }
@@ -322,15 +401,18 @@ export class MessageViewportRuntime<
         this.tryRunPendingBootstrap()
         break
       case 'followBottom':
-        this.enqueueFollowBottomTransaction()
+        this.startFollowBottomCommand()
         break
       case 'jump':
+        this.clearPendingFollowBottom()
         this.enqueueJumpTransaction(command.target.messageId)
         break
       case 'restore':
+        this.clearPendingFollowBottom()
         this.enqueueRestoreTransaction(command.target)
         break
       case 'reset':
+        this.clearPendingFollowBottom()
         this.enqueueResetTransaction(command.reason)
         break
     }
@@ -432,15 +514,21 @@ export class MessageViewportRuntime<
 
   getDebugSnapshot(): {
     state: RuntimeState
+    readySubstate: ReadySubstate
     pendingCommands: number
+    motionActive: boolean
     observedRows: number
     heightCacheSize: number
+    lastScrollSource: ScrollSource | null
   } {
     return {
       state: this.state,
+      readySubstate: this.readySubstate,
       pendingCommands: this.transactions.getPendingCount(),
+      motionActive: this.motionEngine.isActive(),
       observedRows: this.registry.getSnapshot().observedRows,
       heightCacheSize: this.heightCache.size,
+      lastScrollSource: this.lastScrollSource,
     }
   }
 
@@ -459,7 +547,107 @@ export class MessageViewportRuntime<
     return true
   }
 
+  private startFollowBottomCommand(): void {
+    const data = this.dataSnapshot
+
+    if (!data) {
+      return
+    }
+
+    if (data.hasMoreAfter) {
+      this.followBottomCommandCounter += 1
+      this.pendingFollowBottom = {
+        feedId: data.feedId,
+        generation: data.generation,
+        commandId: `follow-bottom-${this.followBottomCommandCounter}`,
+        emittedAfterRevision: null,
+        lastScrollTop: this.registry.getContainer()?.scrollTop ?? 0,
+      }
+      this.readySubstate = 'READY_FOLLOW_BOTTOM_PENDING'
+      this.scrollIntent.setBottomLockState('UNLOCKED')
+      this.emitPendingFollowBottomNeed(data)
+      return
+    }
+
+    this.enqueueFollowBottomTransaction()
+  }
+
+  private drivePendingFollowBottom(
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): boolean {
+    const pending = this.pendingFollowBottom
+
+    if (!pending) {
+      return false
+    }
+
+    if (
+      pending.feedId !== snapshot.feedId ||
+      pending.generation !== snapshot.generation
+    ) {
+      this.clearPendingFollowBottom()
+      return false
+    }
+
+    if (snapshot.hasMoreAfter) {
+      this.emitPendingFollowBottomNeed(snapshot)
+      return true
+    }
+
+    this.clearPendingFollowBottom()
+    this.enqueueFollowBottomTransaction()
+    return true
+  }
+
+  private emitPendingFollowBottomNeed(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): void {
+    const pending = this.pendingFollowBottom
+
+    if (!pending || pending.emittedAfterRevision === data.revision) {
+      return
+    }
+
+    pending.emittedAfterRevision = data.revision
+    this.afterEdgeRequestLatched = true
+    this.emitEvent({
+      type: 'needMoreAfter',
+      feedId: data.feedId,
+      generation: data.generation,
+      reason: 'bottom-follow',
+    })
+  }
+
+  private clearPendingFollowBottom(): void {
+    if (!this.pendingFollowBottom) {
+      return
+    }
+
+    this.pendingFollowBottom = null
+
+    if (this.readySubstate === 'READY_FOLLOW_BOTTOM_PENDING') {
+      this.readySubstate = 'READY_IDLE'
+    }
+  }
+
+  private updatePendingFollowBottomForUserScroll(scrollTop: number): void {
+    const pending = this.pendingFollowBottom
+
+    if (!pending) {
+      return
+    }
+
+    if (scrollTop < pending.lastScrollTop - USER_SCROLL_DIRECTION_EPSILON_PX) {
+      this.clearPendingFollowBottom()
+      return
+    }
+
+    pending.lastScrollTop = scrollTop
+  }
+
   private resetForGeneration(feedId: string, generation: number): void {
+    this.clearPendingFollowBottom()
+    this.cancelActiveMotion('generation-change')
     this.lifecycle.reset(feedId, generation)
     this.transactions.clear()
     this.cancelPendingCommit()
@@ -468,6 +656,8 @@ export class MessageViewportRuntime<
     this.beforeEdgeRequestLatched = false
     this.afterEdgeRequestLatched = false
     this.lastScrollSource = null
+    this.readySubstate = 'READY_IDLE'
+    this.destinationMotionSettle = null
     this.scrollIntent.setBottomLockState('UNLOCKED')
     this.store.setSnapshot(createEmptySnapshot<TMessage, TOptimistic>(feedId, generation))
     this.state = this.registry.getContainer() ? 'ATTACHED' : 'INITIAL'
@@ -781,15 +971,15 @@ export class MessageViewportRuntime<
       this.measureCurrentWindow()
 
       if (shouldFollow) {
-        await this.nextFrame(data.feedId, data.generation)
-        this.scrollToBottom('followBottom')
-        this.scrollIntent.setBottomLockState('LOCKED')
-        this.publishProjection({
+        this.state = 'READY'
+        this.startDestinationMotion({
+          source: 'programmatic',
+          targetTop: this.getBottomTargetTop(container),
           data,
           renderWindow,
-          bootstrapState: 'READY',
           bottomLockState: 'LOCKED',
         })
+        return
       }
 
       this.state = 'READY'
@@ -838,7 +1028,7 @@ export class MessageViewportRuntime<
 
       await this.waitForCommitIfChanged(projection, 'resize')
       this.measureCurrentWindow()
-      this.scrollToBottom('followBottom')
+      this.scrollToBottom('programmatic')
       this.emitViewportAnchorChanged('transaction-settle')
       return
     }
@@ -958,16 +1148,14 @@ export class MessageViewportRuntime<
         containerRect.top -
         Math.max(0, (container.clientHeight - targetRect.height) / 2)
 
-      this.writeScrollTop(container.scrollTop + centerDelta, 'programmatic')
-      this.scrollIntent.setBottomLockState('UNLOCKED')
       this.state = 'READY'
-      this.publishProjection({
+      this.startDestinationMotion({
+        source: 'jump',
+        targetTop: container.scrollTop + centerDelta,
         data,
         renderWindow,
-        bootstrapState: 'READY',
         bottomLockState: 'UNLOCKED',
       })
-      this.emitViewportAnchorChanged('transaction-settle')
     } catch (error) {
       this.recoverAfterCommitFailure({
         token,
@@ -1098,13 +1286,17 @@ export class MessageViewportRuntime<
     if (data.hasMoreAfter) {
       // followBottom 的目标是会话最新消息；当前 DataWindow 还缺 newer page 时，
       // runtime 只能表达分页需求，不能把 partial bottom 锁成 BottomAnchor。
-      this.scrollIntent.setBottomLockState('UNLOCKED')
-      this.emitEvent({
-        type: 'needMoreAfter',
+      this.followBottomCommandCounter += 1
+      this.pendingFollowBottom = {
         feedId: data.feedId,
         generation: data.generation,
-        reason: 'bottom-follow',
-      })
+        commandId: `follow-bottom-${this.followBottomCommandCounter}`,
+        emittedAfterRevision: null,
+        lastScrollTop: container.scrollTop,
+      }
+      this.readySubstate = 'READY_FOLLOW_BOTTOM_PENDING'
+      this.scrollIntent.setBottomLockState('UNLOCKED')
+      this.emitPendingFollowBottomNeed(data)
       return
     }
 
@@ -1130,17 +1322,14 @@ export class MessageViewportRuntime<
 
       await this.waitForCommitIfChanged(projection, 'followBottom')
       this.measureCurrentWindow()
-      await this.nextFrame(data.feedId, data.generation)
-      this.scrollToBottom('followBottom')
-      this.scrollIntent.setBottomLockState('LOCKED')
-      this.publishProjection({
+      this.state = 'READY'
+      this.startDestinationMotion({
+        source: 'followBottom',
+        targetTop: this.getBottomTargetTop(container),
         data,
         renderWindow,
-        bootstrapState: 'READY',
         bottomLockState: 'LOCKED',
       })
-      this.state = 'READY'
-      this.emitViewportAnchorChanged('transaction-settle')
     } catch (error) {
       this.recoverAfterCommitFailure({
         token,
@@ -1558,6 +1747,7 @@ export class MessageViewportRuntime<
     this.emitEdgeNeeds(container, data, scrollSource)
 
     if (scrollSource === 'user') {
+      this.updatePendingFollowBottomForUserScroll(container.scrollTop)
       this.lastUserScrollTop = container.scrollTop
       this.lastUserDistanceToBottom = distance
       this.scheduleViewportAnchorIdleEvent()
@@ -1592,6 +1782,10 @@ export class MessageViewportRuntime<
     container: HTMLElement,
     data: MessageDataSnapshot<TMessage, TOptimistic>,
   ): void {
+    if (this.readySubstate === 'READY_MOTION_ACTIVE') {
+      return
+    }
+
     const snapshot = this.store.getSnapshot()
     const nearTop = container.scrollTop < snapshot.topSpacer + this.getMinOverscanPx(container)
     const nearBottom =
@@ -1742,11 +1936,15 @@ export class MessageViewportRuntime<
       return
     }
 
+    if (this.motionEngine.isActive()) {
+      this.cancelActiveMotion('resize-during-motion')
+    }
+
     if (
       this.scrollIntent.getBottomLockState() === 'LOCKED' &&
       !data.hasMoreAfter
     ) {
-      this.scrollToBottom('followBottom')
+      this.scrollToBottom('programmatic')
       this.emitViewportAnchorChanged('transaction-settle')
       return
     }
@@ -1881,7 +2079,7 @@ export class MessageViewportRuntime<
       this.measureCurrentWindow()
 
       if (shouldFollowBottom) {
-        this.scrollToBottom('followBottom')
+        this.scrollToBottom('programmatic')
         this.scrollIntent.setBottomLockState('LOCKED')
         this.publishProjection({
           data,
@@ -1979,6 +2177,7 @@ export class MessageViewportRuntime<
       if (
         entry.target === this.registry.getBottomSentinel() &&
         data.hasMoreAfter &&
+        !this.pendingFollowBottom &&
         this.isAtAfterDataEdge(data) &&
         !this.afterEdgeRequestLatched
       ) {
@@ -2041,7 +2240,12 @@ export class MessageViewportRuntime<
       })
     }
 
-    if (nearBottom && data.hasMoreAfter && !this.afterEdgeRequestLatched) {
+    if (
+      nearBottom &&
+      data.hasMoreAfter &&
+      !this.pendingFollowBottom &&
+      !this.afterEdgeRequestLatched
+    ) {
       this.afterEdgeRequestLatched = true
       this.emitEvent({
         type: 'needMoreAfter',
@@ -2120,17 +2324,143 @@ export class MessageViewportRuntime<
     }
   }
 
-  private scrollToBottom(source: Extract<ScrollSource, 'followBottom'>): void {
+  private startDestinationMotion(input: {
+    source: ScrollMotionSource
+    targetTop: number
+    data: MessageDataSnapshot<TMessage, TOptimistic>
+    renderWindow: RenderWindow
+    bottomLockState: MessageViewportSnapshot['bottomLockState']
+  }): void {
     const container = this.registry.getContainer()
 
     if (!container) {
       return
     }
 
-    this.writeScrollTop(
-      Math.max(0, container.scrollHeight - container.clientHeight),
-      source,
+    this.cancelActiveMotion('command-supersede')
+
+    const targetTop = Math.max(0, input.targetTop)
+    this.destinationMotionSettle = {
+      source: input.source,
+      bottomLockState: input.bottomLockState,
+      data: input.data,
+      renderWindow: input.renderWindow,
+    }
+
+    if (this.shouldUseInstantDestinationMotion()) {
+      this.writeScrollTop(targetTop, input.source)
+      this.settleDestinationMotion()
+      return
+    }
+
+    this.readySubstate = 'READY_MOTION_ACTIVE'
+    this.motionEngine.start({
+      container,
+      source: input.source,
+      targetTop,
+      maxDistancePx: this.scrollMotionOptions.maxDistancePx,
+      minDurationMs: this.scrollMotionOptions.minDurationMs,
+      maxDurationMs: this.scrollMotionOptions.maxDurationMs,
+      targetEpsilonPx: this.scrollMotionOptions.targetEpsilonPx,
+      now: () => this.scheduler.now(),
+      requestFrame: (callback) => this.scheduler.requestAnimationFrame(callback),
+      cancelFrame: (handle) => this.scheduler.cancelAnimationFrame(handle),
+      onFrameWrite: (nextTop, source) => this.writeScrollTop(nextTop, source),
+      onSettle: () => this.settleDestinationMotion(),
+      onCancel: (reason) => this.handleDestinationMotionCancel(reason),
+    })
+  }
+
+  private settleDestinationMotion(): void {
+    const settle = this.destinationMotionSettle
+
+    if (!settle) {
+      return
+    }
+
+    this.destinationMotionSettle = null
+    this.readySubstate = 'READY_IDLE'
+    this.scrollIntent.setBottomLockState(settle.bottomLockState)
+    this.publishProjection({
+      data: settle.data,
+      renderWindow: settle.renderWindow,
+      bootstrapState: this.store.getSnapshot().bootstrapState,
+      bottomLockState: settle.bottomLockState,
+    })
+    this.emitViewportAnchorChanged('transaction-settle')
+  }
+
+  private clearDestinationMotionSettle(): void {
+    this.destinationMotionSettle = null
+
+    if (this.readySubstate === 'READY_MOTION_ACTIVE') {
+      this.readySubstate = 'READY_IDLE'
+    }
+  }
+
+  private handleDestinationMotionCancel(reason: ScrollMotionCancelReason): void {
+    const settle = this.destinationMotionSettle
+
+    this.clearDestinationMotionSettle()
+
+    if (!settle || this.state === 'DESTROYED') {
+      return
+    }
+
+    if (reason !== 'user-interrupt' && reason !== 'resize-during-motion') {
+      return
+    }
+
+    const bottomLockState =
+      reason === 'resize-during-motion' ? settle.bottomLockState : 'UNLOCKED'
+
+    this.scrollIntent.setBottomLockState(bottomLockState)
+    this.publishProjection({
+      data: settle.data,
+      renderWindow: settle.renderWindow,
+      bootstrapState: this.store.getSnapshot().bootstrapState,
+      bottomLockState,
+    })
+  }
+
+  private cancelActiveMotion(reason: ScrollMotionCancelReason): void {
+    if (!this.motionEngine.isActive()) {
+      this.clearDestinationMotionSettle()
+      return
+    }
+
+    this.motionEngine.cancel(reason)
+  }
+
+  private shouldUseInstantDestinationMotion(): boolean {
+    if (!this.scrollMotionOptions.enabled) {
+      return true
+    }
+
+    if (!this.scrollMotionOptions.respectReducedMotion) {
+      return false
+    }
+
+    const ownerWindow = this.registry.getContainer()?.ownerDocument.defaultView
+    return Boolean(
+      ownerWindow
+        ?.matchMedia?.('(prefers-reduced-motion: reduce)')
+        .matches,
     )
+  }
+
+  private getBottomTargetTop(container: HTMLElement): number {
+    return Math.max(0, container.scrollHeight - container.clientHeight)
+  }
+
+  private scrollToBottom(source: ScrollMotionSource): void {
+    const container = this.registry.getContainer()
+
+    if (!container) {
+      return
+    }
+
+    this.writeScrollTop(this.getBottomTargetTop(container), source)
   }
 
   private writeScrollTop(nextScrollTop: number, source: ScrollSource): void {
