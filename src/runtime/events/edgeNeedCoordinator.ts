@@ -24,6 +24,7 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
       | MessageDataSnapshot<TMessage, TOptimistic>
       | null,
     private readonly getLastScrollSource: () => ScrollSource | null,
+    private readonly canEmitEdgeNeeds: () => boolean,
     private readonly hasPendingFollowBottom: () => boolean,
     private readonly emitEvent: (event: MessageViewportRuntimeEvent) => void,
   ) {}
@@ -80,6 +81,11 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
     lastUserDistanceToBottom: number
   }): void {
     const { container, data, scrollSource } = input
+
+    if (!this.canEmitEdgeNeeds()) {
+      return
+    }
+
     const nearTop =
       this.isAtBeforeDataEdge() &&
       container.scrollTop <= this.edgeLoadThresholdPx
@@ -161,7 +167,10 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
       return
     }
 
-    if (!this.canEmitEdgeNeedForSource(this.getLastScrollSource())) {
+    if (
+      !this.canEmitEdgeNeeds() ||
+      !this.canEmitEdgeNeedForSource(this.getLastScrollSource())
+    ) {
       return
     }
 

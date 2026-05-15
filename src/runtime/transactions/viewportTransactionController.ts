@@ -485,8 +485,8 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     }
 
     if (data.hasMoreAfter) {
-      // followBottom 的目标是会话最新消息；当前 DataWindow 还缺 newer page 时，
-      // runtime 只能表达分页需求，不能把 partial bottom 锁成 BottomAnchor。
+      // followBottom 的目标是会话最新消息；当前 DataWindow 还缺 latest window 时，
+      // runtime 只能请求 latest window，不能把 partial bottom 锁成 BottomAnchor。
       this.deps.startPendingFollowBottom(data, container.scrollTop)
       return
     }

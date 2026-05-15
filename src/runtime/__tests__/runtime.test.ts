@@ -187,6 +187,10 @@ async function flushScrollFrames(
   }
 }
 
+function markUserScrollIntent(container: HTMLElement): void {
+  container.dispatchEvent(new Event('wheel'))
+}
+
 function createHeightMap(
   start: number,
   end: number,
@@ -480,6 +484,64 @@ describe('MessageViewportRuntime', () => {
     expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight)
   })
 
+  it('requests an around-target window for far jump without requiring gap backfill', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    events.length = 0
+
+    runtime.dispatch({
+      type: 'jump',
+      target: { messageId: 'm-10000', position: 10000 },
+    })
+    await Promise.resolve()
+
+    expect(runtime.getDebugSnapshot().readySubstate).toBe(
+      'READY_DESTINATION_PENDING',
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'needMessagesAround',
+        reason: 'jump',
+        target: { messageId: 'm-10000', position: 10000 },
+      }),
+    )
+    expect(events.some((event) => event.type === 'viewportError')).toBe(false)
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 30,
+      revision: 2,
+      effect: 'reset',
+      start: 9986,
+    }))
+    await Promise.resolve()
+
+    const snapshot = runtime.getSnapshot()
+    expect(snapshot.items.some((item) =>
+      item.key.kind === 'committed' && item.key.messageId === 'm-10000',
+    )).toBe(true)
+    expect(snapshot.items.length).toBeLessThanOrEqual(20)
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await flushMotion(scheduler)
+
+    expect(runtime.getDebugSnapshot().readySubstate).toBe('READY_IDLE')
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+  })
+
   it('emits a viewportAnchorChanged event after scroll idle', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
@@ -494,6 +556,7 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
 
+    markUserScrollIntent(container)
     container.scrollTop = 100
     await flushScrollFrames(container, scheduler, 4)
     scheduler.flushTimers()
@@ -503,6 +566,42 @@ describe('MessageViewportRuntime', () => {
       expect.objectContaining({
         type: 'viewportAnchorChanged',
         reason: 'scroll-idle',
+      }),
+    )
+  })
+
+  it('does not emit edge paging requests after bootstrap commit timeout', async () => {
+    const { runtime, scheduler, observers } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const topSentinel = document.createElement('div')
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.registerTopSentinel(topSentinel)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'restored',
+      target: { messageId: 'm-10' },
+    })
+    await Promise.resolve()
+
+    scheduler.flushTimers()
+    await Promise.resolve()
+    observers.intersectionObservers[0]?.trigger(topSentinel, true)
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'viewportError',
+        code: 'commit-timeout-bootstrap',
+      }),
+    )
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: 'needMoreBefore',
       }),
     )
   })
@@ -540,6 +639,61 @@ describe('MessageViewportRuntime', () => {
     expect(container.scrollTop).toBe(
       getExpectedRestoreScrollTop(snapshot, 'm-10', 24),
     )
+  })
+
+  it('requests an around-target window before restoring a missing target', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+    const restoreTarget = {
+      key: { kind: 'committed' as const, messageId: 'm-5000' },
+      offsetWithinMessage: 18,
+    }
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    events.length = 0
+
+    runtime.dispatch({ type: 'restore', target: restoreTarget })
+    await Promise.resolve()
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'needMessagesAround',
+        reason: 'restore',
+        target: { messageId: 'm-5000' },
+      }),
+    )
+    expect(events.some((event) => event.type === 'viewportError')).toBe(false)
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 30,
+      revision: 2,
+      effect: 'reset',
+      start: 4986,
+    }))
+    await Promise.resolve()
+
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot, -container.scrollTop)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(container.scrollTop).toBe(
+      getExpectedRestoreScrollTop(snapshot, 'm-5000', 18),
+    )
+    expect(runtime.getDebugSnapshot().readySubstate).toBe('READY_IDLE')
   })
 
   it('falls back to a nearest measurable row when the restore target DOM is missing', async () => {
@@ -790,6 +944,49 @@ describe('MessageViewportRuntime', () => {
     expect(events).not.toContain('needMoreBefore')
   })
 
+  it('does not request history from cached reattach without fresh user edge intent', async () => {
+    const { runtime, scheduler, observers } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const topSentinel = document.createElement('div')
+    const events: string[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event.type)
+    })
+    runtime.attach(container)
+    runtime.registerTopSentinel(topSentinel)
+    runtime.setDataSnapshot(createSnapshot({ count: 10, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    markUserScrollIntent(container)
+    container.scrollTop = 400
+    await flushScrollFrames(container, scheduler, 1)
+    events.length = 0
+
+    container.scrollTop = 0
+    runtime.detach()
+    runtime.attach(container)
+    runtime.registerTopSentinel(topSentinel)
+
+    const latestObserver =
+      observers.intersectionObservers[observers.intersectionObservers.length - 1]
+
+    latestObserver?.trigger(topSentinel, true)
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    await Promise.resolve()
+
+    expect(events).not.toContain('needMoreBefore')
+
+    markUserScrollIntent(container)
+    container.scrollTop = 0
+    await flushScrollFrames(container, scheduler, 1)
+
+    expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
+  })
+
   it('does not request history from follow-bottom scroll on an underfilled list', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 900 })
@@ -897,7 +1094,7 @@ describe('MessageViewportRuntime', () => {
     expect(container.scrollTop).toBe(scrollTopBeforeAppend)
   })
 
-  it('turns follow-bottom on a partial data window into a newer-page request', async () => {
+  it('turns follow-bottom on a partial data window into a latest-window request', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
     const events: MessageViewportRuntimeEvent[] = []
@@ -929,13 +1126,13 @@ describe('MessageViewportRuntime', () => {
     expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: 'needMoreAfter',
+        type: 'needLatestMessages',
         reason: 'bottom-follow',
       }),
     )
   })
 
-  it('keeps pending follow-bottom across newer snapshots until latest arrives', async () => {
+  it('keeps pending follow-bottom across latest-window snapshots until latest arrives', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
     const events: MessageViewportRuntimeEvent[] = []
@@ -982,7 +1179,8 @@ describe('MessageViewportRuntime', () => {
     expect(
       events.filter(
         (event) =>
-          event.type === 'needMoreAfter' && event.reason === 'bottom-follow',
+          event.type === 'needLatestMessages' &&
+          event.reason === 'bottom-follow',
       ),
     ).toHaveLength(2)
 
@@ -1039,7 +1237,8 @@ describe('MessageViewportRuntime', () => {
     expect(
       events.filter(
         (event) =>
-          event.type === 'needMoreAfter' && event.reason === 'bottom-follow',
+          event.type === 'needLatestMessages' &&
+          event.reason === 'bottom-follow',
       ),
     ).toHaveLength(2)
   })
@@ -1090,7 +1289,8 @@ describe('MessageViewportRuntime', () => {
     expect(
       events.filter(
         (event) =>
-          event.type === 'needMoreAfter' && event.reason === 'bottom-follow',
+          event.type === 'needLatestMessages' &&
+          event.reason === 'bottom-follow',
       ),
     ).toHaveLength(1)
   })
@@ -1291,16 +1491,20 @@ describe('MessageViewportRuntime', () => {
     runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
+    markUserScrollIntent(container)
     container.scrollTop = 400
     await flushScrollFrames(container, scheduler, 3)
 
+    markUserScrollIntent(container)
     container.scrollTop = 0
     await flushScrollFrames(container, scheduler, 1)
 
     expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
 
+    markUserScrollIntent(container)
     container.scrollTop = 400
     await flushScrollFrames(container, scheduler, 1)
+    markUserScrollIntent(container)
     container.scrollTop = 0
     await flushScrollFrames(container, scheduler, 1)
 
@@ -1320,9 +1524,11 @@ describe('MessageViewportRuntime', () => {
     runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
+    markUserScrollIntent(container)
     container.scrollTop = 400
     await flushScrollFrames(container, scheduler, 3)
 
+    markUserScrollIntent(container)
     container.scrollTop = 0
     await flushScrollFrames(container, scheduler, 1)
     expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)

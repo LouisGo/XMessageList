@@ -77,15 +77,15 @@ function createRuntimeStub(
 
   return {
     runtime: {
-    setDataSnapshot: vi.fn(),
-    dispatch: vi.fn(),
-    subscribeEvent: vi.fn((nextListener) => {
-      listener = nextListener
-      return () => {
-        listener = null
-      }
-    }),
-    getViewportAnchorState: vi.fn(() => viewportAnchor),
+      setDataSnapshot: vi.fn(),
+      dispatch: vi.fn(),
+      subscribeEvent: vi.fn((nextListener) => {
+        listener = nextListener
+        return () => {
+          listener = null
+        }
+      }),
+      getViewportAnchorState: vi.fn(() => viewportAnchor),
     },
     emitEvent: (event) => {
       listener?.(event)
@@ -408,13 +408,13 @@ describe('useDemoMessageScenario', () => {
     )
   })
 
-  it('drains newer pages before following bottom when the user explicitly requests latest', async () => {
+  it('loads the latest window instead of draining newer pages when the user requests bottom', async () => {
     const restoredAnchor = {
       messageId: 'feed-runtime-m-32',
       position: 32,
       offsetWithinMessage: 24,
     }
-    const { runtime } = createRuntimeStub()
+    const { runtime, emitEvent } = createRuntimeStub()
     const host = document.createElement('div')
     const root = createRoot(host)
     let scenario: DemoMessageScenario | null = null
@@ -437,12 +437,87 @@ describe('useDemoMessageScenario', () => {
 
     await act(async () => {
       scenario?.followBottom('sidebar')
+      emitEvent({
+        type: 'needLatestMessages',
+        feedId: 'feed-runtime',
+        generation: 2,
+        reason: 'bottom-follow',
+      })
     })
     await flushTimers(220)
+
+    expect(scenario?.loadedMessageCount).toBe(20)
+    expect(runtime.dispatch).toHaveBeenLastCalledWith({ type: 'followBottom' })
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'history.latest',
+        phase: 'success',
+        details: expect.objectContaining({
+          source: 'follow-bottom',
+          hasMoreAfter: false,
+          loaded: 20,
+        }),
+      }),
+    )
+    expect(mockWriteDemoLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'history.append',
+        details: expect.objectContaining({ source: 'follow-bottom' }),
+      }),
+    )
+  })
+
+  it('loads an around-target window when runtime asks for a far jump target', async () => {
+    const { runtime, emitEvent } = createRuntimeStub()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    store.set('feed-runtime', makeFeed('feed-runtime', 120))
+
+    await act(async () => {
+      root.render(
+        <TestHarness runtime={runtime} onScenario={(next) => {
+          scenario = next
+        }}
+        />,
+      )
+    })
+
+    await flushTimers(180)
+    expect(scenario?.loadedMessageCount).toBe(20)
+
+    await act(async () => {
+      emitEvent({
+        type: 'needMessagesAround',
+        feedId: 'feed-runtime',
+        generation: 2,
+        reason: 'jump',
+        target: { messageId: 'feed-runtime-m-72', position: 72 },
+      })
+    })
     await flushTimers(220)
 
-    expect(scenario?.loadedMessageCount).toBe(59)
-    expect(runtime.dispatch).toHaveBeenLastCalledWith({ type: 'followBottom' })
+    expect(scenario?.loadedMessageCount).toBe(31)
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'history.around',
+        phase: 'success',
+        details: expect.objectContaining({
+          intent: 'jump',
+          loaded: 31,
+          hasMoreBefore: true,
+          hasMoreAfter: true,
+          target: { messageId: 'feed-runtime-m-72', position: 72 },
+        }),
+      }),
+    )
+    expect(mockWriteDemoLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'history.append',
+        details: expect.objectContaining({ source: 'follow-bottom' }),
+      }),
+    )
   })
 
   it('persists edit, delete, and reaction mutations for loaded messages', async () => {

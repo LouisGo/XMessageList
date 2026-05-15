@@ -15,10 +15,10 @@ npm run build
 ## Runtime Boundary
 
 - `src/runtime`: framework-independent imperative viewport engine。负责 RenderWindow、spacer、DOM registry、height cache、bottom lock、transaction correction 和 runtime event。
-- `src/react`: React 18 projection adapter。使用 `useSyncExternalStore` 订阅 runtime snapshot，通过 ref callback 注册 DOM，并在 `useLayoutEffect` 中发送 commit ack。
+- `src/react`: React 18 projection adapter。使用 `useSyncExternalStore` 订阅 runtime snapshot，通过 ref callback 注册 row/spacer/sentinel DOM，并在 layout effect 中 attach scroll container 与发送 commit ack；订阅必须先于 attach。
 - `src/demo`: 本地 mock 数据和交互场景，覆盖 latest bootstrap、prepend、append、dynamic height。
 - `src/test`: fake scheduler、fake observers、DOM metric helpers。
-- `docs/messageList`: 设计文档和外部 research，作为实现约束。
+- `docs/architecture` / `docs/viewport-runtime`: 设计文档和外部 research，作为实现约束。
 
 ## Minimal Usage
 

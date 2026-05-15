@@ -255,6 +255,15 @@ type MessageViewportRuntimeEvent =
 当前实现会在用户接近 after edge 时发出 `needMoreAfter(reason: 'near-bottom')`。
 这是“用户向下浏览”的逐页分页信号。
 
+`needMoreBefore` / `needMoreAfter` 只能在 runtime 已经完成 bootstrap、public
+state 为 `READY`、内部子状态为 `READY_IDLE`、projection `bootstrapState` 为
+`READY`，且 scroll source 是 user / momentum 时发出。user / momentum 必须
+来自当前激活期的近期用户输入意图；unknown scroll、container attach 恢复
+`scrollTop`、restore 对齐、旧 feed 激活期残留的 `lastScrollSource` 都不能触发
+edge paging。BOOTSTRAPPING / MOUNTING、commit timeout recovery、pending
+follow-bottom、pending destination 和 motion active 期间也都不能发 edge paging
+event。否则恢复失败或 runtime 自己写 `scrollTop` 会被 sentinel 放大成错误分页。
+
 外部显式 `followBottom` 但当前 DataWindow 仍有 `hasMoreAfter=true` 时，runtime
 发出 `needLatestMessages(reason: 'bottom-follow')`。接入方必须直接请求 latest
 window 并替换 DataWindow，不能沿当前 after edge 逐页补齐中间空洞。

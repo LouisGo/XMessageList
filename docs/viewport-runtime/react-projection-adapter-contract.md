@@ -59,6 +59,20 @@ function useMessageViewportRuntime(runtime: MessageViewportRuntime) {
 
 React 官方 `useSyncExternalStore` 文档将它定位为订阅外部 store 的 hook。这里 runtime snapshot 就是该外部 store。
 
+`MessageViewport` 必须先调用该 hook，再在后续 layout effect 中执行
+`runtime.attach(container)`。Container ref callback 只保存 DOM 引用，不能直接
+attach。原因是 feed 切换 / staged activation 允许 runtime 在 React 挂载前已经
+持有 data snapshot 和 pending bootstrap command；如果 ref callback 先 attach，
+runtime 可能立刻发布 bootstrap projection，而 React 还没有建立 external-store
+订阅与 commit ack 链路，最终导致 `commit-timeout-bootstrap`。
+
+runtime prop 变化时，旧 runtime 的 `detach()` 必须发生在 React mutation
+新 projection DOM 之前。否则同一个 scroll container 已经被换成新 feed
+内容后，旧 runtime 再读取 `scrollTop` 会污染它自己的 retained scroll position，
+下一次缓存命中就会恢复到错误位置。当前 adapter 用一个 class boundary 的
+`getSnapshotBeforeUpdate` 承接 pre-mutation detach；新 runtime 仍在 layout
+effect 中 attach。
+
 ## 3. Ref Registry
 
 React row wrapper 必须注册 DOM。
@@ -136,6 +150,10 @@ attach(container)
 - `attach` 幂等；同一个 container 重复 attach 不重复注册 observer。
 - `detach` 幂等；不存在 observer 时不抛错。
 - `destroy` 只在 feed runtime 彻底废弃时调用。
+- `attach` 只能发生在 adapter 已经订阅 runtime snapshot 之后；不要在 ref
+  callback 中 attach scroll container。
+- runtime prop 变化时，旧 runtime 必须在 DOM mutation 前 detach，不能等
+  layout effect cleanup。
 - ref callback 收到 `null` 时只删除对应 DOM 引用，不清空 height cache。
 - stale commit 回执必须按 `feedId + generation + revision` 丢弃。
 

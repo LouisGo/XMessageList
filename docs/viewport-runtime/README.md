@@ -31,6 +31,7 @@ React 只拥有：
 - unread marker / loading indicator / bottom-follow affordance / local interaction UI
 - `useSyncExternalStore` 订阅 runtime snapshot
 - 通过 ref callback 把 DOM 节点注册给 runtime
+- 在订阅建立后 attach scroll container，避免 pending bootstrap projection 丢失 commit ack
 - commit 后回执 runtime
 
 `src/react` 不是 demo-only 的薄包装。它应该提供标准 IM viewport shell：

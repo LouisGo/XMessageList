@@ -36,6 +36,8 @@ if (!lifecycleGuard.isCurrent(feedId, generation)) return;
 `attach(container)`：
 
 - 保存 container。
+- 清掉上一激活期的瞬时 scroll intent / `lastScrollSource`。
+- 将 retained `scrollTop` 恢复标记为 programmatic scroll write。
 - 注册 scroll listener。
 - 注册 container ResizeObserver。
 - 注册 sentinel IntersectionObserver。
@@ -50,6 +52,7 @@ if (!lifecycleGuard.isCurrent(feedId, generation)) return;
 - disconnect IntersectionObserver。
 - cancel rAF。
 - clear pending commit。
+- 清掉瞬时 scroll intent / `lastScrollSource`，避免缓存 runtime 复用时误触发 edge need。
 - 保留 feed generation 和可复用 height cache。
 
 `destroy()`：
@@ -200,6 +203,10 @@ Runtime 不吞掉不可恢复错误。它发布 `viewportError`，由上层决�
 9. StrictMode 下 attach/detach/attach 不重复 observer。
 10. LRU 复用 feed runtime 时，切回未淘汰 feed 不丢失 projection/height cache。
 11. LRU 淘汰 feed runtime 时必须调用 `destroy()`，被淘汰 feed 再切回走新 runtime + restore/latest。
+12. data snapshot + pending restored bootstrap 先于 React 挂载时，adapter attach 后必须完成 commit ack 并进入 READY，不能出现 `commit-timeout-bootstrap`。
+13. bootstrap commit timeout / recovery 后，top/bottom sentinel 不得触发 `needMoreBefore` / `needMoreAfter`。
+14. 缓存 runtime `detach -> attach` 恢复 scrollTop 时，sentinel / scroll 副作用不得触发 `needMoreBefore` / `needMoreAfter`；只有新的用户滚动意图可以重新打开 edge paging。
+15. React runtime prop 变化时，旧 runtime detach 必须早于新 projection DOM mutation；测试要断言 detach 看到的仍是旧 feed DOM。
 
 ## 10. Test Assertions
 

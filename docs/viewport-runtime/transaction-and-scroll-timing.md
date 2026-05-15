@@ -257,8 +257,11 @@ scroll handler 在 token 有效期间不把该 scroll 解释成用户主动滚�
   settle 后是否继续 LOCKED。
 
 有效 token 只覆盖 runtime 自己的 scroll write。用户 wheel / touch / pointer /
-keyboard intent 到达时必须取消 active motion，并让后续 scroll 重新按 user /
-momentum 分类。
+keyboard intent 到达时必须取消 active motion，并让近期后续 scroll 重新按
+user / momentum 分类；没有近期用户输入意图的 scroll 不能默认归为 user，
+只能按 programmatic 处理。`attach` / `detach` / generation change 必须清掉
+瞬时 scroll intent，避免缓存 runtime 复用时把上一次激活期的 source 继承到
+下一次 feed 恢复。
 
 ## 11. Jump Transaction
 
@@ -334,7 +337,13 @@ new IntersectionObserver(callback, {
 });
 ```
 
-当前实现默认 `edgeLoadThresholdPx = 96`，也允许外部覆盖。`needMoreBefore` / `needMoreAfter` 只会在 user / momentum scroll source 下发出，并且会在用户离开边缘前保持 latch，避免 recovery / followBottom 写入 `scrollTop` 时误触发历史加载。
+当前实现默认 `edgeLoadThresholdPx = 96`，也允许外部覆盖。`needMoreBefore` /
+`needMoreAfter` 只会在 stable `READY` + `READY_IDLE` +
+`bootstrapState=READY` 且 scroll source 为 user / momentum 时发出；user /
+momentum 必须来自近期用户输入意图，不能由未知 scroll event、restore 对齐、
+container attach 的 scrollTop 恢复或旧 `lastScrollSource` 推导出来。edge need
+会在用户离开边缘前保持 latch，避免 bootstrap recovery / followBottom /
+motion 写入 `scrollTop` 时误触发历史加载。
 
 `hasMoreAfter=true` 时，当前物理底部是 DataWindow after edge，不是 feed latest bottom。
 因此 bottom lock hysteresis 必须保持 `UNLOCKED`。普通下滑只能触发一批

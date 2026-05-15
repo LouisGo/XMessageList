@@ -3,6 +3,7 @@ import type {
   BootstrapState,
   MessageDataItem,
   MessageDataSnapshot,
+  MessageIdentityAnchor,
   MessageRuntimeCommand,
   MessageRuntimeItemKey,
   MessageViewportRuntimeOptions,
@@ -31,6 +32,7 @@ export type MeasurableRow = {
 export type ReadySubstate =
   | 'READY_IDLE'
   | 'READY_FOLLOW_BOTTOM_PENDING'
+  | 'READY_DESTINATION_PENDING'
   | 'READY_MOTION_ACTIVE'
 
 export type PendingFollowBottom = {
@@ -39,6 +41,16 @@ export type PendingFollowBottom = {
   commandId: string
   emittedAfterRevision: number | null
   lastScrollTop: number
+}
+
+export type PendingDestinationRequest = {
+  feedId: string
+  generation: number
+  commandId: string
+  intent: 'jump' | 'restore'
+  target: MessageIdentityAnchor
+  commandTarget: AnchorState | MessageIdentityAnchor
+  emittedAfterRevision: number | null
 }
 
 export type DestinationMotionSettle<TMessage, TOptimistic> = {

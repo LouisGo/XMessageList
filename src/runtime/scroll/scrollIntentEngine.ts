@@ -5,6 +5,8 @@ type ScrollWriteToken = {
   expiresAtFrame: number
 }
 
+const USER_INTENT_FRAME_WINDOW = 90
+
 /**
  * ScrollIntentEngine 负责区分用户滚动和 runtime 写入。
  * 这可以防止 recovery / follow-bottom 写 scrollTop 时错误解除 bottom lock。
@@ -13,6 +15,8 @@ export class ScrollIntentEngine {
   private state: BottomLockState = 'UNLOCKED'
 
   private currentWrite: ScrollWriteToken | null = null
+
+  private userIntentExpiresAtFrame = -1
 
   constructor(
     private readonly lockThresholdPx: number,
@@ -37,10 +41,20 @@ export class ScrollIntentEngine {
       source,
       expiresAtFrame: currentFrame + 2,
     }
+    this.userIntentExpiresAtFrame = -1
   }
 
-  markUserIntent(): void {
+  markUserIntent(currentFrame: number): void {
     this.currentWrite = null
+    this.userIntentExpiresAtFrame = Math.max(
+      this.userIntentExpiresAtFrame,
+      currentFrame + USER_INTENT_FRAME_WINDOW,
+    )
+  }
+
+  clearTransientIntent(): void {
+    this.currentWrite = null
+    this.userIntentExpiresAtFrame = -1
   }
 
   classifyScroll(currentFrame: number): ScrollSource {
@@ -49,7 +63,13 @@ export class ScrollIntentEngine {
     }
 
     this.currentWrite = null
-    return 'user'
+
+    if (this.userIntentExpiresAtFrame >= currentFrame) {
+      return 'user'
+    }
+
+    this.userIntentExpiresAtFrame = -1
+    return 'programmatic'
   }
 
   updateBottomLockFromDistance(

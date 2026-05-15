@@ -26,7 +26,8 @@ Runtime 拥有：
 - prepend / append / jump / restore / follow-bottom / resize 等事务
 - scrollTop 写入、scroll source 分类、bottom lock、bounded motion
 - projection snapshot 发布和 revision 管理
-- `needMoreBefore` / `needMoreAfter` / `viewportAnchorChanged` 等 runtime event
+- `needMoreBefore` / `needMoreAfter` / `needLatestMessages` /
+  `needMessagesAround` / `viewportAnchorChanged` 等 runtime event
 
 Runtime 不拥有：
 

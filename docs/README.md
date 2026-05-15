@@ -6,4 +6,5 @@ Primary entries:
 
 - `architecture/README.md`
 - `viewport-runtime/README.md`
+- `flutter/README.md`
 - `typex-transition/message-list-transition-boundary.md`

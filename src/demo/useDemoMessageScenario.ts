@@ -55,6 +55,8 @@ const OPERATION_DELAYS: Record<
     DemoOperationName,
     | 'history.prepend'
     | 'history.append'
+    | 'history.latest'
+    | 'history.around'
     | 'message.append'
     | 'message.longBurst'
     | 'message.edit'
@@ -68,6 +70,8 @@ const OPERATION_DELAYS: Record<
 > = {
   'history.prepend': 200,
   'history.append': 200,
+  'history.latest': 200,
+  'history.around': 200,
   'message.append': 80,
   'message.longBurst': 620,
   'message.edit': 100,
@@ -199,10 +203,7 @@ export function useDemoMessageScenario(
   const loadingBeforeRef = useRef(false)
   const loadingAfterRef = useRef(false)
   const feedLoadingRef = useRef(false)
-  const downwardScrollModeRef = useRef<'idle' | 'follow-bottom'>('idle')
-  const loadFutureBatchRef = useRef<
-    ((source: 'edge-user' | 'follow-bottom') => void) | null
-  >(null)
+  const queuedLatestFollowBottomRef = useRef(false)
   const loadTokenRef = useRef(0)
   const feedSessionStateRef = useRef(new Map<string, CachedFeedSessionState>())
   const nextFeedSwitchRuntimeCacheHitRef = useRef(false)
@@ -259,7 +260,7 @@ export function useDemoMessageScenario(
     loadingBeforeRef.current = false
     loadingAfterRef.current = false
     feedLoadingRef.current = false
-    downwardScrollModeRef.current = 'idle'
+    queuedLatestFollowBottomRef.current = false
     setLoadingBefore(false)
     setFeedLoading(false)
     syncDisplayedCounts()
@@ -841,8 +842,24 @@ export function useDemoMessageScenario(
     })
   }, [log, runLoggedOperation])
 
+  const finishAfterDataRequest = useCallback((requestFeedId: string) => {
+    loadingAfterRef.current = false
+
+    if (!queuedLatestFollowBottomRef.current) {
+      return
+    }
+
+    queuedLatestFollowBottomRef.current = false
+
+    if (activeFeedIdRef.current !== requestFeedId) {
+      return
+    }
+
+    activeRuntimeRef.current?.dispatch({ type: 'followBottom' })
+  }, [])
+
   const loadFutureBatch = useCallback((
-    source: 'edge-user' | 'follow-bottom',
+    source: 'edge-user',
   ) => {
     if (!hasMoreAfterRef.current) {
       void log({
@@ -924,32 +941,144 @@ export function useDemoMessageScenario(
         }
       },
       onFinally: () => {
-        loadingAfterRef.current = false
-
-        if (downwardScrollModeRef.current !== 'follow-bottom') {
-          return
-        }
-
-        if (activeFeedIdRef.current !== requestFeedId) {
-          downwardScrollModeRef.current = 'idle'
-          return
-        }
-
-        if (hasMoreAfterRef.current) {
-          loadFutureBatchRef.current?.('follow-bottom')
-          return
-        }
-
-        activeRuntime.dispatch({ type: 'followBottom' })
-        downwardScrollModeRef.current = 'idle'
+        finishAfterDataRequest(requestFeedId)
       },
       skipPersist: true,
     })
-  }, [activeRuntime, log, runLoggedOperation])
+  }, [finishAfterDataRequest, log, runLoggedOperation])
 
-  useEffect(() => {
-    loadFutureBatchRef.current = loadFutureBatch
-  }, [loadFutureBatch])
+  const loadLatestWindow = useCallback((source: 'follow-bottom') => {
+    if (loadingAfterRef.current) {
+      queuedLatestFollowBottomRef.current = true
+      void log({
+        requestId: createDemoRequestId('history.latest'),
+        operation: 'history.latest',
+        phase: 'skip',
+        feedId: activeFeedIdRef.current,
+        messageCount: messagesRef.current.length,
+        details: { reason: 'already-loading', source },
+      })
+      return
+    }
+
+    loadingAfterRef.current = true
+    const requestFeedId = activeFeedIdRef.current
+
+    void runLoggedOperation({
+      operation: 'history.latest',
+      startEvent: 'loading latest messages...',
+      details: { batchSize: PAGE_SIZE, source },
+      apply: async (feedId) => {
+        const storeFeed = await loadPersistedDemoFeed(feedId)
+        feedMessagesRef.current = storeFeed
+          ? normalizeDemoMessages(feedId, storeFeed.messages)
+          : []
+
+        const resp = await getLatestMessages({
+          feedId,
+          count: PAGE_SIZE,
+        })
+
+        if (isErrorResponse(resp)) {
+          throw new Error(resp.errorMessage)
+        }
+
+        messagesRef.current = normalizeDemoMessages(feedId, resp.messages)
+        hasMoreBeforeRef.current = resp.hasMoreBefore
+        hasMoreAfterRef.current = resp.hasMoreAfter
+        lastViewportAnchorRef.current = undefined
+
+        return {
+          effect: 'auto-scroll-to-bottom' as ViewportEffect,
+          kind: 'reset' as DemoSnapshotKind,
+          eventText: `loaded latest ${messagesRef.current.length} messages`,
+          details: {
+            total: resp.total,
+            source,
+            hasMoreBefore: resp.hasMoreBefore,
+            hasMoreAfter: resp.hasMoreAfter,
+            loaded: messagesRef.current.length,
+            anchor: resp.anchor,
+          },
+        }
+      },
+      onFinally: () => {
+        finishAfterDataRequest(requestFeedId)
+      },
+    })
+  }, [finishAfterDataRequest, log, runLoggedOperation])
+
+  const loadAroundTargetWindow = useCallback((
+    target: { messageId: string; position?: number },
+    reason: 'jump' | 'restore',
+  ) => {
+    if (loadingAfterRef.current) {
+      void log({
+        requestId: createDemoRequestId('history.around'),
+        operation: 'history.around',
+        phase: 'skip',
+        feedId: activeFeedIdRef.current,
+        messageCount: messagesRef.current.length,
+        details: { reason: 'already-loading', target, intent: reason },
+      })
+      return
+    }
+
+    loadingAfterRef.current = true
+    const requestFeedId = activeFeedIdRef.current
+
+    void runLoggedOperation({
+      operation: 'history.around',
+      startEvent: 'loading target messages...',
+      details: {
+        intent: reason,
+        target,
+        before: RESTORE_BEFORE_PAGE_SIZE,
+        after: RESTORE_AFTER_PAGE_SIZE,
+      },
+      apply: async (feedId) => {
+        const storeFeed = await loadPersistedDemoFeed(feedId)
+        feedMessagesRef.current = storeFeed
+          ? normalizeDemoMessages(feedId, storeFeed.messages)
+          : []
+
+        const resp = await getMessagesAround({
+          feedId,
+          anchor: target,
+          before: RESTORE_BEFORE_PAGE_SIZE,
+          after: RESTORE_AFTER_PAGE_SIZE,
+        })
+
+        if (isErrorResponse(resp)) {
+          throw new Error(resp.errorMessage)
+        }
+
+        messagesRef.current = normalizeDemoMessages(feedId, resp.messages)
+        hasMoreBeforeRef.current = resp.hasMoreBefore
+        hasMoreAfterRef.current = resp.hasMoreAfter
+
+        return {
+          effect: 'reset' as ViewportEffect,
+          kind: 'reset' as DemoSnapshotKind,
+          eventText: `loaded ${reason} target`,
+          details: {
+            total: resp.total,
+            intent: reason,
+            target,
+            hasMoreBefore: resp.hasMoreBefore,
+            hasMoreAfter: resp.hasMoreAfter,
+            loaded: messagesRef.current.length,
+            anchor: resp.anchor,
+            anchorStatus: resp.anchorStatus,
+          },
+        }
+      },
+      onFinally: () => {
+        finishAfterDataRequest(requestFeedId)
+      },
+      skipPersist: true,
+    })
+  }, [finishAfterDataRequest, log, runLoggedOperation])
 
   const appendMessage = useCallback(() => {
     void runLoggedOperation({
@@ -1241,20 +1370,8 @@ export function useDemoMessageScenario(
       messageCount: messagesRef.current.length,
       details: { source },
     })
-    downwardScrollModeRef.current = 'follow-bottom'
-
-    if (loadingAfterRef.current) {
-      return
-    }
-
-    if (hasMoreAfterRef.current) {
-      void loadFutureBatch('follow-bottom')
-      return
-    }
-
     activeRuntime.dispatch({ type: 'followBottom' })
-    downwardScrollModeRef.current = 'idle'
-  }, [activeRuntime, loadFutureBatch, log])
+  }, [activeRuntime, log])
 
   const selectFeed = useCallback((feedId: string) => {
     if (feedId === selectedFeedId) {
@@ -1416,7 +1533,7 @@ export function useDemoMessageScenario(
           hasMoreBeforeRef.current = false
           hasMoreAfterRef.current = false
           lastViewportAnchorRef.current = undefined
-          downwardScrollModeRef.current = 'idle'
+          queuedLatestFollowBottomRef.current = false
           feedMessagesRef.current = []
           messagesRef.current = []
           syncDisplayedCounts()
@@ -1498,7 +1615,7 @@ export function useDemoMessageScenario(
 
     nextFeedSwitchRuntimeCacheHitRef.current = false
     activeFeedIdRef.current = activeFeedId
-    downwardScrollModeRef.current = 'idle'
+    queuedLatestFollowBottomRef.current = false
 
     if (runtimeCacheHit) {
       feedLoadingRef.current = false
@@ -1626,16 +1743,35 @@ export function useDemoMessageScenario(
 
         // 普通向下分页也必须由 runtime 的 edge event 驱动；
         // demo 不能再用 scrollTop/scrollHeight 自己判断触底。
-        void loadFutureBatch(
-          downwardScrollModeRef.current === 'follow-bottom'
-            ? 'follow-bottom'
-            : 'edge-user',
-        )
+        void loadFutureBatch('edge-user')
+        return
+      }
+
+      if (
+        event.type === 'needLatestMessages' &&
+        event.feedId === activeFeedIdRef.current
+      ) {
+        void loadLatestWindow('follow-bottom')
+        return
+      }
+
+      if (
+        event.type === 'needMessagesAround' &&
+        event.feedId === activeFeedIdRef.current
+      ) {
+        void loadAroundTargetWindow(event.target, event.reason)
       }
     })
 
     return unsubscribe
-  }, [activeRuntime, loadFutureBatch, loadHistoryBatch, log])
+  }, [
+    activeRuntime,
+    loadAroundTargetWindow,
+    loadFutureBatch,
+    loadHistoryBatch,
+    loadLatestWindow,
+    log,
+  ])
 
   return {
     feeds: DEMO_FEEDS,

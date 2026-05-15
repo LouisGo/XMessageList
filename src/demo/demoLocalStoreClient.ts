@@ -7,6 +7,8 @@ export type DemoOperationName =
   | 'feed.clear'
   | 'history.prepend'
   | 'history.append'
+  | 'history.latest'
+  | 'history.around'
   | 'message.append'
   | 'message.longBurst'
   | 'message.edit'

@@ -99,6 +99,7 @@ export class MessageViewportRuntime<
     readySubstate:
       | 'READY_IDLE'
       | 'READY_FOLLOW_BOTTOM_PENDING'
+      | 'READY_DESTINATION_PENDING'
       | 'READY_MOTION_ACTIVE'
     pendingCommands: number
     motionActive: boolean

@@ -17,9 +17,11 @@ import {
   USER_SCROLL_DIRECTION_EPSILON_PX,
   VIEWPORT_ANCHOR_IDLE_MS,
   cloneAnchorState,
+  isAnchorState,
   type BootstrapCommand,
   type CommitRecoveryInput,
   type ContainerSize,
+  type PendingDestinationRequest,
   type PendingFollowBottom,
   type ReadySubstate,
 } from './runtimeTypes'
@@ -31,6 +33,7 @@ import type {
   AnchorState,
   MessageDataItem,
   MessageDataSnapshot,
+  MessageIdentityAnchor,
   MessageRuntimeCommand,
   MessageRuntimeItemKey,
   MessageViewportRuntimeEvent,
@@ -122,7 +125,11 @@ export class MessageViewportRuntimeController<
 
   private pendingFollowBottom: PendingFollowBottom | null = null
 
+  private pendingDestinationRequest: PendingDestinationRequest | null = null
+
   private followBottomCommandCounter = 0
+
+  private destinationCommandCounter = 0
 
   private scrollRaf: number | null = null
 
@@ -151,7 +158,7 @@ export class MessageViewportRuntimeController<
   }
 
   private readonly handleUserScrollIntent = (): void => {
-    this.scrollIntent.markUserIntent()
+    this.scrollIntent.markUserIntent(this.currentFrame)
     this.motion.cancel('user-interrupt')
   }
 
@@ -223,6 +230,7 @@ export class MessageViewportRuntimeController<
       this.edgeLoadThresholdPx,
       () => this.dataSnapshot,
       () => this.lastScrollSource,
+      () => this.canEmitEdgeNeeds(),
       () => this.pendingFollowBottom !== null,
       (event) => this.emitEvent(event),
     )
@@ -296,10 +304,14 @@ export class MessageViewportRuntimeController<
 
     this.lifecycle.resume()
     this.transactions.resume()
+    this.scrollIntent.clearTransientIntent()
+    this.scrollIntent.markScrollWrite('programmatic', this.currentFrame)
+    this.lastScrollSource = null
     this.registry.attachContainer(container)
     // detach/attach 同一个 runtime 实例时保留 scrollTop，feed 切换缓存复用不能闪回顶部。
     container.scrollTop = Math.max(0, this.retainedScrollTop ?? 0)
     this.lastUserScrollTop = container.scrollTop
+    this.lastUserDistanceToBottom = getDistanceToBottom(container)
     this.lastContainerSize = this.readContainerSize(container)
     container.addEventListener('scroll', this.handleScroll, { passive: true })
     container.addEventListener('wheel', this.handleUserScrollIntent, { passive: true })
@@ -325,6 +337,7 @@ export class MessageViewportRuntimeController<
 
     this.lifecycle.suspend()
     this.clearPendingFollowBottom()
+    this.clearPendingDestinationRequest()
     this.motion.cancel('detach')
     this.commit.cancelPendingCommit()
     this.cancelScheduledWork()
@@ -343,6 +356,8 @@ export class MessageViewportRuntimeController<
       container.removeEventListener('keydown', this.handleUserScrollIntent)
     }
 
+    this.scrollIntent.clearTransientIntent()
+    this.lastScrollSource = null
     this.registry.clearDomRefs()
     this.lastContainerSize = null
     this.readySubstate = 'READY_IDLE'
@@ -358,6 +373,7 @@ export class MessageViewportRuntimeController<
     this.lifecycle.destroy()
     this.transactions.stop()
     this.clearPendingFollowBottom()
+    this.clearPendingDestinationRequest()
     this.motion.cancel('destroy')
     this.heightCache.clear()
     this.eventListeners.clear()
@@ -400,6 +416,10 @@ export class MessageViewportRuntimeController<
       return
     }
 
+    if (this.drivePendingDestinationRequest(snapshot)) {
+      return
+    }
+
     if (this.state === 'INITIAL' || this.state === 'ATTACHED') {
       return
     }
@@ -432,18 +452,20 @@ export class MessageViewportRuntimeController<
         this.tryRunPendingBootstrap()
         break
       case 'followBottom':
+        this.clearPendingDestinationRequest()
         this.startFollowBottomCommand()
         break
       case 'jump':
         this.clearPendingFollowBottom()
-        this.enqueueJumpTransaction(command.target.messageId)
+        this.startJumpCommand(command.target)
         break
       case 'restore':
         this.clearPendingFollowBottom()
-        this.enqueueRestoreTransaction(command.target)
+        this.startRestoreCommand(command.target)
         break
       case 'reset':
         this.clearPendingFollowBottom()
+        this.clearPendingDestinationRequest()
         this.enqueueResetTransaction(command.reason)
         break
     }
@@ -578,7 +600,7 @@ export class MessageViewportRuntimeController<
     }
 
     if (data.hasMoreAfter) {
-      // followBottom 面向 feed latest；当前 DataWindow 还缺 newer page 时先转成 after 分页意图。
+      // followBottom 面向 feed latest；当前 DataWindow 还缺 latest page 时请求 latest window。
       this.startPendingFollowBottom(
         data,
         this.registry.getContainer()?.scrollTop ?? 0,
@@ -587,6 +609,40 @@ export class MessageViewportRuntimeController<
     }
 
     this.enqueueFollowBottomTransaction()
+  }
+
+  private startJumpCommand(target: MessageIdentityAnchor): void {
+    const data = this.dataSnapshot
+
+    if (!data) {
+      return
+    }
+
+    if (!this.hasCommittedMessage(data, target.messageId)) {
+      this.startPendingDestinationRequest('jump', target, target)
+      return
+    }
+
+    this.clearPendingDestinationRequest()
+    this.enqueueJumpTransaction(target.messageId)
+  }
+
+  private startRestoreCommand(target: AnchorState | MessageIdentityAnchor): void {
+    const data = this.dataSnapshot
+
+    if (!data) {
+      return
+    }
+
+    const identityTarget = this.getIdentityTarget(target)
+
+    if (identityTarget && !this.hasCommittedMessage(data, identityTarget.messageId)) {
+      this.startPendingDestinationRequest('restore', identityTarget, target)
+      return
+    }
+
+    this.clearPendingDestinationRequest()
+    this.enqueueRestoreTransaction(target)
   }
 
   private drivePendingFollowBottom(
@@ -607,13 +663,46 @@ export class MessageViewportRuntimeController<
     }
 
     if (snapshot.hasMoreAfter) {
-      // 每个 data revision 最多发一次 bottom-follow，避免 BFF 分页未返回时重复拉取。
+      // 每个 data revision 最多发一次 latest-window need，避免 BFF 未返回时重复拉取。
       this.emitPendingFollowBottomNeed(snapshot)
       return true
     }
 
     this.clearPendingFollowBottom()
     this.enqueueFollowBottomTransaction()
+    return true
+  }
+
+  private drivePendingDestinationRequest(
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): boolean {
+    const pending = this.pendingDestinationRequest
+
+    if (!pending) {
+      return false
+    }
+
+    if (
+      pending.feedId !== snapshot.feedId ||
+      pending.generation !== snapshot.generation
+    ) {
+      this.clearPendingDestinationRequest()
+      return false
+    }
+
+    if (!this.hasCommittedMessage(snapshot, pending.target.messageId)) {
+      this.emitPendingDestinationNeed(snapshot)
+      return true
+    }
+
+    this.clearPendingDestinationRequest()
+
+    if (pending.intent === 'jump') {
+      this.enqueueJumpTransaction(pending.target.messageId)
+      return true
+    }
+
+    this.enqueueRestoreTransaction(pending.commandTarget)
     return true
   }
 
@@ -629,10 +718,29 @@ export class MessageViewportRuntimeController<
     pending.emittedAfterRevision = data.revision
     this.edge.setAfterEdgeLatched(true)
     this.emitEvent({
-      type: 'needMoreAfter',
+      type: 'needLatestMessages',
       feedId: data.feedId,
       generation: data.generation,
       reason: 'bottom-follow',
+    })
+  }
+
+  private emitPendingDestinationNeed(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): void {
+    const pending = this.pendingDestinationRequest
+
+    if (!pending || pending.emittedAfterRevision === data.revision) {
+      return
+    }
+
+    pending.emittedAfterRevision = data.revision
+    this.emitEvent({
+      type: 'needMessagesAround',
+      feedId: data.feedId,
+      generation: data.generation,
+      reason: pending.intent,
+      target: { ...pending.target },
     })
   }
 
@@ -648,6 +756,18 @@ export class MessageViewportRuntimeController<
     }
   }
 
+  private clearPendingDestinationRequest(): void {
+    if (!this.pendingDestinationRequest) {
+      return
+    }
+
+    this.pendingDestinationRequest = null
+
+    if (this.readySubstate === 'READY_DESTINATION_PENDING') {
+      this.readySubstate = 'READY_IDLE'
+    }
+  }
+
   private updatePendingFollowBottomForUserScroll(scrollTop: number): void {
     const pending = this.pendingFollowBottom
 
@@ -656,12 +776,22 @@ export class MessageViewportRuntimeController<
     }
 
     if (scrollTop < pending.lastScrollTop - USER_SCROLL_DIRECTION_EPSILON_PX) {
-      // 用户主动向上阅读时，pending follow-bottom 必须让位，不能继续追逐 newer page。
+      // 用户主动向上阅读时，pending follow-bottom 必须让位，不能继续追逐 latest。
       this.clearPendingFollowBottom()
       return
     }
 
     pending.lastScrollTop = scrollTop
+  }
+
+  private canEmitEdgeNeeds(): boolean {
+    const snapshot = this.store.getSnapshot()
+
+    return (
+      this.state === 'READY' &&
+      this.readySubstate === 'READY_IDLE' &&
+      snapshot.bootstrapState === 'READY'
+    )
   }
 
   private startPendingFollowBottom(
@@ -681,8 +811,65 @@ export class MessageViewportRuntimeController<
     this.emitPendingFollowBottomNeed(data)
   }
 
+  private startPendingDestinationRequest(
+    intent: 'jump' | 'restore',
+    target: MessageIdentityAnchor,
+    commandTarget: AnchorState | MessageIdentityAnchor,
+  ): void {
+    const data = this.dataSnapshot
+
+    if (!data) {
+      return
+    }
+
+    this.destinationCommandCounter += 1
+    this.pendingDestinationRequest = {
+      feedId: data.feedId,
+      generation: data.generation,
+      commandId: `${intent}-${this.destinationCommandCounter}`,
+      intent,
+      target: { ...target },
+      commandTarget: this.cloneDestinationCommandTarget(commandTarget),
+      emittedAfterRevision: null,
+    }
+    this.readySubstate = 'READY_DESTINATION_PENDING'
+    this.scrollIntent.setBottomLockState('UNLOCKED')
+    this.emitPendingDestinationNeed(data)
+  }
+
+  private hasCommittedMessage(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+    messageId: string,
+  ): boolean {
+    return data.items.some(
+      (item) =>
+        item.key.kind === 'committed' && item.key.messageId === messageId,
+    )
+  }
+
+  private getIdentityTarget(
+    target: AnchorState | MessageIdentityAnchor,
+  ): MessageIdentityAnchor | null {
+    if (!isAnchorState(target)) {
+      return { ...target }
+    }
+
+    if (target.key.kind !== 'committed') {
+      return null
+    }
+
+    return { messageId: target.key.messageId }
+  }
+
+  private cloneDestinationCommandTarget(
+    target: AnchorState | MessageIdentityAnchor,
+  ): AnchorState | MessageIdentityAnchor {
+    return isAnchorState(target) ? cloneAnchorState(target) : { ...target }
+  }
+
   private resetForGeneration(feedId: string, generation: number): void {
     this.clearPendingFollowBottom()
+    this.clearPendingDestinationRequest()
     this.motion.cancel('generation-change')
     this.lifecycle.reset(feedId, generation)
     this.transactions.clear()
@@ -691,6 +878,7 @@ export class MessageViewportRuntimeController<
     this.heightCache.clear()
     this.edge.resetLatches()
     this.lastScrollSource = null
+    this.scrollIntent.clearTransientIntent()
     this.readySubstate = 'READY_IDLE'
     this.scrollIntent.setBottomLockState('UNLOCKED')
     // 先发布空 snapshot，让 React projection 明确切到新 feed，再等待新的 bootstrap。

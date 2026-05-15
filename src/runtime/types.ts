@@ -211,7 +211,20 @@ export type MessageViewportRuntimeEvent =
       type: 'needMoreAfter'
       feedId: string
       generation: number
-      reason: 'near-bottom' | 'bottom-follow'
+      reason: 'near-bottom'
+    }
+  | {
+      type: 'needLatestMessages'
+      feedId: string
+      generation: number
+      reason: 'bottom-follow'
+    }
+  | {
+      type: 'needMessagesAround'
+      feedId: string
+      generation: number
+      reason: 'jump' | 'restore'
+      target: MessageIdentityAnchor
     }
   | {
       type: 'viewportAnchorChanged'

@@ -1,9 +1,11 @@
 import {
+  Component,
   type CSSProperties,
   type ReactNode,
   useCallback,
   useLayoutEffect,
   useMemo,
+  useRef,
 } from 'react'
 import {
   getRuntimeItemKey,
@@ -90,6 +92,48 @@ export type MessageViewportProps<
   ) => ReactNode
 }
 
+type RuntimeScrollContainerProps<TMessage, TOptimistic> = {
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
+  setContainerRef: (element: HTMLDivElement | null) => void
+  children: ReactNode
+}
+
+class RuntimeScrollContainer<
+  TMessage = unknown,
+  TOptimistic = unknown,
+> extends Component<RuntimeScrollContainerProps<TMessage, TOptimistic>> {
+  getSnapshotBeforeUpdate(
+    prevProps: RuntimeScrollContainerProps<TMessage, TOptimistic>,
+  ): null {
+    if (prevProps.runtime !== this.props.runtime) {
+      prevProps.runtime.detach()
+    }
+
+    return null
+  }
+
+  componentDidUpdate(): void {
+    // React requires componentDidUpdate when getSnapshotBeforeUpdate is present.
+  }
+
+  componentWillUnmount(): void {
+    this.props.runtime.detach()
+  }
+
+  render() {
+    return (
+      <div
+        ref={this.props.setContainerRef}
+        data-message-scroll-container
+        data-testid="message-scroll-container"
+        style={scrollContainerStyle}
+      >
+        {this.props.children}
+      </div>
+    )
+  }
+}
+
 /**
  * MessageViewport 是 runtime projection shell。
  * DOM 顺序固定为 sentinel -> spacer -> flow rows -> spacer -> sentinel，
@@ -125,6 +169,7 @@ export function MessageViewport<
   }, [onViewportAnchorChange, runtime])
 
   const snapshot = useMessageViewportRuntime(runtime)
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const viewportStyle = useMemo<CSSProperties>(
     () => ({
       ...baseViewportStyle,
@@ -134,15 +179,20 @@ export function MessageViewport<
   )
   const setContainerRef = useCallback(
     (element: HTMLDivElement | null) => {
-      if (element) {
-        runtime.attach(element)
-        return
-      }
-
-      runtime.detach()
+      containerRef.current = element
     },
-    [runtime],
+    [],
   )
+
+  useLayoutEffect(() => {
+    const container = containerRef.current
+
+    if (!container) {
+      return
+    }
+
+    runtime.attach(container)
+  }, [runtime])
   const followBottom = useCallback(() => {
     runtime.dispatch({ type: 'followBottom' })
   }, [runtime])
@@ -195,11 +245,9 @@ export function MessageViewport<
       data-bottom-lock-state={snapshot.bottomLockState}
       style={viewportStyle}
     >
-      <div
-        ref={setContainerRef}
-        data-message-scroll-container
-        data-testid="message-scroll-container"
-        style={scrollContainerStyle}
+      <RuntimeScrollContainer
+        runtime={runtime}
+        setContainerRef={setContainerRef}
       >
         <div ref={setTopSentinel} data-top-sentinel />
         <div
@@ -230,7 +278,7 @@ export function MessageViewport<
           style={{ height: snapshot.bottomSpacer }}
         />
         <div ref={setBottomSentinel} data-bottom-sentinel />
-      </div>
+      </RuntimeScrollContainer>
       {bottomSlot}
       {renderTopEdge?.(snapshot)}
       {renderBottomEdge?.(snapshot)}

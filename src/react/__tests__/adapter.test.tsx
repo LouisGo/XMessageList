@@ -13,22 +13,27 @@ type TestMessage = {
 }
 
 function createSnapshot(input?: {
+  feedId?: string
+  messagePrefix?: string
   hasMoreBefore?: boolean
   hasMoreAfter?: boolean
 }): MessageDataSnapshot<TestMessage> {
+  const feedId = input?.feedId ?? 'feed'
+  const messagePrefix = input?.messagePrefix ?? 'm'
+
   return {
-    feedId: 'feed',
+    feedId,
     generation: 1,
     revision: 1,
     items: Array.from({ length: 12 }, (_, index) => ({
       kind: 'committed' as const,
-      key: { kind: 'committed' as const, messageId: `m-${index}` },
-      message: { id: `m-${index}` },
+      key: { kind: 'committed' as const, messageId: `${messagePrefix}-${index}` },
+      message: { id: `${messagePrefix}-${index}` },
       version: 1,
       contentVersion: 1,
       estimatedHeight: 48,
     })),
-    anchor: { messageId: 'm-11' },
+    anchor: { messageId: `${messagePrefix}-11` },
     anchorStatus: 'normal',
     hasMoreBefore: input?.hasMoreBefore ?? false,
     hasMoreAfter: input?.hasMoreAfter ?? false,
@@ -147,6 +152,63 @@ describe('React adapter', () => {
     })
 
     expect(runtime.getDebugSnapshot().state).toBe('DETACHED')
+  })
+
+  it('subscribes before attaching a runtime with pending restored bootstrap', async () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = new MessageViewportRuntime<TestMessage>({
+      feedId: 'feed',
+      generation: 1,
+      scheduler,
+      observers,
+      window: {
+        minMountedItems: 8,
+        maxMountedItems: 20,
+        defaultItemHeight: 48,
+      },
+    })
+    const events: unknown[] = []
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      value: 320,
+    })
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.setDataSnapshot(createSnapshot({ hasMoreBefore: true }))
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'restored',
+      target: {
+        key: { kind: 'committed', messageId: 'm-6' },
+        offsetWithinMessage: 0,
+      },
+    })
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtime} />)
+    })
+    await act(async () => {
+      await flushFramesWithMicrotasks(scheduler, 4)
+    })
+
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'viewportReady' }),
+    )
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ type: 'viewportError' }),
+    )
+    expect(runtime.getDebugSnapshot().state).toBe('READY')
+    expect(host.querySelectorAll('[data-message-row]').length).toBeGreaterThan(0)
   })
 
   it('owns standard follow-bottom UI and anchor event wiring', async () => {
@@ -303,5 +365,83 @@ describe('React adapter', () => {
     })
 
     expect(detachA).toHaveBeenCalledTimes(2)
+  })
+
+  it('detaches the previous runtime before projecting the next runtime DOM', async () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtimeA = new MessageViewportRuntime<TestMessage>({
+      feedId: 'feed-a',
+      generation: 1,
+      scheduler,
+      observers,
+      window: {
+        minMountedItems: 8,
+        maxMountedItems: 20,
+        defaultItemHeight: 48,
+      },
+    })
+    const runtimeB = new MessageViewportRuntime<TestMessage>({
+      feedId: 'feed-b',
+      generation: 1,
+      scheduler,
+      observers,
+      window: {
+        minMountedItems: 8,
+        maxMountedItems: 20,
+        defaultItemHeight: 48,
+      },
+    })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      value: 320,
+    })
+
+    runtimeA.setDataSnapshot(
+      createSnapshot({ feedId: 'feed-a', messagePrefix: 'a' }),
+    )
+    runtimeA.dispatch({ type: 'bootstrap', mode: 'latest' })
+    runtimeB.setDataSnapshot(
+      createSnapshot({ feedId: 'feed-b', messagePrefix: 'b' }),
+    )
+    runtimeB.dispatch({ type: 'bootstrap', mode: 'latest' })
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtimeA} />)
+    })
+    await act(async () => {
+      await flushFramesWithMicrotasks(scheduler, 4)
+    })
+
+    expect(host.textContent).toContain('a-')
+    const detachDomSnapshots: string[] = []
+    const originalDetach = runtimeA.detach.bind(runtimeA)
+
+    vi.spyOn(runtimeA, 'detach').mockImplementation(() => {
+      detachDomSnapshots.push(host.textContent ?? '')
+      originalDetach()
+    })
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtimeB} />)
+    })
+    await act(async () => {
+      await flushFramesWithMicrotasks(scheduler, 4)
+    })
+
+    expect(detachDomSnapshots[0]).toContain('a-')
+    expect(detachDomSnapshots[0]).not.toContain('b-')
+    expect(host.textContent).toContain('b-')
+
+    await act(async () => {
+      root.unmount()
+    })
   })
 })
