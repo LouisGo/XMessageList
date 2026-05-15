@@ -73,6 +73,13 @@ runtime prop 变化时，旧 runtime 的 `detach()` 必须发生在 React mutati
 `getSnapshotBeforeUpdate` 承接 pre-mutation detach；新 runtime 仍在 layout
 effect 中 attach。
 
+`viewportAnchorChanged` 订阅必须覆盖 `detach()` 期间的 terminal checkpoint。
+因此订阅不能只放在父函数组件的 layout-effect cleanup 生命周期里；整棵
+viewport unmount 时，该 cleanup 可能早于 scroll container 的
+`componentWillUnmount()` 执行，导致 `reason: 'detach'` 的最后 anchor 丢失。
+当前 adapter 由同一个 class boundary 同时持有 event subscription 和 `detach()`，
+并在 full unmount 时先 detach 再 unsubscribe。
+
 ## 3. Ref Registry
 
 React row wrapper 必须注册 DOM。
@@ -154,6 +161,8 @@ attach(container)
   callback 中 attach scroll container。
 - runtime prop 变化时，旧 runtime 必须在 DOM mutation 前 detach，不能等
   layout effect cleanup。
+- `viewportAnchorChanged` event subscription 必须保持到 `detach()` 完成之后，
+  full unmount 和 runtime prop 切换都要能透出 `reason: 'detach'` checkpoint。
 - ref callback 收到 `null` 时只删除对应 DOM 引用，不清空 height cache。
 - stale commit 回执必须按 `feedId + generation + revision` 丢弃。
 

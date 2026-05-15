@@ -476,4 +476,65 @@ describe('React adapter', () => {
       root.unmount()
     })
   })
+
+  it('keeps anchor checkpoint subscribed through full viewport unmount', async () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = new MessageViewportRuntime<TestMessage>({
+      feedId: 'feed',
+      generation: 1,
+      scheduler,
+      observers,
+      window: {
+        minMountedItems: 8,
+        maxMountedItems: 20,
+        defaultItemHeight: 48,
+      },
+    })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const onViewportAnchorChange = vi.fn()
+
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      value: 320,
+    })
+
+    runtime.setDataSnapshot(createSnapshot())
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+
+    await act(async () => {
+      root.render(
+        <ViewportOnlyHarness
+          runtime={runtime}
+          onViewportAnchorChange={onViewportAnchorChange}
+        />,
+      )
+    })
+    await act(async () => {
+      await flushFramesWithMicrotasks(scheduler, 4)
+    })
+
+    onViewportAnchorChange.mockClear()
+
+    await act(async () => {
+      root.unmount()
+    })
+
+    expect(onViewportAnchorChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'viewportAnchorChanged',
+        feedId: 'feed',
+        generation: 1,
+        reason: 'detach',
+        anchor: expect.objectContaining({
+          key: expect.objectContaining({ kind: 'committed' }),
+        }),
+      }),
+    )
+  })
 })

@@ -212,6 +212,9 @@ Runtime 不吞掉不可恢复错误。它发布 `viewportError`，由上层决�
 13. bootstrap commit timeout / recovery 后，top/bottom sentinel 不得触发 `needMoreBefore` / `needMoreAfter`。
 14. 缓存 runtime `detach -> attach` 恢复 scrollTop 时，sentinel / scroll 副作用不得触发 `needMoreBefore` / `needMoreAfter`；只有新的用户滚动意图可以重新打开 edge paging。
 15. React runtime prop 变化时，旧 runtime detach 必须早于新 projection DOM mutation；测试要断言 detach 看到的仍是旧 feed DOM。
+16. 整棵 React viewport unmount 时，anchor event subscription 必须保持到
+    `detach()` 完成之后，测试要断言 app 仍收到 `reason: 'detach'` 的最后
+    `viewportAnchorChanged` checkpoint。
 
 ## 10. Test Assertions
 

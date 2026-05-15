@@ -91,6 +91,7 @@ export type MessageViewportProps<
 
 type RuntimeScrollContainerProps<TMessage, TOptimistic> = {
   runtime: MessageViewportRuntime<TMessage, TOptimistic>
+  onViewportAnchorChange?: (event: ViewportAnchorChangedEvent) => void
   setContainerRef: (element: HTMLDivElement | null) => void
   children: ReactNode
 }
@@ -99,6 +100,16 @@ class RuntimeScrollContainer<
   TMessage = unknown,
   TOptimistic = unknown,
 > extends Component<RuntimeScrollContainerProps<TMessage, TOptimistic>> {
+  private unsubscribeViewportAnchorChange: (() => void) | null = null
+  private subscribedViewportAnchorRuntime: MessageViewportRuntime<
+    TMessage,
+    TOptimistic
+  > | null = null
+
+  componentDidMount(): void {
+    this.syncViewportAnchorSubscription()
+  }
+
   getSnapshotBeforeUpdate(
     prevProps: RuntimeScrollContainerProps<TMessage, TOptimistic>,
   ): null {
@@ -109,12 +120,52 @@ class RuntimeScrollContainer<
     return null
   }
 
-  componentDidUpdate(): void {
+  componentDidUpdate(
+    prevProps: RuntimeScrollContainerProps<TMessage, TOptimistic>,
+  ): void {
     // React requires componentDidUpdate when getSnapshotBeforeUpdate is present.
+    if (prevProps.runtime !== this.props.runtime) {
+      this.clearViewportAnchorSubscription()
+    }
+
+    this.syncViewportAnchorSubscription()
   }
 
   componentWillUnmount(): void {
     this.props.runtime.detach()
+    this.clearViewportAnchorSubscription()
+  }
+
+  private syncViewportAnchorSubscription(): void {
+    if (!this.props.onViewportAnchorChange) {
+      this.clearViewportAnchorSubscription()
+      return
+    }
+
+    if (
+      this.subscribedViewportAnchorRuntime === this.props.runtime &&
+      this.unsubscribeViewportAnchorChange
+    ) {
+      return
+    }
+
+    this.clearViewportAnchorSubscription()
+    this.subscribedViewportAnchorRuntime = this.props.runtime
+    this.unsubscribeViewportAnchorChange = this.props.runtime.subscribeEvent(
+      (event) => {
+        if (event.type !== 'viewportAnchorChanged') {
+          return
+        }
+
+        this.props.onViewportAnchorChange?.(event)
+      },
+    )
+  }
+
+  private clearViewportAnchorSubscription(): void {
+    this.unsubscribeViewportAnchorChange?.()
+    this.unsubscribeViewportAnchorChange = null
+    this.subscribedViewportAnchorRuntime = null
   }
 
   render() {
@@ -151,20 +202,6 @@ export function MessageViewport<
   onViewportAnchorChange,
   renderOverlay,
 }: MessageViewportProps<TMessage, TOptimistic>) {
-  useLayoutEffect(() => {
-    if (!onViewportAnchorChange) {
-      return undefined
-    }
-
-    return runtime.subscribeEvent((event) => {
-      if (event.type !== 'viewportAnchorChanged') {
-        return
-      }
-
-      onViewportAnchorChange(event)
-    })
-  }, [onViewportAnchorChange, runtime])
-
   const snapshot = useMessageViewportRuntime(runtime)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewportStyle = useMemo<CSSProperties>(
@@ -244,6 +281,7 @@ export function MessageViewport<
     >
       <RuntimeScrollContainer
         runtime={runtime}
+        onViewportAnchorChange={onViewportAnchorChange}
         setContainerRef={setContainerRef}
       >
         <div ref={setTopSentinel} data-top-sentinel />
