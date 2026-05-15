@@ -23,8 +23,11 @@ import type {
 import type {
   CommitRecoveryInput,
   ContainerSize,
+  MeasurableRow,
+  RestoreTarget,
 } from '../core/runtimeTypes'
 import { runBootstrapTransaction } from './bootstrapTransactions'
+import { areRuntimeItemKeysEqual } from '../shared/utils'
 
 export type ViewportTransactionDeps<TMessage, TOptimistic> = {
   registry: DomRegistry
@@ -58,7 +61,11 @@ export type ViewportTransactionDeps<TMessage, TOptimistic> = {
   deriveRuntimeStateFromSnapshot: (
     snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
   ) => RuntimeState
-  emitViewportAnchorChanged: (reason: ViewportAnchorChangeReason) => void
+  emitViewportAnchorChanged: (
+    reason: ViewportAnchorChangeReason,
+    anchor?: AnchorState | null,
+  ) => void
+  invalidateSpacerCache: () => void
   emitEvent: (event: MessageViewportRuntimeEvent) => void
   emitError: (code: string) => void
 }
@@ -142,12 +149,12 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       }
 
       const delta = anchorTopAfter - anchorTopBefore
+      this.deps.measureCurrentWindow()
 
       if (Math.abs(delta) > 0.5) {
         this.deps.motion.writeScrollTop(container.scrollTop + delta, 'recovery')
       }
 
-      this.deps.measureCurrentWindow()
       this.deps.scrollIntent.setBottomLockState('UNLOCKED')
       this.deps.setState('READY')
       this.deps.projection.publish({
@@ -156,7 +163,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         bootstrapState: 'READY',
         bottomLockState: 'UNLOCKED',
       })
-      this.deps.emitViewportAnchorChanged('transaction-settle')
+      this.deps.emitViewportAnchorChanged('transaction-settle', anchor)
     } catch (error) {
       this.deps.recoverAfterCommitFailure({
         token,
@@ -283,10 +290,13 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
 
     await this.deps.commit.waitForChanged(projection, 'resize')
 
+    let settledAnchor: AnchorState | null | undefined
+
     if (anchor && typeof anchorTopBefore === 'number') {
       // 普通 refresh 不改变用户正在看的 anchor；只在 commit 后 DOM 真正更新时补偿滚动。
       const anchorElementAfter = this.deps.registry.getRow(anchor.key)
       const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
+      this.deps.measureCurrentWindow()
 
       if (typeof anchorTopAfter === 'number') {
         const delta = anchorTopAfter - anchorTopBefore
@@ -294,11 +304,13 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         if (Math.abs(delta) > 0.5) {
           this.deps.motion.writeScrollTop(container.scrollTop + delta, 'recovery')
         }
+        settledAnchor = anchor
       }
+    } else {
+      this.deps.measureCurrentWindow()
     }
 
-    this.deps.measureCurrentWindow()
-    this.deps.emitViewportAnchorChanged('transaction-settle')
+    this.deps.emitViewportAnchorChanged('transaction-settle', settledAnchor)
   }
 
   async runJumpTransaction(messageId: string): Promise<void> {
@@ -309,9 +321,9 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       return
     }
 
-    const targetIndex = data.items.findIndex(
-      (item) =>
-        item.key.kind === 'committed' && item.key.messageId === messageId,
+    const targetIndex = this.deps.renderWindow.findCommittedMessageIndex(
+      data.items,
+      messageId,
     )
 
     if (targetIndex < 0) {
@@ -449,12 +461,12 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         return
       }
 
+      this.deps.measureCurrentWindow()
       this.deps.anchor.alignToResolvedRestoreTarget(
         container,
         restoreTarget,
         resolvedRestoreTarget,
       )
-      this.deps.measureCurrentWindow()
       this.deps.scrollIntent.setBottomLockState('UNLOCKED')
       this.deps.setState('READY')
       this.deps.projection.publish({
@@ -463,7 +475,10 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         bootstrapState: 'READY',
         bottomLockState: 'UNLOCKED',
       })
-      this.deps.emitViewportAnchorChanged('transaction-settle')
+      this.deps.emitViewportAnchorChanged(
+        'transaction-settle',
+        this.createSettledRestoreAnchor(restoreTarget, resolvedRestoreTarget),
+      )
     } catch (error) {
       this.deps.recoverAfterCommitFailure({
         token,
@@ -537,7 +552,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
   }
 
   async runWindowSlideTransaction(
-    anchorKey: MessageRuntimeItemKey,
+    anchor: AnchorState,
     nextWindow: RenderWindow,
     expectedData: { feedId: string; generation: number; revision: number },
   ): Promise<void> {
@@ -558,7 +573,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       return
     }
 
-    const anchorElementBefore = this.deps.registry.getRow(anchorKey)
+    const anchorElementBefore = this.deps.registry.getRow(anchor.key)
     const anchorTopBefore = anchorElementBefore?.getBoundingClientRect().top
 
     if (typeof anchorTopBefore !== 'number') {
@@ -581,20 +596,22 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
 
       await this.deps.commit.waitForChanged(projection, 'resize')
 
-      const anchorElementAfter = this.deps.registry.getRow(anchorKey)
+      const anchorElementAfter = this.deps.registry.getRow(anchor.key)
       const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
 
       if (typeof anchorTopAfter === 'number') {
         const delta = anchorTopAfter - anchorTopBefore
+        this.deps.measureCurrentWindow()
 
         if (Math.abs(delta) > 0.5) {
           this.deps.motion.writeScrollTop(container.scrollTop + delta, 'recovery')
         }
+      } else {
+        this.deps.measureCurrentWindow()
       }
 
-      this.deps.measureCurrentWindow()
       this.deps.setState('READY')
-      this.deps.emitViewportAnchorChanged('transaction-settle')
+      this.deps.emitViewportAnchorChanged('transaction-settle', anchor)
     } catch (error) {
       this.deps.recoverAfterCommitFailure({
         token,
@@ -628,6 +645,9 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     const widthInvalidated = this.deps.measurement.invalidateForWidth(
       nextSize.width,
     )
+    if (widthInvalidated) {
+      this.deps.invalidateSpacerCache()
+    }
     // 宽度变化会让文本换行和高度估算整体失效，必须先清 height cache 再计算新 window。
     const anchorIndex = anchor
       ? this.deps.renderWindow.findIndexByKey(data.items, anchor.key)
@@ -673,6 +693,11 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       })
 
       await this.deps.commit.waitForChanged(projection, 'resize')
+      const anchorElementAfter =
+        !shouldFollowBottom && anchor
+          ? this.deps.registry.getRow(anchor.key)
+          : null
+      const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
       this.deps.measureCurrentWindow()
 
       if (shouldFollowBottom) {
@@ -685,9 +710,6 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
           bottomLockState: 'LOCKED',
         })
       } else if (anchor && typeof anchorTopBefore === 'number') {
-        const anchorElementAfter = this.deps.registry.getRow(anchor.key)
-        const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
-
         if (typeof anchorTopAfter === 'number') {
           const delta = anchorTopAfter - anchorTopBefore
 
@@ -701,7 +723,10 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       }
 
       this.deps.setState('READY')
-      this.deps.emitViewportAnchorChanged('transaction-settle')
+      this.deps.emitViewportAnchorChanged(
+        'transaction-settle',
+        shouldFollowBottom ? undefined : (anchor ?? undefined),
+      )
     } catch (error) {
       this.deps.recoverAfterCommitFailure({
         token,
@@ -718,6 +743,18 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     this.deps.tryRunPendingBootstrap()
     if (!this.deps.getDataSnapshot()) {
       this.deps.emitError(`reset-${reason}`)
+    }
+  }
+
+  private createSettledRestoreAnchor(
+    target: RestoreTarget,
+    resolved: MeasurableRow,
+  ): AnchorState {
+    return {
+      key: resolved.key,
+      offsetWithinMessage: areRuntimeItemKeysEqual(resolved.key, target.key)
+        ? target.offsetWithinMessage
+        : 0,
     }
   }
 }

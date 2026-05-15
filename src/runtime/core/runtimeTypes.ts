@@ -24,6 +24,14 @@ export type ContainerSize = {
   height: number
 }
 
+export type ScrollFrameMetrics = {
+  scrollTop: number
+  clientHeight: number
+  clientWidth: number
+  scrollHeight: number
+  distanceToBottom: number
+}
+
 export type MeasurableRow = {
   key: MessageRuntimeItemKey
   element: HTMLElement

@@ -19,6 +19,12 @@ type WindowAroundInput = {
  * start/end index 是临时派生值，不能用于持久 restore 或跨层 anchor。
  */
 export class RenderWindowEngine {
+  private indexedItems: MessageDataItem[] | null = null
+
+  private keyToIndex = new Map<string, number>()
+
+  private committedMessageIdToIndex = new Map<string, number>()
+
   constructor(
     private readonly config: WindowConfig,
     private readonly spacer: SpacerEngine,
@@ -106,10 +112,13 @@ export class RenderWindowEngine {
     items: MessageDataItem[],
     key: MessageRuntimeItemKey,
   ): number {
-    const serializedKey = serializeRuntimeItemKey(key)
-    return items.findIndex(
-      (item) => serializeRuntimeItemKey(getRuntimeItemKey(item)) === serializedKey,
-    )
+    this.ensureIndex(items)
+    return this.keyToIndex.get(serializeRuntimeItemKey(key)) ?? -1
+  }
+
+  findCommittedMessageIndex(items: MessageDataItem[], messageId: string): number {
+    this.ensureIndex(items)
+    return this.committedMessageIdToIndex.get(messageId) ?? -1
   }
 
   private walkBackwardByEstimatedHeight(
@@ -210,6 +219,31 @@ export class RenderWindowEngine {
       startIndex: 0,
       endIndex: -1,
       itemKeys: [],
+    }
+  }
+
+  private ensureIndex(items: MessageDataItem[]): void {
+    if (this.indexedItems === items) {
+      return
+    }
+
+    this.indexedItems = items
+    this.keyToIndex = new Map()
+    this.committedMessageIdToIndex = new Map()
+
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index]
+
+      if (!item) {
+        continue
+      }
+
+      const key = getRuntimeItemKey(item)
+      this.keyToIndex.set(serializeRuntimeItemKey(key), index)
+
+      if (key.kind === 'committed') {
+        this.committedMessageIdToIndex.set(key.messageId, index)
+      }
     }
   }
 }

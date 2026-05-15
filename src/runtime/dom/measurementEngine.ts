@@ -34,6 +34,8 @@ export class MeasurementEngine {
 
   private readonly elementToKey = new WeakMap<HTMLElement, MessageRuntimeItemKey>()
 
+  private readonly elementToSerializedKey = new WeakMap<HTMLElement, string>()
+
   private readonly keyToElement = new Map<string, HTMLElement>()
 
   private readonly pendingHeights = new Map<string, PendingHeight>()
@@ -55,8 +57,16 @@ export class MeasurementEngine {
       return
     }
 
+    const serializedKey = serializeRuntimeItemKey(key)
+    const previousSerializedKey = this.elementToSerializedKey.get(element)
+
+    if (previousSerializedKey && previousSerializedKey !== serializedKey) {
+      this.keyToElement.delete(previousSerializedKey)
+    }
+
     this.elementToKey.set(element, key)
-    this.keyToElement.set(serializeRuntimeItemKey(key), element)
+    this.elementToSerializedKey.set(element, serializedKey)
+    this.keyToElement.set(serializedKey, element)
     if (!this.rowObserver) {
       return
     }
@@ -65,16 +75,16 @@ export class MeasurementEngine {
   }
 
   unobserveRow(element: HTMLElement | null): void {
-    if (!this.rowObserver || !element) {
+    if (!element) {
       return
     }
 
-    this.rowObserver.unobserve(element)
-    for (const [serializedKey, currentElement] of this.keyToElement) {
-      if (currentElement === element) {
-        this.keyToElement.delete(serializedKey)
-        break
-      }
+    this.rowObserver?.unobserve(element)
+
+    const serializedKey = this.elementToSerializedKey.get(element)
+
+    if (serializedKey) {
+      this.keyToElement.delete(serializedKey)
     }
   }
 
@@ -260,12 +270,20 @@ export class MeasurementEngine {
   }
 
   private trimCache(items: MessageDataItem[]): void {
+    if (this.heightCache.size <= 1000) {
+      return
+    }
+
     const liveKeys = new Set(
       items.map((item) => serializeRuntimeItemKey(getRuntimeItemKey(item))),
     )
 
     for (const key of this.heightCache.keys()) {
-      if (!liveKeys.has(key) && this.heightCache.size > 1000) {
+      if (this.heightCache.size <= 1000) {
+        break
+      }
+
+      if (!liveKeys.has(key)) {
         this.heightCache.delete(key)
       }
     }

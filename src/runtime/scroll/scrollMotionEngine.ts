@@ -153,8 +153,7 @@ export class ScrollMotionEngine {
 
     if (
       progress >= 1 ||
-      Math.abs(active.targetTop - active.input.container.scrollTop) <=
-        active.input.targetEpsilonPx
+      Math.abs(active.targetTop - nextTop) <= active.input.targetEpsilonPx
     ) {
       this.active = null
       active.frameId = null

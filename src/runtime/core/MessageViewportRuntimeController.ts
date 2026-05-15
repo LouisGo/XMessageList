@@ -24,6 +24,7 @@ import {
   type PendingDestinationRequest,
   type PendingFollowBottom,
   type ReadySubstate,
+  type ScrollFrameMetrics,
 } from './runtimeTypes'
 import { AnchorCoordinator } from '../dom/anchorCoordinator'
 import { EdgeNeedCoordinator } from '../events/edgeNeedCoordinator'
@@ -281,8 +282,9 @@ export class MessageViewportRuntimeController<
         this.recoverAfterCommitFailure(input),
       deriveRuntimeStateFromSnapshot: (snapshot) =>
         this.deriveRuntimeStateFromSnapshot(snapshot),
-      emitViewportAnchorChanged: (reason) =>
-        this.emitViewportAnchorChanged(reason),
+      emitViewportAnchorChanged: (reason, anchor) =>
+        this.emitViewportAnchorChanged(reason, anchor),
+      invalidateSpacerCache: () => this.spacer.invalidateEstimateCache(),
       emitEvent: (event) => this.emitEvent(event),
       emitError: (code) => this.emitError(code),
     })
@@ -844,10 +846,7 @@ export class MessageViewportRuntimeController<
     data: MessageDataSnapshot<TMessage, TOptimistic>,
     messageId: string,
   ): boolean {
-    return data.items.some(
-      (item) =>
-        item.key.kind === 'committed' && item.key.messageId === messageId,
-    )
+    return this.renderWindow.findCommittedMessageIndex(data.items, messageId) >= 0
   }
 
   private getIdentityTarget(
@@ -879,6 +878,7 @@ export class MessageViewportRuntimeController<
     this.commit.cancelPendingCommit()
     this.cancelScheduledWork()
     this.heightCache.clear()
+    this.spacer.invalidateEstimateCache()
     this.edge.resetLatches()
     this.lastScrollSource = null
     this.scrollIntent.clearTransientIntent()
@@ -996,11 +996,17 @@ export class MessageViewportRuntimeController<
       return []
     }
 
-    return this.measurement.measureMountedRows(
+    const deltas = this.measurement.measureMountedRows(
       snapshot.items,
       snapshot.revision,
       container.clientWidth,
     )
+
+    if (deltas.length > 0) {
+      this.spacer.invalidateEstimateCache()
+    }
+
+    return deltas
   }
 
   private keepCurrentWindow(items: MessageDataItem<TMessage, TOptimistic>[]): RenderWindow {
@@ -1042,12 +1048,12 @@ export class MessageViewportRuntimeController<
       return
     }
 
-    const distance = getDistanceToBottom(container)
+    const metrics = this.readScrollFrameMetrics(container)
     const scrollSource = this.scrollIntent.classifyScroll(this.currentFrame)
     this.lastScrollSource = scrollSource
     const changed = this.updateBottomLockForDataWindow(
       data,
-      distance,
+      metrics.distanceToBottom,
       scrollSource,
     )
 
@@ -1061,8 +1067,8 @@ export class MessageViewportRuntimeController<
     }
 
     this.edge.emitEdgeNeeds({
-      container,
       data,
+      metrics,
       scrollSource,
       lastUserScrollTop: this.lastUserScrollTop,
       lastUserDistanceToBottom: this.lastUserDistanceToBottom,
@@ -1070,14 +1076,14 @@ export class MessageViewportRuntimeController<
 
     if (scrollSource === 'user') {
       // 只有真实用户滚动能更新用户意图基线；runtime 写 scrollTop 不应影响 edge latch 释放。
-      this.updatePendingFollowBottomForUserScroll(container.scrollTop)
-      this.lastUserScrollTop = container.scrollTop
-      this.lastUserDistanceToBottom = distance
+      this.updatePendingFollowBottomForUserScroll(metrics.scrollTop)
+      this.lastUserScrollTop = metrics.scrollTop
+      this.lastUserDistanceToBottom = metrics.distanceToBottom
       this.scheduleViewportAnchorIdleEvent()
     }
 
     if (this.state === 'READY') {
-      this.maybeSlideWindow(container, data)
+      this.maybeSlideWindow(data, metrics)
     }
   }
 
@@ -1102,18 +1108,19 @@ export class MessageViewportRuntimeController<
   }
 
   private maybeSlideWindow(
-    container: HTMLElement,
     data: MessageDataSnapshot<TMessage, TOptimistic>,
+    metrics: ScrollFrameMetrics,
   ): void {
     if (this.readySubstate === 'READY_MOTION_ACTIVE') {
       return
     }
 
     const snapshot = this.store.getSnapshot()
-    const nearTop = container.scrollTop < snapshot.topSpacer + this.getMinOverscanPx(container)
+    const minOverscanPx = this.getMinOverscanPx(metrics)
+    const nearTop = metrics.scrollTop < snapshot.topSpacer + minOverscanPx
     const nearBottom =
-      getDistanceToBottom(container) <
-      snapshot.bottomSpacer + this.getMinOverscanPx(container)
+      metrics.distanceToBottom <
+      snapshot.bottomSpacer + minOverscanPx
 
     if (!nearTop && !nearBottom) {
       return
@@ -1135,8 +1142,8 @@ export class MessageViewportRuntimeController<
     const nextWindow = this.renderWindow.computeWindowAroundAnchor({
       items: data.items,
       anchorIndex,
-      viewportHeight: container.clientHeight,
-      viewportWidth: container.clientWidth,
+      viewportHeight: metrics.clientHeight,
+      viewportWidth: metrics.clientWidth,
     })
 
     if (this.projection.isRenderWindowEqual(snapshot.renderWindow, nextWindow)) {
@@ -1146,7 +1153,7 @@ export class MessageViewportRuntimeController<
     this.transactions.enqueue(
       'resize',
       () =>
-        this.transactionController.runWindowSlideTransaction(anchor.key, nextWindow, {
+        this.transactionController.runWindowSlideTransaction(anchor, nextWindow, {
           feedId: data.feedId,
           generation: data.generation,
           revision: data.revision,
@@ -1190,6 +1197,8 @@ export class MessageViewportRuntimeController<
       return
     }
 
+    this.spacer.invalidateEstimateCache()
+
     if (this.motion.isActive()) {
       // motion 期间高度变化会改变目的地坐标，先取消再按当前 anchor/bottom lock 恢复。
       this.motion.cancel('resize-during-motion')
@@ -1221,7 +1230,7 @@ export class MessageViewportRuntimeController<
       this.motion.writeScrollTop(container.scrollTop + deltaAboveAnchor, 'recovery')
     }
 
-    this.emitViewportAnchorChanged('transaction-settle')
+    this.emitViewportAnchorChanged('transaction-settle', anchor)
   }
 
   private setupContainerObserver(container: HTMLElement): void {
@@ -1294,14 +1303,20 @@ export class MessageViewportRuntimeController<
     }, VIEWPORT_ANCHOR_IDLE_MS)
   }
 
-  private emitViewportAnchorChanged(reason: ViewportAnchorChangeReason): void {
+  private emitViewportAnchorChanged(
+    reason: ViewportAnchorChangeReason,
+    anchorOverride?: AnchorState | null,
+  ): void {
     const data = this.dataSnapshot
 
     if (!data || this.state === 'DESTROYED') {
       return
     }
 
-    const anchor = this.captureViewportAnchor()
+    const anchor =
+      typeof anchorOverride === 'undefined'
+        ? this.captureViewportAnchor()
+        : anchorOverride
 
     this.emitEvent({
       type: 'viewportAnchorChanged',
@@ -1312,10 +1327,24 @@ export class MessageViewportRuntimeController<
     })
   }
 
-  private getMinOverscanPx(container: HTMLElement): number {
+  private getMinOverscanPx(metrics: ScrollFrameMetrics): number {
     return this.config.minOverscanPx > 0
       ? this.config.minOverscanPx
-      : container.clientHeight * 2
+      : metrics.clientHeight * 2
+  }
+
+  private readScrollFrameMetrics(container: HTMLElement): ScrollFrameMetrics {
+    const scrollTop = container.scrollTop
+    const clientHeight = container.clientHeight
+    const scrollHeight = container.scrollHeight
+
+    return {
+      scrollTop,
+      clientHeight,
+      clientWidth: container.clientWidth,
+      scrollHeight,
+      distanceToBottom: Math.max(0, scrollHeight - scrollTop - clientHeight),
+    }
   }
 
   private readContainerSize(container: HTMLElement): ContainerSize {

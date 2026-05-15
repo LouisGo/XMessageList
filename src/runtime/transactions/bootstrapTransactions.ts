@@ -1,5 +1,6 @@
 import type { AnchorState, MessageDataSnapshot, MessageViewportSnapshot } from '../types'
 import type { ViewportTransactionDeps } from './viewportTransactionController'
+import { areRuntimeItemKeysEqual } from '../shared/utils'
 
 export function runBootstrapTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
@@ -168,13 +169,23 @@ async function runRestoredBootstrap<TMessage, TOptimistic>(
       return
     }
 
+    const settledAnchor = {
+      key: resolvedRestoreTarget.key,
+      offsetWithinMessage: areRuntimeItemKeysEqual(
+        resolvedRestoreTarget.key,
+        restoreTarget.key,
+      )
+        ? restoreTarget.offsetWithinMessage
+        : 0,
+    }
+
+    deps.measureCurrentWindow()
     // restored bootstrap 对齐的是视觉 anchor + offset，不是简单把目标消息滚到顶部。
     deps.anchor.alignToResolvedRestoreTarget(
       container,
       restoreTarget,
       resolvedRestoreTarget,
     )
-    deps.measureCurrentWindow()
     deps.scrollIntent.setBottomLockState('UNLOCKED')
     deps.setState('READY')
     deps.projection.publish({
@@ -183,7 +194,7 @@ async function runRestoredBootstrap<TMessage, TOptimistic>(
       bootstrapState: 'READY',
       bottomLockState: 'UNLOCKED',
     })
-    deps.emitViewportAnchorChanged('transaction-settle')
+    deps.emitViewportAnchorChanged('transaction-settle', settledAnchor)
     deps.emitEvent({
       type: 'viewportReady',
       feedId: data.feedId,

@@ -1,12 +1,14 @@
 import type { DomRegistry } from '../dom/domRegistry'
 import type { ProjectionStore } from '../core/projectionStore'
 import type {
+  ScrollFrameMetrics,
+} from '../core/runtimeTypes'
+import type {
   MessageDataSnapshot,
   MessageViewportRuntimeEvent,
   RuntimeObserverFactory,
   ScrollSource,
 } from '../types'
-import { getDistanceToBottom } from '../shared/utils'
 
 export class EdgeNeedCoordinator<TMessage, TOptimistic> {
   private beforeEdgeRequestLatched = false
@@ -74,13 +76,13 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
   }
 
   emitEdgeNeeds(input: {
-    container: HTMLElement
     data: MessageDataSnapshot<TMessage, TOptimistic>
+    metrics: ScrollFrameMetrics
     scrollSource: ScrollSource
     lastUserScrollTop: number
     lastUserDistanceToBottom: number
   }): void {
-    const { container, data, scrollSource } = input
+    const { data, metrics, scrollSource } = input
 
     if (!this.canEmitEdgeNeeds()) {
       return
@@ -88,8 +90,8 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
 
     const nearTop =
       this.isAtBeforeDataEdge() &&
-      container.scrollTop <= this.edgeLoadThresholdPx
-    const distanceToBottom = getDistanceToBottom(container)
+      metrics.scrollTop <= this.edgeLoadThresholdPx
+    const distanceToBottom = metrics.distanceToBottom
     const nearBottom =
       this.isAtAfterDataEdge(data) &&
       distanceToBottom <= this.edgeLoadThresholdPx
@@ -98,8 +100,8 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
     const bottomReleaseThreshold = this.edgeLoadThresholdPx * 3
     const userMovedDownAwayFromTop =
       scrollSource === 'user' &&
-      container.scrollTop > topReleaseThreshold &&
-      container.scrollTop >= input.lastUserScrollTop
+      metrics.scrollTop > topReleaseThreshold &&
+      metrics.scrollTop >= input.lastUserScrollTop
     const userMovedUpAwayFromBottom =
       scrollSource === 'user' &&
       distanceToBottom > bottomReleaseThreshold &&

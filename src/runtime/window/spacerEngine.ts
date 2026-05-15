@@ -18,17 +18,22 @@ export type HeightCache = Map<string, HeightRecord>
  * 这符合 IM runtime 的锚点模型：spacer 用来维持连续感，不是权威坐标。
  */
 export class SpacerEngine {
+  private rangeHeightCache = new WeakMap<MessageDataItem[], Map<string, number>>()
+
   constructor(
     private readonly config: WindowConfig,
     private readonly heightCache: HeightCache,
   ) {}
+
+  invalidateEstimateCache(): void {
+    this.rangeHeightCache = new WeakMap()
+  }
 
   estimateItemHeight(item: MessageDataItem, width: number): number {
     const key = serializeRuntimeItemKey(getRuntimeItemKey(item))
     const cached = this.heightCache.get(key)
 
     if (cached && cached.widthBucket === getWidthBucket(width)) {
-      cached.lastAccessedAt = Date.now()
       return cached.height
     }
 
@@ -46,9 +51,23 @@ export class SpacerEngine {
     endIndex: number,
     width: number,
   ): number {
-    let height = 0
     const safeStart = Math.max(0, startIndex)
     const safeEnd = Math.min(items.length, endIndex)
+    const cacheKey = `${getWidthBucket(width)}:${safeStart}:${safeEnd}`
+    let itemCache = this.rangeHeightCache.get(items)
+
+    if (!itemCache) {
+      itemCache = new Map()
+      this.rangeHeightCache.set(items, itemCache)
+    }
+
+    const cached = itemCache.get(cacheKey)
+
+    if (typeof cached === 'number') {
+      return cached
+    }
+
+    let height = 0
 
     for (let index = safeStart; index < safeEnd; index += 1) {
       const item = items[index]
@@ -57,7 +76,9 @@ export class SpacerEngine {
       }
     }
 
-    return Math.max(0, height)
+    const clampedHeight = Math.max(0, height)
+    itemCache.set(cacheKey, clampedHeight)
+    return clampedHeight
   }
 
   computeTopSpacer(

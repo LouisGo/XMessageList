@@ -18,6 +18,11 @@ import type {
 } from './runtimeTypes'
 
 export class ProjectionCoordinator<TMessage, TOptimistic> {
+  private projectedItemsCache = new WeakMap<
+    Array<MessageDataItem<TMessage, TOptimistic>>,
+    Map<string, Array<MessageDataItem<TMessage, TOptimistic>>>
+  >()
+
   constructor(
     private readonly store: ProjectionStore<TMessage, TOptimistic>,
     private readonly registry: DomRegistry,
@@ -44,7 +49,8 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
         width,
       )
     const current = this.store.getSnapshot()
-    const items = input.data.items.slice(
+    const items = this.getProjectedItems(
+      input.data.items,
       input.renderWindow.startIndex,
       input.renderWindow.endIndex + 1,
     )
@@ -147,6 +153,30 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
         item.version === next.version
       )
     })
+  }
+
+  private getProjectedItems(
+    items: Array<MessageDataItem<TMessage, TOptimistic>>,
+    startIndex: number,
+    endIndex: number,
+  ): Array<MessageDataItem<TMessage, TOptimistic>> {
+    const cacheKey = `${startIndex}:${endIndex}`
+    let itemCache = this.projectedItemsCache.get(items)
+
+    if (!itemCache) {
+      itemCache = new Map()
+      this.projectedItemsCache.set(items, itemCache)
+    }
+
+    const cached = itemCache.get(cacheKey)
+
+    if (cached) {
+      return cached
+    }
+
+    const projectedItems = items.slice(startIndex, endIndex)
+    itemCache.set(cacheKey, projectedItems)
+    return projectedItems
   }
 }
 
