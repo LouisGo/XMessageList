@@ -50,14 +50,22 @@ class MessageViewportRuntime {
 
 | Module | Responsibility | React 可见 |
 | --- | --- | --- |
+| MessageViewportRuntime | 稳定 public facade，保持接入 API 不扩散 | 直接接入 |
+| MessageViewportRuntimeController | 组合 runtime parts、维护生命周期状态、路由 command / data effect | 不直接可见 |
 | ProjectionStore | 保存并发布 `MessageViewportSnapshot` | 通过 `getSnapshot` |
+| ProjectionCoordinator | 计算 projection snapshot、spacer、revision equality | 通过 snapshot |
+| CommitCoordinator | 等待 React commit ack、处理 timeout / cancel | 不直接可见 |
 | DomRegistry | container、row、spacer、sentinel refs | 不可见 |
+| AnchorCoordinator | 捕获 viewport anchor、解析 restore target、选择 nearest measurable row | 不直接可见 |
 | RenderWindowEngine | 计算 mount item 范围和 trim 计划 | `renderWindow` |
 | SpacerEngine | 估算并修正 spacer 高度 | `topSpacer` / `bottomSpacer` |
 | MeasurementEngine | 同步测量、ResizeObserver、height cache | 不直接可见 |
 | ScrollIntentEngine | 区分 user / programmatic / recovery / follow bottom / jump | `bottomLockState` |
 | ScrollMotionEngine | 执行 bounded JS scroll motion、同步取消和 settle 回调 | 不直接可见 |
-| TransactionRunner | 串行执行 bootstrap / prepend / append / jump / resize | 不直接可见 |
+| DestinationMotionCoordinator | 持有目的地滚动 settle/cancel 语义，并协调 final anchor event | 不直接可见 |
+| TransactionRunner | 串行化 transaction queue | 不直接可见 |
+| ViewportTransactionController | 执行 bootstrap / prepend / append / jump / restore / followBottom / resize transaction body | 不直接可见 |
+| EdgeNeedCoordinator | sentinel、edge latch、needMoreBefore / needMoreAfter 事件 | 不直接可见 |
 | LifecycleGuard | generation、destroy、detach、异步资源清理 | 不直接可见 |
 
 ## 4. Snapshot Boundary

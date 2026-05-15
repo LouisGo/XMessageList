@@ -1,5 +1,5 @@
-import type { MessageRuntimeItemKey } from './types'
-import { serializeRuntimeItemKey } from './utils'
+import type { MessageRuntimeItemKey } from '../types'
+import { serializeRuntimeItemKey } from '../shared/utils'
 
 export type RuntimeDomRegistrySnapshot = {
   observedRows: number

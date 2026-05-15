@@ -1,4 +1,4 @@
-import type { ViewportTransactionKind } from './types'
+import type { ViewportTransactionKind } from '../types'
 
 type TransactionTask = {
   id: string

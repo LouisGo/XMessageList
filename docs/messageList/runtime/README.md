@@ -70,21 +70,22 @@ Data runtime / BFF 负责把 `MessageIdentityAnchor` 解析为当前
 neighbor fallback。Viewport runtime 只做 projection 内的 DOM fallback：目标行已
 在 snapshot 中但 commit 后不可测量时 retry 或选择已挂载的 nearest measurable row。
 
-## 推荐最小代码形态
+## 当前代码形态
 
 ```ts
 type MessageViewportRuntimeParts = {
-  store: ProjectionStore;
-  refs: RuntimeDomRegistry;
-  window: RenderWindowEngine;
-  measurement: MeasurementEngine;
-  spacer: SpacerEngine;
-  scroll: ScrollIntentEngine;
-  transactions: ViewportTransactionRunner;
+  facade: MessageViewportRuntime;
+  controller: MessageViewportRuntimeController;
+  projection: ProjectionCoordinator;
+  commit: CommitCoordinator;
+  transactions: ViewportTransactionController;
+  anchors: AnchorCoordinator;
+  edges: EdgeNeedCoordinator;
+  motion: DestinationMotionCoordinator;
 };
 ```
 
-这些 parts 可以先做成一个 class 内的私有模块，不必过早拆包。文档里的模块边界用于约束 ownership，不要求一开始就形成复杂目录。
+早期 vertical slice 允许这些 parts 先做成一个 class 内的私有模块；当前实现已经越过原型阶段，`src/runtime/MessageViewportRuntime.ts` 只保留 public facade，核心接线进入 `core/MessageViewportRuntimeController.ts`，transaction / anchor / edge / motion / projection / commit 各自进入独立 coordinator。
 
 ## 外部参考
 

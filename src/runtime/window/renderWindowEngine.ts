@@ -3,8 +3,8 @@ import type {
   MessageRuntimeItemKey,
   RenderWindow,
   WindowConfig,
-} from './types'
-import { clamp, getRuntimeItemKey, serializeRuntimeItemKey } from './utils'
+} from '../types'
+import { clamp, getRuntimeItemKey, serializeRuntimeItemKey } from '../shared/utils'
 import type { SpacerEngine } from './spacerEngine'
 
 type WindowAroundInput = {
@@ -83,6 +83,7 @@ export class RenderWindowEngine {
         ? this.config.maxOverscanPx
         : viewportHeight * 6
 
+    // anchor 前后使用不同 overscan：上方保阅读连续性，下方多留空间减少向下滚动频繁 slide。
     const beforeTarget = clamp(viewportHeight * 3, minOverscanPx, maxOverscanPx)
     const afterTarget = clamp(viewportHeight * 4, minOverscanPx, maxOverscanPx)
     const startIndex = this.walkBackwardByEstimatedHeight(
@@ -180,6 +181,7 @@ export class RenderWindowEngine {
     }
 
     if (end - start + 1 > this.config.maxMountedItems) {
+      // maxMountedItems 是硬上限；超过时以 anchor 为中心裁剪，避免为了 spacer 精度无限挂 DOM。
       const beforeCount = Math.floor(this.config.maxMountedItems / 2)
       start = Math.max(0, anchorIndex - beforeCount)
       end = Math.min(items.length - 1, start + this.config.maxMountedItems - 1)

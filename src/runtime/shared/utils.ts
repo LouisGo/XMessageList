@@ -4,7 +4,7 @@ import type {
   RuntimeObserverFactory,
   RuntimeScheduler,
   WindowConfig,
-} from './types'
+} from '../types'
 
 export const DEFAULT_WINDOW_CONFIG: WindowConfig = {
   minOverscanPx: 0,

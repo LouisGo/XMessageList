@@ -3,13 +3,13 @@ import type {
   MessageDataItem,
   MessageRuntimeItemKey,
   WindowConfig,
-} from './types'
+} from '../types'
 import {
   getItemEstimatedHeight,
   getRuntimeItemKey,
   getWidthBucket,
   serializeRuntimeItemKey,
-} from './utils'
+} from '../shared/utils'
 
 export type HeightCache = Map<string, HeightRecord>
 

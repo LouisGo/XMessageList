@@ -1,4 +1,4 @@
-import type { BottomLockState, ScrollSource } from './types'
+import type { BottomLockState, ScrollSource } from '../types'
 
 type ScrollWriteToken = {
   source: ScrollSource

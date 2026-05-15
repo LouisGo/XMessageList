@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ScrollMotionEngine } from '../scrollMotionEngine'
+import { ScrollMotionEngine } from '../scroll/scrollMotionEngine'
 import { createContainer, FakeScheduler } from '../../test/fakes'
 import type { ScrollSource } from '../types'
 

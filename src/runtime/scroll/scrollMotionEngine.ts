@@ -1,4 +1,4 @@
-import type { RuntimeScheduler, ScrollSource } from './types'
+import type { RuntimeScheduler, ScrollSource } from '../types'
 
 export type ScrollMotionSource = Extract<
   ScrollSource,
@@ -74,6 +74,7 @@ export class ScrollMotionEngine {
     const initialDistance = targetTop - currentTop
 
     if (Math.abs(initialDistance) > maxDistancePx) {
+      // 超长距离先瞬移到目标附近，再做短动画，避免跨几万像素的无意义滚动动画。
       startTop =
         targetTop - Math.sign(initialDistance) * maxDistancePx
       input.onFrameWrite(startTop, input.source)
@@ -158,6 +159,7 @@ export class ScrollMotionEngine {
       this.active = null
       active.frameId = null
       active.input.onFrameWrite(active.targetTop, active.source)
+      // settle 前最后写一次精确 target，消除 easing / 浏览器取整留下的亚像素误差。
       active.input.onSettle()
       return
     }

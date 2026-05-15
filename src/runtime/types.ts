@@ -88,6 +88,7 @@ export type MessageDataSnapshot<TMessage = unknown, TOptimistic = unknown> = {
   feedId: string
   generation: number
   revision: number
+  // 当前已加载 DataWindow，不保证覆盖整个 feed；hasMoreBefore/After 才是数据边界真相。
   items: Array<MessageDataItem<TMessage, TOptimistic>>
   anchor?: MessageIdentityAnchor
   anchorStatus?: 'normal' | 'deleted'
@@ -145,6 +146,7 @@ export type MessageViewportSnapshot<
 export type ProjectionCommit = {
   feedId: string
   generation: number
+  // React 在该 revision 的 DOM/ref 已落地后回传；runtime 事务只能等这个 ack 再读 DOM。
   revision: number
 }
 

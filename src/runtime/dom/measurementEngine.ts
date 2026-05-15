@@ -2,14 +2,14 @@ import type {
   MessageDataItem,
   MessageRuntimeItemKey,
   RuntimeObserverFactory,
-} from './types'
+} from '../types'
 import {
   getItemContentVersion,
   getRuntimeItemKey,
   getWidthBucket,
   serializeRuntimeItemKey,
-} from './utils'
-import type { HeightCache } from './spacerEngine'
+} from '../shared/utils'
+import type { HeightCache } from '../window/spacerEngine'
 
 export type HeightDelta = {
   key: MessageRuntimeItemKey
@@ -128,6 +128,7 @@ export class MeasurementEngine {
       const previousHeight = previous?.height ?? pending.previousHeight
       const delta = pending.nextHeight - previousHeight
 
+      // ResizeObserver 只知道元素尺寸，不知道消息版本；contentVersion 由主动测量路径刷新。
       this.heightCache.set(serializedKey, {
         height: pending.nextHeight,
         measuredAtRevision: revision,
@@ -158,6 +159,7 @@ export class MeasurementEngine {
       return false
     }
 
+    // 宽度 bucket 变化意味着文本换行模型变化，旧高度缓存不能再用于 spacer 估算。
     this.widthBucket = nextBucket
     this.heightCache.clear()
     this.pendingHeights.clear()

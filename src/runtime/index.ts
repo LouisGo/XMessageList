@@ -7,7 +7,7 @@ export {
   getRuntimeItemKey,
   isCommittedKey,
   serializeRuntimeItemKey,
-} from './utils'
+} from './shared/utils'
 export type {
   AnchorState,
   BootstrapState,
