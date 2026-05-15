@@ -264,6 +264,12 @@ edge paging。BOOTSTRAPPING / MOUNTING、commit timeout recovery、pending
 follow-bottom、pending destination 和 motion active 期间也都不能发 edge paging
 event。否则恢复失败或 runtime 自己写 `scrollTop` 会被 sentinel 放大成错误分页。
 
+bottom lock 可以在非用户生命周期边界做只进不退校准：当 `hasMoreAfter=false`
+且真实 `distanceToBottom` 已在 lock threshold 内，runtime 可以把 stale
+`UNLOCKED` 提升为 `LOCKED`。这用于 restored bootstrap、cached attach 以及
+append / refresh 追底判断前的状态修正；它不能把 programmatic 远离底部解释成
+用户离底，也不能在 `hasMoreAfter=true` 的 partial window 上锁底。
+
 外部显式 `followBottom` 但当前 DataWindow 仍有 `hasMoreAfter=true` 时，runtime
 发出 `needLatestMessages(reason: 'bottom-follow')`。接入方必须直接请求 latest
 window 并替换 DataWindow，不能沿当前 after edge 逐页补齐中间空洞。

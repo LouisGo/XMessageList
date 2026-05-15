@@ -18,6 +18,7 @@ import type {
   MessageViewportSnapshot,
   RenderWindow,
   RuntimeState,
+  ScrollSource,
   ViewportAnchorChangeReason,
 } from '../types'
 import type {
@@ -50,7 +51,16 @@ export type ViewportTransactionDeps<TMessage, TOptimistic> = {
   startPendingFollowBottom: (
     data: MessageDataSnapshot<TMessage, TOptimistic>,
     scrollTop: number,
+    commandId?: string,
   ) => void
+  hasActiveFollowBottomIntent: (
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => boolean
+  clearActiveFollowBottomIntent: (reason: string) => void
+  reconcileBottomLockFromViewport: (
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+    reason: string,
+  ) => boolean
   keepCurrentWindow: (
     items: Array<MessageDataItem<TMessage, TOptimistic>>,
   ) => RenderWindow
@@ -194,10 +204,16 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
 
     // BottomLocked 只代表 feed latest 的底部；hasMoreAfter=true 时，
     // 当前物理底部只是已加载 DataWindow 的 after edge，不能被 append page 追底。
+    this.deps.reconcileBottomLockFromViewport(data, 'append-before-follow-check')
+    const hasActiveFollowBottomIntent =
+      this.deps.hasActiveFollowBottomIntent(data)
     const shouldFollow =
       !data.hasMoreAfter &&
       (effect === 'auto-scroll-to-bottom' ||
-        this.deps.scrollIntent.getBottomLockState() === 'LOCKED')
+        this.deps.scrollIntent.getBottomLockState() === 'LOCKED' ||
+        hasActiveFollowBottomIntent)
+    const motionSource: Extract<ScrollSource, 'programmatic' | 'followBottom'> =
+      hasActiveFollowBottomIntent ? 'followBottom' : 'programmatic'
     const token = this.deps.lifecycle.getCurrent()
     const renderWindow = shouldFollow
       ? this.deps.renderWindow.computeLatestWindow(
@@ -222,7 +238,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       if (shouldFollow) {
         this.deps.setState('READY')
         this.deps.motion.start({
-          source: 'programmatic',
+          source: motionSource,
           targetTop: this.deps.motion.getBottomTargetTop(container),
           data,
           renderWindow,
@@ -250,9 +266,21 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       return
     }
 
+    this.deps.reconcileBottomLockFromViewport(data, 'refresh-before-follow-check')
+    const hasActiveFollowBottomIntent =
+      this.deps.hasActiveFollowBottomIntent(data)
+    const shouldFollowBottom =
+      !data.hasMoreAfter &&
+      (this.deps.scrollIntent.getBottomLockState() === 'LOCKED' ||
+        hasActiveFollowBottomIntent)
     const snapshot = this.deps.store.getSnapshot()
-    const renderWindow =
-      snapshot.renderWindow.endIndex >= snapshot.renderWindow.startIndex
+    const renderWindow = shouldFollowBottom
+      ? this.deps.renderWindow.computeLatestWindow(
+          data.items,
+          container.clientHeight,
+          container.clientWidth,
+        )
+      : snapshot.renderWindow.endIndex >= snapshot.renderWindow.startIndex
         ? this.deps.keepCurrentWindow(data.items)
         : this.deps.renderWindow.computeLatestWindow(
             data.items,
@@ -260,10 +288,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
             container.clientWidth,
           )
 
-    if (
-      this.deps.scrollIntent.getBottomLockState() === 'LOCKED' &&
-      !data.hasMoreAfter
-    ) {
+    if (shouldFollowBottom) {
       const projection = this.deps.projection.publish({
         data,
         renderWindow,
@@ -273,6 +298,18 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
 
       await this.deps.commit.waitForChanged(projection, 'resize')
       this.deps.measureCurrentWindow()
+
+      if (hasActiveFollowBottomIntent) {
+        this.deps.motion.start({
+          source: 'followBottom',
+          targetTop: this.deps.motion.getBottomTargetTop(container),
+          data,
+          renderWindow,
+          bottomLockState: 'LOCKED',
+        })
+        return
+      }
+
       this.deps.motion.scrollToBottom('programmatic')
       this.deps.emitViewportAnchorChanged('transaction-settle')
       return
@@ -470,12 +507,13 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         resolvedRestoreTarget,
       )
       this.deps.scrollIntent.setBottomLockState('UNLOCKED')
+      this.deps.reconcileBottomLockFromViewport(data, 'restore-settle')
       this.deps.setState('READY')
       this.deps.projection.publish({
         data,
         renderWindow,
         bootstrapState: 'READY',
-        bottomLockState: 'UNLOCKED',
+        bottomLockState: this.deps.scrollIntent.getBottomLockState(),
       })
       this.deps.emitViewportAnchorChanged(
         'transaction-settle',
@@ -592,6 +630,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         bottomLockState: 'LOCKED',
       })
     } catch (error) {
+      this.deps.clearActiveFollowBottomIntent('commit-timeout')
       this.deps.recoverAfterCommitFailure({
         token,
         nextState: 'READY',
@@ -639,10 +678,38 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     const token = this.deps.lifecycle.getCurrent()
     const previousSnapshot = this.deps.store.getSnapshot()
     const previousBottomLockState = this.deps.scrollIntent.getBottomLockState()
+    const hasActiveFollowBottomIntent =
+      this.deps.hasActiveFollowBottomIntent(data)
 
     this.deps.setState('TRANSACTING')
 
     try {
+      if (hasActiveFollowBottomIntent && !data.hasMoreAfter) {
+        const renderWindow = this.deps.renderWindow.computeLatestWindow(
+          data.items,
+          container.clientHeight,
+          container.clientWidth,
+        )
+        const projection = this.deps.projection.publish({
+          data,
+          renderWindow,
+          bootstrapState: 'READY',
+          bottomLockState: previousBottomLockState,
+        })
+
+        await this.deps.commit.waitForChanged(projection, 'resize')
+        this.deps.measureCurrentWindow()
+        this.deps.setState('READY')
+        this.deps.motion.start({
+          source: 'followBottom',
+          targetTop: this.deps.motion.getBottomTargetTop(container),
+          data,
+          renderWindow,
+          bottomLockState: 'LOCKED',
+        })
+        return
+      }
+
       const projection = this.deps.projection.publish({
         data,
         renderWindow: nextWindow,
@@ -708,8 +775,11 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     const anchorIndex = anchor
       ? this.deps.renderWindow.findIndexByKey(data.items, anchor.key)
       : -1
+    const hasActiveFollowBottomIntent =
+      this.deps.hasActiveFollowBottomIntent(data)
     const shouldFollowBottom =
-      previousBottomLockState === 'LOCKED' && !data.hasMoreAfter
+      !data.hasMoreAfter &&
+      (previousBottomLockState === 'LOCKED' || hasActiveFollowBottomIntent)
     const renderWindow = shouldFollowBottom
       ? this.deps.renderWindow.computeLatestWindow(
           data.items,
@@ -757,14 +827,26 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       this.deps.measureCurrentWindow()
 
       if (shouldFollowBottom) {
-        this.deps.motion.scrollToBottom('programmatic')
-        this.deps.scrollIntent.setBottomLockState('LOCKED')
-        this.deps.projection.publish({
-          data,
-          renderWindow,
-          bootstrapState: previousSnapshot.bootstrapState,
-          bottomLockState: 'LOCKED',
-        })
+        if (hasActiveFollowBottomIntent) {
+          this.deps.setState('READY')
+          this.deps.motion.start({
+            source: 'followBottom',
+            targetTop: this.deps.motion.getBottomTargetTop(container),
+            data,
+            renderWindow,
+            bottomLockState: 'LOCKED',
+          })
+          return
+        } else {
+          this.deps.motion.scrollToBottom('programmatic')
+          this.deps.scrollIntent.setBottomLockState('LOCKED')
+          this.deps.projection.publish({
+            data,
+            renderWindow,
+            bootstrapState: previousSnapshot.bootstrapState,
+            bottomLockState: 'LOCKED',
+          })
+        }
       } else if (anchor && typeof anchorTopBefore === 'number') {
         if (typeof anchorTopAfter === 'number') {
           const delta = anchorTopAfter - anchorTopBefore

@@ -52,6 +52,13 @@ export type PendingFollowBottom = {
   lastScrollTop: number
 }
 
+export type ActiveFollowBottomIntent = {
+  feedId: string
+  generation: number
+  commandId: string
+  lastScrollTop: number
+}
+
 export type PendingDestinationRequest = {
   feedId: string
   generation: number

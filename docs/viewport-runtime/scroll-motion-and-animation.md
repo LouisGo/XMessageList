@@ -183,6 +183,10 @@ before starting any transaction:
   不能为同一次目的地滚动提前 emit。
 - 如果新 transaction supersede 了 motion，由新 transaction 接管后续 anchor emit；
   被取消的旧 motion 不 emit settled anchor。
+- `transaction-supersede` 只让旧 motion target 失效，不等于取消用户显式
+  `followBottom` 意图。只要 active follow-bottom intent 仍匹配当前
+  `feedId + generation`，append / resize / window refresh commit 后必须重新计算
+  latest bottom target，并用 `source: 'followBottom'` 继续 motion。
 
 ## 5. ScrollMotionEngine
 
@@ -272,6 +276,7 @@ function easeOutQuint(t: number): number {
 
 ```text
 command followBottom
+-> create active follow-bottom intent for feedId + generation
 -> if hasMoreAfter=true: emit needLatestMessages(bottom-follow), no motion
 -> data layer loads latest page/window directly, without filling the gap
 -> runtime computes latest RenderWindow
@@ -282,6 +287,7 @@ command followBottom
 -> bounded-animate to bottom
 -> [motion settle callback]:
      set LOCKED
+     clear active follow-bottom intent
      emit viewportAnchorChanged(transaction-settle)
 ```
 
@@ -327,9 +333,39 @@ Runtime 保留该 command，并进入内部 `READY_FOLLOW_BOTTOM_PENDING`。这�
 - Pending 期间 bottom lock 保持 `UNLOCKED`。只有真正落到 feed latest bottom 并
   motion settle 后才能进入 `LOCKED`。
 
+#### 6.1.2 Active Follow Bottom Intent
+
+`followBottom` command 进入 runtime 后，runtime 必须创建一个私有
+`activeFollowBottomIntent`，绑定 `feedId + generation + commandId`。它表示用户
+显式要求追到 feed latest bottom，不能被 append / resize / window refresh 等非用户
+transaction 静默吞掉。
+
+保留规则：
+
+- active intent 命中且 `hasMoreAfter=false` 时，append / resize / window refresh
+  与 bottom locked 一样使用 latest window，但 motion source 必须保持
+  `followBottom`。
+- bottom lock 为 `LOCKED` 时，`items-change` / patch refresh 也必须先计算
+  latest window 再吸底；不能复用旧 window 后直接滚到包含 bottom spacer 的物理底部，
+  否则会落到无 row 的 spacer 区域。
+- append / resize / window refresh 开始时可以取消旧 motion，因为旧 target 可能已经
+  过期；但 commit + measure 后必须基于最新 `scrollHeight - clientHeight` 重新启动
+  follow-bottom motion。
+- raw wheel / touch / pointer / keydown 只标记用户输入，不直接清除 active intent；
+  只有后续 scroll frame 证明用户真实向上滚动时才取消。
+
+清除规则：
+
+- `followBottom` motion settle 且 bottom lock 进入 `LOCKED`。
+- 用户真实向上滚动。
+- 显式 `jump` / `restore` / `reset`。
+- generation change、detach、destroy。
+- follow-bottom transaction commit timeout recovery。
+
 ### 6.2 Bottom Locked Append / Send
 
-当 bottom lock 为 `LOCKED` 且 `hasMoreAfter=false`：
+当 bottom lock 为 `LOCKED`，或 active follow-bottom intent 仍匹配当前
+`feedId + generation`，且 `hasMoreAfter=false`：
 
 ```text
 append / send while locked
@@ -345,6 +381,19 @@ append / send while locked
 如果距离过大，按 bounded motion 规则先同步靠近，再动画最后一段。
 
 这里的追底是 runtime 内部 locked-append 行为，不是外部 public command。
+
+runtime 还必须在生命周期恢复和事务追底判断前，用真实
+`scrollHeight - scrollTop - clientHeight` 对 bottom lock 做只进不退的校准：
+
+- 如果当前 DataWindow 已是 latest（`hasMoreAfter=false`）且真实距离已经在 lock
+  threshold 内，即使最近 scroll source 是 `programmatic`，也要把 stale
+  `UNLOCKED` 提升为 `LOCKED`。
+- 这个校准只能在物理已经到底时加锁，不能因为 programmatic scroll 远离底部而解锁；
+  远离底部的解锁仍然只来自真实 user / momentum 滚动。
+- restored bootstrap、cached attach、append / refresh transaction 开始前都要执行该
+  校准，避免 Bottom 按钮长期残留，或后续 storm / append 误以为用户不在底部。
+- `hasMoreAfter=true` 时禁止校准为 `LOCKED`，因为当前物理底部不是 feed latest
+  bottom。
 
 ### 6.3 Jump / Quote
 
@@ -476,6 +525,13 @@ Motion 必须被以下事件取消：
 Motion active 期间：
 
 - `ScrollIntentEngine.classifyScroll()` 返回 motion source。
+- `destinationMotion.cancel` diagnostics 必须包含 `reason`、`source`、
+  `targetTop`、`scrollTop`、`distancePx`。如果来自 transaction supersede，还必须带
+  当前 `transactionKind` / `transactionId`，用于串联
+  `followBottom -> motion -> resize/append cancel -> rearm motion`。
+- motion cancel 和 follow-bottom intent cancel 是两个不同概念。非用户 transaction
+  cancel motion 时，active follow-bottom intent 必须保留；用户真实向上滚动或目的地
+  命令才取消 intent。
 - edge load emission 必须忽略 motion source。
 - bottom lock hysteresis 不能把 motion scroll 当成 user scroll。
 - viewport anchor idle event 不应由 motion scroll 触发；settle 后发
@@ -593,6 +649,12 @@ Runtime unit tests:
 - pending `followBottom` survives latest-window snapshots until `hasMoreAfter=false`.
 - user upward scroll cancels pending `followBottom` and suppresses further bottom-follow requests.
 - after latest window loads, follow bottom rebuilds latest window before motion.
+- active `followBottom` survives append / resize transaction supersede and re-arms
+  `source: 'followBottom'` motion to the latest bottom.
+- real upward user scroll clears active `followBottom`; later append / resize must not
+  steal the viewport back to bottom.
+- diagnostics expose `destinationMotion.cancel` reason plus transaction kind/id, and
+  show the re-armed follow-bottom motion.
 - far jump / restore with target outside DataWindow emits `needMessagesAround` and starts no motion.
 - after around-target window loads, pending jump / restore consumes the snapshot and starts the normal destination transaction.
 - far follow bottom writes an immediate near-target scrollTop, then animates bounded final segment.

@@ -13,6 +13,7 @@ import type {
   RuntimeScheduler,
   ScrollMotionOptions,
   ScrollSource,
+  ViewportTransactionKind,
   ViewportAnchorChangeReason,
 } from '../types'
 import type {
@@ -21,12 +22,19 @@ import type {
   ReadySubstate,
 } from '../core/runtimeTypes'
 
+export type DestinationMotionCancelContext = {
+  transactionKind?: ViewportTransactionKind
+  transactionId?: string
+}
+
 export class DestinationMotionCoordinator<TMessage, TOptimistic> {
   private readonly motionEngine = new ScrollMotionEngine()
 
   private destinationMotionSettle:
     | DestinationMotionSettle<TMessage, TOptimistic>
     | null = null
+
+  private cancelContext: DestinationMotionCancelContext | null = null
 
   constructor(
     private readonly registry: DomRegistry,
@@ -40,6 +48,13 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     private readonly isDestroyed: () => boolean,
     private readonly emitViewportAnchorChanged: (
       reason: ViewportAnchorChangeReason,
+    ) => void,
+    private readonly onDestinationMotionSettle: (
+      settle: DestinationMotionSettle<TMessage, TOptimistic>,
+    ) => void,
+    private readonly onScrollTopWritten: (
+      scrollTop: number,
+      source: ScrollSource,
     ) => void,
     private readonly emitDiagnostic: RuntimeDiagnosticEmitter,
   ) {}
@@ -131,13 +146,18 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     })
   }
 
-  cancel(reason: ScrollMotionCancelReason): void {
+  cancel(
+    reason: ScrollMotionCancelReason,
+    context: DestinationMotionCancelContext = {},
+  ): void {
     if (!this.motionEngine.isActive()) {
       this.clearDestinationMotionSettle()
       return
     }
 
+    this.cancelContext = context
     this.motionEngine.cancel(reason)
+    this.cancelContext = null
   }
 
   getBottomTargetTop(container: HTMLElement): number {
@@ -161,8 +181,10 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
       return
     }
 
+    const scrollTop = Math.max(0, nextScrollTop)
     this.scrollIntent.markScrollWrite(source, this.getCurrentFrame())
-    container.scrollTop = Math.max(0, nextScrollTop)
+    container.scrollTop = scrollTop
+    this.onScrollTopWritten(scrollTop, source)
   }
 
   private settleDestinationMotion(): void {
@@ -190,6 +212,7 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
         bottomLockState: settle.bottomLockState,
       }),
     })
+    this.onDestinationMotionSettle(settle)
     // 到达目的地后再发布最终 bottomLockState，外部看到的状态才与真实 scrollTop 一致。
     this.projection.publish({
       data: settle.data,
@@ -212,6 +235,7 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
   private handleDestinationMotionCancel(reason: ScrollMotionCancelReason): void {
     const settle = this.destinationMotionSettle
     const container = this.registry.getContainer()
+    const context = this.cancelContext
 
     this.emitDiagnostic({
       channel: 'motion',
@@ -227,6 +251,8 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
         scrollTop: container?.scrollTop ?? null,
         distancePx:
           settle && container ? settle.targetTop - container.scrollTop : null,
+        transactionKind: context?.transactionKind ?? null,
+        transactionId: context?.transactionId ?? null,
       }),
     })
 

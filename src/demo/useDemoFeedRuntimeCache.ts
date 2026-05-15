@@ -32,7 +32,7 @@ function createDemoFeedRuntime(feedId: string): MessageViewportRuntime<DemoMessa
     edgeLoadThresholdPx: 72,
     debug: {
       diagnostics: {
-        channels: ['transaction', 'motion', 'recovery'],
+        channels: 'all',
       },
     },
   })

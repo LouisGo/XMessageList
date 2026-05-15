@@ -157,6 +157,24 @@ async function flushBootstrap(
   })
 }
 
+async function commitCurrentProjection(
+  runtime: MessageViewportRuntime<TestMessage>,
+  container: HTMLElement,
+  topOffset = 0,
+  heightByMessageId: Record<string, number> = {},
+): Promise<MessageViewportSnapshot<TestMessage>> {
+  const snapshot = runtime.getSnapshot()
+  mountProjection(runtime, container, snapshot, topOffset, heightByMessageId)
+  runtime.notifyProjectionCommitted({
+    feedId: snapshot.feedId,
+    generation: snapshot.generation,
+    revision: snapshot.revision,
+  })
+  await Promise.resolve()
+  await Promise.resolve()
+  return runtime.getSnapshot()
+}
+
 async function flushFramesWithMicrotasks(
   scheduler: FakeScheduler,
   count: number,
@@ -228,6 +246,26 @@ function getExpectedRestoreScrollTop(
   }
 
   throw new Error(`message ${messageId} not found in snapshot`)
+}
+
+async function startFollowBottomMotionFromMiddle(input: {
+  runtime: MessageViewportRuntime<TestMessage>
+  scheduler: FakeScheduler
+  container: HTMLElement
+  targetMessageId?: string
+}): Promise<void> {
+  const targetMessageId = input.targetMessageId ?? 'm-35'
+
+  input.runtime.dispatch({ type: 'jump', target: { messageId: targetMessageId } })
+  await Promise.resolve()
+  await commitCurrentProjection(input.runtime, input.container)
+  await flushMotion(input.scheduler)
+  expect(input.runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+
+  input.runtime.dispatch({ type: 'followBottom' })
+  await Promise.resolve()
+  await commitCurrentProjection(input.runtime, input.container)
+  expect(input.runtime.getDebugSnapshot().motionActive).toBe(true)
 }
 
 describe('MessageViewportRuntime', () => {
@@ -418,6 +456,33 @@ describe('MessageViewportRuntime', () => {
     )
   })
 
+  it('locks bottom when restored bootstrap settles at the physical latest bottom', async () => {
+    const { runtime } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const restoreTarget = {
+      key: { kind: 'committed' as const, messageId: 'm-5' },
+      offsetWithinMessage: 0,
+    }
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 10, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'restored', target: restoreTarget })
+    await Promise.resolve()
+
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(container.scrollTop).toBe(200)
+    expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
+  })
+
   it('recomputes the latest window on container height resize and keeps bottom lock', async () => {
     const { runtime, scheduler, observers } = createRuntime({
       window: {
@@ -588,6 +653,152 @@ describe('MessageViewportRuntime', () => {
     expect(snapshot.renderWindow.endIndex).toBe(39)
     expect(snapshot.bottomLockState).toBe('LOCKED')
     expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight)
+  })
+
+  it('continues explicit follow-bottom intent after append supersedes motion', async () => {
+    const { runtime, scheduler } = createRuntime({
+      debug: {
+        diagnostics: {
+          channels: ['transaction', 'motion'],
+          emitEvents: false,
+          maxEntries: 100,
+        },
+      },
+    })
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 80, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    await startFollowBottomMotionFromMiddle({ runtime, scheduler, container })
+
+    runtime.setDataSnapshot(createSnapshot({ count: 81, revision: 2, effect: 'append' }))
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+    expect(runtime.getDebugSnapshot().motionActive).toBe(true)
+
+    await flushMotion(scheduler)
+
+    expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
+    expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight)
+
+    const records = runtime.getDiagnosticRecords()
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        name: 'destinationMotion.cancel',
+        details: expect.objectContaining({
+          source: 'followBottom',
+          reason: 'transaction-supersede',
+          transactionKind: 'append',
+          transactionId: expect.stringMatching(/^append-/),
+        }),
+      }),
+    )
+    expect(
+      records.filter(
+        (record) =>
+          record.name === 'destinationMotion.start' &&
+          record.details.source === 'followBottom',
+      ).length,
+    ).toBeGreaterThanOrEqual(2)
+  })
+
+  it('continues explicit follow-bottom intent after resize refresh supersedes motion', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 80, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    await startFollowBottomMotionFromMiddle({ runtime, scheduler, container })
+
+    runtime.setDataSnapshot(
+      createSnapshot({ count: 80, revision: 2, effect: 'items-change' }),
+    )
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+    expect(runtime.getDebugSnapshot().motionActive).toBe(true)
+
+    await flushMotion(scheduler)
+
+    expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
+    expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight)
+  })
+
+  it('recomputes latest window for locked item refresh before scrolling to bottom', async () => {
+    const { runtime, scheduler } = createRuntime({
+      window: {
+        minMountedItems: 10,
+        maxMountedItems: 20,
+        defaultItemHeight: 50,
+      },
+    })
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 80, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    const before = runtime.getSnapshot()
+    expect(before.bottomLockState).toBe('LOCKED')
+    expect(before.renderWindow.endIndex).toBe(79)
+
+    runtime.setDataSnapshot(
+      createSnapshot({ count: 86, revision: 2, effect: 'items-change' }),
+    )
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+    await flushFramesWithMicrotasks(scheduler, 2)
+
+    const after = runtime.getSnapshot()
+    expect(after.bottomLockState).toBe('LOCKED')
+    expect(after.renderWindow.endIndex).toBe(85)
+    expect(after.items.at(-1)?.key).toEqual({
+      kind: 'committed',
+      messageId: 'm-86',
+    })
+    expect(after.bottomSpacer).toBe(0)
+    expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight)
+  })
+
+  it('clears explicit follow-bottom intent after a real upward user scroll', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 80, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    await startFollowBottomMotionFromMiddle({ runtime, scheduler, container })
+
+    const interruptedScrollTop = 0
+    markUserScrollIntent(container)
+    container.scrollTop = interruptedScrollTop
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    await Promise.resolve()
+
+    runtime.setDataSnapshot(createSnapshot({ count: 81, revision: 2, effect: 'append' }))
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+    await flushFramesWithMicrotasks(scheduler, 2)
+
+    expect(runtime.getDebugSnapshot().motionActive).toBe(false)
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+    expect(container.scrollTop).toBe(interruptedScrollTop)
+    expect(container.scrollTop).not.toBe(
+      container.scrollHeight - container.clientHeight,
+    )
   })
 
   it('requests an around-target window for far jump without requiring gap backfill', async () => {
@@ -1198,6 +1409,40 @@ describe('MessageViewportRuntime', () => {
 
     expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
     expect(container.scrollTop).toBe(scrollTopBeforeAppend)
+  })
+
+  it('reconciles a stale unlocked state when append starts from the physical bottom', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 20, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    markUserScrollIntent(container)
+    container.scrollTop = 0
+    await flushScrollFrames(container, scheduler, 1)
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+
+    container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+    runtime.setDataSnapshot(createSnapshot({ count: 21, revision: 2, effect: 'append' }))
+    await Promise.resolve()
+    let snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await flushMotion(scheduler)
+    snapshot = runtime.getSnapshot()
+
+    expect(snapshot.bottomLockState).toBe('LOCKED')
+    expect(container.scrollTop).toBe(
+      Math.max(0, container.scrollHeight - container.clientHeight),
+    )
   })
 
   it('turns follow-bottom on a partial data window into a latest-window request', async () => {

@@ -91,4 +91,12 @@ export class ScrollIntentEngine {
 
     return false
   }
+
+  reconcileBottomLockFromDistance(distanceToBottom: number): boolean {
+    if (distanceToBottom <= this.lockThresholdPx) {
+      return this.setBottomLockState('LOCKED')
+    }
+
+    return false
+  }
 }

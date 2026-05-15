@@ -20,11 +20,13 @@ import {
   DEFAULT_SCROLL_MOTION_OPTIONS,
   USER_SCROLL_DIRECTION_EPSILON_PX,
   VIEWPORT_ANCHOR_IDLE_MS,
+  type ActiveFollowBottomIntent,
   cloneAnchorState,
   isAnchorState,
   type BootstrapCommand,
   type CommitRecoveryInput,
   type ContainerSize,
+  type DestinationMotionSettle,
   type PendingDestinationRequest,
   type PendingFollowBottom,
   type ReadySubstate,
@@ -136,6 +138,8 @@ export class MessageViewportRuntimeController<
   private pendingBootstrap: BootstrapCommand | null = null
 
   private pendingFollowBottom: PendingFollowBottom | null = null
+
+  private activeFollowBottomIntent: ActiveFollowBottomIntent | null = null
 
   private pendingDestinationRequest: PendingDestinationRequest | null = null
 
@@ -272,6 +276,9 @@ export class MessageViewportRuntimeController<
       () => this.currentFrame,
       () => this.state === 'DESTROYED',
       (reason) => this.emitViewportAnchorChanged(reason),
+      (settle) => this.handleDestinationMotionSettle(settle),
+      (scrollTop, source) =>
+        this.recordActiveFollowBottomIntentScrollWrite(scrollTop, source),
       (input) => this.emitDiagnostic(input),
     )
     this.transactions = new TransactionRunner({
@@ -279,7 +286,10 @@ export class MessageViewportRuntimeController<
         this.emitTransactionDiagnostic('enqueue', kind, id),
       onStart: (kind, id) => {
         this.emitTransactionDiagnostic('start', kind, id)
-        this.motion.cancel('transaction-supersede')
+        this.motion.cancel('transaction-supersede', {
+          transactionKind: kind,
+          transactionId: id,
+        })
       },
       onComplete: (kind, id) =>
         this.emitTransactionDiagnostic('complete', kind, id),
@@ -311,6 +321,12 @@ export class MessageViewportRuntimeController<
       tryRunPendingBootstrap: () => this.tryRunPendingBootstrap(),
       startPendingFollowBottom: (data, scrollTop) =>
         this.startPendingFollowBottom(data, scrollTop),
+      hasActiveFollowBottomIntent: (data) =>
+        this.hasActiveFollowBottomIntent(data),
+      clearActiveFollowBottomIntent: (reason) =>
+        this.clearActiveFollowBottomIntent(reason),
+      reconcileBottomLockFromViewport: (data, reason) =>
+        this.reconcileBottomLockFromViewport(data, reason),
       keepCurrentWindow: (items) => this.keepCurrentWindow(items),
       measureCurrentWindow: () => this.measureCurrentWindow(),
       waitForBootstrapSettle: (currentFeedId, currentGeneration) =>
@@ -377,6 +393,7 @@ export class MessageViewportRuntimeController<
         bootstrapState: this.store.getSnapshot().bootstrapState,
       }),
     })
+    this.reconcileReadyBottomLockFromViewport('attach')
     this.tryRunPendingBootstrap()
   }
 
@@ -398,6 +415,7 @@ export class MessageViewportRuntimeController<
     })
     this.lifecycle.suspend()
     this.clearPendingFollowBottom()
+    this.clearActiveFollowBottomIntent('detach')
     this.clearPendingDestinationRequest()
     this.motion.cancel('detach')
     this.commit.cancelPendingCommit()
@@ -445,6 +463,7 @@ export class MessageViewportRuntimeController<
     this.lifecycle.destroy()
     this.transactions.stop()
     this.clearPendingFollowBottom()
+    this.clearActiveFollowBottomIntent('destroy')
     this.clearPendingDestinationRequest()
     this.motion.cancel('destroy')
     this.heightCache.clear()
@@ -579,14 +598,17 @@ export class MessageViewportRuntimeController<
         break
       case 'jump':
         this.clearPendingFollowBottom()
+        this.clearActiveFollowBottomIntent('jump')
         this.startJumpCommand(command.target)
         break
       case 'restore':
         this.clearPendingFollowBottom()
+        this.clearActiveFollowBottomIntent('restore')
         this.startRestoreCommand(command.target)
         break
       case 'reset':
         this.clearPendingFollowBottom()
+        this.clearActiveFollowBottomIntent('reset')
         this.clearPendingDestinationRequest()
         this.enqueueResetTransaction(command.reason)
         break
@@ -725,11 +747,17 @@ export class MessageViewportRuntimeController<
       return
     }
 
+    const commandId = this.startActiveFollowBottomIntent(
+      data,
+      this.registry.getContainer()?.scrollTop ?? 0,
+    ).commandId
+
     if (data.hasMoreAfter) {
       // followBottom 面向 feed latest；当前 DataWindow 还缺 latest page 时请求 latest window。
       this.startPendingFollowBottom(
         data,
         this.registry.getContainer()?.scrollTop ?? 0,
+        commandId,
       )
       return
     }
@@ -785,6 +813,7 @@ export class MessageViewportRuntimeController<
       pending.generation !== snapshot.generation
     ) {
       this.clearPendingFollowBottom()
+      this.clearActiveFollowBottomIntent('generation-change')
       return false
     }
 
@@ -894,6 +923,140 @@ export class MessageViewportRuntimeController<
     }
   }
 
+  private startActiveFollowBottomIntent(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+    scrollTop: number,
+  ): ActiveFollowBottomIntent {
+    this.followBottomCommandCounter += 1
+    const intent = {
+      feedId: data.feedId,
+      generation: data.generation,
+      commandId: `follow-bottom-${this.followBottomCommandCounter}`,
+      lastScrollTop: scrollTop,
+    }
+
+    this.activeFollowBottomIntent = intent
+    this.emitDiagnostic({
+      channel: 'motion',
+      severity: 'info',
+      name: 'followBottom.intent.start',
+      correlationId: `command:${intent.commandId}`,
+      details: () => ({
+        revision: data.revision,
+        itemCount: data.items.length,
+        hasMoreAfter: data.hasMoreAfter,
+        scrollTop,
+      }),
+    })
+    return intent
+  }
+
+  private ensureActiveFollowBottomIntent(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+    scrollTop: number,
+  ): ActiveFollowBottomIntent {
+    if (this.hasActiveFollowBottomIntent(data)) {
+      const intent = this.activeFollowBottomIntent as ActiveFollowBottomIntent
+      intent.lastScrollTop = scrollTop
+      return intent
+    }
+
+    return this.startActiveFollowBottomIntent(data, scrollTop)
+  }
+
+  private hasActiveFollowBottomIntent(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): boolean {
+    return (
+      this.activeFollowBottomIntent?.feedId === data.feedId &&
+      this.activeFollowBottomIntent.generation === data.generation
+    )
+  }
+
+  private clearActiveFollowBottomIntent(reason: string): void {
+    const intent = this.activeFollowBottomIntent
+
+    if (!intent) {
+      return
+    }
+
+    this.activeFollowBottomIntent = null
+    this.emitDiagnostic({
+      channel: 'motion',
+      severity: 'debug',
+      name: 'followBottom.intent.clear',
+      correlationId: `command:${intent.commandId}`,
+      details: () => ({
+        reason,
+        feedId: intent.feedId,
+        generation: intent.generation,
+        lastScrollTop: intent.lastScrollTop,
+      }),
+    })
+  }
+
+  private updateActiveFollowBottomIntentForScroll(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+    scrollTop: number,
+    scrollSource: ScrollSource,
+  ): void {
+    const intent = this.activeFollowBottomIntent
+
+    if (!intent) {
+      return
+    }
+
+    if (intent.feedId !== data.feedId || intent.generation !== data.generation) {
+      this.clearActiveFollowBottomIntent('generation-change')
+      return
+    }
+
+    if (
+      scrollSource === 'user' &&
+      scrollTop < intent.lastScrollTop - USER_SCROLL_DIRECTION_EPSILON_PX
+    ) {
+      this.clearActiveFollowBottomIntent('user-scroll-up')
+      this.clearPendingFollowBottom()
+      return
+    }
+
+    intent.lastScrollTop = scrollTop
+  }
+
+  private recordActiveFollowBottomIntentScrollWrite(
+    scrollTop: number,
+    source: ScrollSource,
+  ): void {
+    const intent = this.activeFollowBottomIntent
+    const data = this.dataSnapshot
+
+    if (
+      !intent ||
+      !data ||
+      source !== 'followBottom' ||
+      intent.feedId !== data.feedId ||
+      intent.generation !== data.generation
+    ) {
+      return
+    }
+
+    intent.lastScrollTop = scrollTop
+  }
+
+  private handleDestinationMotionSettle(
+    settle: DestinationMotionSettle<TMessage, TOptimistic>,
+  ): void {
+    if (
+      settle.source !== 'followBottom' ||
+      settle.bottomLockState !== 'LOCKED' ||
+      !this.hasActiveFollowBottomIntent(settle.data)
+    ) {
+      return
+    }
+
+    this.clearActiveFollowBottomIntent('settled-locked')
+  }
+
   private updatePendingFollowBottomForUserScroll(scrollTop: number): void {
     const pending = this.pendingFollowBottom
 
@@ -904,6 +1067,7 @@ export class MessageViewportRuntimeController<
     if (scrollTop < pending.lastScrollTop - USER_SCROLL_DIRECTION_EPSILON_PX) {
       // 用户主动向上阅读时，pending follow-bottom 必须让位，不能继续追逐 latest。
       this.clearPendingFollowBottom()
+      this.clearActiveFollowBottomIntent('user-scroll-up')
       return
     }
 
@@ -923,13 +1087,14 @@ export class MessageViewportRuntimeController<
   private startPendingFollowBottom(
     data: MessageDataSnapshot<TMessage, TOptimistic>,
     scrollTop: number,
+    commandId?: string,
   ): void {
-    this.followBottomCommandCounter += 1
-    const commandId = `follow-bottom-${this.followBottomCommandCounter}`
+    const resolvedCommandId =
+      commandId ?? this.ensureActiveFollowBottomIntent(data, scrollTop).commandId
     this.pendingFollowBottom = {
       feedId: data.feedId,
       generation: data.generation,
-      commandId,
+      commandId: resolvedCommandId,
       emittedAfterRevision: null,
       lastScrollTop: scrollTop,
     }
@@ -939,7 +1104,7 @@ export class MessageViewportRuntimeController<
       channel: 'motion',
       severity: 'info',
       name: 'followBottom.pending',
-      correlationId: `command:${commandId}`,
+      correlationId: `command:${resolvedCommandId}`,
       details: () => ({
         revision: data.revision,
         itemCount: data.items.length,
@@ -1006,6 +1171,7 @@ export class MessageViewportRuntimeController<
 
   private resetForGeneration(feedId: string, generation: number): void {
     this.clearPendingFollowBottom()
+    this.clearActiveFollowBottomIntent('generation-change')
     this.clearPendingDestinationRequest()
     this.motion.cancel('generation-change')
     this.lifecycle.reset(feedId, generation)
@@ -1237,6 +1403,11 @@ export class MessageViewportRuntimeController<
     const metrics = this.readScrollFrameMetrics(container)
     const scrollSource = this.scrollIntent.classifyScroll(this.currentFrame)
     this.lastScrollSource = scrollSource
+    this.updateActiveFollowBottomIntentForScroll(
+      data,
+      metrics.scrollTop,
+      scrollSource,
+    )
     if (this.lastDiagnosticScrollSource !== scrollSource) {
       this.lastDiagnosticScrollSource = scrollSource
       this.emitDiagnostic({
@@ -1321,6 +1492,65 @@ export class MessageViewportRuntimeController<
       this.currentFrame,
       scrollSource,
     )
+  }
+
+  private reconcileReadyBottomLockFromViewport(reason: string): boolean {
+    const data = this.dataSnapshot
+
+    if (!data || this.store.getSnapshot().bootstrapState !== 'READY') {
+      return false
+    }
+
+    const changed = this.reconcileBottomLockFromViewport(data, reason)
+
+    if (changed) {
+      this.projection.publish({
+        data,
+        renderWindow: this.keepCurrentWindow(data.items),
+        bootstrapState: this.store.getSnapshot().bootstrapState,
+        bottomLockState: this.scrollIntent.getBottomLockState(),
+      })
+    }
+
+    return changed
+  }
+
+  private reconcileBottomLockFromViewport(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+    reason: string,
+  ): boolean {
+    const container = this.registry.getContainer()
+
+    if (!container || data.hasMoreAfter) {
+      return false
+    }
+
+    const metrics = this.readScrollFrameMetrics(container)
+    const previousBottomLockState = this.scrollIntent.getBottomLockState()
+    const changed = this.scrollIntent.reconcileBottomLockFromDistance(
+      metrics.distanceToBottom,
+    )
+
+    if (changed) {
+      this.lastDiagnosticBottomLockState = this.scrollIntent.getBottomLockState()
+      this.emitDiagnostic({
+        channel: 'scroll',
+        severity: 'info',
+        name: 'scroll.bottomLockReconciled',
+        details: () => ({
+          reason,
+          previousBottomLockState,
+          nextBottomLockState: this.scrollIntent.getBottomLockState(),
+          scrollTop: metrics.scrollTop,
+          scrollHeight: metrics.scrollHeight,
+          clientHeight: metrics.clientHeight,
+          distanceToBottom: metrics.distanceToBottom,
+          hasMoreAfter: data.hasMoreAfter,
+        }),
+      })
+    }
+
+    return changed
   }
 
   private maybeSlideWindow(

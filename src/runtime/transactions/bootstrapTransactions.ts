@@ -187,12 +187,13 @@ async function runRestoredBootstrap<TMessage, TOptimistic>(
       resolvedRestoreTarget,
     )
     deps.scrollIntent.setBottomLockState('UNLOCKED')
+    deps.reconcileBottomLockFromViewport(data, 'restored-bootstrap-settle')
     deps.setState('READY')
     deps.projection.publish({
       data,
       renderWindow,
       bootstrapState: 'READY',
-      bottomLockState: 'UNLOCKED',
+      bottomLockState: deps.scrollIntent.getBottomLockState(),
     })
     deps.emitViewportAnchorChanged('transaction-settle', settledAnchor)
     deps.emitEvent({
