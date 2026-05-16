@@ -101,6 +101,8 @@ type DemoSnapshotKind = MessageDataSnapshot['change']['kind']
 type LoggedOperationResult = {
   effect: ViewportEffect
   kind: DemoSnapshotKind
+  anchor?: MessageDataSnapshot['anchor']
+  anchorStatus?: MessageDataSnapshot['anchorStatus']
   eventText: string
   details?: Record<string, unknown>
 }
@@ -556,6 +558,7 @@ export function useDemoMessageScenario(
   const publishCurrentMessages = useCallback((
     effect: ViewportEffect,
     kind: DemoSnapshotKind,
+    snapshotMeta: Pick<MessageDataSnapshot, 'anchor' | 'anchorStatus'> = {},
   ) => {
     revisionRef.current += 1
     hasMoreBeforeRef.current = computeHasMoreBefore(
@@ -575,6 +578,8 @@ export function useDemoMessageScenario(
         revision: revisionRef.current,
         effect,
         kind,
+        anchor: snapshotMeta.anchor,
+        anchorStatus: snapshotMeta.anchorStatus,
         hasMoreBefore: hasMoreBeforeRef.current,
         hasMoreAfter: hasMoreAfterRef.current,
       }),
@@ -783,7 +788,10 @@ export function useDemoMessageScenario(
 
       const result = await input.apply(feedId)
 
-      publishCurrentMessages(result.effect, result.kind)
+      publishCurrentMessages(result.effect, result.kind, {
+        anchor: result.anchor,
+        anchorStatus: result.anchorStatus,
+      })
 
       if (!input.skipPersist) {
         await persistCurrentFeed()
@@ -1532,6 +1540,8 @@ export function useDemoMessageScenario(
         return {
           effect: 'reset' as ViewportEffect,
           kind: 'reset' as DemoSnapshotKind,
+          anchor: resp.anchor,
+          anchorStatus: resp.anchorStatus,
           eventText: `loaded ${reason} target`,
           details: {
             total: resp.total,
@@ -2270,6 +2280,12 @@ export function useDemoMessageScenario(
         event.intent === 'jump' &&
         event.feedId === activeFeedIdRef.current
       ) {
+        if (event.resolution === 'fallback-deleted') {
+          window.alert('Quoted message was deleted. Jumped to a nearby message.')
+          setLastEvent('quoted message was deleted; jumped to nearby message')
+          return
+        }
+
         highlightJumpTarget(event.target.messageId)
       }
     })

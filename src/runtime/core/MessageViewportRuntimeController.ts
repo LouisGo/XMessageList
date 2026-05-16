@@ -907,7 +907,16 @@ export class MessageViewportRuntimeController<
       return false
     }
 
-    if (!this.hasCommittedMessage(snapshot, pending.target.messageId)) {
+    const resolvedJumpTarget =
+      pending.intent === 'jump'
+        ? this.resolvePendingJumpTarget(snapshot, pending.target)
+        : null
+
+    if (
+      pending.intent === 'jump'
+        ? !resolvedJumpTarget
+        : !this.hasCommittedMessage(snapshot, pending.target.messageId)
+    ) {
       this.emitPendingDestinationNeed(snapshot)
       return true
     }
@@ -915,9 +924,10 @@ export class MessageViewportRuntimeController<
     this.clearPendingDestinationRequest()
 
     if (pending.intent === 'jump') {
-      this.enqueueJumpTransaction(pending.target, {
+      this.enqueueJumpTransaction(resolvedJumpTarget, {
         forceAnimateFrom: pending.forceAnimateFrom,
         animate: pending.animateOnResolve,
+        originalTarget: pending.target,
       })
       return true
     }
@@ -1129,6 +1139,8 @@ export class MessageViewportRuntimeController<
   private emitDestinationSettled(event: {
     intent: 'jump'
     target: MessageIdentityAnchor
+    resolution: 'target' | 'fallback-deleted'
+    resolvedTarget?: MessageIdentityAnchor
   }): void {
     const token = this.dataSnapshot
       ? {
@@ -1143,6 +1155,10 @@ export class MessageViewportRuntimeController<
       generation: token.generation,
       intent: event.intent,
       target: { ...event.target },
+      resolution: event.resolution,
+      resolvedTarget: event.resolvedTarget
+        ? { ...event.resolvedTarget }
+        : undefined,
     })
   }
 
@@ -1244,6 +1260,25 @@ export class MessageViewportRuntimeController<
     return this.renderWindow.findCommittedMessageIndex(data.items, messageId) >= 0
   }
 
+  private resolvePendingJumpTarget(
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+    target: MessageIdentityAnchor,
+  ): MessageIdentityAnchor | null {
+    if (this.hasCommittedMessage(snapshot, target.messageId)) {
+      return target
+    }
+
+    if (
+      snapshot.anchorStatus === 'deleted' &&
+      snapshot.anchor &&
+      this.hasCommittedMessage(snapshot, snapshot.anchor.messageId)
+    ) {
+      return { ...snapshot.anchor }
+    }
+
+    return null
+  }
+
   private getIdentityTarget(
     target: AnchorState | MessageIdentityAnchor,
   ): MessageIdentityAnchor | null {
@@ -1341,6 +1376,7 @@ export class MessageViewportRuntimeController<
       forceAnimateFrom?: DestinationMotionForcedStart
       allowPreposition?: boolean
       animate?: boolean
+      originalTarget?: MessageIdentityAnchor
     } = {},
   ): void {
     this.transactions.enqueue(

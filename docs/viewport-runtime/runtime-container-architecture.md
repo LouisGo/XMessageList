@@ -245,6 +245,8 @@ type MessageViewportRuntimeEvent =
       generation: number;
       intent: 'jump';
       target: MessageIdentityAnchor;
+      resolution: 'target' | 'fallback-deleted';
+      resolvedTarget?: MessageIdentityAnchor;
     }
   | {
       type: 'viewportAnchorChanged';

@@ -406,6 +406,7 @@ command jump(target identity, optional origin identity)
 -> if target not in DataWindow: emit needMessagesAround(jump, target), no motion
 -> data layer loads around target directly, without filling the gap
 -> runtime computes window around target
+-> if anchorStatus is deleted, use snapshot.anchor as resolved jump target
 -> publish projection
 -> wait commit
 -> resolve measurable target row
@@ -418,7 +419,7 @@ command jump(target identity, optional origin identity)
      set targetTop directly without directional animation
 -> [motion settle callback]:
      set UNLOCKED
-     emit destinationSettled(jump, target)
+     emit destinationSettled(jump, target, resolution, resolvedTarget?)
      emit viewportAnchorChanged(transaction-settle)
 ```
 
@@ -432,10 +433,14 @@ command jump(target identity, optional origin identity)
   position 方向做 bounded motion；没有可靠 origin 的外部分享、收藏、mention 等定位
   直接落到目标，不做方向性动画。
 - target row 未挂载时不启动动画。
+- 如果 BFF 返回 `anchorStatus: deleted`，runtime 必须使用 `snapshot.anchor`
+  作为实际定位目标；`destinationSettled` 保留原始 `target`，并通过
+  `resolution: 'fallback-deleted'` 和 `resolvedTarget` 暴露 fallback 结果。
+  展示层可以据此提示“原消息已删除”，不应该把 fallback 行伪装成原目标高亮。
 - target DOM fallback 仍按现有 nearest measurable row 逻辑。
 - 如果 command 被新的 jump / followBottom supersede，取消当前 motion。
 - 动画期间 scroll source 是 `jump`。
-- `destinationSettled(jump, target)` 和
+- `destinationSettled(jump, target, resolution, resolvedTarget?)` 和
   `viewportAnchorChanged(transaction-settle)` 由 motion/instant settle 路径触发。
 - Runtime 只发出目标定位完成事件；高亮样式、持续时间和重复触发策略由接入方消费
   `destinationSettled` 后自行决定。
@@ -669,7 +674,7 @@ Runtime unit tests:
 - far jump / restore with target outside DataWindow emits `needMessagesAround` and starts no motion before data arrives.
 - after around-target window loads, pending jump / restore consumes the snapshot; rebuilt jump with origin position animates in the correct physical direction, while directionless jump settles instantly.
 - already-loaded quote jump animates directly to the target without far-jump fake pre-positioning.
-- jump settle emits `destinationSettled(jump, target)` only after the target transaction actually completes.
+- jump settle emits `destinationSettled(jump, target, resolution, resolvedTarget?)` only after the target transaction actually completes.
 - far follow bottom writes an immediate near-target scrollTop, then animates bounded final segment.
 - far pre-positioning uses `followBottom` / `jump` source tokens, never `recovery`.
 - jump to far target waits for target window commit and measurable row before motion.

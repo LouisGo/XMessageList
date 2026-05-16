@@ -896,6 +896,72 @@ describe('MessageViewportRuntime', () => {
     expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
   })
 
+  it('jumps to the resolved anchor when a missing jump target was deleted', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 30,
+      revision: 1,
+      effect: 'reset',
+      start: 31,
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    events.length = 0
+
+    runtime.dispatch({
+      type: 'jump',
+      origin: { messageId: 'm-32', position: 32 },
+      target: { messageId: 'm-17', position: 17 },
+    })
+    await Promise.resolve()
+
+    const aroundSnapshot = createSnapshot({
+      count: 42,
+      revision: 2,
+      effect: 'reset',
+      start: 1,
+    })
+    runtime.setDataSnapshot({
+      ...aroundSnapshot,
+      items: aroundSnapshot.items.filter(
+        (item) => item.key.kind !== 'committed' || item.key.messageId !== 'm-17',
+      ),
+      anchor: { messageId: 'm-14', position: 14 },
+      anchorStatus: 'deleted',
+    })
+    await Promise.resolve()
+
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await flushMotion(scheduler)
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'destinationSettled',
+        intent: 'jump',
+        target: { messageId: 'm-17', position: 17 },
+        resolution: 'fallback-deleted',
+        resolvedTarget: { messageId: 'm-14', position: 14 },
+      }),
+    )
+    expect(events.some((event) =>
+      event.type === 'viewportError' && event.code === 'jump-target-missing',
+    )).toBe(false)
+  })
+
   it('emits a viewportAnchorChanged event after scroll idle', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
@@ -1832,6 +1898,7 @@ describe('MessageViewportRuntime', () => {
         type: 'destinationSettled',
         intent: 'jump',
         target: { messageId: 'm-10' },
+        resolution: 'target',
       }),
     )
   })

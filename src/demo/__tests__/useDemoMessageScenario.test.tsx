@@ -537,6 +537,61 @@ describe('useDemoMessageScenario', () => {
     )
   })
 
+  it('publishes deleted around-target fallback anchor to runtime', async () => {
+    const { runtime, emitEvent } = createRuntimeStub()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    const feed = makeFeed('feed-runtime', 42)
+    feed.messages = feed.messages.filter(
+      (message) => message.id !== 'feed-runtime-m-17',
+    )
+    store.set('feed-runtime', feed)
+
+    await act(async () => {
+      root.render(
+        <TestHarness runtime={runtime} onScenario={(next) => {
+          scenario = next
+        }}
+        />,
+      )
+    })
+
+    await flushTimers(180)
+
+    await act(async () => {
+      emitEvent({
+        type: 'needMessagesAround',
+        feedId: 'feed-runtime',
+        generation: 2,
+        reason: 'jump',
+        target: { messageId: 'feed-runtime-m-17', position: 17 },
+      })
+    })
+    await flushTimers(220)
+
+    const latestSnapshot = vi.mocked(runtime.setDataSnapshot).mock.calls.at(-1)?.[0]
+
+    expect(scenario?.loadedMessageCount).toBe(36)
+    expect(latestSnapshot?.anchorStatus).toBe('deleted')
+    expect(latestSnapshot?.anchor).toEqual({
+      messageId: 'feed-runtime-m-16',
+      position: 16,
+    })
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'history.around',
+        phase: 'success',
+        details: expect.objectContaining({
+          target: { messageId: 'feed-runtime-m-17', position: 17 },
+          anchor: { messageId: 'feed-runtime-m-16', position: 16 },
+          anchorStatus: 'deleted',
+        }),
+      }),
+    )
+  })
+
   it('dispatches quote clicks as runtime jump commands only', async () => {
     const { runtime } = createRuntimeStub()
     const host = document.createElement('div')
@@ -625,6 +680,7 @@ describe('useDemoMessageScenario', () => {
         generation: 2,
         intent: 'jump',
         target: { messageId: 'feed-runtime-m-12', position: 12 },
+        resolution: 'target',
       })
     })
 
@@ -634,6 +690,45 @@ describe('useDemoMessageScenario', () => {
     await flushTimers(1400)
 
     expect(scenario?.highlightedMessageId).toBeNull()
+  })
+
+  it('does not highlight when a deleted quote target falls back', async () => {
+    const { runtime, emitEvent } = createRuntimeStub()
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    await act(async () => {
+      root.render(
+        <TestHarness runtime={runtime} onScenario={(next) => {
+          scenario = next
+        }}
+        />,
+      )
+    })
+
+    await flushTimers(180)
+
+    act(() => {
+      emitEvent({
+        type: 'destinationSettled',
+        feedId: 'feed-runtime',
+        generation: 2,
+        intent: 'jump',
+        target: { messageId: 'feed-runtime-m-17', position: 17 },
+        resolution: 'fallback-deleted',
+        resolvedTarget: { messageId: 'feed-runtime-m-14', position: 14 },
+      })
+    })
+
+    expect(scenario?.highlightedMessageId).toBeNull()
+    expect(alertSpy).toHaveBeenCalledWith(
+      'Quoted message was deleted. Jumped to a nearby message.',
+    )
+    expect(scenario?.lastEvent).toBe(
+      'quoted message was deleted; jumped to nearby message',
+    )
   })
 
   it('persists edit, delete, and reaction mutations for loaded messages', async () => {

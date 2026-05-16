@@ -82,6 +82,8 @@ export type DestinationMotionSettle<TMessage, TOptimistic> = {
   destination?: {
     intent: 'jump'
     target: MessageIdentityAnchor
+    resolution: 'target' | 'fallback-deleted'
+    resolvedTarget?: MessageIdentityAnchor
   }
 }
 

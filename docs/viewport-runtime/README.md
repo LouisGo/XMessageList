@@ -70,6 +70,9 @@ Data runtime / BFF 负责把 `MessageIdentityAnchor` 解析为当前
 `MessageDataSnapshot` 内可定位的 anchor，包括 deleted anchor 的 nearest
 neighbor fallback。Viewport runtime 只做 projection 内的 DOM fallback：目标行已
 在 snapshot 中但 commit 后不可测量时 retry 或选择已挂载的 nearest measurable row。
+当 `anchorStatus: deleted` 时，Viewport runtime 必须把 `snapshot.anchor` 作为
+实际 jump/restore 目标消费，不能继续要求原始 deleted messageId 出现在
+DataWindow 中。
 
 ## 当前代码形态
 

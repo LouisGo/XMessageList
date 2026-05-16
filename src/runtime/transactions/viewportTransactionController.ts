@@ -81,6 +81,8 @@ export type ViewportTransactionDeps<TMessage, TOptimistic> = {
   emitDestinationSettled: (event: {
     intent: 'jump'
     target: MessageIdentityAnchor
+    resolution: 'target' | 'fallback-deleted'
+    resolvedTarget?: MessageIdentityAnchor
   }) => void
   invalidateSpacerCache: () => void
   emitEvent: (event: MessageViewportRuntimeEvent) => void
@@ -364,6 +366,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       forceAnimateFrom?: DestinationMotionForcedStart
       allowPreposition?: boolean
       animate?: boolean
+      originalTarget?: MessageIdentityAnchor
     } = {},
   ): Promise<void> {
     const data = this.deps.getDataSnapshot()
@@ -449,7 +452,9 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         })
         this.deps.emitDestinationSettled({
           intent: 'jump',
-          target: targetAnchor,
+          target: options.originalTarget ?? targetAnchor,
+          resolution: getJumpResolution(options.originalTarget, targetAnchor),
+          resolvedTarget: targetAnchor,
         })
         this.deps.emitViewportAnchorChanged('transaction-settle')
         return
@@ -465,7 +470,9 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         allowPreposition: options.allowPreposition,
         destination: {
           intent: 'jump',
-          target: targetAnchor,
+          target: options.originalTarget ?? targetAnchor,
+          resolution: getJumpResolution(options.originalTarget, targetAnchor),
+          resolvedTarget: targetAnchor,
         },
       })
     } catch (error) {
@@ -943,4 +950,15 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         : 0,
     }
   }
+}
+
+function getJumpResolution(
+  originalTarget: MessageIdentityAnchor | undefined,
+  resolvedTarget: MessageIdentityAnchor,
+): 'target' | 'fallback-deleted' {
+  if (!originalTarget || originalTarget.messageId === resolvedTarget.messageId) {
+    return 'target'
+  }
+
+  return 'fallback-deleted'
 }
