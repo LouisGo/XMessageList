@@ -1983,7 +1983,7 @@ describe('MessageViewportRuntime', () => {
     expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
   })
 
-  it('continues top edge paging across revisions while scrollbar stays at the edge', async () => {
+  it('continues top edge paging after prepend while scrollbar drag stays at the edge', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
     const events: string[] = []
@@ -2018,23 +2018,10 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
     await flushScrollFrames(container, scheduler, 3)
 
-    container.scrollTop = 0
-    await flushTrustedScrollFrame(container, scheduler)
-    const nextSlideSnapshot = runtime.getSnapshot()
-    mountProjection(runtime, container, nextSlideSnapshot)
-    runtime.notifyProjectionCommitted({
-      feedId: nextSlideSnapshot.feedId,
-      generation: nextSlideSnapshot.generation,
-      revision: nextSlideSnapshot.revision,
-    })
-    await Promise.resolve()
-    await Promise.resolve()
-    await flushTrustedScrollFrame(container, scheduler)
-
     expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(2)
   })
 
-  it('latches trusted bottom scrollbar paging within the same revision', async () => {
+  it('continues bottom edge paging after append while scrollbar drag stays at the edge', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
     const events: string[] = []
@@ -2043,14 +2030,12 @@ describe('MessageViewportRuntime', () => {
       events.push(event.type)
     })
     runtime.attach(container)
-    runtime.setDataSnapshot(
-      createSnapshot({
-        count: 10,
-        revision: 1,
-        effect: 'reset',
-        hasMoreAfter: true,
-      }),
-    )
+    runtime.setDataSnapshot(createSnapshot({
+      count: 10,
+      revision: 1,
+      effect: 'reset',
+      hasMoreAfter: true,
+    }))
     runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
@@ -2058,6 +2043,15 @@ describe('MessageViewportRuntime', () => {
 
     container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
     await flushTrustedScrollFrame(container, scheduler)
+    expect(events.filter((event) => event === 'needMoreAfter')).toHaveLength(1)
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 30,
+      revision: 2,
+      effect: 'append',
+      hasMoreAfter: true,
+    }))
+    await Promise.resolve()
     const nextSlideSnapshot = runtime.getSnapshot()
     mountProjection(runtime, container, nextSlideSnapshot)
     runtime.notifyProjectionCommitted({
@@ -2067,10 +2061,10 @@ describe('MessageViewportRuntime', () => {
     })
     await Promise.resolve()
     await Promise.resolve()
-    await flushTrustedScrollFrame(container, scheduler)
-    expect(events.filter((event) => event === 'needMoreAfter')).toHaveLength(1)
+    scheduler.flushFrame()
+    await Promise.resolve()
 
-    expect(events.filter((event) => event === 'needMoreAfter')).toHaveLength(1)
+    expect(events.filter((event) => event === 'needMoreAfter')).toHaveLength(2)
   })
 
   it('does not release top edge latch for recovery scroll after prepend', async () => {

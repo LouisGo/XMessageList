@@ -155,6 +155,8 @@ export class MessageViewportRuntimeController<
 
   private anchorIdleTimer: number | null = null
 
+  private scrollbarDragEdgeRecheckRaf: number | null = null
+
   private currentFrame = 0
 
   private lastScrollSource: ScrollSource | null = null
@@ -176,6 +178,8 @@ export class MessageViewportRuntimeController<
   private lastContainerSize: ContainerSize | null = null
 
   private scrollbarDragIntentActive = false
+
+  private scrollbarDragEdgeIntent: 'before' | 'after' | null = null
 
   private readonly handleScroll = (event: Event): void => {
     if (
@@ -211,6 +215,7 @@ export class MessageViewportRuntimeController<
 
   private readonly handleScrollbarDragEnd = (): void => {
     this.scrollbarDragIntentActive = false
+    this.scrollbarDragEdgeIntent = null
   }
 
   constructor(options: MessageViewportRuntimeOptions = {}) {
@@ -1436,6 +1441,74 @@ export class MessageViewportRuntimeController<
     })
   }
 
+  private scheduleScrollbarDragEdgeRecheck(reason: string): void {
+    if (
+      !this.scrollbarDragIntentActive ||
+      this.scrollbarDragEdgeRecheckRaf !== null
+    ) {
+      return
+    }
+
+    const token = this.lifecycle.getCurrent()
+    this.scrollbarDragEdgeRecheckRaf = this.scheduler.requestAnimationFrame(() => {
+      this.scrollbarDragEdgeRecheckRaf = null
+      this.currentFrame += 1
+
+      if (!this.lifecycle.isCurrent(token.feedId, token.generation)) {
+        return
+      }
+
+      this.handleScrollbarDragEdgeRecheckFrame(reason)
+    })
+  }
+
+  private handleScrollbarDragEdgeRecheckFrame(reason: string): void {
+    if (!this.scrollbarDragIntentActive || this.state !== 'READY') {
+      return
+    }
+
+    const data = this.dataSnapshot
+    const container = this.registry.getContainer()
+
+    if (!data || !container) {
+      return
+    }
+
+    const metrics = this.readScrollFrameMetrics(container)
+    const edgeMetrics = this.getScrollbarDragEdgeIntentMetrics(data, metrics)
+    this.lastScrollSource = 'user'
+    this.emitDiagnostic({
+      channel: 'edge',
+      severity: 'debug',
+      name: 'edge.scrollbarDragRecheck',
+      details: () => ({
+        reason,
+        edgeIntent: this.scrollbarDragEdgeIntent,
+        scrollTop: edgeMetrics.scrollTop,
+        distanceToBottom: edgeMetrics.distanceToBottom,
+        actualScrollTop: metrics.scrollTop,
+        actualDistanceToBottom: metrics.distanceToBottom,
+        scrollHeight: edgeMetrics.scrollHeight,
+        clientHeight: edgeMetrics.clientHeight,
+      }),
+    })
+    this.edge.emitEdgeNeeds({
+      data,
+      metrics: edgeMetrics,
+      scrollSource: 'user',
+      lastUserScrollTop: this.lastUserScrollTop,
+      lastUserDistanceToBottom: this.lastUserDistanceToBottom,
+    })
+    if (this.scrollbarDragEdgeIntent) {
+      this.edge.emitScrollbarDragEdgeNeed({
+        data,
+        edge: this.scrollbarDragEdgeIntent,
+      })
+    }
+    this.lastUserScrollTop = edgeMetrics.scrollTop
+    this.lastUserDistanceToBottom = edgeMetrics.distanceToBottom
+  }
+
   private handleScrollFrame(): void {
     const data = this.dataSnapshot
     const container = this.registry.getContainer()
@@ -1506,6 +1579,7 @@ export class MessageViewportRuntimeController<
     })
 
     if (scrollSource === 'user') {
+      this.updateScrollbarDragEdgeIntent(data, metrics)
       // 只有真实用户滚动能更新用户意图基线；runtime 写 scrollTop 不应影响 edge latch 释放。
       this.updatePendingFollowBottomForUserScroll(metrics.scrollTop)
       this.lastUserScrollTop = metrics.scrollTop
@@ -1516,6 +1590,57 @@ export class MessageViewportRuntimeController<
     if (this.state === 'READY') {
       this.maybeSlideWindow(data, metrics)
     }
+  }
+
+  private updateScrollbarDragEdgeIntent(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+    metrics: ScrollFrameMetrics,
+  ): void {
+    if (!this.scrollbarDragIntentActive) {
+      return
+    }
+
+    const snapshot = this.store.getSnapshot()
+
+    if (
+      data.hasMoreBefore &&
+      snapshot.renderWindow.startIndex === 0 &&
+      metrics.scrollTop <= this.edgeLoadThresholdPx
+    ) {
+      this.scrollbarDragEdgeIntent = 'before'
+      return
+    }
+
+    if (
+      data.hasMoreAfter &&
+      snapshot.renderWindow.endIndex >= data.items.length - 1 &&
+      metrics.distanceToBottom <= this.edgeLoadThresholdPx
+    ) {
+      this.scrollbarDragEdgeIntent = 'after'
+    }
+  }
+
+  private getScrollbarDragEdgeIntentMetrics(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+    metrics: ScrollFrameMetrics,
+  ): ScrollFrameMetrics {
+    if (this.scrollbarDragEdgeIntent === 'before' && data.hasMoreBefore) {
+      return {
+        ...metrics,
+        scrollTop: 0,
+        distanceToBottom: Math.max(0, metrics.scrollHeight - metrics.clientHeight),
+      }
+    }
+
+    if (this.scrollbarDragEdgeIntent === 'after' && data.hasMoreAfter) {
+      return {
+        ...metrics,
+        scrollTop: Math.max(0, metrics.scrollHeight - metrics.clientHeight),
+        distanceToBottom: 0,
+      }
+    }
+
+    return metrics
   }
 
   private updateBottomLockForDataWindow(
@@ -1872,6 +1997,10 @@ export class MessageViewportRuntimeController<
       reason,
       anchor: anchor ? cloneAnchorState(anchor) : null,
     })
+
+    if (reason === 'transaction-settle') {
+      this.scheduleScrollbarDragEdgeRecheck('transaction-settle')
+    }
   }
 
   private getEdgeThresholdPx(metrics: ScrollFrameMetrics): number {

@@ -158,6 +158,46 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
     return source === 'user' || source === 'momentum'
   }
 
+  emitScrollbarDragEdgeNeed(input: {
+    data: MessageDataSnapshot<TMessage, TOptimistic>
+    edge: 'before' | 'after'
+  }): void {
+    if (!this.canEmitEdgeNeeds()) {
+      return
+    }
+
+    const { data, edge } = input
+
+    if (
+      edge === 'before' &&
+      data.hasMoreBefore &&
+      this.beforeEdgeRequestRevision !== data.revision
+    ) {
+      this.beforeEdgeRequestRevision = data.revision
+      this.emitEvent({
+        type: 'needMoreBefore',
+        feedId: data.feedId,
+        generation: data.generation,
+        reason: 'near-top',
+      })
+    }
+
+    if (
+      edge === 'after' &&
+      data.hasMoreAfter &&
+      !this.hasPendingFollowBottom() &&
+      this.afterEdgeRequestRevision !== data.revision
+    ) {
+      this.afterEdgeRequestRevision = data.revision
+      this.emitEvent({
+        type: 'needMoreAfter',
+        feedId: data.feedId,
+        generation: data.generation,
+        reason: 'near-bottom',
+      })
+    }
+  }
+
   isAtBeforeDataEdge(): boolean {
     return this.store.getSnapshot().renderWindow.startIndex === 0
   }
