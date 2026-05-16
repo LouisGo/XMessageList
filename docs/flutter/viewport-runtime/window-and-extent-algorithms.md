@@ -16,17 +16,16 @@ MaterializedWindow {
 }
 
 WindowConfig {
-  minOverscanExtent
-  maxOverscanExtent
-  minMaterializedItems
+  overscan
   maxMaterializedItems
-  defaultItemExtent
 }
 ```
 
-这些配置约束的是 runtime row unit，不承诺等于业务 message 条数。如果后续引入 date
-divider、unread divider、sender grouping，也应以 runtime row unit 作为 window、
-trim 和 anchor 的稳定单位。
+`overscan` 是 viewport extent 倍数；`maxMaterializedItems` 是硬上限，不是目标
+DOM / render object 数量。runtime 内部可以保留最小 materialized row 下限和默认
+extent fallback，但这些不是业务调用方需要调的公开契约。如果后续引入 date divider、
+unread divider、sender grouping，也应以 runtime row unit 作为 window、trim 和
+anchor 的稳定单位。
 
 ## 3. Window Sliding Trigger
 
@@ -39,7 +38,7 @@ scroll metrics 是权威触发，edge signal 只能预热数据读取或提示 r
 ```text
 distanceToBeforeEdge
 distanceToAfterEdge
-minOverscanExtent
+viewportExtent * overscan
 ```
 
 edge signal 不能直接修改 MaterializedWindow。Window 修改必须进入 transaction。
@@ -62,12 +61,12 @@ computeWindowAroundAnchor(
 
 - latest bootstrap、followBottom、bottom locked append 以 latest item 或 bottom anchor
   为局部 anchor，使用 viewport-aware window 计算。
-- 如果暂时拿不到有效 viewport extent，latest window 可以退回到尾部
-  `minMaterializedItems` 的保守 fallback。
+- 如果暂时拿不到有效 viewport extent，latest window 可以退回到尾部内部最小
+  materialized row 数的保守 fallback。
 - `anchorIndex` 只是当前 data snapshot 内的派生值。
 - 持久恢复和跨层定位不能使用 index。
 - 当前 anchor 不存在时，先使用 nearest visible item，再必要时 reset bootstrap。
-- anchor 靠近数据边界且 window 低于最小条数时，缺少 quota 尽量向有数据的一侧补齐。
+- anchor 靠近数据边界且 window 低于内部最小条数时，缺少 quota 尽量向有数据的一侧补齐。
 
 ## 5. Trim Order
 
@@ -125,9 +124,8 @@ Cache 回收应优先删除已经不在当前 data snapshot 的 key，再删除�
 ```text
 estimateItemExtent(key) =
   heightCache[key]
-  or localAverageByKind
-  or feedRollingAverage
-  or defaultItemExtent
+  or item.estimatedExtent hint
+  or internal default extent fallback
 ```
 
 范围估算：

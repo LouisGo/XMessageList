@@ -44,6 +44,12 @@ export class ScrollIntentEngine {
     this.userIntentExpiresAtFrame = -1
   }
 
+  hasActiveScrollWrite(currentFrame: number): boolean {
+    return Boolean(
+      this.currentWrite && this.currentWrite.expiresAtFrame >= currentFrame,
+    )
+  }
+
   markUserIntent(currentFrame: number): void {
     this.currentWrite = null
     this.userIntentExpiresAtFrame = Math.max(

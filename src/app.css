@@ -446,6 +446,11 @@ h1 {
   pointer-events: none;
 }
 
+.history-loading-bottom {
+  top: auto;
+  bottom: 12px;
+}
+
 .follow-bottom-button {
   position: absolute;
   right: 24px;

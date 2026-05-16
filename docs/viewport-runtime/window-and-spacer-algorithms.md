@@ -16,27 +16,21 @@ type RenderWindow = {
 };
 
 type WindowConfig = {
-  minOverscanPx: number;
-  maxOverscanPx: number;
-  minMountedItems: number;
-  maxMountedItems: number;
-  trimMarginPx: number;
-  defaultItemHeight: number;
+  overscan?: number;
+  maxMountedItems?: number;
 };
 ```
 
 当前原型默认配置：
 
-| Field               | Value                |
-| ------------------- | -------------------- |
-| `minOverscanPx`     | `0` -> fallback to `2 * viewportHeight` |
-| `maxOverscanPx`     | `0` -> fallback to `6 * viewportHeight` |
-| `minMountedItems`   | 40                   |
-| `maxMountedItems`   | 200                  |
-| `trimMarginPx`      | `0`（保留字段，当前实现未接入） |
-| `defaultItemHeight` | 72                   |
+| Field             | Value |
+| ----------------- | ----- |
+| `overscan`        | 3     |
+| `maxMountedItems` | 200   |
 
-这些值是当前 repo 里的保守默认值。demo / test 可以覆盖它们；真实项目如果需要把 mounted row 提高到更大的量级，必须基于消息密度、图片比例和 Electron 性能数据复测，而不是直接套旧文档里的 120 / 800。
+`overscan` 是 viewport 倍数，不是像素阈值。`maxMountedItems` 是硬上限，不是目标 DOM 数量；实际 mounted row count 由 viewport、消息高度、数据边界和内部安全下限共同决定。
+
+Runtime 内部保留 `MIN_MOUNTED_ITEMS = 40` 和 `DEFAULT_ITEM_ESTIMATE_PX = 104`。正常文档流方案不把高度估算作为公开配置；估算只用于未测量区域的 spacer/window 粗估，真实稳定性依赖 commit 后同步测量、ResizeObserver dirty batching 和 anchor rect correction。
 
 ## 3. Window Sliding Trigger
 
@@ -48,9 +42,10 @@ Runtime 同时使用 scroll position 和 sentinels：
 触发条件：
 
 ```ts
-const nearTop = scrollTop < topSpacer + config.minOverscanPx;
+const edgeThresholdPx = clientHeight * config.overscan;
+const nearTop = scrollTop < topSpacer + edgeThresholdPx;
 const nearBottom =
-  scrollHeight - scrollTop - clientHeight < bottomSpacer + config.minOverscanPx;
+  scrollHeight - scrollTop - clientHeight < bottomSpacer + edgeThresholdPx;
 ```
 
 sentinel 进入 root margin 时可以提前发出 `needMoreBefore` / `needMoreAfter`，但不能直接修改 window。Window 修改必须进入 transaction。
@@ -67,16 +62,8 @@ function computeWindowAroundAnchor(input: {
   heightCache: HeightCache;
   config: WindowConfig;
 }): RenderWindow {
-  const targetPxBefore = clamp(
-    input.viewportHeight * 3,
-    input.config.minOverscanPx,
-    input.config.maxOverscanPx,
-  );
-  const targetPxAfter = clamp(
-    input.viewportHeight * 4,
-    input.config.minOverscanPx,
-    input.config.maxOverscanPx,
-  );
+  const targetPxBefore = input.viewportHeight * input.config.overscan;
+  const targetPxAfter = input.viewportHeight * input.config.overscan * 1.25;
 
   const startIndex = walkBackwardByEstimatedHeight(
     input.anchorIndex,
@@ -94,12 +81,12 @@ function computeWindowAroundAnchor(input: {
 规则：
 
 - `latest bootstrap`、`followBottom`、bottom locked append 不再只依赖固定条数窗口；当前实现会把最后一条 item 作为局部 anchor，走同一套 viewport-aware window 计算。
-- 如果 container 暂时拿不到有效 viewport 尺寸，latest window 会退回到“尾部 `minMountedItems` 条”的保守 fallback。
-- `minMountedItems` / `maxMountedItems` 约束的是 mounted projection rows，不承诺等于业务 message 条数。
+- 如果 container 暂时拿不到有效 viewport 尺寸，latest window 会退回到尾部内部最小 mounted 条数的保守 fallback。
+- 内部最小 mounted 条数和 `maxMountedItems` 约束的是 mounted projection rows，不承诺等于业务 message 条数。
 - `anchorIndex` 只是当前 DataSnapshot 内的派生值。
 - 持久恢复和跨层定位不能使用 index。
 - 如果当前 anchor 不存在，先使用 nearest visible item，再必要时 reset bootstrap。
-- 当 anchor 靠近数据边界、窗口条数仍低于 `minMountedItems` 时，缺少的 quota 会尽量向还有剩余数据的一侧补齐。
+- 当 anchor 靠近数据边界、窗口条数仍低于内部最小 mounted 条数时，缺少的 quota 会尽量向还有剩余数据的一侧补齐。
 
 ## 5. Trim Order
 
@@ -167,12 +154,11 @@ Cache key 使用 `MessageRuntimeItemKey`。
 单条估算：
 
 ```ts
-function estimateItemHeight(key: MessageRuntimeItemKey): number {
+function estimateItemHeight(item: MessageDataItem): number {
   return (
-    heightCache.get(key)?.height ??
-    localAverageByKind.get(key.kind) ??
-    feedRollingAverage ??
-    config.defaultItemHeight
+    heightCache.get(getRuntimeItemKey(item))?.height ??
+    item.estimatedHeight ??
+    DEFAULT_ITEM_ESTIMATE_PX
   );
 }
 ```

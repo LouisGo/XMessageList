@@ -19,7 +19,7 @@ import type {
   RuntimeDiagnosticEmitter,
 } from './runtimeTypes'
 
-const MAX_PROJECTED_ITEMS_CACHE_ENTRIES = 64
+const MAX_PROJECTED_ITEMS_CACHE_ENTRIES = 48
 
 export class ProjectionCoordinator<TMessage, TOptimistic> {
   private projectedItemsCacheIdentity: string | null = null

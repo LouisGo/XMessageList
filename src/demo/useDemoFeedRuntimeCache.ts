@@ -6,9 +6,8 @@ import { LRUCache } from './utils/lru'
 export const DEMO_FEED_RUNTIME_CACHE_CAPACITY = 3
 
 const DEMO_RUNTIME_WINDOW = {
-  minMountedItems: 60,
+  overscan: 3,
   maxMountedItems: 180,
-  defaultItemHeight: 104,
 }
 
 type DemoRuntimeFactory = (

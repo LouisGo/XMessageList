@@ -58,7 +58,7 @@ import type {
   ViewportTransactionKind,
   ViewportAnchorChangeReason,
   ViewportDiagnosticRecord,
-  WindowConfig,
+  NormalizedWindowConfig,
 } from '../types'
 import {
   DEFAULT_BOTTOM_LOCK_THRESHOLD_PX,
@@ -78,7 +78,7 @@ export class MessageViewportRuntimeController<
   TMessage = unknown,
   TOptimistic = unknown,
 > {
-  private readonly config: WindowConfig
+  private readonly config: NormalizedWindowConfig
 
   private readonly scheduler: RuntimeScheduler
 
@@ -175,13 +175,42 @@ export class MessageViewportRuntimeController<
 
   private lastContainerSize: ContainerSize | null = null
 
-  private readonly handleScroll = (): void => {
+  private scrollbarDragIntentActive = false
+
+  private readonly handleScroll = (event: Event): void => {
+    if (
+      this.isScrollbarDragScrollEvent(event) &&
+      !this.scrollIntent.hasActiveScrollWrite(this.currentFrame)
+    ) {
+      this.scrollIntent.markUserIntent(this.currentFrame)
+    }
+
     this.scheduleScrollRaf()
   }
 
   private readonly handleUserScrollIntent = (): void => {
     this.scrollIntent.markUserIntent(this.currentFrame)
     this.motion.cancel('user-interrupt')
+  }
+
+  private readonly handlePointerScrollIntent = (event: PointerEvent): void => {
+    if (this.isLikelyScrollbarPointerEvent(event)) {
+      this.scrollbarDragIntentActive = true
+    }
+
+    this.handleUserScrollIntent()
+  }
+
+  private readonly handleMouseScrollIntent = (event: MouseEvent): void => {
+    if (this.isLikelyScrollbarPointerEvent(event)) {
+      this.scrollbarDragIntentActive = true
+    }
+
+    this.handleUserScrollIntent()
+  }
+
+  private readonly handleScrollbarDragEnd = (): void => {
+    this.scrollbarDragIntentActive = false
   }
 
   constructor(options: MessageViewportRuntimeOptions = {}) {
@@ -221,7 +250,7 @@ export class MessageViewportRuntimeController<
       createEmptySnapshot<TMessage, TOptimistic>(feedId, generation),
     )
     this.lifecycle = new LifecycleGuard(feedId, generation)
-    this.spacer = new SpacerEngine(this.config, this.heightCache)
+    this.spacer = new SpacerEngine(this.heightCache)
     this.renderWindow = new RenderWindowEngine(this.config, this.spacer)
     this.measurement = new MeasurementEngine(
       this.heightCache,
@@ -375,8 +404,12 @@ export class MessageViewportRuntimeController<
     container.addEventListener('touchstart', this.handleUserScrollIntent, {
       passive: true,
     })
-    container.addEventListener('pointerdown', this.handleUserScrollIntent)
+    container.addEventListener('pointerdown', this.handlePointerScrollIntent)
+    container.addEventListener('mousedown', this.handleMouseScrollIntent)
     container.addEventListener('keydown', this.handleUserScrollIntent)
+    window.addEventListener('pointerup', this.handleScrollbarDragEnd)
+    window.addEventListener('mouseup', this.handleScrollbarDragEnd)
+    window.addEventListener('blur', this.handleScrollbarDragEnd)
     this.setupContainerObserver(container)
     this.edge.setupIntersectionObserver(container)
     this.state =
@@ -433,8 +466,12 @@ export class MessageViewportRuntimeController<
       container.removeEventListener('scroll', this.handleScroll)
       container.removeEventListener('wheel', this.handleUserScrollIntent)
       container.removeEventListener('touchstart', this.handleUserScrollIntent)
-      container.removeEventListener('pointerdown', this.handleUserScrollIntent)
+      container.removeEventListener('pointerdown', this.handlePointerScrollIntent)
+      container.removeEventListener('mousedown', this.handleMouseScrollIntent)
       container.removeEventListener('keydown', this.handleUserScrollIntent)
+      window.removeEventListener('pointerup', this.handleScrollbarDragEnd)
+      window.removeEventListener('mouseup', this.handleScrollbarDragEnd)
+      window.removeEventListener('blur', this.handleScrollbarDragEnd)
     }
 
     this.scrollIntent.clearTransientIntent()
@@ -1569,11 +1606,11 @@ export class MessageViewportRuntimeController<
     }
 
     const snapshot = this.store.getSnapshot()
-    const minOverscanPx = this.getMinOverscanPx(metrics)
-    const nearTop = metrics.scrollTop < snapshot.topSpacer + minOverscanPx
+    const edgeThresholdPx = this.getEdgeThresholdPx(metrics)
+    const nearTop = metrics.scrollTop < snapshot.topSpacer + edgeThresholdPx
     const nearBottom =
       metrics.distanceToBottom <
-      snapshot.bottomSpacer + minOverscanPx
+      snapshot.bottomSpacer + edgeThresholdPx
 
     if (!nearTop && !nearBottom) {
       return
@@ -1837,10 +1874,8 @@ export class MessageViewportRuntimeController<
     })
   }
 
-  private getMinOverscanPx(metrics: ScrollFrameMetrics): number {
-    return this.config.minOverscanPx > 0
-      ? this.config.minOverscanPx
-      : metrics.clientHeight * 2
+  private getEdgeThresholdPx(metrics: ScrollFrameMetrics): number {
+    return metrics.clientHeight * this.config.overscan
   }
 
   private readScrollFrameMetrics(container: HTMLElement): ScrollFrameMetrics {
@@ -1855,6 +1890,27 @@ export class MessageViewportRuntimeController<
       scrollHeight,
       distanceToBottom: Math.max(0, scrollHeight - scrollTop - clientHeight),
     }
+  }
+
+  private isScrollbarDragScrollEvent(event: Event): boolean {
+    return this.scrollbarDragIntentActive && (event.isTrusted || event instanceof UIEvent)
+  }
+
+  private isLikelyScrollbarPointerEvent(event: MouseEvent | PointerEvent): boolean {
+    const container = this.registry.getContainer()
+
+    if (!container || event.target !== container) {
+      return false
+    }
+
+    const rect = container.getBoundingClientRect()
+    const verticalScrollbarWidth = container.offsetWidth - container.clientWidth
+
+    if (verticalScrollbarWidth <= 0) {
+      return true
+    }
+
+    return event.clientX >= rect.right - verticalScrollbarWidth - 2
   }
 
   private readContainerSize(container: HTMLElement): ContainerSize {

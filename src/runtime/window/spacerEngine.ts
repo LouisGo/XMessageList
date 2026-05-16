@@ -2,9 +2,9 @@ import type {
   HeightRecord,
   MessageDataItem,
   MessageRuntimeItemKey,
-  WindowConfig,
 } from '../types'
 import {
+  DEFAULT_ITEM_ESTIMATE_PX,
   getItemEstimatedHeight,
   getRuntimeItemKey,
   getWidthBucket,
@@ -25,7 +25,6 @@ export class SpacerEngine {
   private readonly rangeHeightCache = new Map<string, number>()
 
   constructor(
-    private readonly config: WindowConfig,
     private readonly heightCache: HeightCache,
   ) {}
 
@@ -51,12 +50,12 @@ export class SpacerEngine {
       return cached.height
     }
 
-    return getItemEstimatedHeight(item) ?? this.config.defaultItemHeight
+    return getItemEstimatedHeight(item) ?? DEFAULT_ITEM_ESTIMATE_PX
   }
 
   estimateKeyHeight(key: MessageRuntimeItemKey): number {
     const cached = this.heightCache.get(serializeRuntimeItemKey(key))
-    return cached?.height ?? this.config.defaultItemHeight
+    return cached?.height ?? DEFAULT_ITEM_ESTIMATE_PX
   }
 
   estimateRangeHeight(

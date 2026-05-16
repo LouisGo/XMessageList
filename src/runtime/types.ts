@@ -104,12 +104,13 @@ export type RenderWindow = {
 }
 
 export type WindowConfig = {
-  minOverscanPx: number
-  maxOverscanPx: number
-  minMountedItems: number
+  overscan?: number
+  maxMountedItems?: number
+}
+
+export type NormalizedWindowConfig = {
+  overscan: number
   maxMountedItems: number
-  trimMarginPx: number
-  defaultItemHeight: number
 }
 
 export type BottomLockState = 'LOCKED' | 'UNLOCKED' | 'RECOVERING'
@@ -315,7 +316,7 @@ export type RuntimeObserverFactory = {
 export type MessageViewportRuntimeOptions = {
   feedId?: string
   generation?: number
-  window?: Partial<WindowConfig>
+  window?: WindowConfig
   scrollMotion?: Partial<ScrollMotionOptions>
   debug?: {
     diagnostics?: RuntimeDiagnosticsOptions

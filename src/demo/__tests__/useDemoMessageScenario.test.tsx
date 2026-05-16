@@ -397,6 +397,7 @@ describe('useDemoMessageScenario', () => {
     await flushTimers(220)
 
     expect(scenario?.loadedMessageCount).toBe(51)
+    expect(scenario?.loadingAfter).toBe(false)
     expect(scenario?.lastEvent).toBe('loaded 20 newer messages')
     expect(runtime.dispatch).not.toHaveBeenCalledWith({ type: 'followBottom' })
     expect(mockWriteDemoLog).toHaveBeenCalledWith(
@@ -444,9 +445,11 @@ describe('useDemoMessageScenario', () => {
         reason: 'bottom-follow',
       })
     })
+    expect(scenario?.loadingAfter).toBe(false)
     await flushTimers(220)
 
     expect(scenario?.loadedMessageCount).toBe(20)
+    expect(scenario?.loadingAfter).toBe(false)
     expect(runtime.dispatch).toHaveBeenLastCalledWith({ type: 'followBottom' })
     expect(mockWriteDemoLog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -496,9 +499,11 @@ describe('useDemoMessageScenario', () => {
         target: { messageId: 'feed-runtime-m-72', position: 72 },
       })
     })
+    expect(scenario?.loadingAfter).toBe(false)
     await flushTimers(220)
 
     expect(scenario?.loadedMessageCount).toBe(31)
+    expect(scenario?.loadingAfter).toBe(false)
     expect(mockWriteDemoLog).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: 'history.around',

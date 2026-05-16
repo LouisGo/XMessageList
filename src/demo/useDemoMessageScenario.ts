@@ -154,6 +154,7 @@ export type DemoMessageScenario = {
   // 当前已经加载进 runtime data snapshot 的消息数。
   loadedMessageCount: number
   loadingBefore: boolean
+  loadingAfter: boolean
   feedLoading: boolean
   eventStormRunning: boolean
   botPushActive: boolean
@@ -189,6 +190,7 @@ export function useDemoMessageScenario(
   const [messageCount, setMessageCount] = useState(0)
   const [loadedMessageCount, setLoadedMessageCount] = useState(0)
   const [loadingBefore, setLoadingBefore] = useState(false)
+  const [loadingAfter, setLoadingAfter] = useState(false)
   const [feedLoading, setFeedLoading] = useState(true)
   const [eventStormRunning, setEventStormRunning] = useState(false)
   const [botPushActive, setBotPushActive] = useState(false)
@@ -1268,6 +1270,7 @@ export function useDemoMessageScenario(
 
   const finishAfterDataRequest = useCallback((requestFeedId: string) => {
     loadingAfterRef.current = false
+    setLoadingAfter(false)
 
     if (!queuedLatestFollowBottomRef.current) {
       return
@@ -1310,6 +1313,7 @@ export function useDemoMessageScenario(
     }
 
     loadingAfterRef.current = true
+    setLoadingAfter(true)
     const requestFeedId = activeFeedIdRef.current
 
     void runLoggedOperation({
@@ -2208,6 +2212,7 @@ export function useDemoMessageScenario(
     messageCount,
     loadedMessageCount,
     loadingBefore,
+    loadingAfter,
     feedLoading,
     eventStormRunning,
     botPushActive,

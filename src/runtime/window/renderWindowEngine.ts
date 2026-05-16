@@ -1,10 +1,15 @@
 import type {
   MessageDataItem,
   MessageRuntimeItemKey,
+  NormalizedWindowConfig,
   RenderWindow,
-  WindowConfig,
 } from '../types'
-import { clamp, getRuntimeItemKey, serializeRuntimeItemKey } from '../shared/utils'
+import {
+  MIN_MOUNTED_ITEMS,
+  clamp,
+  getRuntimeItemKey,
+  serializeRuntimeItemKey,
+} from '../shared/utils'
 import type { SpacerEngine } from './spacerEngine'
 
 type WindowAroundInput = {
@@ -26,7 +31,7 @@ export class RenderWindowEngine {
   private committedMessageIdToIndex = new Map<string, number>()
 
   constructor(
-    private readonly config: WindowConfig,
+    private readonly config: NormalizedWindowConfig,
     private readonly spacer: SpacerEngine,
   ) {}
 
@@ -58,7 +63,7 @@ export class RenderWindowEngine {
   }
 
   private computeLatestWindowByCount(items: MessageDataItem[]): RenderWindow {
-    const mountedCount = Math.min(items.length, this.config.minMountedItems)
+    const mountedCount = Math.min(items.length, MIN_MOUNTED_ITEMS)
     const startIndex = Math.max(0, items.length - mountedCount)
     const endIndex = items.length - 1
     return this.createWindow(items, startIndex, endIndex)
@@ -86,18 +91,9 @@ export class RenderWindowEngine {
     }
 
     const safeAnchorIndex = clamp(anchorIndex, 0, items.length - 1)
-    const minOverscanPx =
-      this.config.minOverscanPx > 0
-        ? this.config.minOverscanPx
-        : viewportHeight * 2
-    const maxOverscanPx =
-      this.config.maxOverscanPx > 0
-        ? this.config.maxOverscanPx
-        : viewportHeight * 6
-
     // anchor 前后使用不同 overscan：上方保阅读连续性，下方多留空间减少向下滚动频繁 slide。
-    const beforeTarget = clamp(viewportHeight * 3, minOverscanPx, maxOverscanPx)
-    const afterTarget = clamp(viewportHeight * 4, minOverscanPx, maxOverscanPx)
+    const beforeTarget = viewportHeight * this.config.overscan
+    const afterTarget = viewportHeight * this.config.overscan * 1.25
     const startIndex = this.walkBackwardByEstimatedHeight(
       items,
       safeAnchorIndex,
@@ -177,8 +173,8 @@ export class RenderWindowEngine {
     let end = endIndex
     const count = end - start + 1
 
-    if (count < this.config.minMountedItems) {
-      let remaining = Math.min(items.length, this.config.minMountedItems) - count
+    if (count < MIN_MOUNTED_ITEMS) {
+      let remaining = Math.min(items.length, MIN_MOUNTED_ITEMS) - count
       const preferredBefore = Math.min(start, Math.floor(remaining / 2))
       start -= preferredBefore
       remaining -= preferredBefore

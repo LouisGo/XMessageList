@@ -198,7 +198,7 @@ Runtime 不吞掉不可恢复错误。它发布 `viewportError`，由上层决�
 推荐场景：
 
 1. latest bootstrap 后处于 bottom locked。
-2. 高视口 + 稀疏消息时，latest / followBottom window 不应退化成只挂 `minMountedItems` 条。
+2. 高视口 + 稀疏消息时，latest / followBottom window 不应退化成只挂内部最小 mounted 条数。
 3. prepend 50 条动态高度消息，目标 anchor 视觉位置不变。
 4. 图片 decode 后高度增长，anchor 上方变化时 scrollTop 补偿。
 5. bottom locked 时 append 新消息，1 frame 内追底。

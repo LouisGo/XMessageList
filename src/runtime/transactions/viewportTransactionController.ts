@@ -582,6 +582,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       container.clientHeight,
       container.clientWidth,
     )
+    const preProjectionScrollTop = container.scrollTop
     const token = this.deps.lifecycle.getCurrent()
     const previousBottomLockState = this.deps.scrollIntent.getBottomLockState()
 
@@ -601,6 +602,11 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       this.deps.measureCurrentWindow()
       this.deps.setState('READY')
       const targetTop = this.deps.motion.getBottomTargetTop(container)
+      const forceAnimateFrom =
+        Math.abs(targetTop - container.scrollTop) <= 1 &&
+        preProjectionScrollTop > targetTop + 1
+          ? 'beforeTarget' as const
+          : undefined
       this.deps.emitDiagnostic({
         channel: 'motion',
         severity: 'info',
@@ -615,6 +621,8 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
           scrollTop: container.scrollTop,
           targetTop,
           distancePx: targetTop - container.scrollTop,
+          preProjectionScrollTop,
+          forceAnimateFrom,
           scrollHeight: container.scrollHeight,
           clientHeight: container.clientHeight,
           firstRenderedKey: renderWindow.itemKeys[0] ?? null,
@@ -628,6 +636,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         data,
         renderWindow,
         bottomLockState: 'LOCKED',
+        forceAnimateFrom,
       })
     } catch (error) {
       this.deps.clearActiveFollowBottomIntent('commit-timeout')

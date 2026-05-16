@@ -107,9 +107,7 @@ function createRuntime(input?: {
     scheduler,
     observers,
     window: {
-      minMountedItems: 10,
       maxMountedItems: 20,
-      defaultItemHeight: 50,
       ...input?.window,
     },
     scrollMotion: input?.scrollMotion,
@@ -231,6 +229,16 @@ async function flushScrollFrames(
     scheduler.flushFrame()
     await Promise.resolve()
   }
+}
+
+async function flushTrustedScrollFrame(
+  container: HTMLElement,
+  scheduler: FakeScheduler,
+): Promise<void> {
+  container.dispatchEvent(new MouseEvent('mousedown'))
+  container.dispatchEvent(new UIEvent('scroll'))
+  scheduler.flushFrame()
+  await Promise.resolve()
 }
 
 function markUserScrollIntent(container: HTMLElement): void {
@@ -511,9 +519,7 @@ describe('MessageViewportRuntime', () => {
   it('recomputes the latest window on container height resize and keeps bottom lock', async () => {
     const { runtime, scheduler, observers } = createRuntime({
       window: {
-        minMountedItems: 10,
         maxMountedItems: 60,
-        defaultItemHeight: 50,
       },
     })
     const container = createContainer({ height: 300 })
@@ -527,10 +533,10 @@ describe('MessageViewportRuntime', () => {
     const beforeLength = runtime.getSnapshot().renderWindow.itemKeys.length
     Object.defineProperty(container, 'clientHeight', {
       configurable: true,
-      value: 500,
+      value: 800,
     })
 
-    observers.resizeObservers.at(-1)?.trigger(container, 500)
+    observers.resizeObservers.at(-1)?.trigger(container, 800)
     await Promise.resolve()
     scheduler.flushFrame()
     await Promise.resolve()
@@ -759,9 +765,7 @@ describe('MessageViewportRuntime', () => {
   it('recomputes latest window for locked item refresh before scrolling to bottom', async () => {
     const { runtime, scheduler } = createRuntime({
       window: {
-        minMountedItems: 10,
         maxMountedItems: 20,
-        defaultItemHeight: 50,
       },
     })
     const container = createContainer({ height: 300 })
@@ -1079,7 +1083,7 @@ describe('MessageViewportRuntime', () => {
     )
   })
 
-  it('sizes latest bootstrap window from viewport height instead of only minMountedItems', async () => {
+  it('sizes latest bootstrap window from viewport overscan and mounted floor', async () => {
     const { runtime } = createRuntime({
       window: {
         maxMountedItems: 40,
@@ -1094,14 +1098,14 @@ describe('MessageViewportRuntime', () => {
 
     const snapshot = runtime.getSnapshot()
     expect(snapshot.renderWindow.endIndex).toBe(59)
-    expect(snapshot.renderWindow.itemKeys).toHaveLength(37)
-    expect(snapshot.renderWindow.itemKeys.length).toBeGreaterThan(10)
+    expect(snapshot.renderWindow.itemKeys).toHaveLength(40)
+    expect(snapshot.renderWindow.itemKeys.length).toBeGreaterThan(20)
   })
 
-  it('keeps the minMountedItems floor when latest anchor is at the data tail', async () => {
+  it('keeps the internal mounted floor bounded by maxMountedItems at the data tail', async () => {
     const { runtime } = createRuntime({
       window: {
-        defaultItemHeight: 400,
+        maxMountedItems: 10,
       },
     })
     const container = createContainer({ height: 300 })
@@ -1156,7 +1160,7 @@ describe('MessageViewportRuntime', () => {
     snapshot = runtime.getSnapshot()
     expect(snapshot.bottomLockState).toBe('RECOVERING')
     expect(snapshot.renderWindow.endIndex).toBe(59)
-    expect(snapshot.renderWindow.itemKeys).toHaveLength(37)
+    expect(snapshot.renderWindow.itemKeys).toHaveLength(40)
   })
 
   it('keeps anchor visual top during prepend transaction', async () => {
@@ -1573,6 +1577,77 @@ describe('MessageViewportRuntime', () => {
     expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
   })
 
+  it('animates follow-bottom after latest projection clamps scrollTop to the new bottom', async () => {
+    const { runtime, scheduler } = createRuntime({
+      debug: {
+        diagnostics: {
+          channels: ['motion'],
+          emitEvents: false,
+          maxEntries: 100,
+        },
+      },
+    })
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(
+      createSnapshot({
+        count: 80,
+        revision: 1,
+        effect: 'reset',
+        hasMoreAfter: true,
+      }),
+    )
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'restored',
+      target: { messageId: 'm-30' },
+    })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    container.scrollTop = 6000
+
+    runtime.dispatch({ type: 'followBottom' })
+    await Promise.resolve()
+    runtime.setDataSnapshot(
+      createSnapshot({
+        count: 20,
+        revision: 2,
+        effect: 'auto-scroll-to-bottom',
+        hasMoreAfter: false,
+        start: 81,
+      }),
+    )
+    await Promise.resolve()
+
+    const snapshot = runtime.getSnapshot()
+    expect(snapshot.bottomLockState).toBe('RECOVERING')
+    mountProjection(runtime, container, snapshot)
+    container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const records = runtime.getDiagnosticRecords()
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        name: 'destinationMotion.start',
+        details: expect.objectContaining({
+          source: 'followBottom',
+          forcedStartTop: 0,
+        }),
+      }),
+    )
+    expect(runtime.getDebugSnapshot().motionActive).toBe(true)
+
+    await flushMotion(scheduler)
+    expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
+  })
+
   it('keeps pending follow-bottom on raw user input without scroll movement', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
@@ -1887,6 +1962,117 @@ describe('MessageViewportRuntime', () => {
     expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(2)
   })
 
+  it('treats trusted scrollbar scroll as user edge intent', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: string[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event.type)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 10, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    await flushScrollFrames(container, scheduler, 3)
+
+    container.scrollTop = 0
+    await flushTrustedScrollFrame(container, scheduler)
+
+    expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
+  })
+
+  it('continues top edge paging across revisions while scrollbar stays at the edge', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: string[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event.type)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 10, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    await flushScrollFrames(container, scheduler, 3)
+
+    container.scrollTop = 0
+    await flushTrustedScrollFrame(container, scheduler)
+    await flushTrustedScrollFrame(container, scheduler)
+    expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
+
+    runtime.setDataSnapshot(
+      createSnapshot({ count: 30, revision: 2, effect: 'prepend', start: -20 }),
+    )
+    await Promise.resolve()
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    await flushScrollFrames(container, scheduler, 3)
+
+    container.scrollTop = 0
+    await flushTrustedScrollFrame(container, scheduler)
+    const nextSlideSnapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, nextSlideSnapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: nextSlideSnapshot.feedId,
+      generation: nextSlideSnapshot.generation,
+      revision: nextSlideSnapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    await flushTrustedScrollFrame(container, scheduler)
+
+    expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(2)
+  })
+
+  it('latches trusted bottom scrollbar paging within the same revision', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: string[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event.type)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(
+      createSnapshot({
+        count: 10,
+        revision: 1,
+        effect: 'reset',
+        hasMoreAfter: true,
+      }),
+    )
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    await flushScrollFrames(container, scheduler, 3)
+
+    container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+    await flushTrustedScrollFrame(container, scheduler)
+    const nextSlideSnapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, nextSlideSnapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: nextSlideSnapshot.feedId,
+      generation: nextSlideSnapshot.generation,
+      revision: nextSlideSnapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    await flushTrustedScrollFrame(container, scheduler)
+    expect(events.filter((event) => event === 'needMoreAfter')).toHaveLength(1)
+
+    expect(events.filter((event) => event === 'needMoreAfter')).toHaveLength(1)
+  })
+
   it('does not release top edge latch for recovery scroll after prepend', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
@@ -2009,9 +2195,7 @@ describe('MessageViewportRuntime', () => {
   it('invalidates render-window indexes when a new revision reuses the same items array', async () => {
     const { runtime, scheduler } = createRuntime({
       window: {
-        minMountedItems: 10,
         maxMountedItems: 20,
-        defaultItemHeight: 50,
       },
     })
     const container = createContainer({ height: 300 })
@@ -2054,9 +2238,7 @@ describe('MessageViewportRuntime', () => {
   it('recomputes spacer estimates when a new revision reuses the same items array', async () => {
     const { runtime, scheduler } = createRuntime({
       window: {
-        minMountedItems: 10,
         maxMountedItems: 20,
-        defaultItemHeight: 50,
       },
     })
     const container = createContainer({ height: 300 })

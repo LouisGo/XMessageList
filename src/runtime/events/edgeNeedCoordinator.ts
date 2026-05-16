@@ -11,9 +11,9 @@ import type {
 } from '../types'
 
 export class EdgeNeedCoordinator<TMessage, TOptimistic> {
-  private beforeEdgeRequestLatched = false
+  private beforeEdgeRequestRevision: number | null = null
 
-  private afterEdgeRequestLatched = false
+  private afterEdgeRequestRevision: number | null = null
 
   private intersectionObserver: IntersectionObserver | null = null
 
@@ -32,12 +32,14 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
   ) {}
 
   resetLatches(): void {
-    this.beforeEdgeRequestLatched = false
-    this.afterEdgeRequestLatched = false
+    this.beforeEdgeRequestRevision = null
+    this.afterEdgeRequestRevision = null
   }
 
   setAfterEdgeLatched(value: boolean): void {
-    this.afterEdgeRequestLatched = value
+    this.afterEdgeRequestRevision = value
+      ? this.store.getSnapshot().revision
+      : null
   }
 
   disconnect(): void {
@@ -109,11 +111,11 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
 
     // latch 只在用户明确离开边界后释放；否则停在边界附近会把同一页请求打爆。
     if (userMovedDownAwayFromTop) {
-      this.beforeEdgeRequestLatched = false
+      this.beforeEdgeRequestRevision = null
     }
 
     if (userMovedUpAwayFromBottom) {
-      this.afterEdgeRequestLatched = false
+      this.afterEdgeRequestRevision = null
     }
 
     // 历史分页是用户接近数据边界的意图，不能由 followBottom / recovery 等
@@ -122,8 +124,12 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
       return
     }
 
-    if (nearTop && data.hasMoreBefore && !this.beforeEdgeRequestLatched) {
-      this.beforeEdgeRequestLatched = true
+    if (
+      nearTop &&
+      data.hasMoreBefore &&
+      this.beforeEdgeRequestRevision !== data.revision
+    ) {
+      this.beforeEdgeRequestRevision = data.revision
       this.emitEvent({
         type: 'needMoreBefore',
         feedId: data.feedId,
@@ -136,9 +142,9 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
       nearBottom &&
       data.hasMoreAfter &&
       !this.hasPendingFollowBottom() &&
-      !this.afterEdgeRequestLatched
+      this.afterEdgeRequestRevision !== data.revision
     ) {
-      this.afterEdgeRequestLatched = true
+      this.afterEdgeRequestRevision = data.revision
       this.emitEvent({
         type: 'needMoreAfter',
         feedId: data.feedId,
@@ -186,9 +192,9 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
         entry.target === this.registry.getTopSentinel() &&
         data.hasMoreBefore &&
         this.isAtBeforeDataEdge() &&
-        !this.beforeEdgeRequestLatched
+        this.beforeEdgeRequestRevision !== data.revision
       ) {
-        this.beforeEdgeRequestLatched = true
+        this.beforeEdgeRequestRevision = data.revision
         this.emitEvent({
           type: 'needMoreBefore',
           feedId: data.feedId,
@@ -202,9 +208,9 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
         data.hasMoreAfter &&
         !this.hasPendingFollowBottom() &&
         this.isAtAfterDataEdge(data) &&
-        !this.afterEdgeRequestLatched
+        this.afterEdgeRequestRevision !== data.revision
       ) {
-        this.afterEdgeRequestLatched = true
+        this.afterEdgeRequestRevision = data.revision
         this.emitEvent({
           type: 'needMoreAfter',
           feedId: data.feedId,

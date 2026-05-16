@@ -71,6 +71,9 @@ function TestHarness({
       renderTopEdge={(snapshot) => (
         <div data-testid="top-edge">{snapshot.edgeState.before}</div>
       )}
+      renderBottomEdge={(snapshot) => (
+        <div data-testid="bottom-edge">{snapshot.edgeState.after}</div>
+      )}
       onViewportAnchorChange={onViewportAnchorChange}
       style={{ height: 240 }}
     />
@@ -119,9 +122,7 @@ describe('React adapter', () => {
       scheduler,
       observers,
       window: {
-        minMountedItems: 8,
         maxMountedItems: 20,
-        defaultItemHeight: 48,
       },
     })
     const notify = vi.spyOn(runtime, 'notifyProjectionCommitted')
@@ -150,6 +151,7 @@ describe('React adapter', () => {
 
     expect(notify).toHaveBeenCalled()
     expect(host.querySelector('[data-message-viewport]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="bottom-edge"]')).not.toBeNull()
     expect(host.querySelectorAll('[data-message-row]').length).toBeGreaterThan(0)
 
     await act(async () => {
@@ -168,9 +170,7 @@ describe('React adapter', () => {
       scheduler,
       observers,
       window: {
-        minMountedItems: 8,
         maxMountedItems: 20,
-        defaultItemHeight: 48,
       },
     })
     const events: unknown[] = []
@@ -225,9 +225,7 @@ describe('React adapter', () => {
       scheduler,
       observers,
       window: {
-        minMountedItems: 8,
         maxMountedItems: 20,
-        defaultItemHeight: 48,
       },
     })
     const dispatch = vi.spyOn(runtime, 'dispatch')
@@ -292,9 +290,7 @@ describe('React adapter', () => {
       scheduler,
       observers,
       window: {
-        minMountedItems: 8,
         maxMountedItems: 20,
-        defaultItemHeight: 48,
       },
     })
     const runtimeB = new MessageViewportRuntime<TestMessage>({
@@ -303,9 +299,7 @@ describe('React adapter', () => {
       scheduler,
       observers,
       window: {
-        minMountedItems: 8,
         maxMountedItems: 20,
-        defaultItemHeight: 48,
       },
     })
     const attachA = vi.spyOn(runtimeA, 'attach')
@@ -385,9 +379,7 @@ describe('React adapter', () => {
       scheduler,
       observers,
       window: {
-        minMountedItems: 8,
         maxMountedItems: 20,
-        defaultItemHeight: 48,
       },
     })
     const runtimeB = new MessageViewportRuntime<TestMessage>({
@@ -396,9 +388,7 @@ describe('React adapter', () => {
       scheduler,
       observers,
       window: {
-        minMountedItems: 8,
         maxMountedItems: 20,
-        defaultItemHeight: 48,
       },
     })
     const host = document.createElement('div')
@@ -486,9 +476,7 @@ describe('React adapter', () => {
       scheduler,
       observers,
       window: {
-        minMountedItems: 8,
         maxMountedItems: 20,
-        defaultItemHeight: 48,
       },
     })
     const host = document.createElement('div')

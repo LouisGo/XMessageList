@@ -255,6 +255,13 @@ export function DemoMessageViewport() {
                 <div className="history-loading">Loading older messages...</div>
               ) : null
             }
+            renderBottomEdge={() =>
+              scenario.loadingAfter ? (
+                <div className="history-loading history-loading-bottom">
+                  Loading newer messages...
+                </div>
+              ) : null
+            }
             renderFollowBottom={() => (
               <button
                 type="button"

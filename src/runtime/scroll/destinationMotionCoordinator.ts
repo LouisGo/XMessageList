@@ -69,6 +69,7 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     data: MessageDataSnapshot<TMessage, TOptimistic>
     renderWindow: MessageViewportSnapshot<TMessage, TOptimistic>['renderWindow']
     bottomLockState: MessageViewportSnapshot['bottomLockState']
+    forceAnimateFrom?: 'beforeTarget'
   }): void {
     const container = this.registry.getContainer()
 
@@ -88,6 +89,10 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     }
 
     const instantReason = this.getInstantDestinationMotionReason()
+    const forcedStartTop =
+      !instantReason && input.forceAnimateFrom === 'beforeTarget'
+        ? Math.max(0, targetTop - this.scrollMotionOptions.maxDistancePx)
+        : null
     const motionCorrelationId =
       `motion:${input.source}:${input.data.feedId}:${input.data.generation}:${input.data.revision}`
     this.emitDiagnostic({
@@ -102,6 +107,7 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
         currentTop: container.scrollTop,
         targetTop,
         distancePx: targetTop - container.scrollTop,
+        forcedStartTop,
         scrollHeight: container.scrollHeight,
         clientHeight: container.clientHeight,
         enabled: this.scrollMotionOptions.enabled,
@@ -115,6 +121,10 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
       this.writeScrollTop(targetTop, input.source)
       this.settleDestinationMotion()
       return
+    }
+
+    if (forcedStartTop !== null) {
+      this.writeScrollTop(forcedStartTop, input.source)
     }
 
     this.setReadySubstate('READY_MOTION_ACTIVE')

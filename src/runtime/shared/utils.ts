@@ -1,18 +1,18 @@
 import type {
   MessageDataItem,
   MessageRuntimeItemKey,
+  NormalizedWindowConfig,
   RuntimeObserverFactory,
   RuntimeScheduler,
   WindowConfig,
 } from '../types'
 
-export const DEFAULT_WINDOW_CONFIG: WindowConfig = {
-  minOverscanPx: 0,
-  maxOverscanPx: 0,
-  minMountedItems: 40,
+export const DEFAULT_ITEM_ESTIMATE_PX = 104
+export const MIN_MOUNTED_ITEMS = 40
+
+export const DEFAULT_WINDOW_CONFIG: NormalizedWindowConfig = {
+  overscan: 3,
   maxMountedItems: 200,
-  trimMarginPx: 0,
-  defaultItemHeight: 72,
 }
 
 export const DEFAULT_BOTTOM_LOCK_THRESHOLD_PX = 40
@@ -127,11 +127,24 @@ export function createDefaultObserverFactory(): RuntimeObserverFactory {
 }
 
 export function mergeWindowConfig(
-  override: Partial<WindowConfig> | undefined,
-): WindowConfig {
+  override: WindowConfig | undefined,
+): NormalizedWindowConfig {
+  const overscan =
+    typeof override?.overscan === 'number' &&
+    Number.isFinite(override.overscan) &&
+    override.overscan > 0
+      ? override.overscan
+      : DEFAULT_WINDOW_CONFIG.overscan
+  const maxMountedItems =
+    typeof override?.maxMountedItems === 'number' &&
+    Number.isFinite(override.maxMountedItems) &&
+    override.maxMountedItems > 0
+      ? Math.max(1, Math.floor(override.maxMountedItems))
+      : DEFAULT_WINDOW_CONFIG.maxMountedItems
+
   return {
-    ...DEFAULT_WINDOW_CONFIG,
-    ...override,
+    overscan,
+    maxMountedItems,
   }
 }
 
