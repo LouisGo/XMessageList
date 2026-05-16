@@ -17,6 +17,7 @@ import type {
   ViewportAnchorChangeReason,
 } from '../types'
 import type {
+  DestinationMotionForcedStart,
   DestinationMotionSettle,
   RuntimeDiagnosticEmitter,
   ReadySubstate,
@@ -69,7 +70,9 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     data: MessageDataSnapshot<TMessage, TOptimistic>
     renderWindow: MessageViewportSnapshot<TMessage, TOptimistic>['renderWindow']
     bottomLockState: MessageViewportSnapshot['bottomLockState']
-    forceAnimateFrom?: 'beforeTarget'
+    forceAnimateFrom?: DestinationMotionForcedStart
+    allowPreposition?: boolean
+    destination?: DestinationMotionSettle<TMessage, TOptimistic>['destination']
   }): void {
     const container = this.registry.getContainer()
 
@@ -86,12 +89,13 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
       bottomLockState: input.bottomLockState,
       data: input.data,
       renderWindow: input.renderWindow,
+      destination: input.destination,
     }
 
     const instantReason = this.getInstantDestinationMotionReason()
     const forcedStartTop =
-      !instantReason && input.forceAnimateFrom === 'beforeTarget'
-        ? Math.max(0, targetTop - this.scrollMotionOptions.maxDistancePx)
+      !instantReason
+        ? this.getForcedStartTop(targetTop, input.forceAnimateFrom)
         : null
     const motionCorrelationId =
       `motion:${input.source}:${input.data.feedId}:${input.data.generation}:${input.data.revision}`
@@ -136,6 +140,7 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
       minDurationMs: this.scrollMotionOptions.minDurationMs,
       maxDurationMs: this.scrollMotionOptions.maxDurationMs,
       targetEpsilonPx: this.scrollMotionOptions.targetEpsilonPx,
+      allowPreposition: input.allowPreposition,
       now: () => this.scheduler.now(),
       requestFrame: (callback) => this.scheduler.requestAnimationFrame(callback),
       cancelFrame: (handle) => this.scheduler.cancelAnimationFrame(handle),
@@ -182,6 +187,25 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     }
 
     this.writeScrollTop(this.getBottomTargetTop(container), source)
+  }
+
+  scrollTo(source: ScrollMotionSource, targetTop: number): void {
+    this.writeScrollTop(targetTop, source)
+  }
+
+  private getForcedStartTop(
+    targetTop: number,
+    forceAnimateFrom: DestinationMotionForcedStart | undefined,
+  ): number | null {
+    if (!forceAnimateFrom) {
+      return null
+    }
+
+    if (forceAnimateFrom === 'beforeTarget') {
+      return Math.max(0, targetTop - this.scrollMotionOptions.maxDistancePx)
+    }
+
+    return targetTop + this.scrollMotionOptions.maxDistancePx
   }
 
   writeScrollTop(nextScrollTop: number, source: ScrollSource): void {

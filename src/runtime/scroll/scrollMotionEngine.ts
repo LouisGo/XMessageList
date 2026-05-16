@@ -25,6 +25,7 @@ export type ScrollMotionStart = {
   minDurationMs: number
   maxDurationMs: number
   targetEpsilonPx: number
+  allowPreposition?: boolean
   now: RuntimeScheduler['now']
   requestFrame: RuntimeScheduler['requestAnimationFrame']
   cancelFrame: RuntimeScheduler['cancelAnimationFrame']
@@ -104,7 +105,7 @@ export class ScrollMotionEngine {
     const initialDistance = targetTop - currentTop
     let prepositionTop: number | null = null
 
-    if (Math.abs(initialDistance) > maxDistancePx) {
+    if (input.allowPreposition !== false && Math.abs(initialDistance) > maxDistancePx) {
       // 超长距离先瞬移到目标附近，再做短动画，避免跨几万像素的无意义滚动动画。
       startTop =
         targetTop - Math.sign(initialDistance) * maxDistancePx

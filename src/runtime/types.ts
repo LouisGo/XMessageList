@@ -157,7 +157,7 @@ export type MessageRuntimeCommand =
       mode: 'latest' | 'unread' | 'restored'
       target?: AnchorState | MessageIdentityAnchor
     }
-  | { type: 'jump'; target: MessageIdentityAnchor }
+  | { type: 'jump'; target: MessageIdentityAnchor; origin?: MessageIdentityAnchor }
   | { type: 'restore'; target: AnchorState | MessageIdentityAnchor }
   | { type: 'followBottom' }
   | { type: 'reset'; reason: string }
@@ -278,6 +278,13 @@ export type MessageViewportRuntimeEvent =
       feedId: string
       generation: number
       reason: 'jump' | 'restore'
+      target: MessageIdentityAnchor
+    }
+  | {
+      type: 'destinationSettled'
+      feedId: string
+      generation: number
+      intent: 'jump'
       target: MessageIdentityAnchor
     }
   | ViewportAnchorChangedEvent

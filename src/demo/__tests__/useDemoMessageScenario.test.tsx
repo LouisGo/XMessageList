@@ -502,15 +502,27 @@ describe('useDemoMessageScenario', () => {
     expect(scenario?.loadingAfter).toBe(false)
     await flushTimers(220)
 
-    expect(scenario?.loadedMessageCount).toBe(31)
+    expect(scenario?.loadedMessageCount).toBe(41)
     expect(scenario?.loadingAfter).toBe(false)
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'history.around',
+        phase: 'start',
+        details: expect.objectContaining({
+          intent: 'jump',
+          target: { messageId: 'feed-runtime-m-72', position: 72 },
+          before: 20,
+          after: 20,
+        }),
+      }),
+    )
     expect(mockWriteDemoLog).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: 'history.around',
         phase: 'success',
         details: expect.objectContaining({
           intent: 'jump',
-          loaded: 31,
+          loaded: 41,
           hasMoreBefore: true,
           hasMoreAfter: true,
           target: { messageId: 'feed-runtime-m-72', position: 72 },
@@ -523,6 +535,105 @@ describe('useDemoMessageScenario', () => {
         details: expect.objectContaining({ source: 'follow-bottom' }),
       }),
     )
+  })
+
+  it('dispatches quote clicks as runtime jump commands only', async () => {
+    const { runtime } = createRuntimeStub()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    await act(async () => {
+      root.render(
+        <TestHarness runtime={runtime} onScenario={(next) => {
+          scenario = next
+        }}
+        />,
+      )
+    })
+
+    await flushTimers(180)
+
+    act(() => {
+      scenario?.jumpToQuote({
+        origin: {
+          messageId: 'feed-runtime-m-32',
+          position: 32,
+        },
+        target: {
+          messageId: 'feed-runtime-m-12',
+          position: 12,
+        },
+      })
+    })
+
+    expect(runtime.dispatch).toHaveBeenCalledWith({
+      type: 'jump',
+      origin: {
+        messageId: 'feed-runtime-m-32',
+        position: 32,
+      },
+      target: {
+        messageId: 'feed-runtime-m-12',
+        position: 12,
+      },
+    })
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'runtime.command.quoteJump',
+        phase: 'info',
+        details: {
+          origin: {
+            messageId: 'feed-runtime-m-32',
+            position: 32,
+          },
+          target: {
+            messageId: 'feed-runtime-m-12',
+            position: 12,
+          },
+        },
+      }),
+    )
+    expect(mockWriteDemoLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'history.around',
+      }),
+    )
+  })
+
+  it('highlights a message after runtime settles a jump destination', async () => {
+    const { runtime, emitEvent } = createRuntimeStub()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    await act(async () => {
+      root.render(
+        <TestHarness runtime={runtime} onScenario={(next) => {
+          scenario = next
+        }}
+        />,
+      )
+    })
+
+    await flushTimers(180)
+
+    act(() => {
+      emitEvent({
+        type: 'destinationSettled',
+        feedId: 'feed-runtime',
+        generation: 2,
+        intent: 'jump',
+        target: { messageId: 'feed-runtime-m-12', position: 12 },
+      })
+    })
+
+    expect(scenario?.highlightedMessageId).toBe('feed-runtime-m-12')
+    expect(scenario?.highlightToken).toBe(1)
+
+    await flushTimers(1400)
+
+    expect(scenario?.highlightedMessageId).toBeNull()
   })
 
   it('persists edit, delete, and reaction mutations for loaded messages', async () => {

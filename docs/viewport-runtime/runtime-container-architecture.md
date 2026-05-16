@@ -240,6 +240,13 @@ type MessageViewportRuntimeEvent =
       target: MessageIdentityAnchor;
     }
   | {
+      type: 'destinationSettled';
+      feedId: string;
+      generation: number;
+      intent: 'jump';
+      target: MessageIdentityAnchor;
+    }
+  | {
       type: 'viewportAnchorChanged';
       feedId: string;
       generation: number;

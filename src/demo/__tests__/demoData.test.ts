@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   createDemoSnapshot,
   createDemoMessages,
+  createNewestMessage,
   createOlderMessages,
   createOutgoingMessage,
   getFirstMessageSequence,
@@ -45,6 +46,37 @@ describe('demoData', () => {
 
     expect(outgoing.id).toBe('feed-send-m-4')
     expect(outgoing.author).toBe('You')
+  })
+
+  it('randomly attaches quote metadata from older messages', () => {
+    const current = createDemoMessages(3, 'feed-quote')
+    const message = createNewestMessage({
+      feedId: 'feed-quote',
+      sequence: 4,
+      quoteCandidates: current,
+      random: vi.fn()
+        .mockReturnValueOnce(0.29)
+        .mockReturnValueOnce(0.4),
+    })
+
+    expect(message.quote).toEqual({
+      messageId: 'feed-quote-m-2',
+      position: 2,
+      author: current[1]?.author,
+      bodyPreview: current[1]?.body,
+    })
+  })
+
+  it('does not attach quote metadata when probability misses', () => {
+    const current = createDemoMessages(3, 'feed-no-quote')
+    const message = createOutgoingMessage('hello', {
+      feedId: 'feed-no-quote',
+      sequence: 4,
+      quoteCandidates: current,
+      random: vi.fn(() => 0.3),
+    })
+
+    expect(message.quote).toBeUndefined()
   })
 
   it('can project an empty feed snapshot for clear-message scenarios', () => {

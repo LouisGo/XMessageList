@@ -19,6 +19,7 @@ export type DemoOperationName =
   | 'mock.eventStorm'
   | 'mock.botPush'
   | 'runtime.command.followBottom'
+  | 'runtime.command.quoteJump'
   | 'runtime.event'
 
 export type DemoLogPhase =

@@ -6,6 +6,7 @@ import {
   type DemoMessage,
   createNewestMessage,
   getNextMessageSequence,
+  maybeAttachRandomQuote,
 } from './demoData'
 
 const EVENT_STORM_MIN_DELAY_MS = 90
@@ -157,14 +158,21 @@ export function applyEventStormTick(input: {
       })
 
       for (const message of deliveries) {
-        const isOutOfOrder = message.sequence <= maxVisibleSequence
+        const quotedMessage = maybeAttachRandomQuote(
+          message,
+          nextFeedMessages,
+          random,
+        )
+        const isOutOfOrder = quotedMessage.sequence <= maxVisibleSequence
 
-        nextFeedMessages = upsertMessagesBySequence(nextFeedMessages, [message])
+        nextFeedMessages = upsertMessagesBySequence(nextFeedMessages, [
+          quotedMessage,
+        ])
 
         if (input.hasMoreAfter) {
           feedOnlyChangeCount += 1
         } else {
-          nextMessages = upsertMessagesBySequence(nextMessages, [message])
+          nextMessages = upsertMessagesBySequence(nextMessages, [quotedMessage])
 
           if (isOutOfOrder) {
             visibleOutOfOrderAppendCount += 1
@@ -381,9 +389,16 @@ export function applyBotPushTick(input: {
   const random = input.random ?? Math.random
   const count = pickInteger(1, 3, random)
   const startSequence = getNextMessageSequence(input.feedMessages)
-  const pushed = Array.from({ length: count }, (_, index) =>
-    createBotMessage(input.feedId, startSequence + index, random, index),
-  )
+  let quoteCandidates = input.feedMessages
+  const pushed = Array.from({ length: count }, (_, index) => {
+    const message = maybeAttachRandomQuote(
+      createBotMessage(input.feedId, startSequence + index, random, index),
+      quoteCandidates,
+      random,
+    )
+    quoteCandidates = [...quoteCandidates, message]
+    return message
+  })
   const feedMessages = upsertMessagesBySequence(input.feedMessages, pushed)
   const messages = input.hasMoreAfter
     ? input.messages

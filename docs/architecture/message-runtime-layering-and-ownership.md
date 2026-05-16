@@ -291,7 +291,7 @@ semantic command
 
 ```ts
 type MessageRuntimeCommand =
-  | { type: 'jump'; target: MessageIdentityAnchor }
+  | { type: 'jump'; target: MessageIdentityAnchor; origin?: MessageIdentityAnchor }
   | { type: 'restore'; target: AnchorState | MessageIdentityAnchor }
   | { type: 'followBottom' };
 ```

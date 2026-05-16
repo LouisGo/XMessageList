@@ -402,7 +402,7 @@ runtime 还必须在生命周期恢复和事务追底判断前，用真实
 流程：
 
 ```text
-command jump(target identity)
+command jump(target identity, optional origin identity)
 -> if target not in DataWindow: emit needMessagesAround(jump, target), no motion
 -> data layer loads around target directly, without filling the gap
 -> runtime computes window around target
@@ -410,9 +410,15 @@ command jump(target identity)
 -> wait commit
 -> resolve measurable target row
 -> compute targetTop for center/top alignment
--> bounded-animate final visible segment
+-> if target was already in DataWindow and origin.position / target.position define direction:
+     animate directly from current scrollTop to targetTop, without fake pre-positioning
+   else if DataWindow was rebuilt and origin.position / target.position define direction:
+     bounded-animate final visible segment from the physical source direction
+   else:
+     set targetTop directly without directional animation
 -> [motion settle callback]:
      set UNLOCKED
+     emit destinationSettled(jump, target)
      emit viewportAnchorChanged(transaction-settle)
 ```
 
@@ -420,14 +426,19 @@ command jump(target identity)
 
 - 远距离 jump 是 destination intent，不是连续浏览。目标缺失时只能 around target
   重建 DataWindow，不能沿当前窗口逐页 append/prepend 到目标。
-- 不尝试从旧 scrollTop 连续动画到远处目标。
+- 不尝试从旧 scrollTop 连续动画到远处目标。target 已在当前 DataWindow 内且带
+  `origin.position` 时，从当前 scrollTop 直接动画到目标，不做假预落位；只有发生
+  around-target DataWindow 重建、且带 `origin.position` 的 jump，才在最终可见段按
+  position 方向做 bounded motion；没有可靠 origin 的外部分享、收藏、mention 等定位
+  直接落到目标，不做方向性动画。
 - target row 未挂载时不启动动画。
 - target DOM fallback 仍按现有 nearest measurable row 逻辑。
 - 如果 command 被新的 jump / followBottom supersede，取消当前 motion。
 - 动画期间 scroll source 是 `jump`。
-- `viewportAnchorChanged(transaction-settle)` 由 motion settle callback 触发。
-- 接入方从 `viewportAnchorChanged` 的 anchor 里读取 `targetKey` 并执行高亮，
-  不由 runtime 驱动业务高亮。
+- `destinationSettled(jump, target)` 和
+  `viewportAnchorChanged(transaction-settle)` 由 motion/instant settle 路径触发。
+- Runtime 只发出目标定位完成事件；高亮样式、持续时间和重复触发策略由接入方消费
+  `destinationSettled` 后自行决定。
 
 ### 6.4 Restore
 
@@ -655,8 +666,10 @@ Runtime unit tests:
   steal the viewport back to bottom.
 - diagnostics expose `destinationMotion.cancel` reason plus transaction kind/id, and
   show the re-armed follow-bottom motion.
-- far jump / restore with target outside DataWindow emits `needMessagesAround` and starts no motion.
-- after around-target window loads, pending jump / restore consumes the snapshot and starts the normal destination transaction.
+- far jump / restore with target outside DataWindow emits `needMessagesAround` and starts no motion before data arrives.
+- after around-target window loads, pending jump / restore consumes the snapshot; rebuilt jump with origin position animates in the correct physical direction, while directionless jump settles instantly.
+- already-loaded quote jump animates directly to the target without far-jump fake pre-positioning.
+- jump settle emits `destinationSettled(jump, target)` only after the target transaction actually completes.
 - far follow bottom writes an immediate near-target scrollTop, then animates bounded final segment.
 - far pre-positioning uses `followBottom` / `jump` source tokens, never `recovery`.
 - jump to far target waits for target window commit and measurable row before motion.

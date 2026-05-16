@@ -33,9 +33,19 @@ export function DemoMessageViewport() {
     }
 
     const message = item.message
+    const quote = message.quote
+    const isHighlighted = scenario.highlightedMessageId === message.id
 
     return (
-      <article className={`message-row ${message.tone} ${message.kind}`}>
+      <article
+        key={isHighlighted ? `highlight-${scenario.highlightToken}` : 'normal'}
+        className={[
+          'message-row',
+          message.tone,
+          message.kind,
+          isHighlighted ? 'jump-highlight' : '',
+        ].filter(Boolean).join(' ')}
+      >
         <header>
           <strong>{message.author}</strong>
           <div className="message-row-meta">
@@ -76,6 +86,26 @@ export function DemoMessageViewport() {
             </div>
           </div>
         </header>
+        {quote ? (
+          <button
+            type="button"
+            className="message-quote"
+            data-testid={`quote-jump-${message.id}`}
+            onClick={() => scenario.jumpToQuote({
+              origin: {
+                messageId: message.id,
+                position: message.sequence,
+              },
+              target: {
+                messageId: quote.messageId,
+                position: quote.position,
+              },
+            })}
+          >
+            <strong>{quote.author}</strong>
+            <span>{quote.bodyPreview}</span>
+          </button>
+        ) : null}
         <p>{message.body}</p>
         {message.media ? <MediaBlock message={message} /> : null}
         {message.expanded ? (

@@ -59,6 +59,9 @@ const PAGE_SIZE = 20
 const FEED_LOAD_DELAY_MS = 180
 const RESTORE_BEFORE_PAGE_SIZE = Math.max(1, Math.floor(PAGE_SIZE / 2))
 const RESTORE_AFTER_PAGE_SIZE = PAGE_SIZE
+const JUMP_AROUND_BEFORE_PAGE_SIZE = PAGE_SIZE
+const JUMP_AROUND_AFTER_PAGE_SIZE = PAGE_SIZE
+const JUMP_HIGHLIGHT_DURATION_MS = 1_400
 const REACTION_EMOJIS = ['😀', '😂', '🔥', '👍', '🎉', '😭', '👀', '❤️', '🚀', '🥲']
 
 const OPERATION_DELAYS: Record<
@@ -158,6 +161,8 @@ export type DemoMessageScenario = {
   feedLoading: boolean
   eventStormRunning: boolean
   botPushActive: boolean
+  highlightedMessageId: string | null
+  highlightToken: number
   pendingOperation: string
   lastEvent: string
   selectFeed: (feedId: string) => void
@@ -172,6 +177,10 @@ export type DemoMessageScenario = {
   toggleDynamicHeight: () => void
   sendMessage: (body: string) => boolean
   followBottom: (source: 'sidebar' | 'floating') => void
+  jumpToQuote: (input: {
+    origin: { messageId: string; position?: number }
+    target: { messageId: string; position?: number }
+  }) => void
   clearFeed: (feedId: string) => void
   rememberRuntimeViewportAnchor: (event: ViewportAnchorChangedEvent) => void
 }
@@ -194,6 +203,10 @@ export function useDemoMessageScenario(
   const [feedLoading, setFeedLoading] = useState(true)
   const [eventStormRunning, setEventStormRunning] = useState(false)
   const [botPushActive, setBotPushActive] = useState(false)
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(
+    null,
+  )
+  const [highlightToken, setHighlightToken] = useState(0)
   const [pendingOperation, setPendingOperation] = useState('idle')
   const [lastEvent, setLastEvent] = useState(
     `loading ${getDemoFeedDefinition(initialFeedId).title}...`,
@@ -226,6 +239,7 @@ export function useDemoMessageScenario(
   const eventStormStateRef = useRef<AdvancedMockEventStormState | null>(null)
   const botPushActiveRef = useRef(false)
   const botPushTimerRef = useRef<number | null>(null)
+  const highlightTimerRef = useRef<number | null>(null)
 
   const activeFeed = useMemo(
     () => getDemoFeedDefinition(activeFeedId),
@@ -242,6 +256,13 @@ export function useDemoMessageScenario(
   useEffect(() => {
     activeRuntimeRef.current = activeRuntime
   }, [activeRuntime])
+
+  useEffect(() => () => {
+    if (highlightTimerRef.current !== null) {
+      window.clearTimeout(highlightTimerRef.current)
+      highlightTimerRef.current = null
+    }
+  }, [])
 
   const log = useCallback((entry: DemoLogEntry) => writeDemoLog(entry), [])
 
@@ -818,6 +839,20 @@ export function useDemoMessageScenario(
 
     window.clearTimeout(botPushTimerRef.current)
     botPushTimerRef.current = null
+  }, [])
+
+  const highlightJumpTarget = useCallback((messageId: string) => {
+    if (highlightTimerRef.current !== null) {
+      window.clearTimeout(highlightTimerRef.current)
+      highlightTimerRef.current = null
+    }
+
+    setHighlightedMessageId(messageId)
+    setHighlightToken((token) => token + 1)
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedMessageId(null)
+      highlightTimerRef.current = null
+    }, JUMP_HIGHLIGHT_DURATION_MS)
   }, [])
 
   const logAdvancedMockOperationSummary = useCallback((
@@ -1440,6 +1475,15 @@ export function useDemoMessageScenario(
     target: { messageId: string; position?: number },
     reason: 'jump' | 'restore',
   ) => {
+    const before =
+      reason === 'jump'
+        ? JUMP_AROUND_BEFORE_PAGE_SIZE
+        : RESTORE_BEFORE_PAGE_SIZE
+    const after =
+      reason === 'jump'
+        ? JUMP_AROUND_AFTER_PAGE_SIZE
+        : RESTORE_AFTER_PAGE_SIZE
+
     if (loadingAfterRef.current) {
       void log({
         requestId: createDemoRequestId('history.around'),
@@ -1461,8 +1505,8 @@ export function useDemoMessageScenario(
       details: {
         intent: reason,
         target,
-        before: RESTORE_BEFORE_PAGE_SIZE,
-        after: RESTORE_AFTER_PAGE_SIZE,
+        before,
+        after,
       },
       apply: async (feedId) => {
         const storeFeed = await loadPersistedDemoFeed(feedId)
@@ -1473,8 +1517,8 @@ export function useDemoMessageScenario(
         const resp = await getMessagesAround({
           feedId,
           anchor: target,
-          before: RESTORE_BEFORE_PAGE_SIZE,
-          after: RESTORE_AFTER_PAGE_SIZE,
+          before,
+          after,
         })
 
         if (isErrorResponse(resp)) {
@@ -1518,6 +1562,7 @@ export function useDemoMessageScenario(
         const message = createNewestMessage({
           feedId,
           sequence: getNextMessageSequence(feedMessagesRef.current),
+          quoteCandidates: feedMessagesRef.current,
         })
 
         feedMessagesRef.current = [...feedMessagesRef.current, message]
@@ -1549,9 +1594,17 @@ export function useDemoMessageScenario(
       apply: (feedId) => {
         const projectsIntoCurrentWindow = !hasMoreAfterRef.current
         const startSequence = getNextMessageSequence(feedMessagesRef.current)
-        const next = Array.from({ length: 4 }, (_, index) =>
-          createNewestMessage({ feedId, sequence: startSequence + index }),
-        ).map((message, index) =>
+        const next: DemoMessage[] = []
+
+        for (let index = 0; index < 4; index += 1) {
+          next.push(createNewestMessage({
+            feedId,
+            sequence: startSequence + index,
+            quoteCandidates: [...feedMessagesRef.current, ...next],
+          }))
+        }
+
+        const projectedNext = next.map((message, index) =>
           index === 1
             ? {
                 ...message,
@@ -1562,20 +1615,20 @@ export function useDemoMessageScenario(
             : message,
         )
 
-        feedMessagesRef.current = [...feedMessagesRef.current, ...next]
+        feedMessagesRef.current = [...feedMessagesRef.current, ...projectedNext]
         if (projectsIntoCurrentWindow) {
-          messagesRef.current = [...messagesRef.current, ...next]
+          messagesRef.current = [...messagesRef.current, ...projectedNext]
         }
 
         return {
           effect: projectsIntoCurrentWindow ? 'append' : 'none',
           kind: projectsIntoCurrentWindow ? 'append' : 'patch',
           eventText: projectsIntoCurrentWindow
-            ? `appended long burst ${next.length}`
-            : `queued long burst ${next.length} after current window`,
+            ? `appended long burst ${projectedNext.length}`
+            : `queued long burst ${projectedNext.length} after current window`,
           details: {
-            added: next.length,
-            ids: next.map((message) => message.id),
+            added: projectedNext.length,
+            ids: projectedNext.map((message) => message.id),
             visibleInCurrentWindow: projectsIntoCurrentWindow,
           },
         }
@@ -1721,6 +1774,7 @@ export function useDemoMessageScenario(
         const message = createOutgoingMessage(trimmed, {
           feedId,
           sequence: getNextMessageSequence(feedMessagesRef.current),
+          quoteCandidates: feedMessagesRef.current,
         })
 
         feedMessagesRef.current = [...feedMessagesRef.current, message]
@@ -1799,6 +1853,25 @@ export function useDemoMessageScenario(
       details: { source },
     })
     activeRuntime.dispatch({ type: 'followBottom' })
+  }, [activeRuntime, log])
+
+  const jumpToQuote = useCallback((input: {
+    origin: { messageId: string; position?: number }
+    target: { messageId: string; position?: number }
+  }) => {
+    void log({
+      requestId: createDemoRequestId('runtime.command.quoteJump'),
+      operation: 'runtime.command.quoteJump',
+      phase: 'info',
+      feedId: activeFeedIdRef.current,
+      messageCount: messagesRef.current.length,
+      details: input,
+    })
+    activeRuntime.dispatch({
+      type: 'jump',
+      origin: input.origin,
+      target: input.target,
+    })
   }, [activeRuntime, log])
 
   const selectFeed = useCallback((feedId: string) => {
@@ -2189,12 +2262,22 @@ export function useDemoMessageScenario(
         event.feedId === activeFeedIdRef.current
       ) {
         void loadAroundTargetWindow(event.target, event.reason)
+        return
+      }
+
+      if (
+        event.type === 'destinationSettled' &&
+        event.intent === 'jump' &&
+        event.feedId === activeFeedIdRef.current
+      ) {
+        highlightJumpTarget(event.target.messageId)
       }
     })
 
     return unsubscribe
   }, [
     activeRuntime,
+    highlightJumpTarget,
     loadAroundTargetWindow,
     loadFutureBatch,
     loadHistoryBatch,
@@ -2216,6 +2299,8 @@ export function useDemoMessageScenario(
     feedLoading,
     eventStormRunning,
     botPushActive,
+    highlightedMessageId,
+    highlightToken,
     pendingOperation,
     lastEvent,
     selectFeed,
@@ -2230,6 +2315,7 @@ export function useDemoMessageScenario(
     toggleDynamicHeight,
     sendMessage,
     followBottom,
+    jumpToQuote,
     clearFeed,
     rememberRuntimeViewportAnchor,
   }

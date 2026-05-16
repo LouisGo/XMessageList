@@ -23,12 +23,20 @@ export type DemoMessage = {
     height: number
     label: string
   }
+  quote?: {
+    messageId: string
+    position: number
+    author: string
+    bodyPreview: string
+  }
 }
 
 export type DemoMessageCreateOptions = {
   feedId?: string
   sequence?: number
   beforeSequence?: number
+  quoteCandidates?: DemoMessage[]
+  random?: () => number
 }
 
 const DEFAULT_FEED_ID = 'feed-runtime'
@@ -69,7 +77,11 @@ export function createNewestMessage(
 ): DemoMessage {
   const feedId = options.feedId ?? DEFAULT_FEED_ID
   const sequence = options.sequence ?? getFallbackNextSequence(feedId)
-  const message = createMessage(feedId, sequence)
+  const message = maybeAttachRandomQuote(
+    createMessage(feedId, sequence),
+    options.quoteCandidates ?? [],
+    options.random,
+  )
 
   syncFeedCursor(feedId, [message])
   return message
@@ -81,20 +93,59 @@ export function createOutgoingMessage(
 ): DemoMessage {
   const feedId = options.feedId ?? DEFAULT_FEED_ID
   const sequence = options.sequence ?? getFallbackNextSequence(feedId)
-  const message: DemoMessage = {
-    id: createMessageId(feedId, sequence),
-    feedId,
-    sequence,
-    author: 'You',
-    body,
-    tone: 'self',
-    kind: body.length > 180 ? 'longText' : 'text',
-    expanded: false,
-    reactions: [],
-  }
+  const message = maybeAttachRandomQuote(
+    {
+      id: createMessageId(feedId, sequence),
+      feedId,
+      sequence,
+      author: 'You',
+      body,
+      tone: 'self',
+      kind: body.length > 180 ? 'longText' : 'text',
+      expanded: false,
+      reactions: [],
+    },
+    options.quoteCandidates ?? [],
+    options.random,
+  )
 
   syncFeedCursor(feedId, [message])
   return message
+}
+
+export function maybeAttachRandomQuote(
+  message: DemoMessage,
+  candidates: DemoMessage[],
+  random: () => number = Math.random,
+): DemoMessage {
+  const quoteCandidates = candidates.filter(
+    (candidate) =>
+      candidate.feedId === message.feedId &&
+      candidate.sequence < message.sequence,
+  )
+
+  if (quoteCandidates.length === 0 || random() >= 0.3) {
+    return message
+  }
+
+  const quoted =
+    quoteCandidates[
+      Math.floor(random() * quoteCandidates.length) % quoteCandidates.length
+    ]
+
+  if (!quoted) {
+    return message
+  }
+
+  return {
+    ...message,
+    quote: {
+      messageId: quoted.id,
+      position: quoted.sequence,
+      author: quoted.author,
+      bodyPreview: createQuotePreview(quoted.body),
+    },
+  }
 }
 
 /**
@@ -158,6 +209,7 @@ export function normalizeDemoMessages(
         typeof message.editedAt === 'string' && message.editedAt.length > 0
           ? message.editedAt
           : undefined,
+      quote: normalizeQuote(message.quote),
     }
   })
 
@@ -252,12 +304,13 @@ export function estimateDemoMessageHeight(message: DemoMessage): number {
   const textHeight = message.kind === 'longText' ? 230 : 76
   const mediaHeight = message.media ? message.media.height + 28 : 0
   const expandedHeight = message.expanded ? 78 : 0
+  const quoteHeight = message.quote ? 58 : 0
   const reactionRows =
     message.reactions.length > 0
       ? Math.ceil(message.reactions.length / 6)
       : 0
   const reactionHeight = reactionRows * 32
-  return textHeight + mediaHeight + expandedHeight + reactionHeight
+  return textHeight + quoteHeight + mediaHeight + expandedHeight + reactionHeight
 }
 
 export function toCommittedItem(
@@ -285,10 +338,36 @@ function getDemoMessageContentVersion(message: DemoMessage): number {
           editedAt: message.editedAt ?? '',
           reactions: message.reactions,
           media: message.media ?? null,
+          quote: message.quote ?? null,
         }),
       ),
     ) + 1
   )
+}
+
+function normalizeQuote(messageQuote: DemoMessage['quote']): DemoMessage['quote'] {
+  if (
+    !messageQuote ||
+    typeof messageQuote.messageId !== 'string' ||
+    messageQuote.messageId.length === 0 ||
+    !Number.isFinite(messageQuote.position) ||
+    typeof messageQuote.author !== 'string' ||
+    typeof messageQuote.bodyPreview !== 'string'
+  ) {
+    return undefined
+  }
+
+  return {
+    messageId: messageQuote.messageId,
+    position: messageQuote.position,
+    author: messageQuote.author,
+    bodyPreview: messageQuote.bodyPreview,
+  }
+}
+
+function createQuotePreview(body: string): string {
+  const compact = body.replace(/\s+/g, ' ').trim()
+  return compact.length > 96 ? `${compact.slice(0, 96)}...` : compact
 }
 
 export function createDemoSnapshot(input: {

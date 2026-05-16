@@ -171,7 +171,7 @@ type MessageRuntimeCommand =
       mode: 'latest' | 'unread' | 'restored';
       target?: AnchorState | MessageIdentityAnchor;
     }
-  | { type: 'jump'; target: MessageIdentityAnchor }
+  | { type: 'jump'; target: MessageIdentityAnchor; origin?: MessageIdentityAnchor }
   | { type: 'restore'; target: AnchorState | MessageIdentityAnchor }
   | { type: 'followBottom' }
   | { type: 'reset'; reason: string };

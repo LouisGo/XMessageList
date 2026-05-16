@@ -383,7 +383,7 @@ describe('MessageViewportRuntime', () => {
     const container = createContainer({ height: 300 })
 
     runtime.attach(container)
-    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.setDataSnapshot(createSnapshot({ count: 60, revision: 1, effect: 'reset' }))
     runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
@@ -399,7 +399,7 @@ describe('MessageViewportRuntime', () => {
     const container = createContainer({ height: 300 })
 
     runtime.attach(container)
-    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.setDataSnapshot(createSnapshot({ count: 60, revision: 1, effect: 'reset' }))
     runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
@@ -453,7 +453,11 @@ describe('MessageViewportRuntime', () => {
     const before = runtime.getDebugSnapshot()
 
     runtime.dispatch({ type: 'followBottom' })
-    runtime.dispatch({ type: 'jump', target: { messageId: 'm-10' } })
+    runtime.dispatch({
+      type: 'jump',
+      origin: { messageId: 'm-60', position: 60 },
+      target: { messageId: 'm-10', position: 10 },
+    })
     runtime.dispatch({ type: 'restore', target: { messageId: 'm-10' } })
 
     expect(runtime.getDebugSnapshot()).toEqual(before)
@@ -654,7 +658,11 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
 
-    runtime.dispatch({ type: 'jump', target: { messageId: 'm-10' } })
+    runtime.dispatch({
+      type: 'jump',
+      origin: { messageId: 'm-60', position: 60 },
+      target: { messageId: 'm-10', position: 10 },
+    })
     await Promise.resolve()
     let snapshot = runtime.getSnapshot()
     mountProjection(runtime, container, snapshot)
@@ -1142,7 +1150,11 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
 
-    runtime.dispatch({ type: 'jump', target: { messageId: 'm-10' } })
+    runtime.dispatch({
+      type: 'jump',
+      origin: { messageId: 'm-60', position: 60 },
+      target: { messageId: 'm-10', position: 10 },
+    })
     await Promise.resolve()
     let snapshot = runtime.getSnapshot()
     mountProjection(runtime, container, snapshot)
@@ -1753,12 +1765,23 @@ describe('MessageViewportRuntime', () => {
     const container = createContainer({ height: 300 })
 
     runtime.attach(container)
-    runtime.setDataSnapshot(createSnapshot({ count: 60, revision: 1, effect: 'reset' }))
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
     runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
 
-    runtime.dispatch({ type: 'jump', target: { messageId: 'm-10' } })
+    runtime.dispatch({
+      type: 'jump',
+      origin: { messageId: 'm-1000', position: 1000 },
+      target: { messageId: 'm-400', position: 400 },
+    })
+    await Promise.resolve()
+    runtime.setDataSnapshot(createSnapshot({
+      count: 41,
+      revision: 2,
+      effect: 'reset',
+      start: 380,
+    }))
     await Promise.resolve()
     const snapshot = runtime.getSnapshot()
     mountProjection(runtime, container, snapshot)
@@ -1776,17 +1799,108 @@ describe('MessageViewportRuntime', () => {
     expect(runtime.getDebugSnapshot().lastScrollSource).toBe('jump')
   })
 
-  it('cancels jump motion on user wheel and leaves the viewport unlocked', async () => {
+  it('settles directionless jumps without starting motion', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
 
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
     runtime.attach(container)
     runtime.setDataSnapshot(createSnapshot({ count: 60, revision: 1, effect: 'reset' }))
     runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
+    events.length = 0
 
     runtime.dispatch({ type: 'jump', target: { messageId: 'm-10' } })
+    await Promise.resolve()
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(runtime.getDebugSnapshot().motionActive).toBe(false)
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'destinationSettled',
+        intent: 'jump',
+        target: { messageId: 'm-10' },
+      }),
+    )
+  })
+
+  it('starts upward quote jumps from below the target', async () => {
+    const { runtime, scheduler } = createRuntime({
+      scrollMotion: { maxDistancePx: 120 },
+    })
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    runtime.dispatch({
+      type: 'jump',
+      origin: { messageId: 'm-1000', position: 1000 },
+      target: { messageId: 'm-400', position: 400 },
+    })
+    await Promise.resolve()
+    runtime.setDataSnapshot(createSnapshot({
+      count: 41,
+      revision: 2,
+      effect: 'reset',
+      start: 380,
+    }))
+    await Promise.resolve()
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(runtime.getDebugSnapshot().motionActive).toBe(true)
+    expect(container.scrollTop).toBeGreaterThan(0)
+    const forcedStartTop = container.scrollTop
+    await flushMotion(scheduler)
+
+    expect(container.scrollTop).toBeLessThan(forcedStartTop)
+  })
+
+  it('cancels jump motion on user wheel and leaves the viewport unlocked', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    runtime.dispatch({
+      type: 'jump',
+      origin: { messageId: 'm-1000', position: 1000 },
+      target: { messageId: 'm-400', position: 400 },
+    })
+    await Promise.resolve()
+    runtime.setDataSnapshot(createSnapshot({
+      count: 41,
+      revision: 2,
+      effect: 'reset',
+      start: 380,
+    }))
     await Promise.resolve()
     const snapshot = runtime.getSnapshot()
     mountProjection(runtime, container, snapshot)
@@ -1816,7 +1930,18 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
 
-    runtime.dispatch({ type: 'jump', target: { messageId: 'm-10' } })
+    runtime.dispatch({
+      type: 'jump',
+      origin: { messageId: 'm-1000', position: 1000 },
+      target: { messageId: 'm-400', position: 400 },
+    })
+    await Promise.resolve()
+    runtime.setDataSnapshot(createSnapshot({
+      count: 41,
+      revision: 2,
+      effect: 'reset',
+      start: 380,
+    }))
     await Promise.resolve()
     const snapshot = runtime.getSnapshot()
     mountProjection(runtime, container, snapshot)

@@ -349,6 +349,60 @@ h1 {
   line-height: 1.62;
 }
 
+.message-row.jump-highlight {
+  animation: message-jump-highlight 1.4s ease-out;
+}
+
+@keyframes message-jump-highlight {
+  0% {
+    box-shadow: 0 0 0 0 rgb(20 116 93 / 0.42);
+    outline: 2px solid rgb(20 116 93 / 0.7);
+  }
+
+  45% {
+    box-shadow: 0 0 0 8px rgb(20 116 93 / 0.16);
+    outline: 2px solid rgb(20 116 93 / 0.5);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgb(20 116 93 / 0);
+    outline: 2px solid rgb(20 116 93 / 0);
+  }
+}
+
+.message-quote {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  margin-top: 10px;
+  border: 1px solid #c9d7dc;
+  border-left: 3px solid #14745d;
+  border-radius: 6px;
+  background: #f2f7f6;
+  color: #344d56;
+  padding: 9px 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-quote:hover {
+  background: #e9f2f0;
+}
+
+.message-quote strong {
+  color: #172126;
+  font-size: 12px;
+}
+
+.message-quote span {
+  overflow: hidden;
+  color: #52646b;
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .media-block {
   display: grid;
   place-items: center;

@@ -12,6 +12,7 @@ import type {
   AnchorState,
   MessageDataItem,
   MessageDataSnapshot,
+  MessageIdentityAnchor,
   MessageRuntimeCommand,
   MessageRuntimeItemKey,
   MessageViewportRuntimeEvent,
@@ -24,6 +25,7 @@ import type {
 import type {
   CommitRecoveryInput,
   ContainerSize,
+  DestinationMotionForcedStart,
   MeasurableRow,
   RuntimeDiagnosticEmitter,
   RestoreTarget,
@@ -76,6 +78,10 @@ export type ViewportTransactionDeps<TMessage, TOptimistic> = {
     reason: ViewportAnchorChangeReason,
     anchor?: AnchorState | null,
   ) => void
+  emitDestinationSettled: (event: {
+    intent: 'jump'
+    target: MessageIdentityAnchor
+  }) => void
   invalidateSpacerCache: () => void
   emitEvent: (event: MessageViewportRuntimeEvent) => void
   emitDiagnostic: RuntimeDiagnosticEmitter
@@ -352,7 +358,14 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     this.deps.emitViewportAnchorChanged('transaction-settle', settledAnchor)
   }
 
-  async runJumpTransaction(messageId: string): Promise<void> {
+  async runJumpTransaction(
+    targetAnchor: MessageIdentityAnchor,
+    options: {
+      forceAnimateFrom?: DestinationMotionForcedStart
+      allowPreposition?: boolean
+      animate?: boolean
+    } = {},
+  ): Promise<void> {
     const data = this.deps.getDataSnapshot()
     const container = this.deps.registry.getContainer()
 
@@ -360,6 +373,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       return
     }
 
+    const messageId = targetAnchor.messageId
     const targetIndex = this.deps.renderWindow.findCommittedMessageIndex(
       data.items,
       messageId,
@@ -422,12 +436,37 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         Math.max(0, (container.clientHeight - targetRect.height) / 2)
 
       this.deps.setState('READY')
+      const targetTop = container.scrollTop + centerDelta
+
+      if (options.animate === false) {
+        this.deps.motion.scrollTo('jump', targetTop)
+        this.deps.scrollIntent.setBottomLockState('UNLOCKED')
+        this.deps.projection.publish({
+          data,
+          renderWindow,
+          bootstrapState: this.deps.store.getSnapshot().bootstrapState,
+          bottomLockState: 'UNLOCKED',
+        })
+        this.deps.emitDestinationSettled({
+          intent: 'jump',
+          target: targetAnchor,
+        })
+        this.deps.emitViewportAnchorChanged('transaction-settle')
+        return
+      }
+
       this.deps.motion.start({
         source: 'jump',
-        targetTop: container.scrollTop + centerDelta,
+        targetTop,
         data,
         renderWindow,
         bottomLockState: 'UNLOCKED',
+        forceAnimateFrom: options.forceAnimateFrom,
+        allowPreposition: options.allowPreposition,
+        destination: {
+          intent: 'jump',
+          target: targetAnchor,
+        },
       })
     } catch (error) {
       this.deps.recoverAfterCommitFailure({

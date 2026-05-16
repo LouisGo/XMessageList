@@ -15,6 +15,8 @@ import type {
 import type { RuntimeDiagnosticInput } from '../debug/diagnosticRecorder'
 import type { ScrollMotionSource } from '../scroll/scrollMotionEngine'
 
+export type DestinationMotionForcedStart = 'beforeTarget' | 'afterTarget'
+
 export type PublishResult<TMessage, TOptimistic> = {
   snapshot: MessageViewportSnapshot<TMessage, TOptimistic>
   changed: boolean
@@ -67,6 +69,8 @@ export type PendingDestinationRequest = {
   target: MessageIdentityAnchor
   commandTarget: AnchorState | MessageIdentityAnchor
   emittedAfterRevision: number | null
+  forceAnimateFrom?: DestinationMotionForcedStart
+  animateOnResolve: boolean
 }
 
 export type DestinationMotionSettle<TMessage, TOptimistic> = {
@@ -75,6 +79,10 @@ export type DestinationMotionSettle<TMessage, TOptimistic> = {
   bottomLockState: MessageViewportSnapshot['bottomLockState']
   data: MessageDataSnapshot<TMessage, TOptimistic>
   renderWindow: RenderWindow
+  destination?: {
+    intent: 'jump'
+    target: MessageIdentityAnchor
+  }
 }
 
 export type RuntimeDiagnosticEmitter = (input: RuntimeDiagnosticInput) => void

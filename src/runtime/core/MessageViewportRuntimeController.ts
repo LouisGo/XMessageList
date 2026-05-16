@@ -26,6 +26,7 @@ import {
   type BootstrapCommand,
   type CommitRecoveryInput,
   type ContainerSize,
+  type DestinationMotionForcedStart,
   type DestinationMotionSettle,
   type PendingDestinationRequest,
   type PendingFollowBottom,
@@ -371,6 +372,7 @@ export class MessageViewportRuntimeController<
         this.deriveRuntimeStateFromSnapshot(snapshot),
       emitViewportAnchorChanged: (reason, anchor) =>
         this.emitViewportAnchorChanged(reason, anchor),
+      emitDestinationSettled: (event) => this.emitDestinationSettled(event),
       invalidateSpacerCache: () => this.spacer.invalidateEstimateCache(),
       emitEvent: (event) => this.emitEvent(event),
       emitDiagnostic: (input) => this.emitDiagnostic(input),
@@ -647,7 +649,7 @@ export class MessageViewportRuntimeController<
       case 'jump':
         this.clearPendingFollowBottom()
         this.clearActiveFollowBottomIntent('jump')
-        this.startJumpCommand(command.target)
+        this.startJumpCommand(command.target, command.origin)
         break
       case 'restore':
         this.clearPendingFollowBottom()
@@ -813,20 +815,32 @@ export class MessageViewportRuntimeController<
     this.enqueueFollowBottomTransaction()
   }
 
-  private startJumpCommand(target: MessageIdentityAnchor): void {
+  private startJumpCommand(
+    target: MessageIdentityAnchor,
+    origin?: MessageIdentityAnchor,
+  ): void {
     const data = this.dataSnapshot
 
     if (!data) {
       return
     }
 
+    const forceAnimateFrom = this.getJumpForcedStart(origin, target)
+    const animateOnResolve = forceAnimateFrom !== undefined
+
     if (!this.hasCommittedMessage(data, target.messageId)) {
-      this.startPendingDestinationRequest('jump', target, target)
+      this.startPendingDestinationRequest('jump', target, target, {
+        forceAnimateFrom,
+        animateOnResolve,
+      })
       return
     }
 
     this.clearPendingDestinationRequest()
-    this.enqueueJumpTransaction(target.messageId)
+    this.enqueueJumpTransaction(target, {
+      animate: animateOnResolve,
+      allowPreposition: false,
+    })
   }
 
   private startRestoreCommand(target: AnchorState | MessageIdentityAnchor): void {
@@ -901,7 +915,10 @@ export class MessageViewportRuntimeController<
     this.clearPendingDestinationRequest()
 
     if (pending.intent === 'jump') {
-      this.enqueueJumpTransaction(pending.target.messageId)
+      this.enqueueJumpTransaction(pending.target, {
+        forceAnimateFrom: pending.forceAnimateFrom,
+        animate: pending.animateOnResolve,
+      })
       return true
     }
 
@@ -1094,6 +1111,10 @@ export class MessageViewportRuntimeController<
   private handleDestinationMotionSettle(
     settle: DestinationMotionSettle<TMessage, TOptimistic>,
   ): void {
+    if (settle.destination) {
+      this.emitDestinationSettled(settle.destination)
+    }
+
     if (
       settle.source !== 'followBottom' ||
       settle.bottomLockState !== 'LOCKED' ||
@@ -1103,6 +1124,26 @@ export class MessageViewportRuntimeController<
     }
 
     this.clearActiveFollowBottomIntent('settled-locked')
+  }
+
+  private emitDestinationSettled(event: {
+    intent: 'jump'
+    target: MessageIdentityAnchor
+  }): void {
+    const token = this.dataSnapshot
+      ? {
+          feedId: this.dataSnapshot.feedId,
+          generation: this.dataSnapshot.generation,
+        }
+      : this.lifecycle.getCurrent()
+
+    this.emitEvent({
+      type: 'destinationSettled',
+      feedId: token.feedId,
+      generation: token.generation,
+      intent: event.intent,
+      target: { ...event.target },
+    })
   }
 
   private updatePendingFollowBottomForUserScroll(scrollTop: number): void {
@@ -1168,6 +1209,10 @@ export class MessageViewportRuntimeController<
     intent: 'jump' | 'restore',
     target: MessageIdentityAnchor,
     commandTarget: AnchorState | MessageIdentityAnchor,
+    options: {
+      forceAnimateFrom?: DestinationMotionForcedStart
+      animateOnResolve?: boolean
+    } = {},
   ): void {
     const data = this.dataSnapshot
 
@@ -1184,6 +1229,8 @@ export class MessageViewportRuntimeController<
       target: { ...target },
       commandTarget: this.cloneDestinationCommandTarget(commandTarget),
       emittedAfterRevision: null,
+      forceAnimateFrom: options.forceAnimateFrom,
+      animateOnResolve: options.animateOnResolve ?? true,
     }
     this.readySubstate = 'READY_DESTINATION_PENDING'
     this.scrollIntent.setBottomLockState('UNLOCKED')
@@ -1209,6 +1256,32 @@ export class MessageViewportRuntimeController<
     }
 
     return { messageId: target.key.messageId }
+  }
+
+  private getJumpForcedStart(
+    origin: MessageIdentityAnchor | undefined,
+    target: MessageIdentityAnchor,
+  ): DestinationMotionForcedStart | undefined {
+    if (
+      !origin ||
+      !Number.isFinite(origin.position) ||
+      !Number.isFinite(target.position)
+    ) {
+      return undefined
+    }
+
+    const originPosition = origin.position as number
+    const targetPosition = target.position as number
+
+    if (targetPosition < originPosition) {
+      return 'afterTarget'
+    }
+
+    if (targetPosition > originPosition) {
+      return 'beforeTarget'
+    }
+
+    return undefined
   }
 
   private cloneDestinationCommandTarget(
@@ -1262,10 +1335,17 @@ export class MessageViewportRuntimeController<
     )
   }
 
-  private enqueueJumpTransaction(messageId: string): void {
+  private enqueueJumpTransaction(
+    target: MessageIdentityAnchor,
+    options: {
+      forceAnimateFrom?: DestinationMotionForcedStart
+      allowPreposition?: boolean
+      animate?: boolean
+    } = {},
+  ): void {
     this.transactions.enqueue(
       'jump',
-      () => this.transactionController.runJumpTransaction(messageId),
+      () => this.transactionController.runJumpTransaction(target, options),
       'jump',
     )
   }
@@ -2147,10 +2227,11 @@ export class MessageViewportRuntimeController<
         })
         break
       case 'viewportReady':
+      case 'destinationSettled':
         this.emitDiagnostic({
           channel: 'lifecycle',
           severity: 'info',
-          name: 'event.viewportReady',
+          name: `event.${event.type}`,
           details: () => ({
             event,
           }),
