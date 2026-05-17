@@ -660,6 +660,28 @@ type RuntimeDiagnosticsOptions =
 - `recovery`：commit recovery 和 runtime error。
 - `anchor` / `edge`：anchor 缺失/fallback、need event 触发摘要。
 
+对 destination motion，诊断必须能串起以下链路：
+
+```text
+command / need event
+-> transaction.enqueue/start
+-> projection.publish + commit
+-> destinationMotion.start
+-> destinationMotion.cancel? / destinationMotion.reschedule?
+-> destinationMotion.settle
+-> destinationSettled
+```
+
+最小字段要求：
+
+- `destinationMotion.start`：`source`、`targetTop`、`currentTop`、`distancePx`。
+- `destinationMotion.cancel`：`reason`、`source`、`targetTop`、`scrollTop`、
+  `distancePx`；如果是 `transaction-supersede`，还必须带 `transactionKind/id`。
+- `destinationMotion.reschedule`：原始 `target`、`resolvedTarget`、superseding
+  `transactionKind/id`。
+- `destinationSettled`：只能在最终 target 事务和 motion 完成后发出，不能用来表达
+  “intent still pending”。
+
 ## 9. Testing Requirements
 
 Runtime unit tests:

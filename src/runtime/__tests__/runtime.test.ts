@@ -2015,12 +2015,17 @@ describe('MessageViewportRuntime', () => {
   it('cancels jump motion on user wheel and leaves the viewport unlocked', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
 
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
     runtime.attach(container)
     runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
     runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
+    events.length = 0
 
     runtime.dispatch({
       type: 'jump',
@@ -2045,12 +2050,28 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(runtime.getDebugSnapshot().motionActive).toBe(true)
+    events.length = 0
 
     container.dispatchEvent(new Event('wheel'))
 
     expect(runtime.getDebugSnapshot().state).toBe('READY')
     expect(runtime.getDebugSnapshot().motionActive).toBe(false)
     expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+
+    await flushFramesWithMicrotasks(scheduler, 5)
+
+    expect(runtime.getDebugSnapshot().motionActive).toBe(false)
+    expect(runtime.getDebugSnapshot().readySubstate).toBe('READY_IDLE')
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: 'destinationSettled',
+      }),
+    )
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: 'needMessagesAround',
+      }),
+    )
   })
 
   it('cancels active destination motion before stabilizing a row resize', async () => {

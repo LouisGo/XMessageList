@@ -160,6 +160,10 @@ React adapter 依赖 revision 做 commit 回执，但不能把 revision 当作�
 
 ## 7. Runtime State Machine
 
+Runtime 是分层状态机，不是单一 `RuntimeState`。实现和接入层都不能只用
+`state === READY` 判断用户动作已经完成；必须结合 `ReadySubstate`、transaction
+队列、active motion 和 `bottomLockState`。
+
 ```ts
 type RuntimeState =
   | 'INITIAL'
@@ -207,6 +211,44 @@ type ReadySubstate =
 - 任意新 transaction 启动前，`TransactionRunner` 必须同步取消 active motion。
 - Motion settle 可以保持 public state 为 `READY`，但必须在 settle 后再 emit
   `viewportAnchorChanged(transaction-settle)`。
+
+### 7.1 Orthogonal State Layers
+
+这些状态层相互正交，分别表达不同所有权：
+
+| Layer | Owner | Meaning |
+| --- | --- | --- |
+| `RuntimeState` | runtime lifecycle | attach/bootstrap/transaction/detach/destroy |
+| `ReadySubstate` | runtime command intent | pending latest / pending destination / active motion |
+| `TransactionRunner` | mutation serialization | window、spacer、DOM commit、measurement 的串行所有权 |
+| `ScrollMotionEngine` | scroll writer | animation 期间唯一写 `scrollTop` 的 owner |
+| `bottomLockState` | scroll intent | latest bottom lock 与 projection recovery 状态 |
+
+`bottomLockState: RECOVERING` 是短期兼容保留的 projection/recovery 中间态。它不表示：
+
+- jump / restore / followBottom 已经完成。
+- 可以 emit `destinationSettled`。
+- React adapter 应卸载 follow-bottom affordance。
+- 当前处于稳定的 bottom lock 语义。
+
+稳定语义只能来自最终 settle：
+
+- jump / restore：目标 DOM commit、测量、motion settle 后才算完成。
+- followBottom：latest window commit、motion 到达物理 latest bottom 后才算 `LOCKED`。
+- prepend / resize / refresh：anchor correction 完成后才允许 emit settled anchor。
+
+### 7.2 Supersede Rules
+
+`transaction-supersede` 只表示旧 motion 的坐标失效，不表示用户意图取消。
+
+- active `followBottom` 被 append / resize supersede 后，必须在新 projection commit 后
+  重新计算 latest bottom target 并继续 motion。
+- active `jump` 被 data / resize supersede 后，必须重新解析 target DOM 和 `targetTop`；
+  被取消的半程 motion 不能 emit `destinationSettled`。
+- user interrupt 与 transaction supersede 必须分离：真实用户 wheel / drag / gesture
+  取消 jump 后不能自动重启，也不能保留 pending destination。
+- reset / generation change / detach / destroy 是隔离边界，必须清掉 pending intent、
+  active motion、commit wait 和 measurement cache。
 
 ## 8. Public Events
 
