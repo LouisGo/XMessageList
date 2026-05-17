@@ -217,6 +217,175 @@ Runtime 不吞掉不可恢复错误。它发布 `viewportError`，由上层决�
     `detach()` 完成之后，测试要断言 app 仍收到 `reason: 'detach'` 的最后
     `viewportAnchorChanged` checkpoint。
 
+### 9.1 Targeted Regression Matrix
+
+这组测试是为最近几轮状态机重构和架构收敛定制的，不再按“点按钮看一遍”设计，而是直接围绕 runtime 的关键轴：
+
+- lifecycle / bootstrap
+- transaction / projection / settle
+- destination / motion / interrupt
+- bottom lock / followBottom
+- edge paging / native scroll / drag edge
+- quote jump / restore / session switch
+
+执行前要求：
+
+- 清空 `.logs/`，只保留当前轮次日志。
+- 每个场景都同时采集页面状态、runtime diagnostics、demo log、console warn/error。
+- 结论必须区分 demo policy、React projection、runtime state machine、浏览器时序四类归因。
+
+#### A. Bootstrap / Lifecycle
+
+目的：确认 `INITIAL -> ATTACHED -> BOOTSTRAPPING -> READY` 的首屏链路没有引入新回归。
+
+覆盖点：
+
+- latest bootstrap 到 bottom locked。
+- restored bootstrap 先于 React 挂载到达时，attach 后必须完成 commit ack。
+- commit timeout / recovery 后不能误触发 edge paging。
+- StrictMode 下 `attach -> detach -> attach` 不重复 observer。
+
+断言：
+
+- 首屏不白屏、不闪回顶部。
+- `bootstrapState` 与实际视觉状态一致。
+- `viewportPhase` 在 projection / measurement / correcting 时切换合理。
+
+#### B. Session Switch / Restore
+
+目的：验证 feed 切换、LRU 复用、缓存恢复和 anchor persistence 没有状态污染。
+
+覆盖点：
+
+- feed A 中间位置切换到 feed B，再切回 A。
+- LRU 复用 feed runtime 时，返回未淘汰 feed 不丢失 projection / height cache。
+- LRU 淘汰 feed runtime 时必须 destroy，新 runtime 重新 bootstrap。
+- detaching 期间必须仍能拿到最后一次 `viewportAnchorChanged(reason: 'detach')`。
+
+断言：
+
+- 不出现旧 feed 残影。
+- restored position 不跳到错误区间。
+- `bottomLockState` 不从旧会话污染到新会话。
+
+#### C. Top Paging / Prepend Stability
+
+目的：专门验证 `needMoreBefore`、anchor correction、prepend settle 是否稳定。
+
+覆盖点：
+
+- 慢速靠近顶部触发。
+- 快速甩到顶部触发。
+- scrollbar drag 到顶部边缘触发。
+- 连续 prepend 时 anchor 视觉位置稳定。
+
+断言：
+
+- prepend 后不会整体下跳。
+- 不会在 recovery 期重复触发异常分页。
+- `scrollTop` correction 不会把 viewport 锚点打散。
+
+#### D. Bottom Paging / FollowBottom
+
+目的：把 `followBottom`、`needMoreAfter`、底部锁定和动画完成语义分开验证。
+
+覆盖点：
+
+- 中部向下滚动到 near-bottom 触发 after edge。
+- 点击 Bottom / floating follow-bottom。
+- scrollbar drag 到最底部边缘并停留。
+- append / resize 过程中 followBottom 的连续追底。
+
+断言：
+
+- partial window 不应伪装成真正锁底。
+- followBottom 不应先失焦再恢复成看似正确的状态。
+- 动画结束前不提前发 settled anchor。
+
+#### E. Quote Jump / Restore
+
+目的：验证 destination resolve、motion settle 和高亮目标一致性。
+
+覆盖点：
+
+- 点击 quote 区域跳转到中部、远距离、边缘消息。
+- jump 被 append / resize supersede 后重解析目标。
+- jump 过程中被 wheel / drag 打断。
+- jump 后立刻切换会话，再切回。
+
+断言：
+
+- 目标消息居中或按定义落点，不应停在顶部错位。
+- 高亮锚点与实际目标一致。
+- `destinationSettled` 只在真实 settle 后出现。
+- user interrupt 后不自动重启 jump。
+
+#### F. Event Storm / Bot Push / Dynamic Height
+
+目的：专门压测状态机在并发数据、动态高度和自动追加下的连贯性。
+
+覆盖点：
+
+- Event Storm 中点击 quote jump。
+- Event Storm 中 followBottom / append / scroll 混跑。
+- Bot Push 干扰下手动阅读历史。
+- Dynamic Height 开启后做 switch / prepend / jump / followBottom。
+
+断言：
+
+- 不抢滚，不白屏，不出现 bottom button 错隐。
+- 视图不会因高度变化产生明显错位。
+- 诊断里能串起 `command -> transaction -> projection -> motion -> settle`。
+
+#### G. Native Scrollbar Edge Drag
+
+目的：覆盖最近修过的原生滚动条边缘拖拽路径。
+
+覆盖点：
+
+- scrollbar drag 到顶部边缘持续停留。
+- scrollbar drag 到底部边缘持续停留。
+- drag 结束后的 intent 清理。
+
+断言：
+
+- edge paging 只在真实用户意图存在时触发。
+- 不会把恢复态 / 程序滚动误判为用户滚动。
+- drag 边缘信号不会污染下一次分页判断。
+
+### 9.2 Evidence Contract
+
+每个 E2E 场景都必须记录以下证据：
+
+- 当前 feed / generation / revision。
+- 当前大致 scroll 位置。
+- 当前按钮状态：Load History / Bottom / follow bottom / Event Storm / Bot Push / Dynamic Height。
+- 当前计数器状态：message count / loaded count / pending operation / last event。
+- 关键 runtime diagnostics：`projection.publish`、`transaction`、`viewportPhase`、`destinationState`、`viewportAnchorChanged`、`needMoreBefore` / `needMoreAfter`、`destinationMotion.start` / `settle` / `cancel`。
+- console warn/error。
+
+如果日志不足以判断归因，必须明确写“证据不足”，并指出缺失的是：
+
+- command / transaction / motion 的 correlation id。
+- projection commit ack。
+- 目标 resolve 结果。
+- 用户输入源和浏览器 scroll source 的区分。
+
+### 9.3 Shortest-Repro Priority
+
+当某个问题偶现时，E2E 应优先收集最短复现路径，而不是扩大操作量：
+
+1. 先做单一操作复现，例如只点 quote 或只点 Bottom。
+2. 再叠加一个干扰源，例如 Event Storm 或 Dynamic Height。
+3. 最后才加入会话切换、drag edge、快速滚动这类组合干扰。
+
+这样能更快判断问题归因是：
+
+- demo policy / mock 数据过激
+- runtime 状态机流转不一致
+- React projection 过早或过晚 commit
+- 浏览器时序 / input event loop 竞争
+
 ## 10. Test Assertions
 
 优先断言 observable behavior：

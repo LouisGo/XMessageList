@@ -124,7 +124,7 @@ export function maybeAttachRandomQuote(
       candidate.sequence < message.sequence,
   )
 
-  if (quoteCandidates.length === 0 || random() >= 0.3) {
+  if (quoteCandidates.length === 0 || random() >= 0.6) {
     return message
   }
 
