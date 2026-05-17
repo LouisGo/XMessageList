@@ -1,5 +1,7 @@
 import {
   type FormEvent,
+  type PointerEvent,
+  type MouseEvent,
   useState,
 } from 'react'
 import {
@@ -35,6 +37,41 @@ export function DemoMessageViewport() {
     const message = item.message
     const quote = message.quote
     const isHighlighted = scenario.highlightedMessageId === message.id
+    const jumpToMessageQuote = () => {
+      if (!quote) {
+        return
+      }
+
+      scenario.jumpToQuote({
+        origin: {
+          messageId: message.id,
+          position: message.sequence,
+        },
+        target: {
+          messageId: quote.messageId,
+          position: quote.position,
+        },
+      })
+    }
+    const handleQuotePointerDown = (
+      event: PointerEvent<HTMLButtonElement>,
+    ) => {
+      if (event.button !== 0) {
+        return
+      }
+
+      event.preventDefault()
+      jumpToMessageQuote()
+    }
+    const handleQuoteClick = (event: MouseEvent<HTMLButtonElement>) => {
+      // Pointer users dispatch on pointer-down so a Storm re-render cannot
+      // replace the button before click. Keyboard activation still uses click.
+      if (event.detail !== 0) {
+        return
+      }
+
+      jumpToMessageQuote()
+    }
 
     return (
       <article
@@ -91,16 +128,8 @@ export function DemoMessageViewport() {
             type="button"
             className="message-quote"
             data-testid={`quote-jump-${message.id}`}
-            onClick={() => scenario.jumpToQuote({
-              origin: {
-                messageId: message.id,
-                position: message.sequence,
-              },
-              target: {
-                messageId: quote.messageId,
-                position: quote.position,
-              },
-            })}
+            onPointerDown={handleQuotePointerDown}
+            onClick={handleQuoteClick}
           >
             <strong>{quote.author}</strong>
             <span>{quote.bodyPreview}</span>

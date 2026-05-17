@@ -187,6 +187,9 @@ before starting any transaction:
   `followBottom` 意图。只要 active follow-bottom intent 仍匹配当前
   `feedId + generation`，append / resize / window refresh commit 后必须重新计算
   latest bottom target，并用 `source: 'followBottom'` 继续 motion。
+- `transaction-supersede` 同样不能把 active jump 直接当作 settled。被 data / resize
+  supersede 的 jump 必须在 superseding transaction commit 后重新解析目标 DOM 和
+  `targetTop`，只有真实 motion 到达目标后才允许 emit `destinationSettled`。
 
 ## 5. ScrollMotionEngine
 
@@ -671,6 +674,8 @@ Runtime unit tests:
   steal the viewport back to bottom.
 - diagnostics expose `destinationMotion.cancel` reason plus transaction kind/id, and
   show the re-armed follow-bottom motion.
+- active jump survives data / resize transaction supersede, re-resolves its target,
+  and must not emit `destinationSettled` from the canceled partial motion.
 - far jump / restore with target outside DataWindow emits `needMessagesAround` and starts no motion before data arrives.
 - after around-target window loads, pending jump / restore consumes the snapshot; rebuilt jump with origin position animates in the correct physical direction, while directionless jump settles instantly.
 - already-loaded quote jump animates directly to the target without far-jump fake pre-positioning.

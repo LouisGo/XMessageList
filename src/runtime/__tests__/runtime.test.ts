@@ -896,6 +896,72 @@ describe('MessageViewportRuntime', () => {
     expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
   })
 
+  it('re-resolves jump destination when a data transaction supersedes motion', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    events.length = 0
+
+    runtime.dispatch({
+      type: 'jump',
+      origin: { messageId: 'm-1000', position: 1000 },
+      target: { messageId: 'm-400', position: 400 },
+    })
+    await Promise.resolve()
+    runtime.setDataSnapshot(createSnapshot({
+      count: 41,
+      revision: 2,
+      effect: 'reset',
+      start: 380,
+    }))
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+    events.length = 0
+
+    expect(runtime.getDebugSnapshot().motionActive).toBe(true)
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 41,
+      revision: 3,
+      effect: 'items-change',
+      start: 380,
+    }))
+    await Promise.resolve()
+
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: 'destinationSettled',
+      }),
+    )
+    expect(runtime.getDebugSnapshot().motionActive).toBe(false)
+    expect(runtime.getSnapshot().bottomLockState).toBe('RECOVERING')
+
+    await commitCurrentProjection(runtime, container)
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+    await flushMotion(scheduler)
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'destinationSettled',
+        intent: 'jump',
+        target: { messageId: 'm-400', position: 400 },
+        resolution: 'target',
+      }),
+    )
+    expect(runtime.getDebugSnapshot().motionActive).toBe(false)
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+  })
+
   it('jumps to the resolved anchor when a missing jump target was deleted', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })

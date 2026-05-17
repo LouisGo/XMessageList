@@ -260,8 +260,10 @@ type MessageViewportProps = {
 };
 ```
 
-默认 follow-bottom affordance 只在 `bottomLockState === 'UNLOCKED'` 时出现，
-点击只 dispatch semantic command，不直接写 `scrollTop`。
+默认 follow-bottom affordance 只在 `bottomLockState === 'UNLOCKED'` 时出现。
+`RECOVERING` 是 runtime 目的地/恢复事务的中间态；React adapter 在该状态下必须复用
+上一帧稳定的 follow-bottom slot，不能重新调用 `renderFollowBottom` 或卸载按钮。点击只
+dispatch semantic command，不直接写 `scrollTop`。
 
 `onViewportAnchorChange` 必须透传 runtime 的完整 `viewportAnchorChanged` event，
 不能只透出 `anchor/reason`。Feed 切换时旧 runtime 会在 pre-mutation `detach()`

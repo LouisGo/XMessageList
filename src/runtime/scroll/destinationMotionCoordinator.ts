@@ -53,6 +53,10 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     private readonly onDestinationMotionSettle: (
       settle: DestinationMotionSettle<TMessage, TOptimistic>,
     ) => void,
+    private readonly onDestinationMotionSupersede: (
+      settle: DestinationMotionSettle<TMessage, TOptimistic>,
+      context: DestinationMotionCancelContext | null,
+    ) => void,
     private readonly onScrollTopWritten: (
       scrollTop: number,
       source: ScrollSource,
@@ -293,6 +297,18 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     this.clearDestinationMotionSettle()
 
     if (!settle || this.isDestroyed()) {
+      return
+    }
+
+    if (
+      reason === 'transaction-supersede' &&
+      settle.source === 'jump' &&
+      settle.destination
+    ) {
+      // Data/resize transactions invalidate the measured target coordinate,
+      // but not the user's jump intent. Re-resolve after the superseding
+      // transaction commits; do not emit destinationSettled from a partial move.
+      this.onDestinationMotionSupersede(settle, context)
       return
     }
 

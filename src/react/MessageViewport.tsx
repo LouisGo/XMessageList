@@ -96,6 +96,47 @@ type RuntimeScrollContainerProps<TMessage, TOptimistic> = {
   children: ReactNode
 }
 
+type FollowBottomProjectionProps<TMessage, TOptimistic> = {
+  snapshot: MessageViewportSnapshot<TMessage, TOptimistic>
+  renderFollowBottom?: MessageViewportProps<TMessage, TOptimistic>['renderFollowBottom']
+  followBottom: () => void
+}
+
+class FollowBottomProjection<
+  TMessage = unknown,
+  TOptimistic = unknown,
+> extends Component<FollowBottomProjectionProps<TMessage, TOptimistic>> {
+  private stableNode: ReactNode = null
+
+  render() {
+    const { snapshot, renderFollowBottom, followBottom } = this.props
+
+    if (snapshot.bottomLockState === 'RECOVERING') {
+      return this.stableNode
+    }
+
+    const nextNode =
+      snapshot.bottomLockState === 'UNLOCKED'
+        ? renderFollowBottom
+          ? renderFollowBottom({ snapshot, followBottom })
+          : (
+              <button
+                type="button"
+                className="follow-bottom-button"
+                data-message-follow-bottom
+                data-testid="follow-bottom-button"
+                onClick={followBottom}
+              >
+                Bottom
+              </button>
+            )
+        : null
+
+    this.stableNode = nextNode
+    return nextNode
+  }
+}
+
 class RuntimeScrollContainer<
   TMessage = unknown,
   TOptimistic = unknown,
@@ -254,22 +295,6 @@ export function MessageViewport<
     },
     [runtime],
   )
-  const followBottomNode =
-    snapshot.bottomLockState === 'UNLOCKED'
-      ? renderFollowBottom
-        ? renderFollowBottom({ snapshot, followBottom })
-        : (
-            <button
-              type="button"
-              className="follow-bottom-button"
-              data-message-follow-bottom
-              data-testid="follow-bottom-button"
-              onClick={followBottom}
-            >
-              Bottom
-            </button>
-          )
-      : null
 
   return (
     <div
@@ -317,7 +342,11 @@ export function MessageViewport<
       {bottomSlot}
       {renderTopEdge?.(snapshot)}
       {renderBottomEdge?.(snapshot)}
-      {followBottomNode}
+      <FollowBottomProjection
+        snapshot={snapshot}
+        renderFollowBottom={renderFollowBottom}
+        followBottom={followBottom}
+      />
       {renderOverlay?.(snapshot)}
     </div>
   )

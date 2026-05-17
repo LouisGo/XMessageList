@@ -5,6 +5,7 @@ import {
   MessageViewport,
   MessageViewportRuntime,
   type MessageDataSnapshot,
+  type MessageViewportSnapshot,
 } from '../..'
 import { FakeScheduler, createFakeObservers } from '../../test/fakes'
 
@@ -83,11 +84,15 @@ function TestHarness({
 function ViewportOnlyHarness({
   runtime,
   onViewportAnchorChange,
+  renderFollowBottom,
 }: {
   runtime: MessageViewportRuntime<TestMessage>
   onViewportAnchorChange?: Parameters<
     typeof MessageViewport<TestMessage>
   >[0]['onViewportAnchorChange']
+  renderFollowBottom?: Parameters<
+    typeof MessageViewport<TestMessage>
+  >[0]['renderFollowBottom']
 }) {
   return (
     <MessageViewport
@@ -95,6 +100,7 @@ function ViewportOnlyHarness({
       renderMessage={(item) =>
         item.kind === 'committed' ? <span>{item.message.id}</span> : null
       }
+      renderFollowBottom={renderFollowBottom}
       onViewportAnchorChange={onViewportAnchorChange}
       style={{ height: 240 }}
     />
@@ -276,6 +282,96 @@ describe('React adapter', () => {
     })
 
     expect(dispatch).toHaveBeenCalledWith({ type: 'followBottom' })
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('keeps follow-bottom slot stable during recovering projection', async () => {
+    const listeners = new Set<() => void>()
+    let snapshot: MessageViewportSnapshot<TestMessage> = {
+      feedId: 'feed',
+      generation: 1,
+      revision: 1,
+      items: [],
+      renderWindow: {
+        startIndex: 0,
+        endIndex: -1,
+        itemKeys: [],
+      },
+      topSpacer: 0,
+      bottomSpacer: 0,
+      bottomLockState: 'UNLOCKED',
+      bootstrapState: 'READY',
+      edgeState: {
+        before: 'idle',
+        after: 'idle',
+      },
+    }
+    const runtime = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+
+        return () => {
+          listeners.delete(listener)
+        }
+      },
+      attach: vi.fn(),
+      detach: vi.fn(),
+      dispatch: vi.fn(),
+      notifyProjectionCommitted: vi.fn(),
+      registerRow: vi.fn(),
+      registerTopSentinel: vi.fn(),
+      registerBottomSentinel: vi.fn(),
+      registerTopSpacer: vi.fn(),
+      registerBottomSpacer: vi.fn(),
+      subscribeEvent: vi.fn(() => () => {}),
+    } as unknown as MessageViewportRuntime<TestMessage>
+    const renderFollowBottom = vi.fn(() => (
+      <button type="button" data-testid="custom-follow-bottom">
+        Bottom
+      </button>
+    ))
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      value: 320,
+    })
+
+    await act(async () => {
+      root.render(
+        <ViewportOnlyHarness
+          runtime={runtime}
+          renderFollowBottom={renderFollowBottom}
+        />,
+      )
+    })
+
+    const callsBeforeRecovering = renderFollowBottom.mock.calls.length
+    expect(host.querySelector('[data-testid="custom-follow-bottom"]')).not.toBeNull()
+
+    await act(async () => {
+      snapshot = {
+        ...snapshot,
+        revision: 2,
+        bottomLockState: 'RECOVERING',
+      }
+      for (const listener of listeners) {
+        listener()
+      }
+    })
+
+    expect(runtime.getSnapshot().bottomLockState).toBe('RECOVERING')
+    expect(renderFollowBottom).toHaveBeenCalledTimes(callsBeforeRecovering)
+    expect(host.querySelector('[data-testid="custom-follow-bottom"]')).not.toBeNull()
+
     await act(async () => {
       root.unmount()
     })

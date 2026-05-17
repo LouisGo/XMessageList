@@ -35,7 +35,10 @@ import {
 } from './runtimeTypes'
 import { AnchorCoordinator } from '../dom/anchorCoordinator'
 import { EdgeNeedCoordinator } from '../events/edgeNeedCoordinator'
-import { DestinationMotionCoordinator } from '../scroll/destinationMotionCoordinator'
+import {
+  DestinationMotionCoordinator,
+  type DestinationMotionCancelContext,
+} from '../scroll/destinationMotionCoordinator'
 import { ViewportTransactionController } from '../transactions/viewportTransactionController'
 import type {
   AnchorState,
@@ -312,6 +315,8 @@ export class MessageViewportRuntimeController<
       () => this.state === 'DESTROYED',
       (reason) => this.emitViewportAnchorChanged(reason),
       (settle) => this.handleDestinationMotionSettle(settle),
+      (settle, context) =>
+        this.handleDestinationMotionSupersede(settle, context),
       (scrollTop, source) =>
         this.recordActiveFollowBottomIntentScrollWrite(scrollTop, source),
       (input) => this.emitDiagnostic(input),
@@ -1136,6 +1141,64 @@ export class MessageViewportRuntimeController<
     this.clearActiveFollowBottomIntent('settled-locked')
   }
 
+  private handleDestinationMotionSupersede(
+    settle: DestinationMotionSettle<TMessage, TOptimistic>,
+    context: DestinationMotionCancelContext | null,
+  ): void {
+    const destination = settle.destination
+
+    if (!destination || destination.intent !== 'jump') {
+      return
+    }
+
+    const data = this.dataSnapshot
+
+    if (!data) {
+      return
+    }
+
+    const originalTarget = destination.target
+    const resolvedTarget =
+      destination.resolvedTarget && this.hasCommittedMessage(
+        data,
+        destination.resolvedTarget.messageId,
+      )
+        ? destination.resolvedTarget
+        : this.resolvePendingJumpTarget(data, originalTarget)
+
+    this.emitDiagnostic({
+      channel: 'motion',
+      severity: 'info',
+      name: 'destinationMotion.reschedule',
+      correlationId:
+        `motion:${settle.source}:${settle.data.feedId}:${settle.data.generation}:${settle.data.revision}`,
+      details: () => ({
+        source: settle.source,
+        intent: destination.intent,
+        reason: 'transaction-supersede',
+        transactionKind: context?.transactionKind ?? null,
+        transactionId: context?.transactionId ?? null,
+        target: originalTarget,
+        resolvedTarget: resolvedTarget ?? null,
+      }),
+    })
+
+    if (!resolvedTarget) {
+      this.startPendingDestinationRequest('jump', originalTarget, originalTarget, {
+        animateOnResolve: true,
+        preserveBottomLockState: true,
+      })
+      return
+    }
+
+    this.clearPendingDestinationRequest()
+    this.enqueueJumpTransaction(resolvedTarget, {
+      animate: true,
+      allowPreposition: false,
+      originalTarget,
+    })
+  }
+
   private emitDestinationSettled(event: {
     intent: 'jump'
     target: MessageIdentityAnchor
@@ -1228,6 +1291,7 @@ export class MessageViewportRuntimeController<
     options: {
       forceAnimateFrom?: DestinationMotionForcedStart
       animateOnResolve?: boolean
+      preserveBottomLockState?: boolean
     } = {},
   ): void {
     const data = this.dataSnapshot
@@ -1249,7 +1313,9 @@ export class MessageViewportRuntimeController<
       animateOnResolve: options.animateOnResolve ?? true,
     }
     this.readySubstate = 'READY_DESTINATION_PENDING'
-    this.scrollIntent.setBottomLockState('UNLOCKED')
+    if (!options.preserveBottomLockState) {
+      this.scrollIntent.setBottomLockState('UNLOCKED')
+    }
     this.emitPendingDestinationNeed(data)
   }
 
