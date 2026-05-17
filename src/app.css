@@ -251,6 +251,7 @@ h1 {
 }
 
 .message-viewport {
+  position: relative;
   min-height: 0;
   height: 100%;
   background:
@@ -262,6 +263,59 @@ h1 {
       #e5edf0 10px,
       #e5edf0 20px
     );
+}
+
+.message-viewport [data-message-scroll-container]::-webkit-scrollbar {
+  display: none;
+}
+
+.message-viewport [data-message-scroll-container] {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.x-message-scrollbar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  z-index: 3;
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity 140ms linear;
+}
+
+.x-message-scrollbar.is-scrollable.is-visible,
+.x-message-scrollbar.is-scrollable.is-hovering,
+.x-message-scrollbar.is-scrollable.is-dragging {
+  opacity: 1;
+}
+
+.x-message-scrollbar-thumb {
+  position: absolute;
+  right: 1px;
+  width: 5px;
+  border-radius: 999px;
+  background: rgb(109 122 130 / 0.52);
+  transition:
+    width 120ms linear,
+    right 120ms linear,
+    background-color 120ms linear,
+    transform 0ms linear;
+  pointer-events: auto;
+}
+
+.x-message-scrollbar.is-hovering .x-message-scrollbar-thumb,
+.x-message-scrollbar.is-dragging .x-message-scrollbar-thumb,
+body.x-message-scrollbar-dragging .x-message-scrollbar-thumb {
+  right: 0;
+  width: 8px;
+  background: rgb(109 122 130 / 0.72);
+}
+
+body.x-message-scrollbar-dragging {
+  user-select: none;
 }
 
 [data-message-window] {

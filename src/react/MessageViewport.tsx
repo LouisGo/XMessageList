@@ -5,6 +5,7 @@ import {
   useCallback,
   useLayoutEffect,
   useMemo,
+  useState,
   useRef,
 } from 'react'
 import {
@@ -19,6 +20,7 @@ import type {
   MessageViewportSnapshot,
 } from '../runtime'
 import { useMessageViewportRuntime } from './useMessageViewportRuntime'
+import { CustomScrollbar } from './CustomScrollbar'
 
 export type MessageRowProjectionProps<
   TMessage = unknown,
@@ -87,6 +89,7 @@ export type MessageViewportProps<
   renderOverlay?: (
     snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
   ) => ReactNode
+  customScrollbar?: boolean
 }
 
 type RuntimeScrollContainerProps<TMessage, TOptimistic> = {
@@ -235,9 +238,13 @@ export function MessageViewport<
   renderFollowBottom,
   onViewportAnchorChange,
   renderOverlay,
+  customScrollbar = true,
 }: MessageViewportProps<TMessage, TOptimistic>) {
   const snapshot = useMessageViewportRuntime(runtime)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(
+    null,
+  )
   const viewportStyle = useMemo<CSSProperties>(
     () => ({
       ...baseViewportStyle,
@@ -248,6 +255,7 @@ export function MessageViewport<
   const setContainerRef = useCallback(
     (element: HTMLDivElement | null) => {
       containerRef.current = element
+      setContainerElement(element)
     },
     [],
   )
@@ -332,6 +340,11 @@ export function MessageViewport<
         />
         <div ref={setBottomSentinel} data-bottom-sentinel />
       </RuntimeScrollContainer>
+      <CustomScrollbar
+        container={containerElement}
+        enabled={customScrollbar}
+        geometryVersion={snapshot.revision}
+      />
       {bottomSlot}
       {renderTopEdge?.(snapshot)}
       {renderBottomEdge?.(snapshot)}
@@ -353,6 +366,8 @@ const baseViewportStyle: CSSProperties = {
 const scrollContainerStyle: CSSProperties = {
   height: '100%',
   overflowY: 'auto',
+  scrollbarWidth: 'none',
+  msOverflowStyle: 'none',
   overflowAnchor: 'none',
   position: 'relative',
 }

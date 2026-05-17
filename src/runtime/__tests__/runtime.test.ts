@@ -10,6 +10,11 @@ import {
   serializeRuntimeItemKey,
 } from '..'
 import {
+  CUSTOM_SCROLLBAR_DRAG_END_EVENT,
+  CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
+  CUSTOM_SCROLLBAR_DRAG_START_EVENT,
+} from '../../runtime/scroll/customScrollbarEvents'
+import {
   createContainer,
   createFakeObservers,
   FakeScheduler,
@@ -2302,6 +2307,30 @@ describe('MessageViewportRuntime', () => {
     await flushTrustedScrollFrame(container, scheduler)
 
     expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
+  })
+
+  it('treats custom scrollbar drag as user edge intent', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: string[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event.type)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 10, revision: 1, effect: 'reset', hasMoreAfter: true }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    await flushScrollFrames(container, scheduler, 3)
+
+    container.dispatchEvent(new CustomEvent(CUSTOM_SCROLLBAR_DRAG_START_EVENT))
+    container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+    container.dispatchEvent(new CustomEvent(CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT))
+    await flushTrustedScrollFrame(container, scheduler)
+    container.dispatchEvent(new CustomEvent(CUSTOM_SCROLLBAR_DRAG_END_EVENT))
+
+    expect(events.filter((event) => event === 'needMoreAfter')).toHaveLength(1)
   })
 
   it('continues top edge paging after prepend while scrollbar drag stays at the edge', async () => {

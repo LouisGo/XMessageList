@@ -15,6 +15,7 @@ The adapter standardizes IM viewport projection SOP without owning scrolling:
 
 - render the fixed projection DOM shell
 - render edge and follow-bottom slots
+- overlay the custom scrollbar as a DOM-only direct-manipulation layer
 - dispatch semantic follow-bottom commands
 - expose runtime anchor persistence events to the app/demo
 

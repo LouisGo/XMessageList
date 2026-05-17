@@ -1,6 +1,6 @@
 import { StrictMode, act, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   MessageViewport,
   MessageViewportRuntime,
@@ -119,6 +119,18 @@ async function flushFramesWithMicrotasks(
 }
 
 describe('React adapter', () => {
+  beforeEach(() => {
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      callback(0)
+      return 1
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('commits projection through layout effect and supports StrictMode remount', async () => {
     const scheduler = new FakeScheduler()
     const observers = createFakeObservers()
@@ -621,4 +633,464 @@ describe('React adapter', () => {
       }),
     )
   })
+
+  it('renders a custom scrollbar overlay and hides native scrollbar styling', async () => {
+    const runtime = createMockRuntime()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtime} />)
+    })
+
+    const scrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    expect(scrollContainer).not.toBeNull()
+    if (!scrollContainer) {
+      return
+    }
+
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      value: 1200,
+    })
+
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+
+    expect(scrollContainer.style.scrollbarWidth).toBe('none')
+    expect((scrollContainer.style as CSSStyleDeclaration & { msOverflowStyle?: string }).msOverflowStyle).toBe('none')
+    expect(host.querySelector('[data-testid="custom-scrollbar"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="custom-scrollbar-thumb"]')).not.toBeNull()
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('maps custom thumb dragging to native scrollTop without dispatching runtime commands', async () => {
+    const runtime = createMockRuntime()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtime} />)
+    })
+
+    const scrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    expect(scrollContainer).not.toBeNull()
+    if (!scrollContainer) {
+      return
+    }
+
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      value: 1200,
+    })
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      configurable: true,
+      writable: true,
+      value: 0,
+    })
+
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+
+    const thumb = host.querySelector<HTMLElement>(
+      '[data-testid="custom-scrollbar-thumb"]',
+    )
+    expect(thumb).not.toBeNull()
+    if (!thumb) {
+      return
+    }
+
+    await act(async () => {
+      thumb.dispatchEvent(createPointerEvent('pointerdown', 20, 1))
+      document.dispatchEvent(createPointerEvent('pointermove', 80, 1))
+      document.dispatchEvent(createPointerEvent('pointerup', 80, 1))
+    })
+
+    expect(scrollContainer.scrollTop).toBeGreaterThan(0)
+    expect(runtime.dispatch).not.toHaveBeenCalled()
+    expect(document.body.classList.contains('x-message-scrollbar-dragging')).toBe(
+      false,
+    )
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('rebases active custom thumb drag after content growth changes scroll geometry', async () => {
+    const runtime = createMockRuntime()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scrollHeight = 1200
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtime} />)
+    })
+
+    const scrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    expect(scrollContainer).not.toBeNull()
+    if (!scrollContainer) {
+      return
+    }
+
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    })
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      configurable: true,
+      writable: true,
+      value: 0,
+    })
+
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+
+    const thumb = host.querySelector<HTMLElement>(
+      '[data-testid="custom-scrollbar-thumb"]',
+    )
+    expect(thumb).not.toBeNull()
+    if (!thumb) {
+      return
+    }
+
+    await act(async () => {
+      thumb.dispatchEvent(createPointerEvent('pointerdown', 20, 1))
+    })
+
+    scrollHeight = 1800
+    scrollContainer.scrollTop = 600
+
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+
+    await act(async () => {
+      document.dispatchEvent(createPointerEvent('pointermove', 10, 1))
+    })
+
+    expect(scrollContainer.scrollTop).toBeGreaterThan(0)
+    expect(scrollContainer.scrollTop).toBeLessThan(600)
+
+    await act(async () => {
+      document.dispatchEvent(createPointerEvent('pointerup', 10, 1))
+      root.unmount()
+    })
+  })
+
+  it('does not let drag-owned sync suppress a later projection rebase in the same frame', async () => {
+    const runtime = createMockRuntime()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scrollHeight = 1200
+    const frameCallbacks: FrameRequestCallback[] = []
+
+    vi.mocked(window.requestAnimationFrame).mockImplementation((callback) => {
+      frameCallbacks.push(callback)
+      return frameCallbacks.length
+    })
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtime} />)
+    })
+
+    const scrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    expect(scrollContainer).not.toBeNull()
+    if (!scrollContainer) {
+      return
+    }
+
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    })
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      configurable: true,
+      writable: true,
+      value: 0,
+    })
+
+    while (frameCallbacks.length > 0) {
+      frameCallbacks.shift()?.(0)
+    }
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+    while (frameCallbacks.length > 0) {
+      frameCallbacks.shift()?.(0)
+    }
+
+    const thumb = host.querySelector<HTMLElement>(
+      '[data-testid="custom-scrollbar-thumb"]',
+    )
+    expect(thumb).not.toBeNull()
+    if (!thumb) {
+      return
+    }
+
+    await act(async () => {
+      thumb.dispatchEvent(createPointerEvent('pointerdown', 20, 1))
+      document.dispatchEvent(createPointerEvent('pointermove', 80, 1))
+    })
+
+    scrollHeight = 1800
+    scrollContainer.scrollTop = 600
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+
+    while (frameCallbacks.length > 0) {
+      frameCallbacks.shift()?.(16)
+    }
+
+    await act(async () => {
+      document.dispatchEvent(createPointerEvent('pointermove', 70, 1))
+    })
+
+    expect(scrollContainer.scrollTop).toBeGreaterThan(0)
+    expect(scrollContainer.scrollTop).toBeLessThan(600)
+
+    await act(async () => {
+      document.dispatchEvent(createPointerEvent('pointerup', 70, 1))
+      root.unmount()
+    })
+  })
+
+  it('continues active drag linearly after prepend-like geometry growth with the pointer outside the track', async () => {
+    const runtime = createMockRuntime()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scrollHeight = 1200
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtime} />)
+    })
+
+    const scrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    expect(scrollContainer).not.toBeNull()
+    if (!scrollContainer) {
+      return
+    }
+
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    })
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      configurable: true,
+      writable: true,
+      value: 0,
+    })
+
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+
+    const thumb = host.querySelector<HTMLElement>(
+      '[data-testid="custom-scrollbar-thumb"]',
+    )
+    expect(thumb).not.toBeNull()
+    if (!thumb) {
+      return
+    }
+
+    await act(async () => {
+      thumb.dispatchEvent(createPointerEvent('pointerdown', 20, 1))
+      document.dispatchEvent(createPointerEvent('pointermove', -500, 1))
+    })
+
+    scrollHeight = 1800
+    scrollContainer.scrollTop = 600
+
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+
+    expect(scrollContainer.scrollTop).toBe(600)
+
+    await act(async () => {
+      document.dispatchEvent(createPointerEvent('pointermove', -501, 1))
+    })
+
+    expect(scrollContainer.scrollTop).toBeLessThan(600)
+    expect(scrollContainer.scrollTop).toBeGreaterThan(550)
+
+    await act(async () => {
+      document.dispatchEvent(createPointerEvent('pointerup', -501, 1))
+      root.unmount()
+    })
+  })
+
+  it('continues active drag linearly after append-like geometry growth moves the thumb upward', async () => {
+    const runtime = createMockRuntime()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scrollHeight = 1200
+    let scrollTop = 480
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtime} />)
+    })
+
+    const scrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    expect(scrollContainer).not.toBeNull()
+    if (!scrollContainer) {
+      return
+    }
+
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    })
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value) => {
+        scrollTop = value
+      },
+    })
+
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+
+    const thumb = host.querySelector<HTMLElement>(
+      '[data-testid="custom-scrollbar-thumb"]',
+    )
+    expect(thumb).not.toBeNull()
+    if (!thumb) {
+      return
+    }
+
+    await act(async () => {
+      thumb.dispatchEvent(createPointerEvent('pointerdown', 120, 1))
+    })
+
+    scrollHeight = 1800
+
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+
+    expect(scrollContainer.scrollTop).toBe(480)
+
+    await act(async () => {
+      document.dispatchEvent(createPointerEvent('pointermove', 150, 1))
+    })
+
+    expect(scrollContainer.scrollTop).toBeGreaterThan(480)
+    expect(scrollContainer.scrollTop).toBeLessThan(800)
+
+    await act(async () => {
+      document.dispatchEvent(createPointerEvent('pointerup', 150, 1))
+      root.unmount()
+    })
+  })
 })
+
+function createMockRuntime(): MessageViewportRuntime<TestMessage> & {
+  dispatch: ReturnType<typeof vi.fn>
+} {
+  const snapshot: MessageViewportSnapshot<TestMessage> = {
+    feedId: 'feed',
+    generation: 1,
+    revision: 1,
+    items: [],
+    renderWindow: {
+      startIndex: 0,
+      endIndex: -1,
+      itemKeys: [],
+    },
+    topSpacer: 0,
+    bottomSpacer: 0,
+    bottomLockState: 'LOCKED',
+    bootstrapState: 'READY_EMPTY',
+    viewportPhase: 'IDLE',
+    edgeState: {
+      before: 'idle',
+      after: 'idle',
+    },
+  }
+
+  return {
+    getSnapshot: () => snapshot,
+    subscribe: vi.fn(() => () => {}),
+    attach: vi.fn(),
+    detach: vi.fn(),
+    destroy: vi.fn(),
+    setDataSnapshot: vi.fn(),
+    dispatch: vi.fn(),
+    notifyProjectionCommitted: vi.fn(),
+    registerRow: vi.fn(),
+    registerTopSentinel: vi.fn(),
+    registerBottomSentinel: vi.fn(),
+    registerTopSpacer: vi.fn(),
+    registerBottomSpacer: vi.fn(),
+    subscribeEvent: vi.fn(() => () => {}),
+    getViewportAnchorState: vi.fn(() => null),
+    getDiagnosticRecords: vi.fn(() => []),
+    getDebugSnapshot: vi.fn(),
+  } as unknown as MessageViewportRuntime<TestMessage> & {
+    dispatch: ReturnType<typeof vi.fn>
+  }
+}
+
+function createPointerEvent(
+  type: string,
+  clientY: number,
+  pointerId: number,
+): Event {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientY,
+    button: 0,
+  })
+  Object.defineProperty(event, 'pointerId', {
+    configurable: true,
+    value: pointerId,
+  })
+  return event
+}

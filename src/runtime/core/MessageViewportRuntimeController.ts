@@ -40,6 +40,11 @@ import {
   type DestinationMotionCancelContext,
 } from '../scroll/destinationMotionCoordinator'
 import { ViewportTransactionController } from '../transactions/viewportTransactionController'
+import {
+  CUSTOM_SCROLLBAR_DRAG_END_EVENT,
+  CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
+  CUSTOM_SCROLLBAR_DRAG_START_EVENT,
+} from '../scroll/customScrollbarEvents'
 import type {
   AnchorState,
   MessageDataItem,
@@ -229,6 +234,22 @@ export class MessageViewportRuntimeController<
   private readonly handleScrollbarDragEnd = (): void => {
     this.scrollbarDragIntentActive = false
     this.scrollbarDragEdgeIntent = null
+  }
+
+  private readonly handleCustomScrollbarDragStart = (): void => {
+    this.scrollbarDragIntentActive = true
+    this.scrollIntent.markUserIntent(this.currentFrame)
+    this.handleUserScrollIntent()
+  }
+
+  private readonly handleCustomScrollbarDragScroll = (): void => {
+    this.scrollbarDragIntentActive = true
+    this.scrollIntent.markUserIntent(this.currentFrame)
+    this.scheduleScrollRaf()
+  }
+
+  private readonly handleCustomScrollbarDragEnd = (): void => {
+    this.handleScrollbarDragEnd()
   }
 
   constructor(options: MessageViewportRuntimeOptions = {}) {
@@ -437,6 +458,18 @@ export class MessageViewportRuntimeController<
     container.addEventListener('pointerdown', this.handlePointerScrollIntent)
     container.addEventListener('mousedown', this.handleMouseScrollIntent)
     container.addEventListener('keydown', this.handleUserScrollIntent)
+    container.addEventListener(
+      CUSTOM_SCROLLBAR_DRAG_START_EVENT,
+      this.handleCustomScrollbarDragStart as EventListener,
+    )
+    container.addEventListener(
+      CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
+      this.handleCustomScrollbarDragScroll as EventListener,
+    )
+    container.addEventListener(
+      CUSTOM_SCROLLBAR_DRAG_END_EVENT,
+      this.handleCustomScrollbarDragEnd as EventListener,
+    )
     window.addEventListener('pointerup', this.handleScrollbarDragEnd)
     window.addEventListener('mouseup', this.handleScrollbarDragEnd)
     window.addEventListener('blur', this.handleScrollbarDragEnd)
@@ -499,6 +532,18 @@ export class MessageViewportRuntimeController<
       container.removeEventListener('pointerdown', this.handlePointerScrollIntent)
       container.removeEventListener('mousedown', this.handleMouseScrollIntent)
       container.removeEventListener('keydown', this.handleUserScrollIntent)
+      container.removeEventListener(
+        CUSTOM_SCROLLBAR_DRAG_START_EVENT,
+        this.handleCustomScrollbarDragStart as EventListener,
+      )
+      container.removeEventListener(
+        CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
+        this.handleCustomScrollbarDragScroll as EventListener,
+      )
+      container.removeEventListener(
+        CUSTOM_SCROLLBAR_DRAG_END_EVENT,
+        this.handleCustomScrollbarDragEnd as EventListener,
+      )
       window.removeEventListener('pointerup', this.handleScrollbarDragEnd)
       window.removeEventListener('mouseup', this.handleScrollbarDragEnd)
       window.removeEventListener('blur', this.handleScrollbarDragEnd)

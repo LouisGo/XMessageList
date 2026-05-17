@@ -73,7 +73,7 @@ describe('demoData', () => {
       feedId: 'feed-no-quote',
       sequence: 4,
       quoteCandidates: current,
-      random: vi.fn(() => 0.3),
+      random: vi.fn(() => 0.6),
     })
 
     expect(message.quote).toBeUndefined()
