@@ -862,6 +862,8 @@ describe('MessageViewportRuntime', () => {
     expect(runtime.getDebugSnapshot().readySubstate).toBe(
       'READY_DESTINATION_PENDING',
     )
+    expect(runtime.getDebugSnapshot().transactionState).toBe('queued')
+    expect(runtime.getDebugSnapshot().destinationState).toBe('pendingData')
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'needMessagesAround',
@@ -880,6 +882,7 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
 
     const snapshot = runtime.getSnapshot()
+    expect(runtime.getDebugSnapshot().destinationState).toBe('resolvingDom')
     expect(snapshot.items.some((item) =>
       item.key.kind === 'committed' && item.key.messageId === 'm-10000',
     )).toBe(true)
@@ -893,6 +896,8 @@ describe('MessageViewportRuntime', () => {
     await flushMotion(scheduler)
 
     expect(runtime.getDebugSnapshot().readySubstate).toBe('READY_IDLE')
+    expect(runtime.getDebugSnapshot().transactionState).toBe('queued')
+    expect(runtime.getDebugSnapshot().destinationState).toBe('settled')
     expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
   })
 
@@ -928,6 +933,7 @@ describe('MessageViewportRuntime', () => {
     events.length = 0
 
     expect(runtime.getDebugSnapshot().motionActive).toBe(true)
+    expect(runtime.getDebugSnapshot().destinationState).toBe('motionActive')
 
     runtime.setDataSnapshot(createSnapshot({
       count: 41,
@@ -959,6 +965,7 @@ describe('MessageViewportRuntime', () => {
       }),
     )
     expect(runtime.getDebugSnapshot().motionActive).toBe(false)
+    expect(runtime.getDebugSnapshot().destinationState).toBe('settled')
     expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
   })
 
@@ -1712,6 +1719,7 @@ describe('MessageViewportRuntime', () => {
     await flushBootstrap(runtime, scheduler, container)
 
     runtime.dispatch({ type: 'followBottom' })
+    expect(runtime.getDebugSnapshot().destinationState).toBe('pendingData')
     runtime.setDataSnapshot(
       createSnapshot({
         count: 40,
@@ -1740,6 +1748,7 @@ describe('MessageViewportRuntime', () => {
 
     const snapshot = runtime.getSnapshot()
     expect(snapshot.viewportPhase).toBe('PROJECTING')
+    expect(runtime.getDebugSnapshot().destinationState).toBe('resolvingDom')
     mountProjection(runtime, container, snapshot)
     runtime.notifyProjectionCommitted({
       feedId: snapshot.feedId,
@@ -1749,6 +1758,7 @@ describe('MessageViewportRuntime', () => {
     await flushMotion(scheduler)
 
     expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
+    expect(runtime.getDebugSnapshot().destinationState).toBe('settled')
   })
 
   it('animates follow-bottom after latest projection clamps scrollTop to the new bottom', async () => {
@@ -1796,6 +1806,7 @@ describe('MessageViewportRuntime', () => {
 
     const snapshot = runtime.getSnapshot()
     expect(snapshot.viewportPhase).toBe('PROJECTING')
+    expect(runtime.getDebugSnapshot().destinationState).toBe('resolvingDom')
     mountProjection(runtime, container, snapshot)
     container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
     runtime.notifyProjectionCommitted({
@@ -2216,6 +2227,7 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
     snapshot = runtime.getSnapshot()
     expect(snapshot.viewportPhase).toBe('PROJECTING')
+    expect(runtime.getDebugSnapshot().destinationState).toBe('resolvingDom')
 
     await flushTransactionTimeout(scheduler)
 

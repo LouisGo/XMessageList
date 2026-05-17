@@ -13,6 +13,7 @@ import type {
   RuntimeScheduler,
   ScrollMotionOptions,
   ScrollSource,
+  DestinationState,
   ViewportTransactionKind,
   ViewportAnchorChangeReason,
 } from '../types'
@@ -45,6 +46,7 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     private readonly projection: ProjectionCoordinator<TMessage, TOptimistic>,
     private readonly scrollMotionOptions: Required<ScrollMotionOptions>,
     private readonly setReadySubstate: (substate: ReadySubstate) => void,
+    private readonly setDestinationState: (state: DestinationState) => void,
     private readonly getCurrentFrame: () => number,
     private readonly isDestroyed: () => boolean,
     private readonly emitViewportAnchorChanged: (
@@ -127,6 +129,7 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     // motion 完成前只暴露 MOTION_ACTIVE 阶段；最终 bottom lock 和 destinationSettled
     // 必须等真实 scrollTop 到达后再发布，避免动画过程中 UI 误判目的地已完成。
     if (instantReason) {
+      this.setDestinationState('motionActive')
       this.writeScrollTop(targetTop, input.source)
       this.settleDestinationMotion()
       return
@@ -137,6 +140,7 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     }
 
     this.setReadySubstate('READY_MOTION_ACTIVE')
+    this.setDestinationState('motionActive')
     this.projection.publish({
       data: input.data,
       renderWindow: input.renderWindow,
@@ -242,6 +246,7 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
 
     this.destinationMotionSettle = null
     this.setReadySubstate('READY_IDLE')
+    this.setDestinationState('settled')
     this.scrollIntent.setBottomLockState(settle.bottomLockState)
     const container = this.registry.getContainer()
     this.emitDiagnostic({
@@ -279,6 +284,7 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
 
     this.destinationMotionSettle = null
     this.setReadySubstate('READY_IDLE')
+    this.setDestinationState('idle')
     this.projection.publish({
       data: settle.data,
       renderWindow: settle.renderWindow,
@@ -338,6 +344,7 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
       reason === 'resize-during-motion' ? settle.bottomLockState : 'UNLOCKED'
 
     // 用户打断表示放弃目的地；resize 打断只是坐标失效，仍保留原事务期望的 lock 语义。
+    this.setDestinationState(reason === 'user-interrupt' ? 'interrupted' : 'settled')
     this.scrollIntent.setBottomLockState(bottomLockState)
     this.projection.publish({
       data: settle.data,

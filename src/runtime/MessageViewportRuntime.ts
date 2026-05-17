@@ -106,6 +106,15 @@ export class MessageViewportRuntime<
       | 'READY_FOLLOW_BOTTOM_PENDING'
       | 'READY_DESTINATION_PENDING'
       | 'READY_MOTION_ACTIVE'
+    viewportPhase: 'IDLE' | 'PROJECTING' | 'MEASURING' | 'CORRECTING' | 'MOTION_ACTIVE'
+    transactionState: 'idle' | 'queued' | 'active' | 'settling'
+    destinationState:
+      | 'idle'
+      | 'pendingData'
+      | 'resolvingDom'
+      | 'motionActive'
+      | 'interrupted'
+      | 'settled'
     pendingCommands: number
     motionActive: boolean
     observedRows: number

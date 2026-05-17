@@ -83,6 +83,7 @@ type MessageViewportSnapshot = {
   bottomSpacer: number;
   bottomLockState: BottomLockState;
   bootstrapState: BootstrapState;
+  viewportPhase: ViewportPhase;
   edgeState: ViewportEdgeState;
 };
 ```
@@ -95,6 +96,7 @@ type MessageViewportSnapshot = {
 - `bottomSpacer`
 - `bottomLockState`
 - `bootstrapState`
+- `viewportPhase`
 - 边缘 loading / exhausted 状态
 
 禁止进入 snapshot：
@@ -164,6 +166,10 @@ Runtime 是分层状态机，不是单一 `RuntimeState`。实现和接入层都
 `state === READY` 判断用户动作已经完成；必须结合 `ReadySubstate`、transaction
 队列、active motion、`viewportPhase` 和 `bottomLockState`。
 
+本节描述当前实现的目标模型。它不是把所有状态塞进一个 enum，而是把 runtime
+拆成多条正交状态轴：生命周期、bootstrap、transaction、destination、visual
+phase、bottom lock。每条轴只回答一个问题，任何代码都不应跨轴复用语义。
+
 ```ts
 type RuntimeState =
   | 'INITIAL'
@@ -189,6 +195,21 @@ type RuntimeState =
 
 `detach` 不等同于 `destroy`。React StrictMode 下允许 `attach -> detach -> attach`，runtime 必须保持幂等。
 
+```mermaid
+stateDiagram-v2
+  [*] --> INITIAL
+  INITIAL --> ATTACHED: attach
+  ATTACHED --> BOOTSTRAPPING: bootstrap + data ready
+  BOOTSTRAPPING --> READY: settle / empty feed
+  READY --> DETACHED: detach
+  DETACHED --> ATTACHED: attach
+  INITIAL --> DESTROYED: destroy
+  ATTACHED --> DESTROYED: destroy
+  BOOTSTRAPPING --> DESTROYED: destroy
+  READY --> DESTROYED: destroy
+  DETACHED --> DESTROYED: destroy
+```
+
 `READY` 可以有 runtime 私有子状态，但这些子状态不进入 public snapshot：
 
 ```ts
@@ -211,6 +232,16 @@ type ReadySubstate =
 - Motion settle 可以保持 public state 为 `READY`，但必须在 settle 后再 emit
   `viewportAnchorChanged(transaction-settle)`。
 
+```mermaid
+stateDiagram-v2
+  [*] --> READY_IDLE
+  READY_IDLE --> READY_FOLLOW_BOTTOM_PENDING: followBottom waits latest data
+  READY_IDLE --> READY_DESTINATION_PENDING: jump / restore waits around data
+  READY_FOLLOW_BOTTOM_PENDING --> READY_MOTION_ACTIVE: latest window resolved
+  READY_DESTINATION_PENDING --> READY_MOTION_ACTIVE: target DOM resolved
+  READY_MOTION_ACTIVE --> READY_IDLE: settle / cancel cleanup
+```
+
 ### 7.1 Orthogonal State Layers
 
 这些状态层相互正交，分别表达不同所有权：
@@ -219,13 +250,16 @@ type ReadySubstate =
 | --- | --- | --- |
 | `RuntimeState` | runtime lifecycle | attach/bootstrap/detach/destroy |
 | `ReadySubstate` | runtime command intent | pending latest / pending destination / active motion |
+| `TransactionState` | transaction serialization | queued / active / settling / idle |
+| `DestinationState` | destination intent | pendingData / resolvingDom / motionActive / settled / interrupted |
 | `TransactionRunner` | mutation serialization | window、spacer、DOM commit、measurement 的串行所有权 |
 | `ScrollMotionEngine` | scroll writer | animation 期间唯一写 `scrollTop` 的 owner |
 | `bottomLockState` | scroll intent | 只表达 latest bottom lock |
 | `viewportPhase` | visual phase | projection、measurement、correction、motion 中间态 |
 
 `bottomLockState` 只能是 `LOCKED / UNLOCKED`。Projection/recovery/motion 的中间态
-必须由 `viewportPhase` 表达，不能再塞回 bottom lock。
+必须由 `viewportPhase` 表达，不能再塞回 bottom lock。`TransactionState` 和
+`DestinationState` 只用于 controller 内部诊断与守卫，不进入 public snapshot。
 
 稳定语义只能来自最终 settle：
 
@@ -233,7 +267,143 @@ type ReadySubstate =
 - followBottom：latest window commit、motion 到达物理 latest bottom 后才算 `LOCKED`。
 - prepend / resize / refresh：anchor correction 完成后才允许 emit settled anchor。
 
-### 7.2 Supersede Rules
+### 7.2 Bootstrap State Axis
+
+Bootstrap 是独立子状态机。`RuntimeState.BOOTSTRAPPING` 只表示 runtime 处于首屏启动
+生命周期；具体允许哪些副作用必须看 `BootstrapState`。
+
+```mermaid
+stateDiagram-v2
+  [*] --> INITIAL
+  INITIAL --> MOUNTING: initial projection
+  MOUNTING --> MEASURING: commit ack
+  MEASURING --> STABILIZING: first measurement done
+  STABILIZING --> READY: correction settled
+  INITIAL --> READY_EMPTY: empty feed
+  READY_EMPTY --> [*]
+  READY --> [*]
+```
+
+阶段许可表必须和实现保持一致：
+
+| BootstrapState | Projection | Measurement | Correction | Trim | Edge Need |
+| --- | --- | --- | --- | --- | --- |
+| `MOUNTING` | allowed | forbidden | forbidden | forbidden | forbidden |
+| `MEASURING` | allowed | allowed | forbidden | forbidden | forbidden |
+| `STABILIZING` | allowed | allowed | allowed | forbidden | forbidden |
+| `READY` | allowed | allowed | allowed | allowed | allowed |
+
+关键约束：
+
+- `MEASURING` 可以读 DOM / height，但不能写 correction，也不能触发分页。
+- `STABILIZING` 可以做首屏必要 correction，但仍不能 trim，也不能发 edge need。
+- `READY_EMPTY` 是空 feed 的稳定完成态，不是中间态。
+- 普通 READY 事务不能借用 bootstrap 禁令；它们由 transaction / viewportPhase 约束。
+
+### 7.3 Transaction State Axis
+
+`TransactionState` 只描述 projection、DOM commit、measurement、correction 的串行化。
+它不代表用户目的地完成，也不改变 `RuntimeState`。
+
+```mermaid
+stateDiagram-v2
+  [*] --> idle
+  idle --> active: first transaction starts
+  idle --> queued: enqueue behind active transaction
+  queued --> active: runner drains next
+  active --> settling: correction / final write
+  settling --> idle: finalized
+  active --> idle: no correction needed
+  queued --> idle: drop / clear / stop
+```
+
+语义边界：
+
+- `active` 表示 transaction body 正在持有 mutation 串行权。
+- `settling` 表示 transaction 已进入最终 correction / anchor settle 阶段。
+- `queued` 只表示还有等待执行的 transaction，不表示当前 active transaction 仍未完成。
+- transaction 可以启动 destination motion，但 motion 本身不是 transaction。
+
+当前实现说明：
+
+- `TransactionRunner` 是真实队列执行器。
+- controller diagnostics 会输出 `transactionState`，用于串联日志。
+- 事务体仍会在局部阶段写 `active / settling / idle`。这符合当前行为，但不是最终最干净的单一真源模型；后续收敛时应让 `TransactionRunner` 统一发布 queue/active/idle，事务体只表达 `settling` 或更细的 transaction phase。
+
+### 7.4 Destination State Axis
+
+`DestinationState` 只描述 jump / restore / followBottom 的用户目的地意图生命周期。
+它不代表 DOM projection 是否完成，也不等同于 bottom lock。
+
+```mermaid
+stateDiagram-v2
+  [*] --> idle
+  idle --> pendingData: target data missing
+  idle --> resolvingDom: target data already present
+  pendingData --> resolvingDom: data window resolved
+  resolvingDom --> motionActive: target DOM measured
+  motionActive --> settled: motion reached destination
+  motionActive --> interrupted: user interrupt
+  motionActive --> pendingData: transaction supersede requires re-resolve
+  settled --> pendingData: next command
+  settled --> resolvingDom: next command
+  interrupted --> pendingData: next command
+  interrupted --> resolvingDom: next command
+```
+
+语义边界：
+
+- `pendingData` 表示 runtime 已保留用户意图，并请求 latest / around data。
+- `resolvingDom` 表示 data 已在当前 window，正在等待 projection commit 后解析 DOM。
+- `motionActive` 表示目的地坐标已经解析，scroll writer 由 motion 接管。
+- `settled` / `interrupted` 是终态诊断值，可以保留到下一次目的地命令覆盖。
+
+关键禁令：
+
+- `transaction-supersede` 不能把 `motionActive` 直接变成 `settled`。
+- 真实用户 wheel / drag / gesture 才能把目的地意图终止为 `interrupted`。
+- jump 的 `destinationSettled` 只能在目标 DOM resolve 且最终 motion settle 后发送。
+- followBottom 的 `LOCKED` 只能在 latest window + 物理底部 settle 后发布。
+
+### 7.5 Viewport Phase Axis
+
+`ViewportPhase` 是 React 可见的视觉中间态。它解释 projection 正在经历什么，
+但不承载业务吸底语义，也不承载用户目的地意图。
+
+```mermaid
+stateDiagram-v2
+  [*] --> IDLE
+  IDLE --> PROJECTING: publish projection
+  PROJECTING --> MEASURING: commit ack / measure DOM
+  MEASURING --> CORRECTING: anchor correction
+  CORRECTING --> IDLE: correction settled
+  PROJECTING --> MOTION_ACTIVE: destination motion starts
+  MOTION_ACTIVE --> IDLE: motion settle / cancel cleanup
+```
+
+React adapter 可以读取 `viewportPhase` 做稳定 projection 判断，但不能接管 scroll 语义。
+例如 follow-bottom slot 是否存在，应由 runtime snapshot 的稳定业务状态和 projection
+共同决定，不能在 adapter 中用临时冻结补偿 runtime 状态机缺陷。
+
+### 7.6 Bottom Lock Axis
+
+`bottomLockState` 只表达当前 viewport 是否锁在 feed latest。
+
+```mermaid
+stateDiagram-v2
+  [*] --> UNLOCKED
+  UNLOCKED --> LOCKED: latest bottom reached
+  LOCKED --> UNLOCKED: user reads away / partial window / explicit jump
+```
+
+约束：
+
+- `LOCKED` 不表示 motion 正在恢复，也不表示 projection 已完成。
+- `UNLOCKED + MOTION_ACTIVE` 是合法状态，例如 quote jump 动画期间。
+- `LOCKED + PROJECTING` 是合法状态，例如 bottom locked append projection 期间。
+- `hasMoreAfter=true` 的 partial window 不能投影成 `LOCKED`。
+
+### 7.7 Supersede Rules
 
 `transaction-supersede` 只表示旧 motion 的坐标失效，不表示用户意图取消。
 
@@ -245,6 +415,45 @@ type ReadySubstate =
   取消 jump 后不能自动重启，也不能保留 pending destination。
 - reset / generation change / detach / destroy 是隔离边界，必须清掉 pending intent、
   active motion、commit wait 和 measurement cache。
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Runtime
+  participant Tx as TransactionRunner
+  participant Motion
+  participant React
+
+  User->>Runtime: jump / followBottom
+  Runtime->>Tx: enqueue transaction
+  Tx->>Motion: cancel(transaction-supersede)
+  Tx->>React: publish projection
+  React-->>Tx: commit ack
+  Tx->>Runtime: resolve target / targetTop
+  Runtime->>Motion: start motion
+  Motion-->>Runtime: settle
+  Runtime->>React: publish final bottomLock + IDLE phase
+  Runtime-->>User: destinationSettled / anchorChanged
+```
+
+### 7.8 Current Implementation Review Notes
+
+当前实现已经完成的正向收敛：
+
+- `RuntimeState` 已从业务事务状态中抽离，只表达 attach/bootstrap/detach/destroy。
+- `BottomLockState` 已删除 `RECOVERING`，只保留 `LOCKED / UNLOCKED`。
+- `viewportPhase` 已成为 projection / measurement / correction / motion 的视觉出口。
+- Bootstrap 已有阶段许可表，`MEASURING / STABILIZING` 的副作用边界明确。
+- jump / followBottom 的稳定完成语义已下沉到 motion settle，而不是 transaction commit。
+
+仍需保持警惕的收敛点：
+
+- `TransactionState` 目前同时由 `TransactionRunner` 回调和 transaction body 写入；
+  长期应收敛为单一写入模型，避免 diagnostics 中出现 queue/active/idle 时序偏差。
+- `DestinationState` 的 `settled / interrupted` 当前是 sticky diagnostic terminal state；
+  这是可解释的，但必须明确它不是“当前仍在执行目的地命令”。
+- 如果未来新增 `transactionPhase`，应只描述 transaction body 的内部阶段，不能再把它
+  混回 lifecycle、destination 或 bottom lock。
 
 ## 8. Public Events
 

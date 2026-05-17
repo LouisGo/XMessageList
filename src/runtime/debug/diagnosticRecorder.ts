@@ -13,6 +13,8 @@ type DiagnosticRuntimeContext = {
   state: RuntimeState
   readySubstate: string
   viewportPhase: string
+  transactionState: string
+  destinationState: string
   pendingCommands: number
 }
 
@@ -95,6 +97,8 @@ export class DiagnosticRecorder {
         state: context.state,
         readySubstate: context.readySubstate,
         viewportPhase: context.viewportPhase,
+        transactionState: context.transactionState,
+        destinationState: context.destinationState,
         pendingCommands: context.pendingCommands,
         ...(input.details?.() ?? {}),
       },

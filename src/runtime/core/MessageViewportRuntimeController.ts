@@ -59,6 +59,8 @@ import type {
   RuntimeState,
   ScrollMotionOptions,
   ScrollSource,
+  TransactionState,
+  DestinationState,
   ViewportPhase,
   ViewportTransactionKind,
   ViewportAnchorChangeReason,
@@ -139,6 +141,10 @@ export class MessageViewportRuntimeController<
   private readySubstate: ReadySubstate = 'READY_IDLE'
 
   private viewportPhase: ViewportPhase = 'IDLE'
+
+  private transactionState: TransactionState = 'idle'
+
+  private destinationState: DestinationState = 'idle'
 
   private dataSnapshot: MessageDataSnapshot<TMessage, TOptimistic> | null = null
 
@@ -314,6 +320,9 @@ export class MessageViewportRuntimeController<
       (substate) => {
         this.readySubstate = substate
       },
+      (state) => {
+        this.setDestinationState(state)
+      },
       () => this.currentFrame,
       () => this.state === 'DESTROYED',
       (reason) => this.emitViewportAnchorChanged(reason),
@@ -326,22 +335,19 @@ export class MessageViewportRuntimeController<
     )
     this.transactions = new TransactionRunner({
       onEnqueue: (kind, id) =>
-        this.emitTransactionDiagnostic('enqueue', kind, id),
+        this.handleTransactionEnqueue(kind, id),
       onStart: (kind, id) => {
-        this.emitTransactionDiagnostic('start', kind, id)
+        this.handleTransactionStart(kind, id)
         this.motion.cancel('transaction-supersede', {
           transactionKind: kind,
           transactionId: id,
         })
       },
-      onComplete: (kind, id) =>
-        this.emitTransactionDiagnostic('complete', kind, id),
+      onComplete: (kind, id) => this.handleTransactionComplete(kind, id),
       onDrop: (kind, id, reason) =>
-        this.emitTransactionDiagnostic('drop', kind, id, { reason }),
+        this.handleTransactionDrop(kind, id, reason),
       onError: (kind, id, error) =>
-        this.emitTransactionDiagnostic('error', kind, id, {
-          error: error instanceof Error ? error.message : String(error),
-        }),
+        this.handleTransactionError(kind, id, error),
     })
     this.transactionController = new ViewportTransactionController({
       registry: this.registry,
@@ -360,6 +366,12 @@ export class MessageViewportRuntimeController<
       },
       setViewportPhase: (phase) => {
         this.setViewportPhase(phase)
+      },
+      setTransactionState: (state) => {
+        this.setTransactionState(state)
+      },
+      setDestinationState: (state) => {
+        this.setDestinationState(state)
       },
       setPendingBootstrap: (command) => {
         this.pendingBootstrap = command
@@ -497,6 +509,9 @@ export class MessageViewportRuntimeController<
     this.registry.clearDomRefs()
     this.lastContainerSize = null
     this.readySubstate = 'READY_IDLE'
+    this.setViewportPhase('IDLE')
+    this.setTransactionState('idle')
+    this.setDestinationState('idle')
     this.state = 'DETACHED'
   }
 
@@ -525,6 +540,9 @@ export class MessageViewportRuntimeController<
     this.eventListeners.clear()
     this.store.clearListeners()
     this.retainedScrollTop = null
+    this.setViewportPhase('IDLE')
+    this.setTransactionState('idle')
+    this.setDestinationState('idle')
     this.state = 'DESTROYED'
   }
 
@@ -765,6 +783,8 @@ export class MessageViewportRuntimeController<
     state: RuntimeState
     readySubstate: ReadySubstate
     viewportPhase: ViewportPhase
+    transactionState: TransactionState
+    destinationState: DestinationState
     pendingCommands: number
     motionActive: boolean
     observedRows: number
@@ -775,6 +795,8 @@ export class MessageViewportRuntimeController<
       state: this.state,
       readySubstate: this.readySubstate,
       viewportPhase: this.viewportPhase,
+      transactionState: this.transactionState,
+      destinationState: this.destinationState,
       pendingCommands: this.transactions.getPendingCount(),
       motionActive: this.motion.isActive(),
       observedRows: this.registry.getSnapshot().observedRows,
@@ -997,6 +1019,9 @@ export class MessageViewportRuntimeController<
     if (this.readySubstate === 'READY_FOLLOW_BOTTOM_PENDING') {
       this.readySubstate = 'READY_IDLE'
     }
+    if (this.destinationState === 'pendingData') {
+      this.setDestinationState('idle')
+    }
   }
 
   private clearPendingDestinationRequest(): void {
@@ -1008,6 +1033,9 @@ export class MessageViewportRuntimeController<
 
     if (this.readySubstate === 'READY_DESTINATION_PENDING') {
       this.readySubstate = 'READY_IDLE'
+    }
+    if (this.destinationState !== 'motionActive') {
+      this.setDestinationState('idle')
     }
   }
 
@@ -1275,6 +1303,7 @@ export class MessageViewportRuntimeController<
       lastScrollTop: scrollTop,
     }
     this.readySubstate = 'READY_FOLLOW_BOTTOM_PENDING'
+    this.setDestinationState('pendingData')
     this.scrollIntent.setBottomLockState('UNLOCKED')
     this.emitDiagnostic({
       channel: 'motion',
@@ -1321,6 +1350,7 @@ export class MessageViewportRuntimeController<
       animateOnResolve: options.animateOnResolve ?? true,
     }
     this.readySubstate = 'READY_DESTINATION_PENDING'
+    this.setDestinationState('pendingData')
     if (!options.preserveBottomLockState) {
       this.scrollIntent.setBottomLockState('UNLOCKED')
     }
@@ -1415,6 +1445,9 @@ export class MessageViewportRuntimeController<
     this.lastScrollSource = null
     this.scrollIntent.clearTransientIntent()
     this.readySubstate = 'READY_IDLE'
+    this.setViewportPhase('IDLE')
+    this.setTransactionState('idle')
+    this.setDestinationState('idle')
     this.scrollIntent.setBottomLockState('UNLOCKED')
     // 先发布空 snapshot，让 React projection 明确切到新 feed，再等待新的 bootstrap。
     this.store.setSnapshot(createEmptySnapshot<TMessage, TOptimistic>(feedId, generation))
@@ -1506,6 +1539,52 @@ export class MessageViewportRuntimeController<
     })
   }
 
+  private handleTransactionEnqueue(kind: ViewportTransactionKind, id: string): void {
+    this.setTransactionState(
+      this.transactions.getPendingCount() > 1 ? 'queued' : 'active',
+    )
+    this.emitTransactionDiagnostic('enqueue', kind, id)
+  }
+
+  private handleTransactionStart(kind: ViewportTransactionKind, id: string): void {
+    this.setTransactionState('active')
+    this.emitTransactionDiagnostic('start', kind, id)
+  }
+
+  private handleTransactionComplete(
+    kind: ViewportTransactionKind,
+    id: string,
+  ): void {
+    this.setTransactionState(
+      this.transactions.getPendingCount() > 0 ? 'queued' : 'idle',
+    )
+    this.emitTransactionDiagnostic('complete', kind, id)
+  }
+
+  private handleTransactionDrop(
+    kind: ViewportTransactionKind,
+    id: string,
+    reason: 'reset-supersede' | 'key-supersede' | 'clear' | 'stop',
+  ): void {
+    this.setTransactionState(
+      this.transactions.getPendingCount() > 0 ? 'queued' : 'idle',
+    )
+    this.emitTransactionDiagnostic('drop', kind, id, { reason })
+  }
+
+  private handleTransactionError(
+    kind: ViewportTransactionKind,
+    id: string,
+    error: unknown,
+  ): void {
+    this.setTransactionState(
+      this.transactions.getPendingCount() > 0 ? 'queued' : 'idle',
+    )
+    this.emitTransactionDiagnostic('error', kind, id, {
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+
   /**
    * commit timeout / cancel 后不能把 runtime 留在中间态。
    * 这里只恢复当前 generation 仍有效的事务，避免旧事务覆盖 feed 切换或 detach 后的新状态。
@@ -1567,6 +1646,22 @@ export class MessageViewportRuntimeController<
    */
   private setViewportPhase(phase: ViewportPhase): void {
     this.viewportPhase = phase
+  }
+
+  /**
+   * TransactionState 只描述 projection / commit / measurement / correction 的串行化。
+   * 它不替代 lifecycle，也不表示 jump/followBottom 已经完成。
+   */
+  private setTransactionState(state: TransactionState): void {
+    this.transactionState = state
+  }
+
+  /**
+   * DestinationState 只描述用户目的地意图的生命周期。
+   * 这条轴要能直接解释 pendingData / resolvingDom / motionActive / settled / interrupted。
+   */
+  private setDestinationState(state: DestinationState): void {
+    this.destinationState = state
   }
 
   private measureCurrentWindow(): HeightDelta[] {
@@ -2463,6 +2558,8 @@ export class MessageViewportRuntimeController<
     state: RuntimeState
     readySubstate: ReadySubstate
     viewportPhase: ViewportPhase
+    transactionState: TransactionState
+    destinationState: DestinationState
     pendingCommands: number
   } {
     const data = this.dataSnapshot
@@ -2476,6 +2573,8 @@ export class MessageViewportRuntimeController<
       state: this.state,
       readySubstate: this.readySubstate,
       viewportPhase: this.viewportPhase,
+      transactionState: this.transactionState,
+      destinationState: this.destinationState,
       pendingCommands: this.transactions.getPendingCount(),
     }
   }

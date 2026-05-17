@@ -14,12 +14,14 @@ function createRecorder(input?: {
       now += 1
       return now
     },
-      () => ({
+    () => ({
       feedId: 'feed',
       generation: 1,
       state: 'READY',
       readySubstate: 'READY_IDLE',
       viewportPhase: 'IDLE',
+      transactionState: 'idle',
+      destinationState: 'idle',
       pendingCommands: 0,
     }),
     (event) => {
@@ -101,5 +103,26 @@ describe('DiagnosticRecorder', () => {
       'three',
     ])
     expect(events).toEqual([])
+  })
+
+  it('captures transaction and destination axes in record details', () => {
+    const { recorder } = createRecorder({
+      diagnostics: {
+        enabled: true,
+      },
+    })
+
+    recorder.emit({
+      channel: 'transaction',
+      name: 'transaction.axes',
+    })
+
+    expect(recorder.getRecords()[0]?.details).toEqual(
+      expect.objectContaining({
+        transactionState: 'idle',
+        destinationState: 'idle',
+        viewportPhase: 'IDLE',
+      }),
+    )
   })
 })

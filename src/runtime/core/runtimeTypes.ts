@@ -12,6 +12,8 @@ import type {
   RuntimeState,
   ScrollMotionOptions,
   ViewportPhase,
+  TransactionState,
+  DestinationState,
 } from '../types'
 import type { RuntimeDiagnosticInput } from '../debug/diagnosticRecorder'
 import type { ScrollMotionSource } from '../scroll/scrollMotionEngine'
@@ -102,6 +104,15 @@ export type PublishProjectionInput<TMessage, TOptimistic> = {
   viewportPhase?: ViewportPhase
   topSpacer?: number
   bottomSpacer?: number
+}
+
+/**
+ * TransactionState 和 DestinationState 进入 diagnostics / debug snapshot，
+ * 但不扩张 public snapshot；它们是 controller 内部的一等状态轴。
+ */
+export type RuntimeStateAxes = {
+  transactionState: TransactionState
+  destinationState: DestinationState
 }
 
 export type CommitRecoveryInput<TMessage, TOptimistic> = {
