@@ -303,6 +303,7 @@ export function MessageViewport<
       data-message-viewport
       data-testid="message-viewport"
       data-bottom-lock-state={snapshot.bottomLockState}
+      data-custom-scrollbar={customScrollbar ? 'true' : 'false'}
       style={viewportStyle}
     >
       <RuntimeScrollContainer
@@ -366,8 +367,6 @@ const baseViewportStyle: CSSProperties = {
 const scrollContainerStyle: CSSProperties = {
   height: '100%',
   overflowY: 'auto',
-  scrollbarWidth: 'none',
-  msOverflowStyle: 'none',
   overflowAnchor: 'none',
   position: 'relative',
 }

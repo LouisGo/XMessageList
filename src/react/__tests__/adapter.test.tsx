@@ -85,6 +85,7 @@ function ViewportOnlyHarness({
   runtime,
   onViewportAnchorChange,
   renderFollowBottom,
+  customScrollbar,
 }: {
   runtime: MessageViewportRuntime<TestMessage>
   onViewportAnchorChange?: Parameters<
@@ -93,6 +94,7 @@ function ViewportOnlyHarness({
   renderFollowBottom?: Parameters<
     typeof MessageViewport<TestMessage>
   >[0]['renderFollowBottom']
+  customScrollbar?: boolean
 }) {
   return (
     <MessageViewport
@@ -102,6 +104,7 @@ function ViewportOnlyHarness({
       }
       renderFollowBottom={renderFollowBottom}
       onViewportAnchorChange={onViewportAnchorChange}
+      customScrollbar={customScrollbar}
       style={{ height: 240 }}
     />
   )
@@ -218,7 +221,7 @@ describe('React adapter', () => {
     })
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} />)
+      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
     })
     await act(async () => {
       await flushFramesWithMicrotasks(scheduler, 4)
@@ -640,7 +643,7 @@ describe('React adapter', () => {
     const root = createRoot(host)
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} />)
+      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(
@@ -664,10 +667,43 @@ describe('React adapter', () => {
       scrollContainer.dispatchEvent(new Event('scroll'))
     })
 
-    expect(scrollContainer.style.scrollbarWidth).toBe('none')
-    expect((scrollContainer.style as CSSStyleDeclaration & { msOverflowStyle?: string }).msOverflowStyle).toBe('none')
+    expect(
+      host.querySelector('[data-custom-scrollbar="true"] style')?.textContent,
+    ).toContain('scrollbar-width: none')
     expect(host.querySelector('[data-testid="custom-scrollbar"]')).not.toBeNull()
     expect(host.querySelector('[data-testid="custom-scrollbar-thumb"]')).not.toBeNull()
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('keeps native scrollbar styling when custom scrollbar is disabled', async () => {
+    const runtime = createMockRuntime()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(
+        <ViewportOnlyHarness runtime={runtime} customScrollbar={false} />,
+      )
+    })
+
+    const scrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    expect(scrollContainer).not.toBeNull()
+    expect(host.querySelector('[data-custom-scrollbar="false"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="custom-scrollbar"]')).toBeNull()
+    expect(host.querySelector('.x-message-scrollbar')).toBeNull()
+    expect(host.querySelector('style')?.textContent ?? '').not.toContain(
+      'scrollbar-width: none',
+    )
+    expect(scrollContainer?.style.scrollbarWidth).toBe('')
+    expect(
+      (scrollContainer?.style as CSSStyleDeclaration & { msOverflowStyle?: string })
+        .msOverflowStyle ?? '',
+    ).toBe('')
 
     await act(async () => {
       root.unmount()
@@ -680,7 +716,7 @@ describe('React adapter', () => {
     const root = createRoot(host)
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} />)
+      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(
@@ -741,7 +777,7 @@ describe('React adapter', () => {
     let scrollHeight = 1200
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} />)
+      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(
@@ -815,7 +851,7 @@ describe('React adapter', () => {
     })
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} />)
+      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(
@@ -893,7 +929,7 @@ describe('React adapter', () => {
     let scrollHeight = 1200
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} />)
+      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(
@@ -965,7 +1001,7 @@ describe('React adapter', () => {
     let scrollTop = 480
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} />)
+      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(
