@@ -59,6 +59,7 @@ import type {
   RuntimeState,
   ScrollMotionOptions,
   ScrollSource,
+  ViewportPhase,
   ViewportTransactionKind,
   ViewportAnchorChangeReason,
   ViewportDiagnosticRecord,
@@ -136,6 +137,8 @@ export class MessageViewportRuntimeController<
   private state: RuntimeState = 'INITIAL'
 
   private readySubstate: ReadySubstate = 'READY_IDLE'
+
+  private viewportPhase: ViewportPhase = 'IDLE'
 
   private dataSnapshot: MessageDataSnapshot<TMessage, TOptimistic> | null = null
 
@@ -354,6 +357,9 @@ export class MessageViewportRuntimeController<
       getDataSnapshot: () => this.dataSnapshot,
       setState: (state) => {
         this.state = state
+      },
+      setViewportPhase: (phase) => {
+        this.setViewportPhase(phase)
       },
       setPendingBootstrap: (command) => {
         this.pendingBootstrap = command
@@ -692,7 +698,7 @@ export class MessageViewportRuntimeController<
     }
 
     if (command.type === 'jump' || command.type === 'restore') {
-      return this.state === 'READY' || this.state === 'TRANSACTING'
+      return this.state === 'READY'
     }
 
     return true
@@ -758,6 +764,7 @@ export class MessageViewportRuntimeController<
   getDebugSnapshot(): {
     state: RuntimeState
     readySubstate: ReadySubstate
+    viewportPhase: ViewportPhase
     pendingCommands: number
     motionActive: boolean
     observedRows: number
@@ -767,6 +774,7 @@ export class MessageViewportRuntimeController<
     return {
       state: this.state,
       readySubstate: this.readySubstate,
+      viewportPhase: this.viewportPhase,
       pendingCommands: this.transactions.getPendingCount(),
       motionActive: this.motion.isActive(),
       observedRows: this.registry.getSnapshot().observedRows,
@@ -1553,6 +1561,14 @@ export class MessageViewportRuntimeController<
       : 'ATTACHED'
   }
 
+  /**
+   * viewportPhase 是视觉中间态轴，不能和 lifecycle 或 bottom lock 混用。
+   * 这里仅记录 runtime 当前阶段；真正需要 React 感知的阶段必须随 projection 一起发布。
+   */
+  private setViewportPhase(phase: ViewportPhase): void {
+    this.viewportPhase = phase
+  }
+
   private measureCurrentWindow(): HeightDelta[] {
     const snapshot = this.store.getSnapshot()
     const container = this.registry.getContainer()
@@ -1833,9 +1849,7 @@ export class MessageViewportRuntimeController<
     // hasMoreAfter=true 说明当前 DOM 底部不是会话最新消息底部，
     // 只能作为向下分页边界，不能进入 BottomLocked 心智模型。
     if (data.hasMoreAfter) {
-      return this.scrollIntent.getBottomLockState() === 'RECOVERING'
-        ? false
-        : this.scrollIntent.setBottomLockState('UNLOCKED')
+      return this.scrollIntent.setBottomLockState('UNLOCKED')
     }
 
     return this.scrollIntent.updateBottomLockFromDistance(
@@ -2027,7 +2041,7 @@ export class MessageViewportRuntimeController<
     const token = this.lifecycle.getCurrent()
     const previousSnapshot = this.store.getSnapshot()
     const previousBottomLockState = this.scrollIntent.getBottomLockState()
-    this.state = 'TRANSACTING'
+    this.setViewportPhase('PROJECTING')
 
     try {
       const projection = this.projection.publish({
@@ -2035,11 +2049,19 @@ export class MessageViewportRuntimeController<
         renderWindow: nextWindow,
         bootstrapState: previousSnapshot.bootstrapState,
         bottomLockState: previousBottomLockState,
+        viewportPhase: 'PROJECTING',
       })
 
       await this.commit.waitForChanged(projection, 'resize')
       this.measureCurrentWindow()
-      this.state = 'READY'
+      this.setViewportPhase('IDLE')
+      this.projection.publish({
+        data,
+        renderWindow: nextWindow,
+        bootstrapState: previousSnapshot.bootstrapState,
+        bottomLockState: this.scrollIntent.getBottomLockState(),
+        viewportPhase: 'IDLE',
+      })
       this.emitViewportAnchorChanged(
         'transaction-settle',
         this.captureViewportAnchor(),
@@ -2440,6 +2462,7 @@ export class MessageViewportRuntimeController<
     generation: number
     state: RuntimeState
     readySubstate: ReadySubstate
+    viewportPhase: ViewportPhase
     pendingCommands: number
   } {
     const data = this.dataSnapshot
@@ -2452,6 +2475,7 @@ export class MessageViewportRuntimeController<
       generation: token.generation,
       state: this.state,
       readySubstate: this.readySubstate,
+      viewportPhase: this.viewportPhase,
       pendingCommands: this.transactions.getPendingCount(),
     }
   }

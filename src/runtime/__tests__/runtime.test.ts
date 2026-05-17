@@ -679,7 +679,7 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
     await Promise.resolve()
     snapshot = runtime.getSnapshot()
-    expect(snapshot.bottomLockState).toBe('RECOVERING')
+    expect(snapshot.viewportPhase).toBe('PROJECTING')
     mountProjection(runtime, container, snapshot, 0, tallLatestRows)
     runtime.notifyProjectionCommitted({
       feedId: snapshot.feedId,
@@ -943,7 +943,7 @@ describe('MessageViewportRuntime', () => {
       }),
     )
     expect(runtime.getDebugSnapshot().motionActive).toBe(false)
-    expect(runtime.getSnapshot().bottomLockState).toBe('RECOVERING')
+    expect(runtime.getSnapshot().viewportPhase).toBe('PROJECTING')
 
     await commitCurrentProjection(runtime, container)
     await Promise.resolve()
@@ -1110,7 +1110,7 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
 
     const snapshot = runtime.getSnapshot()
-    expect(snapshot.bottomLockState).toBe('RECOVERING')
+    expect(snapshot.viewportPhase).toBe('PROJECTING')
 
     mountProjection(runtime, container, snapshot, -container.scrollTop)
     runtime.notifyProjectionCommitted({
@@ -1302,7 +1302,7 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
 
     snapshot = runtime.getSnapshot()
-    expect(snapshot.bottomLockState).toBe('RECOVERING')
+    expect(snapshot.viewportPhase).toBe('PROJECTING')
     expect(snapshot.renderWindow.endIndex).toBe(59)
     expect(snapshot.renderWindow.itemKeys).toHaveLength(40)
   })
@@ -1333,7 +1333,7 @@ describe('MessageViewportRuntime', () => {
     expect(container.scrollTop).toBeGreaterThan(100)
   })
 
-  it('recovers from prepend commit timeout without staying in RECOVERING', async () => {
+  it('recovers from prepend commit timeout without staying in projection phase', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
 
@@ -1358,7 +1358,7 @@ describe('MessageViewportRuntime', () => {
     runtime.setDataSnapshot(createSnapshot({ count: 35, revision: 2, effect: 'prepend', start: 15 }))
     await Promise.resolve()
     snapshot = runtime.getSnapshot()
-    expect(snapshot.bottomLockState).toBe('RECOVERING')
+    expect(snapshot.viewportPhase).toBe('PROJECTING')
 
     await flushTransactionTimeout(scheduler)
 
@@ -1739,7 +1739,7 @@ describe('MessageViewportRuntime', () => {
     ).toHaveLength(2)
 
     const snapshot = runtime.getSnapshot()
-    expect(snapshot.bottomLockState).toBe('RECOVERING')
+    expect(snapshot.viewportPhase).toBe('PROJECTING')
     mountProjection(runtime, container, snapshot)
     runtime.notifyProjectionCommitted({
       feedId: snapshot.feedId,
@@ -1795,7 +1795,7 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
 
     const snapshot = runtime.getSnapshot()
-    expect(snapshot.bottomLockState).toBe('RECOVERING')
+    expect(snapshot.viewportPhase).toBe('PROJECTING')
     mountProjection(runtime, container, snapshot)
     container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
     runtime.notifyProjectionCommitted({
@@ -2154,7 +2154,7 @@ describe('MessageViewportRuntime', () => {
     const stoppedScrollTop = container.scrollTop
 
     expect(runtime.getDebugSnapshot().motionActive).toBe(false)
-    expect(runtime.getSnapshot().bottomLockState).not.toBe('RECOVERING')
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
 
     await flushFramesWithMicrotasks(scheduler, 3)
 
@@ -2215,7 +2215,7 @@ describe('MessageViewportRuntime', () => {
     runtime.dispatch({ type: 'followBottom' })
     await Promise.resolve()
     snapshot = runtime.getSnapshot()
-    expect(snapshot.bottomLockState).toBe('RECOVERING')
+    expect(snapshot.viewportPhase).toBe('PROJECTING')
 
     await flushTransactionTimeout(scheduler)
 

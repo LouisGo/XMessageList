@@ -71,6 +71,7 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
       input.bottomLockState,
     )
     const edgeState = createEdgeState(input.data)
+    const viewportPhase = input.viewportPhase ?? current.viewportPhase
     // revision 只在 React 需要重新 commit 时递增；相同 projection 复用快照，避免空事务等待 ack。
     const nextRevision = this.isProjectionEqual(current, {
       feedId: input.data.feedId,
@@ -81,6 +82,7 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
       bottomSpacer,
       bottomLockState,
       bootstrapState: input.bootstrapState,
+      viewportPhase,
       edgeState,
     })
       ? current.revision
@@ -96,6 +98,7 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
       bottomSpacer: Math.max(0, bottomSpacer),
       bottomLockState,
       bootstrapState: input.bootstrapState,
+      viewportPhase,
       edgeState,
     }
 
@@ -141,6 +144,7 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
       current.generation === next.generation &&
       current.bootstrapState === next.bootstrapState &&
       current.bottomLockState === next.bottomLockState &&
+      current.viewportPhase === next.viewportPhase &&
       Math.abs(current.topSpacer - next.topSpacer) <= 0.5 &&
       Math.abs(current.bottomSpacer - next.bottomSpacer) <= 0.5 &&
       isEdgeStateEqual(current.edgeState, next.edgeState) &&
@@ -228,6 +232,7 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
         snapshotRevision: snapshot.revision,
         bootstrapState: snapshot.bootstrapState,
         bottomLockState: snapshot.bottomLockState,
+        viewportPhase: snapshot.viewportPhase,
         renderWindowStart: snapshot.renderWindow.startIndex,
         renderWindowEnd: snapshot.renderWindow.endIndex,
         renderedItems: snapshot.items.length,

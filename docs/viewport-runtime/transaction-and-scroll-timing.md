@@ -26,10 +26,10 @@ begin transaction
 
 React commit ack 之后，第一轮测量使用同步 DOM read。ResizeObserver 只处理后续异步高度变化。
 
-如果 transaction settle 后需要目的地滚动动画，transaction 先释放
-`TRANSACTING`，再把 scrollTop 写入权交给 `ScrollMotionEngine`。Motion settle
-才负责最终 anchor capture 和 `viewportAnchorChanged(transaction-settle)` emit；
-transaction commit callback 不为同一次目的地滚动提前 emit。
+如果 transaction settle 后需要目的地滚动动画，transaction 先释放串行权，再把
+scrollTop 写入权交给 `ScrollMotionEngine`。Motion settle 才负责最终 anchor capture
+和 `viewportAnchorChanged(transaction-settle)` emit；transaction commit callback
+不为同一次目的地滚动提前 emit。
 
 ## 3. Read / Write Discipline
 
@@ -273,7 +273,7 @@ measure target row
 resolve target alignment
 handoff to motion if enabled, otherwise apply instant correction
 motion settle or sync correction captures new anchor
-enter READY or RECOVERING->READY
+enter READY
 ```
 
 推荐 alignment：
@@ -290,7 +290,7 @@ enter READY or RECOVERING->READY
 - 检查 data snapshot 是否包含 target。
 - 如果包含但 DOM 未注册，等待一次 commit retry。
 - 如果仍不可测量，执行当前 projection 内的 nearest measurable fallback。
-- fallback 或失败恢复后必须退出 `RECOVERING` projection，不得让 UI 停在中间态。
+- fallback 或失败恢复后必须退出 projection 中间态，不得让 UI 停在中间态。
 
 ## 12. Resize Transaction
 

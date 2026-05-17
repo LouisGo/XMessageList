@@ -106,14 +106,8 @@ class FollowBottomProjection<
   TMessage = unknown,
   TOptimistic = unknown,
 > extends Component<FollowBottomProjectionProps<TMessage, TOptimistic>> {
-  private stableNode: ReactNode = null
-
   render() {
     const { snapshot, renderFollowBottom, followBottom } = this.props
-
-    if (snapshot.bottomLockState === 'RECOVERING') {
-      return this.stableNode
-    }
 
     const nextNode =
       snapshot.bottomLockState === 'UNLOCKED'
@@ -132,7 +126,6 @@ class FollowBottomProjection<
             )
         : null
 
-    this.stableNode = nextNode
     return nextNode
   }
 }

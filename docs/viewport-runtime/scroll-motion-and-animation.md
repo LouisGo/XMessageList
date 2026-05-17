@@ -139,8 +139,9 @@ Public snapshot 仍只暴露 React projection 必须渲染的字段。
 
 ### 4.1 Runtime Substate
 
-Public `RuntimeState` 仍保持 `READY / TRANSACTING / ...`，但 `READY` 内部必须再
-区分私有子状态：
+Public `RuntimeState` 只表示生命周期，不再包含 `TRANSACTING`。`READY` 内部必须再
+区分私有子状态，而 projection / recovery / motion 的中间态由 `viewportPhase`
+表达：
 
 ```ts
 type ReadySubstate =
@@ -158,9 +159,9 @@ type ReadySubstate =
   runtime 正在等待 around-target DataWindow。
 - `READY_MOTION_ACTIVE`：`ScrollMotionEngine` 拥有 `scrollTop` 写入权。
 
-Motion 不是 transaction。Transaction 在 commit + measure 后释放
-`TRANSACTING`，如果该操作需要动画，runtime 进入 `READY_MOTION_ACTIVE`，直到
-motion settle 或 cancel。
+Motion 不是 transaction。Transaction 在 commit + measure 后释放串行权；
+如果该操作需要动画，runtime 进入 `READY_MOTION_ACTIVE`，直到 motion settle 或
+cancel。
 
 ### 4.2 Transaction Ownership
 
@@ -315,7 +316,7 @@ type PendingFollowBottom = {
 ```
 
 Runtime 保留该 command，并进入内部 `READY_FOLLOW_BOTTOM_PENDING`。这不是
-`TRANSACTING`，因为此时没有 projection 正在等待 commit；但它也不是普通
+transaction active，因为此时没有 projection 正在等待 commit；但它也不是普通
 `READY_IDLE`，因为后续 `setDataSnapshot` 必须继续驱动同一个 follow-bottom
 意图。
 
@@ -567,8 +568,8 @@ Motion active 期间：
 Motion cancel 后：
 
 - 不强行 emit settled anchor。
-- 不保持 RECOVERING 状态。
-- 当前 transaction 根据取消原因决定恢复到 READY 或被新 transaction 接管。
+- 不保持 projection / motion 中间态。
+- 当前 transaction 根据取消原因决定回到 `viewportPhase: IDLE` 或被新 transaction 接管。
 
 ## 8. Reduced Motion And Configuration
 

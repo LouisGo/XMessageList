@@ -11,6 +11,7 @@ import type {
   RenderWindow,
   RuntimeState,
   ScrollMotionOptions,
+  ViewportPhase,
 } from '../types'
 import type { RuntimeDiagnosticInput } from '../debug/diagnosticRecorder'
 import type { ScrollMotionSource } from '../scroll/scrollMotionEngine'
@@ -40,6 +41,10 @@ export type MeasurableRow = {
   element: HTMLElement
 }
 
+/**
+ * ReadySubstate 只描述 READY 生命周期下的用户目的地意图。
+ * 它不负责 DOM commit 串行化；transaction 轴独立表达 projection mutation。
+ */
 export type ReadySubstate =
   | 'READY_IDLE'
   | 'READY_FOLLOW_BOTTOM_PENDING'
@@ -94,6 +99,7 @@ export type PublishProjectionInput<TMessage, TOptimistic> = {
   renderWindow: RenderWindow
   bootstrapState: BootstrapState
   bottomLockState: MessageViewportSnapshot['bottomLockState']
+  viewportPhase?: ViewportPhase
   topSpacer?: number
   bottomSpacer?: number
 }

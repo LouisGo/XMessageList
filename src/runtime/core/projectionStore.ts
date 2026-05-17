@@ -30,6 +30,7 @@ export function createEmptySnapshot<
     bottomSpacer: 0,
     bottomLockState: 'UNLOCKED',
     bootstrapState: 'INITIAL',
+    viewportPhase: 'IDLE',
     edgeState: EMPTY_EDGE_STATE,
   }
 }

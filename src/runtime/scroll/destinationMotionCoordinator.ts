@@ -124,7 +124,8 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
       }),
     })
 
-    // motion 完成前先暂存最终 projection 状态，避免动画中途就暴露 LOCKED / jump 完成。
+    // motion 完成前只暴露 MOTION_ACTIVE 阶段；最终 bottom lock 和 destinationSettled
+    // 必须等真实 scrollTop 到达后再发布，避免动画过程中 UI 误判目的地已完成。
     if (instantReason) {
       this.writeScrollTop(targetTop, input.source)
       this.settleDestinationMotion()
@@ -136,6 +137,13 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
     }
 
     this.setReadySubstate('READY_MOTION_ACTIVE')
+    this.projection.publish({
+      data: input.data,
+      renderWindow: input.renderWindow,
+      bootstrapState: this.store.getSnapshot().bootstrapState,
+      bottomLockState: this.scrollIntent.getBottomLockState(),
+      viewportPhase: 'MOTION_ACTIVE',
+    })
     this.motionEngine.start({
       container,
       source: input.source,
@@ -257,17 +265,27 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
       renderWindow: settle.renderWindow,
       bootstrapState: this.store.getSnapshot().bootstrapState,
       bottomLockState: settle.bottomLockState,
+      viewportPhase: 'IDLE',
     })
     this.emitViewportAnchorChanged('transaction-settle')
   }
 
   private clearDestinationMotionSettle(): void {
-    if (!this.destinationMotionSettle) {
+    const settle = this.destinationMotionSettle
+
+    if (!settle) {
       return
     }
 
     this.destinationMotionSettle = null
     this.setReadySubstate('READY_IDLE')
+    this.projection.publish({
+      data: settle.data,
+      renderWindow: settle.renderWindow,
+      bootstrapState: this.store.getSnapshot().bootstrapState,
+      bottomLockState: this.scrollIntent.getBottomLockState(),
+      viewportPhase: 'IDLE',
+    })
   }
 
   private handleDestinationMotionCancel(reason: ScrollMotionCancelReason): void {
@@ -326,6 +344,7 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
       renderWindow: settle.renderWindow,
       bootstrapState: this.store.getSnapshot().bootstrapState,
       bottomLockState,
+      viewportPhase: 'IDLE',
     })
   }
 

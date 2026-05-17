@@ -184,7 +184,6 @@ type MessageRuntimeCommand =
 | INITIAL       | only bootstrap accepted                           |
 | BOOTSTRAPPING | latest bootstrap wins, jump replaces pending jump |
 | READY         | commands execute sequentially                     |
-| TRANSACTING   | command queued or supersedes by type              |
 | DESTROYED     | command rejected                                  |
 
 Supersede 规则：

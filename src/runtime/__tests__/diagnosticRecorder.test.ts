@@ -14,11 +14,12 @@ function createRecorder(input?: {
       now += 1
       return now
     },
-    () => ({
+      () => ({
       feedId: 'feed',
       generation: 1,
       state: 'READY',
       readySubstate: 'READY_IDLE',
+      viewportPhase: 'IDLE',
       pendingCommands: 0,
     }),
     (event) => {

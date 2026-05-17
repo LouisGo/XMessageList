@@ -287,7 +287,7 @@ describe('React adapter', () => {
     })
   })
 
-  it('keeps follow-bottom slot stable during recovering projection', async () => {
+  it('keeps follow-bottom visibility driven by bottom lock during motion phase', async () => {
     const listeners = new Set<() => void>()
     let snapshot: MessageViewportSnapshot<TestMessage> = {
       feedId: 'feed',
@@ -303,6 +303,7 @@ describe('React adapter', () => {
       bottomSpacer: 0,
       bottomLockState: 'UNLOCKED',
       bootstrapState: 'READY',
+      viewportPhase: 'IDLE',
       edgeState: {
         before: 'idle',
         after: 'idle',
@@ -354,22 +355,21 @@ describe('React adapter', () => {
       )
     })
 
-    const callsBeforeRecovering = renderFollowBottom.mock.calls.length
     expect(host.querySelector('[data-testid="custom-follow-bottom"]')).not.toBeNull()
 
     await act(async () => {
       snapshot = {
         ...snapshot,
         revision: 2,
-        bottomLockState: 'RECOVERING',
+        viewportPhase: 'MOTION_ACTIVE',
       }
       for (const listener of listeners) {
         listener()
       }
     })
 
-    expect(runtime.getSnapshot().bottomLockState).toBe('RECOVERING')
-    expect(renderFollowBottom).toHaveBeenCalledTimes(callsBeforeRecovering)
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION_ACTIVE')
     expect(host.querySelector('[data-testid="custom-follow-bottom"]')).not.toBeNull()
 
     await act(async () => {

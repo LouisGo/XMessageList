@@ -2,6 +2,44 @@ import type { AnchorState, MessageDataSnapshot, MessageViewportSnapshot } from '
 import type { ViewportTransactionDeps } from './viewportTransactionController'
 import { areRuntimeItemKeysEqual } from '../shared/utils'
 
+/**
+ * Bootstrap 阶段许可表：
+ * MOUNTING 只允许首次 projection 和 commit wait；
+ * MEASURING 只允许读取 DOM/height，不允许 correction、trim、分页触发；
+ * STABILIZING 允许首屏必要 correction，但仍禁止 trim 和外部分页触发；
+ * READY 才恢复普通 viewport effects。
+ */
+const BOOTSTRAP_PHASE_POLICY = {
+  MOUNTING: {
+    projection: true,
+    measurement: false,
+    correction: false,
+    trim: false,
+    edgeNeed: false,
+  },
+  MEASURING: {
+    projection: true,
+    measurement: true,
+    correction: false,
+    trim: false,
+    edgeNeed: false,
+  },
+  STABILIZING: {
+    projection: true,
+    measurement: true,
+    correction: true,
+    trim: false,
+    edgeNeed: false,
+  },
+  READY: {
+    projection: true,
+    measurement: true,
+    correction: true,
+    trim: true,
+    edgeNeed: true,
+  },
+} as const
+
 export function runBootstrapTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
   mode: 'latest' | 'unread' | 'restored',
@@ -30,6 +68,7 @@ export function runBootstrapTransaction<TMessage, TOptimistic>(
       bottomSpacer: 0,
       bootstrapState: 'READY_EMPTY',
       bottomLockState: 'LOCKED',
+      viewportPhase: 'IDLE',
     })
     deps.setState('READY')
     deps.emitEvent({
@@ -73,6 +112,7 @@ async function runLatestBootstrap<TMessage, TOptimistic>(
   )
 
   deps.setState('BOOTSTRAPPING')
+  deps.setViewportPhase('PROJECTING')
 
   try {
     const projection = deps.projection.publish({
@@ -80,22 +120,41 @@ async function runLatestBootstrap<TMessage, TOptimistic>(
       renderWindow,
       bootstrapState: 'MOUNTING',
       bottomLockState: 'UNLOCKED',
+      viewportPhase: 'PROJECTING',
     })
 
     await deps.commit.waitForChanged(projection, 'bootstrap')
+    assertBootstrapPolicy('MEASURING', 'measurement')
+    deps.projection.publish({
+      data,
+      renderWindow,
+      bootstrapState: 'MEASURING',
+      bottomLockState: 'UNLOCKED',
+      viewportPhase: 'MEASURING',
+    })
     deps.measureCurrentWindow()
     // latest bootstrap 先按估算窗口吸底，再等异步高度稳定后用实测结果二次校正。
+    assertBootstrapPolicy('STABILIZING', 'correction')
+    deps.projection.publish({
+      data,
+      renderWindow,
+      bootstrapState: 'STABILIZING',
+      bottomLockState: 'UNLOCKED',
+      viewportPhase: 'CORRECTING',
+    })
     deps.motion.scrollToBottom('followBottom')
     await deps.waitForBootstrapSettle(data.feedId, data.generation)
     deps.measureCurrentWindow()
     deps.motion.scrollToBottom('followBottom')
     deps.scrollIntent.setBottomLockState('LOCKED')
+    deps.setViewportPhase('IDLE')
     deps.setState('READY')
     deps.projection.publish({
       data,
       renderWindow,
       bootstrapState: 'READY',
       bottomLockState: 'LOCKED',
+      viewportPhase: 'IDLE',
     })
     deps.emitViewportAnchorChanged('transaction-settle')
     deps.emitEvent({
@@ -145,9 +204,18 @@ async function runRestoredBootstrap<TMessage, TOptimistic>(
       renderWindow,
       bootstrapState: 'MOUNTING',
       bottomLockState: 'UNLOCKED',
+      viewportPhase: 'PROJECTING',
     })
 
     await deps.commit.waitForChanged(projection, 'bootstrap')
+    assertBootstrapPolicy('MEASURING', 'measurement')
+    deps.projection.publish({
+      data,
+      renderWindow,
+      bootstrapState: 'MEASURING',
+      bottomLockState: 'UNLOCKED',
+      viewportPhase: 'MEASURING',
+    })
 
     const resolvedRestoreTarget =
       deps.anchor.getDirectMeasurableRow(restoreTarget.key) ??
@@ -181,6 +249,14 @@ async function runRestoredBootstrap<TMessage, TOptimistic>(
 
     deps.measureCurrentWindow()
     // restored bootstrap 对齐的是视觉 anchor + offset，不是简单把目标消息滚到顶部。
+    assertBootstrapPolicy('STABILIZING', 'correction')
+    deps.projection.publish({
+      data,
+      renderWindow,
+      bootstrapState: 'STABILIZING',
+      bottomLockState: 'UNLOCKED',
+      viewportPhase: 'CORRECTING',
+    })
     deps.anchor.alignToResolvedRestoreTarget(
       container,
       restoreTarget,
@@ -188,12 +264,14 @@ async function runRestoredBootstrap<TMessage, TOptimistic>(
     )
     deps.scrollIntent.setBottomLockState('UNLOCKED')
     deps.reconcileBottomLockFromViewport(data, 'restored-bootstrap-settle')
+    deps.setViewportPhase('IDLE')
     deps.setState('READY')
     deps.projection.publish({
       data,
       renderWindow,
       bootstrapState: 'READY',
       bottomLockState: deps.scrollIntent.getBottomLockState(),
+      viewportPhase: 'IDLE',
     })
     deps.emitViewportAnchorChanged('transaction-settle', settledAnchor)
     deps.emitEvent({
@@ -209,5 +287,14 @@ async function runRestoredBootstrap<TMessage, TOptimistic>(
       restoreSnapshot: previousSnapshot,
     })
     throw error
+  }
+}
+
+function assertBootstrapPolicy(
+  phase: keyof typeof BOOTSTRAP_PHASE_POLICY,
+  capability: keyof typeof BOOTSTRAP_PHASE_POLICY.READY,
+): void {
+  if (!BOOTSTRAP_PHASE_POLICY[phase][capability]) {
+    throw new Error(`bootstrap-${phase}-forbids-${capability}`)
   }
 }

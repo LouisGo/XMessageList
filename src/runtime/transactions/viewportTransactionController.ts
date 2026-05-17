@@ -20,6 +20,7 @@ import type {
   RenderWindow,
   RuntimeState,
   ScrollSource,
+  ViewportPhase,
   ViewportAnchorChangeReason,
 } from '../types'
 import type {
@@ -46,6 +47,7 @@ export type ViewportTransactionDeps<TMessage, TOptimistic> = {
   motion: DestinationMotionCoordinator<TMessage, TOptimistic>
   getDataSnapshot: () => MessageDataSnapshot<TMessage, TOptimistic> | null
   setState: (state: RuntimeState) => void
+  setViewportPhase: (phase: ViewportPhase) => void
   setPendingBootstrap: (
     command: Extract<MessageRuntimeCommand, { type: 'bootstrap' }>,
   ) => void
@@ -141,15 +143,17 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       viewportWidth: container.clientWidth,
     })
 
-    this.deps.setState('TRANSACTING')
-    this.deps.scrollIntent.setBottomLockState('RECOVERING')
+    // transaction 只进入 projection/correction 视觉阶段，不改变 lifecycle，
+    // 也不覆盖业务 bottom lock；prepend 完成前用户仍处于原阅读语义。
+    this.deps.setViewportPhase('PROJECTING')
 
     try {
       const projection = this.deps.projection.publish({
         data,
         renderWindow,
         bootstrapState: 'READY',
-        bottomLockState: 'RECOVERING',
+        bottomLockState: previousBottomLockState,
+        viewportPhase: 'PROJECTING',
       })
 
       await this.deps.commit.waitForChanged(projection, 'prepend')
@@ -170,18 +174,20 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
 
       const delta = anchorTopAfter - anchorTopBefore
       this.deps.measureCurrentWindow()
+      this.deps.setViewportPhase('CORRECTING')
 
       if (Math.abs(delta) > 0.5) {
         this.deps.motion.writeScrollTop(container.scrollTop + delta, 'recovery')
       }
 
       this.deps.scrollIntent.setBottomLockState('UNLOCKED')
-      this.deps.setState('READY')
+      this.deps.setViewportPhase('IDLE')
       this.deps.projection.publish({
         data,
         renderWindow,
         bootstrapState: 'READY',
         bottomLockState: 'UNLOCKED',
+        viewportPhase: 'IDLE',
       })
       this.deps.emitViewportAnchorChanged('transaction-settle', anchor)
     } catch (error) {
@@ -194,6 +200,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
           renderWindow,
           bootstrapState: 'READY',
           bottomLockState: previousBottomLockState,
+          viewportPhase: 'IDLE',
         },
       })
       throw error
@@ -231,20 +238,20 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         )
       : this.deps.keepCurrentWindow(data.items)
 
-    this.deps.setState('TRANSACTING')
+    this.deps.setViewportPhase('PROJECTING')
     try {
       const projection = this.deps.projection.publish({
         data,
         renderWindow,
         bootstrapState: 'READY',
         bottomLockState: this.deps.scrollIntent.getBottomLockState(),
+        viewportPhase: 'PROJECTING',
       })
 
       await this.deps.commit.waitForChanged(projection, 'append')
       this.deps.measureCurrentWindow()
 
       if (shouldFollow) {
-        this.deps.setState('READY')
         this.deps.motion.start({
           source: motionSource,
           targetTop: this.deps.motion.getBottomTargetTop(container),
@@ -255,7 +262,14 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         return
       }
 
-      this.deps.setState('READY')
+      this.deps.setViewportPhase('IDLE')
+      this.deps.projection.publish({
+        data,
+        renderWindow,
+        bootstrapState: 'READY',
+        bottomLockState: this.deps.scrollIntent.getBottomLockState(),
+        viewportPhase: 'IDLE',
+      })
       this.deps.emitViewportAnchorChanged('transaction-settle')
     } catch (error) {
       this.deps.recoverAfterCommitFailure({
@@ -302,6 +316,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         renderWindow,
         bootstrapState: snapshot.bootstrapState,
         bottomLockState: snapshot.bottomLockState,
+        viewportPhase: 'PROJECTING',
       })
 
       await this.deps.commit.waitForChanged(projection, 'resize')
@@ -319,6 +334,15 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       }
 
       this.deps.motion.scrollToBottom('programmatic')
+      this.deps.scrollIntent.setBottomLockState('LOCKED')
+      this.deps.setViewportPhase('IDLE')
+      this.deps.projection.publish({
+        data,
+        renderWindow,
+        bootstrapState: snapshot.bootstrapState,
+        bottomLockState: 'LOCKED',
+        viewportPhase: 'IDLE',
+      })
       this.deps.emitViewportAnchorChanged('transaction-settle')
       return
     }
@@ -333,6 +357,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       renderWindow,
       bootstrapState: snapshot.bootstrapState,
       bottomLockState: snapshot.bottomLockState,
+      viewportPhase: 'PROJECTING',
     })
 
     await this.deps.commit.waitForChanged(projection, 'resize')
@@ -347,6 +372,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
 
       if (typeof anchorTopAfter === 'number') {
         const delta = anchorTopAfter - anchorTopBefore
+        this.deps.setViewportPhase('CORRECTING')
 
         if (Math.abs(delta) > 0.5) {
           this.deps.motion.writeScrollTop(container.scrollTop + delta, 'recovery')
@@ -357,6 +383,14 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       this.deps.measureCurrentWindow()
     }
 
+    this.deps.setViewportPhase('IDLE')
+    this.deps.projection.publish({
+      data,
+      renderWindow,
+      bootstrapState: snapshot.bootstrapState,
+      bottomLockState: this.deps.scrollIntent.getBottomLockState(),
+      viewportPhase: 'IDLE',
+    })
     this.deps.emitViewportAnchorChanged('transaction-settle', settledAnchor)
   }
 
@@ -398,15 +432,16 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       viewportWidth: container.clientWidth,
     })
 
-    this.deps.setState('TRANSACTING')
-    this.deps.scrollIntent.setBottomLockState('RECOVERING')
+    // jump 的 projection 阶段只是在准备目标 DOM；目的地完成由 motion settle 表达。
+    this.deps.setViewportPhase('PROJECTING')
 
     try {
       const projection = this.deps.projection.publish({
         data,
         renderWindow,
         bootstrapState: 'READY',
-        bottomLockState: 'RECOVERING',
+        bottomLockState: previousBottomLockState,
+        viewportPhase: 'PROJECTING',
       })
 
       await this.deps.commit.waitForChanged(projection, 'jump')
@@ -438,17 +473,18 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         containerRect.top -
         Math.max(0, (container.clientHeight - targetRect.height) / 2)
 
-      this.deps.setState('READY')
       const targetTop = container.scrollTop + centerDelta
 
       if (options.animate === false) {
         this.deps.motion.scrollTo('jump', targetTop)
         this.deps.scrollIntent.setBottomLockState('UNLOCKED')
+        this.deps.setViewportPhase('IDLE')
         this.deps.projection.publish({
           data,
           renderWindow,
           bootstrapState: this.deps.store.getSnapshot().bootstrapState,
           bottomLockState: 'UNLOCKED',
+          viewportPhase: 'IDLE',
         })
         this.deps.emitDestinationSettled({
           intent: 'jump',
@@ -513,15 +549,17 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       viewportWidth: container.clientWidth,
     })
 
-    this.deps.setState('TRANSACTING')
-    this.deps.scrollIntent.setBottomLockState('RECOVERING')
+    // restore 是视觉恢复事务：projection/measurement/correction 由 viewportPhase 表达，
+    // bottom lock 保留原值直到最终按落点重新 reconcile。
+    this.deps.setViewportPhase('PROJECTING')
 
     try {
       const projection = this.deps.projection.publish({
         data,
         renderWindow,
         bootstrapState: 'READY',
-        bottomLockState: 'RECOVERING',
+        bottomLockState: previousBottomLockState,
+        viewportPhase: 'PROJECTING',
       })
 
       await this.deps.commit.waitForChanged(projection, 'restore')
@@ -547,6 +585,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       }
 
       this.deps.measureCurrentWindow()
+      this.deps.setViewportPhase('CORRECTING')
       this.deps.anchor.alignToResolvedRestoreTarget(
         container,
         restoreTarget,
@@ -554,12 +593,13 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       )
       this.deps.scrollIntent.setBottomLockState('UNLOCKED')
       this.deps.reconcileBottomLockFromViewport(data, 'restore-settle')
-      this.deps.setState('READY')
+      this.deps.setViewportPhase('IDLE')
       this.deps.projection.publish({
         data,
         renderWindow,
         bootstrapState: 'READY',
         bottomLockState: this.deps.scrollIntent.getBottomLockState(),
+        viewportPhase: 'IDLE',
       })
       this.deps.emitViewportAnchorChanged(
         'transaction-settle',
@@ -632,21 +672,20 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     const token = this.deps.lifecycle.getCurrent()
     const previousBottomLockState = this.deps.scrollIntent.getBottomLockState()
 
-    this.deps.setState('TRANSACTING')
+    this.deps.setViewportPhase('PROJECTING')
     // follow-bottom 必须先切到 latest projection，再基于 commit 后的真实 DOM 吸底；
     // 如果先写 scrollTop，旧窗口 bottom spacer 的估算误差会把最终位置留在底部上方。
-    this.deps.scrollIntent.setBottomLockState('RECOVERING')
     try {
       const projection = this.deps.projection.publish({
         data,
         renderWindow,
         bootstrapState: 'READY',
-        bottomLockState: 'RECOVERING',
+        bottomLockState: previousBottomLockState,
+        viewportPhase: 'PROJECTING',
       })
 
       await this.deps.commit.waitForChanged(projection, 'followBottom')
       this.deps.measureCurrentWindow()
-      this.deps.setState('READY')
       const targetTop = this.deps.motion.getBottomTargetTop(container)
       const forceAnimateFrom =
         Math.abs(targetTop - container.scrollTop) <= 1 &&
@@ -695,6 +734,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
           renderWindow,
           bootstrapState: 'READY',
           bottomLockState: previousBottomLockState,
+          viewportPhase: 'IDLE',
         },
       })
       throw error
@@ -736,7 +776,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     const hasActiveFollowBottomIntent =
       this.deps.hasActiveFollowBottomIntent(data)
 
-    this.deps.setState('TRANSACTING')
+    this.deps.setViewportPhase('PROJECTING')
 
     try {
       if (hasActiveFollowBottomIntent && !data.hasMoreAfter) {
@@ -750,11 +790,11 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
           renderWindow,
           bootstrapState: 'READY',
           bottomLockState: previousBottomLockState,
+          viewportPhase: 'PROJECTING',
         })
 
         await this.deps.commit.waitForChanged(projection, 'resize')
         this.deps.measureCurrentWindow()
-        this.deps.setState('READY')
         this.deps.motion.start({
           source: 'followBottom',
           targetTop: this.deps.motion.getBottomTargetTop(container),
@@ -770,6 +810,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         renderWindow: nextWindow,
         bootstrapState: 'READY',
         bottomLockState: previousBottomLockState,
+        viewportPhase: 'PROJECTING',
       })
 
       await this.deps.commit.waitForChanged(projection, 'resize')
@@ -780,6 +821,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       if (typeof anchorTopAfter === 'number') {
         const delta = anchorTopAfter - anchorTopBefore
         this.deps.measureCurrentWindow()
+        this.deps.setViewportPhase('CORRECTING')
 
         if (Math.abs(delta) > 0.5) {
           this.deps.motion.writeScrollTop(container.scrollTop + delta, 'recovery')
@@ -788,7 +830,14 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         this.deps.measureCurrentWindow()
       }
 
-      this.deps.setState('READY')
+      this.deps.setViewportPhase('IDLE')
+      this.deps.projection.publish({
+        data,
+        renderWindow: nextWindow,
+        bootstrapState: 'READY',
+        bottomLockState: this.deps.scrollIntent.getBottomLockState(),
+        viewportPhase: 'IDLE',
+      })
       this.deps.emitViewportAnchorChanged('transaction-settle', anchor)
     } catch (error) {
       this.deps.recoverAfterCommitFailure({
@@ -863,7 +912,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
       return
     }
 
-    this.deps.setState('TRANSACTING')
+    this.deps.setViewportPhase('PROJECTING')
 
     try {
       const projection = this.deps.projection.publish({
@@ -871,6 +920,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         renderWindow,
         bootstrapState: previousSnapshot.bootstrapState,
         bottomLockState: previousBottomLockState,
+        viewportPhase: 'PROJECTING',
       })
 
       await this.deps.commit.waitForChanged(projection, 'resize')
@@ -883,7 +933,6 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
 
       if (shouldFollowBottom) {
         if (hasActiveFollowBottomIntent) {
-          this.deps.setState('READY')
           this.deps.motion.start({
             source: 'followBottom',
             targetTop: this.deps.motion.getBottomTargetTop(container),
@@ -900,11 +949,13 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
             renderWindow,
             bootstrapState: previousSnapshot.bootstrapState,
             bottomLockState: 'LOCKED',
+            viewportPhase: 'IDLE',
           })
         }
       } else if (anchor && typeof anchorTopBefore === 'number') {
         if (typeof anchorTopAfter === 'number') {
           const delta = anchorTopAfter - anchorTopBefore
+          this.deps.setViewportPhase('CORRECTING')
 
           if (Math.abs(delta) > 0.5) {
             this.deps.motion.writeScrollTop(
@@ -915,7 +966,14 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
         }
       }
 
-      this.deps.setState('READY')
+      this.deps.setViewportPhase('IDLE')
+      this.deps.projection.publish({
+        data,
+        renderWindow,
+        bootstrapState: previousSnapshot.bootstrapState,
+        bottomLockState: this.deps.scrollIntent.getBottomLockState(),
+        viewportPhase: 'IDLE',
+      })
       this.deps.emitViewportAnchorChanged(
         'transaction-settle',
         shouldFollowBottom ? undefined : (anchor ?? undefined),

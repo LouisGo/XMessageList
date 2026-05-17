@@ -113,8 +113,18 @@ export type NormalizedWindowConfig = {
   maxMountedItems: number
 }
 
-export type BottomLockState = 'LOCKED' | 'UNLOCKED' | 'RECOVERING'
+/**
+ * BottomLockState 只表达业务吸底语义：当前 viewport 是否锁在 feed latest。
+ * 它不表达 projection、measurement、correction 或 animation 的中间过程；
+ * 这些视觉阶段必须放到 ViewportPhase，避免 UI 用吸底状态推断 runtime 事务。
+ */
+export type BottomLockState = 'LOCKED' | 'UNLOCKED'
 
+/**
+ * BootstrapState 是 bootstrap 子状态机的 public projection。
+ * MOUNTING/MEASURING/STABILIZING 分别对应挂载、测量、稳定校正阶段；
+ * 这些阶段只约束首屏启动，不代表普通 READY 事务。
+ */
 export type BootstrapState =
   | 'INITIAL'
   | 'MOUNTING'
@@ -122,6 +132,18 @@ export type BootstrapState =
   | 'STABILIZING'
   | 'READY'
   | 'READY_EMPTY'
+
+/**
+ * ViewportPhase 表达 runtime 正在经历的视觉中间态。
+ * 它是 bottom lock 的正交轴：LOCKED + PROJECTING、UNLOCKED + MOTION_ACTIVE
+ * 都是合法组合，React adapter 不应再用 bottomLockState 承担 recovery 语义。
+ */
+export type ViewportPhase =
+  | 'IDLE'
+  | 'PROJECTING'
+  | 'MEASURING'
+  | 'CORRECTING'
+  | 'MOTION_ACTIVE'
 
 export type ViewportEdgeState = {
   before: 'idle' | 'loading' | 'exhausted' | 'error'
@@ -141,6 +163,7 @@ export type MessageViewportSnapshot<
   bottomSpacer: number
   bottomLockState: BottomLockState
   bootstrapState: BootstrapState
+  viewportPhase: ViewportPhase
   edgeState: ViewportEdgeState
 }
 
@@ -164,14 +187,36 @@ export type MessageRuntimeCommand =
 
 export type RuntimeListener = () => void
 
+/**
+ * RuntimeState 只表达 runtime 容器生命周期。
+ * Transaction、destination motion、bottom lock 都是正交状态轴，不能再提升为
+ * lifecycle 值；尤其不能用 lifecycle 判断 jump/followBottom 是否完成。
+ */
 export type RuntimeState =
   | 'INITIAL'
   | 'ATTACHED'
   | 'BOOTSTRAPPING'
   | 'READY'
-  | 'TRANSACTING'
   | 'DETACHED'
   | 'DESTROYED'
+
+/**
+ * TransactionState 只表达 projection/DOM commit/measurement/correction 的串行化。
+ * active transaction 不代表用户目的地已经完成，也不改变 RuntimeState。
+ */
+export type TransactionState = 'idle' | 'queued' | 'active' | 'settling'
+
+/**
+ * DestinationState 承载 jump/restore/followBottom 的用户意图生命周期。
+ * transaction-supersede 只能让坐标失效；只有 user-interrupt 才终止该意图。
+ */
+export type DestinationState =
+  | 'idle'
+  | 'pendingData'
+  | 'resolvingDom'
+  | 'motionActive'
+  | 'interrupted'
+  | 'settled'
 
 export type ViewportTransactionKind =
   | 'bootstrap'

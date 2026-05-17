@@ -162,7 +162,7 @@ React adapter 依赖 revision 做 commit 回执，但不能把 revision 当作�
 
 Runtime 是分层状态机，不是单一 `RuntimeState`。实现和接入层都不能只用
 `state === READY` 判断用户动作已经完成；必须结合 `ReadySubstate`、transaction
-队列、active motion 和 `bottomLockState`。
+队列、active motion、`viewportPhase` 和 `bottomLockState`。
 
 ```ts
 type RuntimeState =
@@ -170,7 +170,6 @@ type RuntimeState =
   | 'ATTACHED'
   | 'BOOTSTRAPPING'
   | 'READY'
-  | 'TRANSACTING'
   | 'DETACHED'
   | 'DESTROYED';
 ```
@@ -182,9 +181,9 @@ type RuntimeState =
 | INITIAL | attach | ATTACHED |
 | ATTACHED | bootstrap command + data ready | BOOTSTRAPPING |
 | BOOTSTRAPPING | settle | READY |
-| READY | transaction start | TRANSACTING |
-| TRANSACTING | transaction commit | READY |
-| ATTACHED / READY / TRANSACTING | detach | DETACHED |
+| READY | transaction start | READY |
+| READY | transaction commit | READY |
+| ATTACHED / READY | detach | DETACHED |
 | DETACHED | attach | ATTACHED |
 | any non-destroyed | destroy | DESTROYED |
 
@@ -218,18 +217,15 @@ type ReadySubstate =
 
 | Layer | Owner | Meaning |
 | --- | --- | --- |
-| `RuntimeState` | runtime lifecycle | attach/bootstrap/transaction/detach/destroy |
+| `RuntimeState` | runtime lifecycle | attach/bootstrap/detach/destroy |
 | `ReadySubstate` | runtime command intent | pending latest / pending destination / active motion |
 | `TransactionRunner` | mutation serialization | window、spacer、DOM commit、measurement 的串行所有权 |
 | `ScrollMotionEngine` | scroll writer | animation 期间唯一写 `scrollTop` 的 owner |
-| `bottomLockState` | scroll intent | latest bottom lock 与 projection recovery 状态 |
+| `bottomLockState` | scroll intent | 只表达 latest bottom lock |
+| `viewportPhase` | visual phase | projection、measurement、correction、motion 中间态 |
 
-`bottomLockState: RECOVERING` 是短期兼容保留的 projection/recovery 中间态。它不表示：
-
-- jump / restore / followBottom 已经完成。
-- 可以 emit `destinationSettled`。
-- React adapter 应卸载 follow-bottom affordance。
-- 当前处于稳定的 bottom lock 语义。
+`bottomLockState` 只能是 `LOCKED / UNLOCKED`。Projection/recovery/motion 的中间态
+必须由 `viewportPhase` 表达，不能再塞回 bottom lock。
 
 稳定语义只能来自最终 settle：
 
