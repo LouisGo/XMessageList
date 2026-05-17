@@ -1926,6 +1926,21 @@ export class MessageViewportRuntimeController<
     const anchor = this.captureViewportAnchor()
 
     if (!anchor) {
+      const estimatedAnchorIndex = this.renderWindow.findEstimatedIndexAtOffset(
+        data.items,
+        metrics.scrollTop + metrics.clientHeight / 2,
+        metrics.clientWidth,
+      )
+      const nextWindow =
+        estimatedAnchorIndex >= 0
+          ? this.renderWindow.computeWindowAroundAnchor({
+              items: data.items,
+              anchorIndex: estimatedAnchorIndex,
+              viewportHeight: metrics.clientHeight,
+              viewportWidth: metrics.clientWidth,
+            })
+          : null
+
       this.emitDiagnostic({
         channel: 'anchor',
         severity: 'warn',
@@ -1938,8 +1953,25 @@ export class MessageViewportRuntimeController<
           distanceToBottom: metrics.distanceToBottom,
           topSpacer: snapshot.topSpacer,
           bottomSpacer: snapshot.bottomSpacer,
+          estimatedAnchorIndex,
         }),
       })
+
+      if (
+        nextWindow &&
+        !this.projection.isRenderWindowEqual(snapshot.renderWindow, nextWindow)
+      ) {
+        this.transactions.enqueue(
+          'resize',
+          () =>
+            this.runAnchorlessWindowSlideTransaction(nextWindow, {
+              feedId: data.feedId,
+              generation: data.generation,
+              revision: data.revision,
+            }),
+          'window-slide',
+        )
+      }
       return
     }
 
@@ -1971,6 +2003,56 @@ export class MessageViewportRuntimeController<
         }),
       'window-slide',
     )
+  }
+
+  private async runAnchorlessWindowSlideTransaction(
+    nextWindow: RenderWindow,
+    expectedData: { feedId: string; generation: number; revision: number },
+  ): Promise<void> {
+    const data = this.dataSnapshot
+    const container = this.registry.getContainer()
+
+    if (!data || !container) {
+      return
+    }
+
+    if (
+      data.feedId !== expectedData.feedId ||
+      data.generation !== expectedData.generation ||
+      data.revision !== expectedData.revision
+    ) {
+      return
+    }
+
+    const token = this.lifecycle.getCurrent()
+    const previousSnapshot = this.store.getSnapshot()
+    const previousBottomLockState = this.scrollIntent.getBottomLockState()
+    this.state = 'TRANSACTING'
+
+    try {
+      const projection = this.projection.publish({
+        data,
+        renderWindow: nextWindow,
+        bootstrapState: previousSnapshot.bootstrapState,
+        bottomLockState: previousBottomLockState,
+      })
+
+      await this.commit.waitForChanged(projection, 'resize')
+      this.measureCurrentWindow()
+      this.state = 'READY'
+      this.emitViewportAnchorChanged(
+        'transaction-settle',
+        this.captureViewportAnchor(),
+      )
+    } catch (error) {
+      this.recoverAfterCommitFailure({
+        token,
+        nextState: 'READY',
+        restoreBottomLockState: previousBottomLockState,
+        restoreSnapshot: previousSnapshot,
+      })
+      throw error
+    }
   }
 
   private scheduleHeightStabilization(): void {

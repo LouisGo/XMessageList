@@ -123,6 +123,35 @@ export class RenderWindowEngine {
     return this.committedMessageIdToIndex.get(messageId) ?? -1
   }
 
+  findEstimatedIndexAtOffset(
+    items: MessageDataItem[],
+    offsetPx: number,
+    width: number,
+  ): number {
+    if (items.length === 0) {
+      return -1
+    }
+
+    const targetOffset = Math.max(0, offsetPx)
+    let height = 0
+
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index]
+
+      if (!item) {
+        continue
+      }
+
+      height += this.spacer.estimateItemHeight(item, width)
+
+      if (height >= targetOffset) {
+        return index
+      }
+    }
+
+    return items.length - 1
+  }
+
   private walkBackwardByEstimatedHeight(
     items: MessageDataItem[],
     anchorIndex: number,

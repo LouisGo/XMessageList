@@ -1412,6 +1412,36 @@ describe('MessageViewportRuntime', () => {
     expect(events).not.toContain('needMoreBefore')
   })
 
+  it('slides the render window after a fast scrollbar drag lands inside spacer-only space', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 100,
+      revision: 1,
+      effect: 'reset',
+      hasMoreAfter: true,
+    }))
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'restored',
+      target: { messageId: 'm-20' },
+    })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    let snapshot = runtime.getSnapshot()
+    expect(snapshot.renderWindow.startIndex).toBeLessThan(40)
+
+    markUserScrollIntent(container)
+    container.scrollTop = 4_500
+    mountProjection(runtime, container, snapshot, -container.scrollTop)
+    await flushScrollFrames(container, scheduler, 1)
+    snapshot = runtime.getSnapshot()
+    expect(snapshot.renderWindow.startIndex).toBeGreaterThan(60)
+  })
+
   it('does not request history from sentinel intersection before user edge intent', async () => {
     const { runtime, scheduler, observers } = createRuntime()
     const container = createContainer({ height: 900 })
