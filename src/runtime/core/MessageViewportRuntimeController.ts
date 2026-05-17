@@ -151,6 +151,8 @@ export class MessageViewportRuntimeController<
 
   private destinationState: DestinationState = 'idle'
 
+  private activeTransactionKind: ViewportTransactionKind | null = null
+
   private dataSnapshot: MessageDataSnapshot<TMessage, TOptimistic> | null = null
 
   private pendingBootstrap: BootstrapCommand | null = null
@@ -1592,6 +1594,7 @@ export class MessageViewportRuntimeController<
   }
 
   private handleTransactionStart(kind: ViewportTransactionKind, id: string): void {
+    this.activeTransactionKind = kind
     this.setTransactionState('active')
     this.emitTransactionDiagnostic('start', kind, id)
   }
@@ -1604,6 +1607,7 @@ export class MessageViewportRuntimeController<
       this.transactions.getPendingCount() > 0 ? 'queued' : 'idle',
     )
     this.emitTransactionDiagnostic('complete', kind, id)
+    this.activeTransactionKind = null
   }
 
   private handleTransactionDrop(
@@ -1615,6 +1619,7 @@ export class MessageViewportRuntimeController<
       this.transactions.getPendingCount() > 0 ? 'queued' : 'idle',
     )
     this.emitTransactionDiagnostic('drop', kind, id, { reason })
+    this.activeTransactionKind = null
   }
 
   private handleTransactionError(
@@ -1628,6 +1633,7 @@ export class MessageViewportRuntimeController<
     this.emitTransactionDiagnostic('error', kind, id, {
       error: error instanceof Error ? error.message : String(error),
     })
+    this.activeTransactionKind = null
   }
 
   /**
@@ -2424,8 +2430,14 @@ export class MessageViewportRuntimeController<
       anchor: anchor ? cloneAnchorState(anchor) : null,
     })
 
-    if (reason === 'transaction-settle') {
-      this.scheduleScrollbarDragEdgeRecheck('transaction-settle')
+    if (
+      reason === 'transaction-settle' &&
+      (this.activeTransactionKind === 'prepend' ||
+        this.activeTransactionKind === 'append')
+    ) {
+      this.scheduleScrollbarDragEdgeRecheck(
+        `transaction-settle:${this.activeTransactionKind}`,
+      )
     }
   }
 

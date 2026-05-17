@@ -2417,6 +2417,56 @@ describe('MessageViewportRuntime', () => {
     expect(events.filter((event) => event === 'needMoreAfter')).toHaveLength(2)
   })
 
+  it('does not re-request bottom paging for non-append transactions while scrollbar drag stays at the edge', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: string[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event.type)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 10,
+      revision: 1,
+      effect: 'reset',
+      hasMoreAfter: true,
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    await flushScrollFrames(container, scheduler, 3)
+
+    container.dispatchEvent(new CustomEvent(CUSTOM_SCROLLBAR_DRAG_START_EVENT))
+    container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+    container.dispatchEvent(new CustomEvent(CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT))
+    await flushTrustedScrollFrame(container, scheduler)
+    expect(events.filter((event) => event === 'needMoreAfter')).toHaveLength(1)
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 10,
+      revision: 2,
+      effect: 'items-change',
+      hasMoreAfter: true,
+    }))
+    await Promise.resolve()
+    const refreshSnapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, refreshSnapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: refreshSnapshot.feedId,
+      generation: refreshSnapshot.generation,
+      revision: refreshSnapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    scheduler.flushFrame()
+    await Promise.resolve()
+
+    expect(events.filter((event) => event === 'needMoreAfter')).toHaveLength(1)
+
+    container.dispatchEvent(new CustomEvent(CUSTOM_SCROLLBAR_DRAG_END_EVENT))
+  })
+
   it('does not release top edge latch for recovery scroll after prepend', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
