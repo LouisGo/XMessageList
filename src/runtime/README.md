@@ -46,13 +46,16 @@ React 只能订阅 projection、注册 DOM ref、在 commit 后回传 `Projectio
 
 Runtime 的生命周期、协调器接线和 projection 边界。
 
-- `MessageViewportRuntimeController.ts`：imperative engine 主控，负责命令路由、coordinator wiring、状态机和调度入口。
+- `MessageViewportRuntimeController.ts`：imperative engine 主控，负责公共入口、coordinator wiring 和调度入口。
 - `projectionStore.ts`：外部 store，供 React `useSyncExternalStore` 订阅。
 - `projectionCoordinator.ts`：发布 projection snapshot，计算 spacer、edge state 和 revision equality。
 - `commitCoordinator.ts`：等待 React commit ack，处理 timeout / cancel。
 - `destinationIntentCoordinator.ts`：jump / restore / follow-bottom 的 pending data、
   active intent、目的地 settle / supersede 和 need event 状态轴。
 - `destinationIntentHelpers.ts`：目的地 intent 的无状态解析、fallback 和 target clone 工具。
+- `runtimeCommandRouter.ts`：runtime command 准入、拒绝诊断和命令到内部 action 的路由。
+- `runtimeLifecycleCoordinator.ts`：attach / detach / destroy / generation reset 的外围清理编排。
+- `runtimeStateAxes.ts`：READY 期内部状态轴的单一写入口和 debug/diagnostic snapshot。
 - `scrollFrameCoordinator.ts`：scroll rAF、scroll source、bottom lock、edge need 和 window slide trigger。
 - `resizeStabilizationCoordinator.ts`：ResizeObserver dirty height batching、container resize rAF 和 resize transaction trigger。
 - `lifecycleGuard.ts`：用 feedId + generation 丢弃过期异步工作。

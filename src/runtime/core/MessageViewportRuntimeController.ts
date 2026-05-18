@@ -10,6 +10,9 @@ import { CommitCoordinator } from './commitCoordinator'
 import { ProjectionCoordinator } from './projectionCoordinator'
 import { ResizeStabilizationCoordinator } from './resizeStabilizationCoordinator'
 import { DestinationIntentCoordinator } from './destinationIntentCoordinator'
+import { RuntimeStateAxes } from './runtimeStateAxes'
+import { RuntimeCommandRouter } from './runtimeCommandRouter'
+import { RuntimeLifecycleCoordinator } from './runtimeLifecycleCoordinator'
 import {
   readScrollFrameMetrics,
   ScrollFrameCoordinator,
@@ -74,7 +77,6 @@ import {
   DEFAULT_BOTTOM_UNLOCK_THRESHOLD_PX,
   createDefaultObserverFactory,
   createDefaultScheduler,
-  getDistanceToBottom,
   getRuntimeItemKey,
   mergeWindowConfig,
 } from '../shared/utils'
@@ -119,6 +121,13 @@ export class MessageViewportRuntimeController<
     TOptimistic
   >
 
+  private readonly commandRouter: RuntimeCommandRouter<TMessage, TOptimistic>
+
+  private readonly runtimeLifecycle: RuntimeLifecycleCoordinator<
+    TMessage,
+    TOptimistic
+  >
+
   private readonly scrollIntent: ScrollIntentEngine
 
   private readonly projection: ProjectionCoordinator<TMessage, TOptimistic>
@@ -150,15 +159,9 @@ export class MessageViewportRuntimeController<
 
   private readonly diagnostics: DiagnosticRecorder
 
+  private readonly stateAxes = new RuntimeStateAxes()
+
   private state: RuntimeState = 'INITIAL'
-
-  private readySubstate: ReadySubstate = 'READY_IDLE'
-
-  private viewportPhase: ViewportPhase = 'IDLE'
-
-  private transactionState: TransactionState = 'idle'
-
-  private destinationState: DestinationState = 'idle'
 
   private activeTransactionKind: ViewportTransactionKind | null = null
 
@@ -325,20 +328,30 @@ export class MessageViewportRuntimeController<
       edge: this.edge,
       getDataSnapshot: () => this.dataSnapshot,
       getScrollTop: () => this.registry.getContainer()?.scrollTop ?? 0,
-      setReadySubstate: (substate) => {
-        this.readySubstate = substate
-      },
-      getReadySubstate: () => this.readySubstate,
+      setReadySubstate: (substate) =>
+        this.stateAxes.setReadySubstate(substate),
+      getReadySubstate: () => this.stateAxes.getReadySubstate(),
       setDestinationState: (state) => {
-        this.setDestinationState(state)
+        this.stateAxes.setDestinationState(state)
       },
-      getDestinationState: () => this.destinationState,
+      getDestinationState: () => this.stateAxes.getDestinationState(),
       enqueueFollowBottomTransaction: () => this.enqueueFollowBottomTransaction(),
       enqueueJumpTransaction: (target, options) =>
         this.enqueueJumpTransaction(target, options),
       enqueueRestoreTransaction: (target) =>
         this.enqueueRestoreTransaction(target),
       emitEvent: (event) => this.emitEvent(event),
+      emitDiagnostic: (input) => this.emitDiagnostic(input),
+    })
+    this.commandRouter = new RuntimeCommandRouter({
+      getState: () => this.state,
+      stateAxes: this.stateAxes,
+      destinationIntent: this.destinationIntent,
+      setPendingBootstrap: (command) => {
+        this.pendingBootstrap = command
+      },
+      tryRunPendingBootstrap: () => this.tryRunPendingBootstrap(),
+      enqueueResetTransaction: (reason) => this.enqueueResetTransaction(reason),
       emitDiagnostic: (input) => this.emitDiagnostic(input),
     })
     this.motion = new DestinationMotionCoordinator(
@@ -348,12 +361,8 @@ export class MessageViewportRuntimeController<
       this.scrollIntent,
       this.projection,
       this.scrollMotionOptions,
-      (substate) => {
-        this.readySubstate = substate
-      },
-      (state) => {
-        this.setDestinationState(state)
-      },
+      (substate) => this.stateAxes.setReadySubstate(substate),
+      (state) => this.stateAxes.setDestinationState(state),
       () => this.currentFrame,
       () => this.state === 'DESTROYED',
       (reason) => this.emitViewportAnchorChanged(reason),
@@ -399,13 +408,13 @@ export class MessageViewportRuntimeController<
         this.state = state
       },
       setViewportPhase: (phase) => {
-        this.setViewportPhase(phase)
+        this.stateAxes.setViewportPhase(phase)
       },
       setTransactionState: (state) => {
-        this.setTransactionState(state)
+        this.stateAxes.setTransactionState(state)
       },
       setDestinationState: (state) => {
-        this.setDestinationState(state)
+        this.stateAxes.setDestinationState(state)
       },
       setPendingBootstrap: (command) => {
         this.pendingBootstrap = command
@@ -454,7 +463,7 @@ export class MessageViewportRuntimeController<
         this.currentFrame = frame
       },
       getState: () => this.state,
-      getReadySubstate: () => this.readySubstate,
+      getReadySubstate: () => this.stateAxes.getReadySubstate(),
       getScrollbarDragIntentActive: () => this.scrollbarDragIntentActive,
       getScrollbarDragEdgeIntent: () => this.scrollbarDragEdgeIntent,
       setScrollbarDragEdgeIntent: (edge) => {
@@ -519,172 +528,67 @@ export class MessageViewportRuntimeController<
         this.emitViewportAnchorChanged(reason, anchor),
       emitDiagnostic: (input) => this.emitDiagnostic(input),
     })
+    this.runtimeLifecycle = new RuntimeLifecycleCoordinator({
+      registry: this.registry,
+      store: this.store,
+      lifecycle: this.lifecycle,
+      transactions: this.transactions,
+      commit: this.commit,
+      resizeStabilization: this.resizeStabilization,
+      edge: this.edge,
+      measurement: this.measurement,
+      motion: this.motion,
+      scrollIntent: this.scrollIntent,
+      renderWindow: this.renderWindow,
+      spacer: this.spacer,
+      destinationIntent: this.destinationIntent,
+      stateAxes: this.stateAxes,
+      heightCache: this.heightCache,
+      eventListeners: this.eventListeners,
+      getState: () => this.state,
+      setState: (state) => {
+        this.state = state
+      },
+      getCurrentFrame: () => this.currentFrame,
+      getRetainedScrollTop: () => this.retainedScrollTop,
+      setRetainedScrollTop: (scrollTop) => {
+        this.retainedScrollTop = scrollTop
+      },
+      setLastScrollSource: (source) => {
+        this.lastScrollSource = source
+      },
+      setLastUserScrollTop: (scrollTop) => {
+        this.lastUserScrollTop = scrollTop
+      },
+      setLastUserDistanceToBottom: (distance) => {
+        this.lastUserDistanceToBottom = distance
+      },
+      setLastContainerSize: (size) => {
+        this.lastContainerSize = size
+      },
+      attachDomListeners: (container) => this.attachDomListeners(container),
+      detachDomListeners: (container) => this.detachDomListeners(container),
+      cancelScheduledWork: () => this.cancelScheduledWork(),
+      readContainerSize: (container) => this.readContainerSize(container),
+      reconcileReadyBottomLockFromViewport: (reason) =>
+        this.reconcileReadyBottomLockFromViewport(reason),
+      tryRunPendingBootstrap: () => this.tryRunPendingBootstrap(),
+      emitViewportAnchorChanged: (reason) =>
+        this.emitViewportAnchorChanged(reason),
+      emitDiagnostic: (input) => this.emitDiagnostic(input),
+    })
   }
 
   attach(container: HTMLElement): void {
-    if (this.state === 'DESTROYED') {
-      return
-    }
-
-    const current = this.registry.getContainer()
-
-    if (current === container) {
-      return
-    }
-
-    if (current) {
-      this.detach()
-    }
-
-    this.lifecycle.resume()
-    this.transactions.resume()
-    this.scrollIntent.clearTransientIntent()
-    this.scrollIntent.markScrollWrite('programmatic', this.currentFrame)
-    this.lastScrollSource = null
-    this.registry.attachContainer(container)
-    // detach/attach 同一个 runtime 实例时保留 scrollTop，feed 切换缓存复用不能闪回顶部。
-    container.scrollTop = Math.max(0, this.retainedScrollTop ?? 0)
-    this.lastUserScrollTop = container.scrollTop
-    this.lastUserDistanceToBottom = getDistanceToBottom(container)
-    this.lastContainerSize = this.readContainerSize(container)
-    container.addEventListener('scroll', this.handleScroll, { passive: true })
-    container.addEventListener('wheel', this.handleUserScrollIntent, { passive: true })
-    container.addEventListener('touchstart', this.handleUserScrollIntent, {
-      passive: true,
-    })
-    container.addEventListener('pointerdown', this.handlePointerScrollIntent)
-    container.addEventListener('mousedown', this.handleMouseScrollIntent)
-    container.addEventListener('keydown', this.handleUserScrollIntent)
-    container.addEventListener(
-      CUSTOM_SCROLLBAR_DRAG_START_EVENT,
-      this.handleCustomScrollbarDragStart as EventListener,
-    )
-    container.addEventListener(
-      CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
-      this.handleCustomScrollbarDragScroll as EventListener,
-    )
-    container.addEventListener(
-      CUSTOM_SCROLLBAR_DRAG_END_EVENT,
-      this.handleCustomScrollbarDragEnd as EventListener,
-    )
-    window.addEventListener('pointerup', this.handleScrollbarDragEnd)
-    window.addEventListener('mouseup', this.handleScrollbarDragEnd)
-    window.addEventListener('blur', this.handleScrollbarDragEnd)
-    this.resizeStabilization.setupContainerObserver(container)
-    this.edge.setupIntersectionObserver(container)
-    this.state =
-      this.store.getSnapshot().bootstrapState === 'READY' ? 'READY' : 'ATTACHED'
-    this.readySubstate = this.state === 'READY' ? 'READY_IDLE' : this.readySubstate
-    this.emitDiagnostic({
-      channel: 'lifecycle',
-      severity: 'info',
-      name: 'lifecycle.attach',
-      details: () => ({
-        restoredScrollTop: container.scrollTop,
-        clientHeight: container.clientHeight,
-        clientWidth: container.clientWidth,
-        bootstrapState: this.store.getSnapshot().bootstrapState,
-      }),
-    })
-    this.reconcileReadyBottomLockFromViewport('attach')
-    this.tryRunPendingBootstrap()
+    this.runtimeLifecycle.attach(container)
   }
 
   detach(): void {
-    if (this.state === 'DESTROYED') {
-      return
-    }
-
-    const container = this.registry.getContainer()
-
-    this.emitDiagnostic({
-      channel: 'lifecycle',
-      severity: 'info',
-      name: 'lifecycle.detach',
-      details: () => ({
-        scrollTop: container?.scrollTop ?? null,
-        hasContainer: Boolean(container),
-      }),
-    })
-    this.lifecycle.suspend()
-    this.destinationIntent.clearPendingFollowBottom()
-    this.destinationIntent.clearActiveFollowBottomIntent('detach')
-    this.destinationIntent.clearPendingDestinationRequest()
-    this.motion.cancel('detach')
-    this.commit.cancelPendingCommit()
-    this.cancelScheduledWork()
-    this.resizeStabilization.disconnectContainerObserver()
-    this.edge.disconnect()
-    this.measurement.disconnect()
-    this.transactions.clear()
-
-    this.emitViewportAnchorChanged('detach')
-
-    if (container) {
-      this.retainedScrollTop = container.scrollTop
-      container.removeEventListener('scroll', this.handleScroll)
-      container.removeEventListener('wheel', this.handleUserScrollIntent)
-      container.removeEventListener('touchstart', this.handleUserScrollIntent)
-      container.removeEventListener('pointerdown', this.handlePointerScrollIntent)
-      container.removeEventListener('mousedown', this.handleMouseScrollIntent)
-      container.removeEventListener('keydown', this.handleUserScrollIntent)
-      container.removeEventListener(
-        CUSTOM_SCROLLBAR_DRAG_START_EVENT,
-        this.handleCustomScrollbarDragStart as EventListener,
-      )
-      container.removeEventListener(
-        CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
-        this.handleCustomScrollbarDragScroll as EventListener,
-      )
-      container.removeEventListener(
-        CUSTOM_SCROLLBAR_DRAG_END_EVENT,
-        this.handleCustomScrollbarDragEnd as EventListener,
-      )
-      window.removeEventListener('pointerup', this.handleScrollbarDragEnd)
-      window.removeEventListener('mouseup', this.handleScrollbarDragEnd)
-      window.removeEventListener('blur', this.handleScrollbarDragEnd)
-    }
-
-    this.scrollIntent.clearTransientIntent()
-    this.lastScrollSource = null
-    this.registry.clearDomRefs()
-    this.lastContainerSize = null
-    this.readySubstate = 'READY_IDLE'
-    this.setViewportPhase('IDLE')
-    this.setTransactionState('idle')
-    this.setDestinationState('idle')
-    this.state = 'DETACHED'
+    this.runtimeLifecycle.detach()
   }
 
   destroy(): void {
-    if (this.state === 'DESTROYED') {
-      return
-    }
-
-    this.emitDiagnostic({
-      channel: 'lifecycle',
-      severity: 'info',
-      name: 'lifecycle.destroy',
-      details: () => ({
-        heightCacheSize: this.heightCache.size,
-        observedRows: this.registry.getSnapshot().observedRows,
-      }),
-    })
-    this.detach()
-    this.lifecycle.destroy()
-    this.transactions.stop()
-    this.destinationIntent.clearPendingFollowBottom()
-    this.destinationIntent.clearActiveFollowBottomIntent('destroy')
-    this.destinationIntent.clearPendingDestinationRequest()
-    this.motion.cancel('destroy')
-    this.heightCache.clear()
-    this.eventListeners.clear()
-    this.store.clearListeners()
-    this.retainedScrollTop = null
-    this.setViewportPhase('IDLE')
-    this.setTransactionState('idle')
-    this.setDestinationState('idle')
-    this.state = 'DESTROYED'
+    this.runtimeLifecycle.destroy()
   }
 
   setDataSnapshot(snapshot: MessageDataSnapshot<TMessage, TOptimistic>): void {
@@ -792,75 +696,7 @@ export class MessageViewportRuntimeController<
   }
 
   dispatch(command: MessageRuntimeCommand): void {
-    if (!this.canAcceptCommand(command)) {
-      this.emitDiagnostic({
-        channel: 'transaction',
-        severity: 'warn',
-        name: 'command.rejected',
-        correlationId: `command:${command.type}`,
-        details: () => ({
-          commandType: command.type,
-          state: this.state,
-          readySubstate: this.readySubstate,
-        }),
-      })
-      return
-    }
-
-    switch (command.type) {
-      case 'bootstrap':
-        this.pendingBootstrap = command
-        this.tryRunPendingBootstrap()
-        break
-      case 'followBottom':
-        this.destinationIntent.clearPendingDestinationRequest()
-        this.destinationIntent.startFollowBottomCommand()
-        break
-      case 'jump':
-        this.destinationIntent.clearPendingFollowBottom()
-        this.destinationIntent.clearActiveFollowBottomIntent('jump')
-        this.destinationIntent.startJumpCommand(command.target, command.origin)
-        break
-      case 'restore':
-        this.destinationIntent.clearPendingFollowBottom()
-        this.destinationIntent.clearActiveFollowBottomIntent('restore')
-        this.destinationIntent.startRestoreCommand(command.target)
-        break
-      case 'reset':
-        this.destinationIntent.clearPendingFollowBottom()
-        this.destinationIntent.clearActiveFollowBottomIntent('reset')
-        this.destinationIntent.clearPendingDestinationRequest()
-        this.enqueueResetTransaction(command.reason)
-        break
-    }
-  }
-
-  private canAcceptCommand(command: MessageRuntimeCommand): boolean {
-    if (this.state === 'DESTROYED') {
-      return false
-    }
-
-    if (command.type === 'reset') {
-      return true
-    }
-
-    if (this.state === 'INITIAL') {
-      return command.type === 'bootstrap'
-    }
-
-    if (this.state === 'ATTACHED' || this.state === 'DETACHED') {
-      return command.type === 'bootstrap'
-    }
-
-    if (command.type === 'followBottom') {
-      return this.state === 'READY'
-    }
-
-    if (command.type === 'jump' || command.type === 'restore') {
-      return this.state === 'READY'
-    }
-
-    return true
+    this.commandRouter.dispatch(command)
   }
 
   subscribe(listener: RuntimeListener): () => void {
@@ -934,10 +770,10 @@ export class MessageViewportRuntimeController<
   } {
     return {
       state: this.state,
-      readySubstate: this.readySubstate,
-      viewportPhase: this.viewportPhase,
-      transactionState: this.transactionState,
-      destinationState: this.destinationState,
+      readySubstate: this.stateAxes.getReadySubstate(),
+      viewportPhase: this.stateAxes.getViewportPhase(),
+      transactionState: this.stateAxes.getTransactionState(),
+      destinationState: this.stateAxes.getDestinationState(),
       pendingCommands: this.transactions.getPendingCount(),
       motionActive: this.motion.isActive(),
       observedRows: this.registry.getSnapshot().observedRows,
@@ -971,34 +807,13 @@ export class MessageViewportRuntimeController<
 
     return (
       this.state === 'READY' &&
-      this.readySubstate === 'READY_IDLE' &&
+      this.stateAxes.getReadySubstate() === 'READY_IDLE' &&
       snapshot.bootstrapState === 'READY'
     )
   }
 
   private resetForGeneration(feedId: string, generation: number): void {
-    this.destinationIntent.clearPendingFollowBottom()
-    this.destinationIntent.clearActiveFollowBottomIntent('generation-change')
-    this.destinationIntent.clearPendingDestinationRequest()
-    this.motion.cancel('generation-change')
-    this.lifecycle.reset(feedId, generation)
-    this.transactions.clear()
-    this.commit.cancelPendingCommit()
-    this.cancelScheduledWork()
-    this.heightCache.clear()
-    this.renderWindow.invalidateIndexCache()
-    this.spacer.invalidateEstimateCache()
-    this.edge.resetLatches()
-    this.lastScrollSource = null
-    this.scrollIntent.clearTransientIntent()
-    this.readySubstate = 'READY_IDLE'
-    this.setViewportPhase('IDLE')
-    this.setTransactionState('idle')
-    this.setDestinationState('idle')
-    this.scrollIntent.setBottomLockState('UNLOCKED')
-    // 先发布空 snapshot，让 React projection 明确切到新 feed，再等待新的 bootstrap。
-    this.store.setSnapshot(createEmptySnapshot<TMessage, TOptimistic>(feedId, generation))
-    this.state = this.registry.getContainer() ? 'ATTACHED' : 'INITIAL'
+    this.runtimeLifecycle.resetForGeneration(feedId, generation)
   }
 
   private enqueuePrependTransaction(): void {
@@ -1087,7 +902,7 @@ export class MessageViewportRuntimeController<
   }
 
   private handleTransactionEnqueue(kind: ViewportTransactionKind, id: string): void {
-    this.setTransactionState(
+    this.stateAxes.setTransactionState(
       this.transactions.getPendingCount() > 1 ? 'queued' : 'active',
     )
     this.emitTransactionDiagnostic('enqueue', kind, id)
@@ -1095,7 +910,7 @@ export class MessageViewportRuntimeController<
 
   private handleTransactionStart(kind: ViewportTransactionKind, id: string): void {
     this.activeTransactionKind = kind
-    this.setTransactionState('active')
+    this.stateAxes.setTransactionState('active')
     this.emitTransactionDiagnostic('start', kind, id)
   }
 
@@ -1103,7 +918,7 @@ export class MessageViewportRuntimeController<
     kind: ViewportTransactionKind,
     id: string,
   ): void {
-    this.setTransactionState(
+    this.stateAxes.setTransactionState(
       this.transactions.getPendingCount() > 0 ? 'queued' : 'idle',
     )
     this.emitTransactionDiagnostic('complete', kind, id)
@@ -1115,7 +930,7 @@ export class MessageViewportRuntimeController<
     id: string,
     reason: 'reset-supersede' | 'key-supersede' | 'clear' | 'stop',
   ): void {
-    this.setTransactionState(
+    this.stateAxes.setTransactionState(
       this.transactions.getPendingCount() > 0 ? 'queued' : 'idle',
     )
     this.emitTransactionDiagnostic('drop', kind, id, { reason })
@@ -1127,7 +942,7 @@ export class MessageViewportRuntimeController<
     id: string,
     error: unknown,
   ): void {
-    this.setTransactionState(
+    this.stateAxes.setTransactionState(
       this.transactions.getPendingCount() > 0 ? 'queued' : 'idle',
     )
     this.emitTransactionDiagnostic('error', kind, id, {
@@ -1189,30 +1004,6 @@ export class MessageViewportRuntimeController<
     return snapshot.bootstrapState === 'READY' || snapshot.bootstrapState === 'READY_EMPTY'
       ? 'READY'
       : 'ATTACHED'
-  }
-
-  /**
-   * viewportPhase 是视觉中间态轴，不能和 lifecycle 或 bottom lock 混用。
-   * 这里仅记录 runtime 当前阶段；真正需要 React 感知的阶段必须随 projection 一起发布。
-   */
-  private setViewportPhase(phase: ViewportPhase): void {
-    this.viewportPhase = phase
-  }
-
-  /**
-   * TransactionState 只描述 projection / commit / measurement / correction 的串行化。
-   * 它不替代 lifecycle，也不表示 jump/followBottom 已经完成。
-   */
-  private setTransactionState(state: TransactionState): void {
-    this.transactionState = state
-  }
-
-  /**
-   * DestinationState 只描述用户目的地意图的生命周期。
-   * 这条轴要能直接解释 pendingData / resolvingDom / motionActive / settled / interrupted。
-   */
-  private setDestinationState(state: DestinationState): void {
-    this.destinationState = state
   }
 
   private measureCurrentWindow(): HeightDelta[] {
@@ -1351,7 +1142,7 @@ export class MessageViewportRuntimeController<
     const token = this.lifecycle.getCurrent()
     const previousSnapshot = this.store.getSnapshot()
     const previousBottomLockState = this.scrollIntent.getBottomLockState()
-    this.setViewportPhase('PROJECTING')
+    this.stateAxes.setViewportPhase('PROJECTING')
 
     try {
       const projection = this.projection.publish({
@@ -1364,7 +1155,7 @@ export class MessageViewportRuntimeController<
 
       await this.commit.waitForChanged(projection, 'resize')
       this.measureCurrentWindow()
-      this.setViewportPhase('IDLE')
+      this.stateAxes.setViewportPhase('IDLE')
       this.projection.publish({
         data,
         renderWindow: nextWindow,
@@ -1468,6 +1259,56 @@ export class MessageViewportRuntimeController<
       width: container.clientWidth,
       height: container.clientHeight,
     }
+  }
+
+  private attachDomListeners(container: HTMLElement): void {
+    container.addEventListener('scroll', this.handleScroll, { passive: true })
+    container.addEventListener('wheel', this.handleUserScrollIntent, { passive: true })
+    container.addEventListener('touchstart', this.handleUserScrollIntent, {
+      passive: true,
+    })
+    container.addEventListener('pointerdown', this.handlePointerScrollIntent)
+    container.addEventListener('mousedown', this.handleMouseScrollIntent)
+    container.addEventListener('keydown', this.handleUserScrollIntent)
+    container.addEventListener(
+      CUSTOM_SCROLLBAR_DRAG_START_EVENT,
+      this.handleCustomScrollbarDragStart as EventListener,
+    )
+    container.addEventListener(
+      CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
+      this.handleCustomScrollbarDragScroll as EventListener,
+    )
+    container.addEventListener(
+      CUSTOM_SCROLLBAR_DRAG_END_EVENT,
+      this.handleCustomScrollbarDragEnd as EventListener,
+    )
+    window.addEventListener('pointerup', this.handleScrollbarDragEnd)
+    window.addEventListener('mouseup', this.handleScrollbarDragEnd)
+    window.addEventListener('blur', this.handleScrollbarDragEnd)
+  }
+
+  private detachDomListeners(container: HTMLElement): void {
+    container.removeEventListener('scroll', this.handleScroll)
+    container.removeEventListener('wheel', this.handleUserScrollIntent)
+    container.removeEventListener('touchstart', this.handleUserScrollIntent)
+    container.removeEventListener('pointerdown', this.handlePointerScrollIntent)
+    container.removeEventListener('mousedown', this.handleMouseScrollIntent)
+    container.removeEventListener('keydown', this.handleUserScrollIntent)
+    container.removeEventListener(
+      CUSTOM_SCROLLBAR_DRAG_START_EVENT,
+      this.handleCustomScrollbarDragStart as EventListener,
+    )
+    container.removeEventListener(
+      CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
+      this.handleCustomScrollbarDragScroll as EventListener,
+    )
+    container.removeEventListener(
+      CUSTOM_SCROLLBAR_DRAG_END_EVENT,
+      this.handleCustomScrollbarDragEnd as EventListener,
+    )
+    window.removeEventListener('pointerup', this.handleScrollbarDragEnd)
+    window.removeEventListener('mouseup', this.handleScrollbarDragEnd)
+    window.removeEventListener('blur', this.handleScrollbarDragEnd)
   }
 
   private async waitForBootstrapSettle(
@@ -1599,10 +1440,10 @@ export class MessageViewportRuntimeController<
       feedId: token.feedId,
       generation: token.generation,
       state: this.state,
-      readySubstate: this.readySubstate,
-      viewportPhase: this.viewportPhase,
-      transactionState: this.transactionState,
-      destinationState: this.destinationState,
+      readySubstate: this.stateAxes.getReadySubstate(),
+      viewportPhase: this.stateAxes.getViewportPhase(),
+      transactionState: this.stateAxes.getTransactionState(),
+      destinationState: this.stateAxes.getDestinationState(),
       pendingCommands: this.transactions.getPendingCount(),
     }
   }
