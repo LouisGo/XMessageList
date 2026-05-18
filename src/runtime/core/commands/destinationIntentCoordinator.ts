@@ -522,7 +522,9 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
     return intent
   }
 
-  private ensureActiveFollowBottomIntent(
+  // 确认已经存在一个追底意图，供 auto-scroll-to-bottom 这类数据事务复用。
+  // 它不发起 latest 请求，只让后续 supersede/resize 后仍能继续追底。
+  ensureActiveFollowBottomIntent(
     data: MessageDataSnapshot<TMessage, TOptimistic>,
     scrollTop: number,
   ): ActiveFollowBottomIntent {

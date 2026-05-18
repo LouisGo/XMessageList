@@ -780,13 +780,33 @@ describe('React adapter', () => {
     })
   })
 
-  it('keeps thumb dragging functional even if runtime direct-scroll write does not mutate DOM', async () => {
-    const runtime = createMockRuntime({ directScrollWritesDom: false })
+  it('keeps custom thumb dragging functional with a real attached runtime', async () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = new MessageViewportRuntime<TestMessage>({
+      feedId: 'feed',
+      generation: 1,
+      scheduler,
+      observers,
+      window: {
+        maxMountedItems: 20,
+      },
+      debug: {
+        diagnostics: {
+          channels: ['scroll'],
+          emitEvents: false,
+          maxEntries: 20,
+        },
+      },
+    })
     const host = document.createElement('div')
     const root = createRoot(host)
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
+      root.render(<TestHarness runtime={runtime} hasMoreAfter />)
+    })
+    await act(async () => {
+      await flushFramesWithMicrotasks(scheduler, 4)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(
@@ -830,13 +850,78 @@ describe('React adapter', () => {
     })
 
     expect(scrollContainer.scrollTop).toBeGreaterThan(0)
+    expect(runtime.getDiagnosticRecords()).toContainEqual(
+      expect.objectContaining({
+        name: 'scroll.direct.write',
+        details: expect.objectContaining({
+          source: 'custom-scrollbar-drag',
+        }),
+      }),
+    )
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('maps custom track page jump through runtime direct-scroll APIs', async () => {
+    const runtime = createMockRuntime()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
+    })
+
+    const scrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    expect(scrollContainer).not.toBeNull()
+    if (!scrollContainer) {
+      return
+    }
+
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      value: 1200,
+    })
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      configurable: true,
+      writable: true,
+      value: 0,
+    })
+
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+
+    const track = host.querySelector<HTMLElement>(
+      '[data-testid="custom-scrollbar"]',
+    )
+    expect(track).not.toBeNull()
+    if (!track) {
+      return
+    }
+
+    await act(async () => {
+      track.dispatchEvent(createPointerEvent('pointerdown', 200, 1))
+    })
+
+    expect(scrollContainer.scrollTop).toBeGreaterThan(0)
     expect(runtime.beginDirectScroll).toHaveBeenCalledWith({
-      source: 'custom-scrollbar-drag',
+      source: 'custom-scrollbar-track',
     })
     expect(runtime.writeDirectScrollTop).toHaveBeenCalledWith(
       expect.any(Number),
-      { source: 'custom-scrollbar-drag' },
+      { source: 'custom-scrollbar-track' },
     )
+    expect(runtime.endDirectScroll).toHaveBeenCalledWith({
+      source: 'custom-scrollbar-track',
+    })
 
     await act(async () => {
       root.unmount()
@@ -1139,9 +1224,7 @@ describe('React adapter', () => {
   })
 })
 
-function createMockRuntime(options?: {
-  directScrollWritesDom?: boolean
-}): MessageViewportRuntime<TestMessage> & {
+function createMockRuntime(): MessageViewportRuntime<TestMessage> & {
   dispatch: ReturnType<typeof vi.fn>
   beginDirectScroll: ReturnType<typeof vi.fn>
   writeDirectScrollTop: ReturnType<typeof vi.fn>
@@ -1183,13 +1266,12 @@ function createMockRuntime(options?: {
     dispatch: vi.fn(),
     beginDirectScroll: vi.fn(),
     writeDirectScrollTop: vi.fn((scrollTop: number) => {
-      if (options?.directScrollWritesDom === false) {
-        return
-      }
-
       if (attachedContainer) {
         attachedContainer.scrollTop = scrollTop
+        return true
       }
+
+      return false
     }),
     endDirectScroll: vi.fn(),
     notifyProjectionCommitted: vi.fn(),

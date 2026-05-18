@@ -60,8 +60,8 @@ export class MessageViewportRuntime<
     this.controller.beginDirectScroll(input)
   }
 
-  writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): void {
-    this.controller.writeDirectScrollTop(scrollTop, input)
+  writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): boolean {
+    return this.controller.writeDirectScrollTop(scrollTop, input)
   }
 
   endDirectScroll(input: DirectScrollInput): void {

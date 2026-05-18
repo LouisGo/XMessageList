@@ -386,6 +386,9 @@ export class MessageViewportRuntimeController<
       tryRunPendingBootstrap: () => this.tryRunPendingBootstrap(),
       startPendingFollowBottom: (data, scrollTop) =>
         this.destinationIntent.startPendingFollowBottom(data, scrollTop),
+      ensureActiveFollowBottomIntent: (data, scrollTop) => {
+        this.destinationIntent.ensureActiveFollowBottomIntent(data, scrollTop)
+      },
       hasActiveFollowBottomIntent: (data) =>
         this.destinationIntent.hasActiveFollowBottomIntent(data),
       clearActiveFollowBottomIntent: (reason) =>
@@ -621,8 +624,8 @@ export class MessageViewportRuntimeController<
     this.domInput.beginDirectScroll(input)
   }
 
-  writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): void {
-    this.domInput.writeDirectScrollTop(scrollTop, input)
+  writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): boolean {
+    return this.domInput.writeDirectScrollTop(scrollTop, input)
   }
 
   endDirectScroll(input: DirectScrollInput): void {
@@ -747,10 +750,19 @@ export class MessageViewportRuntimeController<
   }
 
   private enqueueAppendTransaction(effect: 'append' | 'auto-scroll-to-bottom'): void {
+    const supersedeKey =
+      effect === 'auto-scroll-to-bottom' ? 'append-follow-bottom' : 'append'
+
+    // auto-scroll-to-bottom 来自本地发送等明确追底意图，优先级高于普通 tail append。
+    // 先丢弃尚未执行的普通 append，避免 storm 队列覆盖用户刚发送消息的追底事务。
+    if (effect === 'auto-scroll-to-bottom') {
+      this.transactions.dropBySupersedeKey('append')
+    }
+
     this.transactions.enqueue(
       'append',
       () => this.transactionController.runAppendTransaction(effect),
-      'append',
+      supersedeKey,
     )
   }
 

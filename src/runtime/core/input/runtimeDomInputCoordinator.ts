@@ -39,11 +39,11 @@ export class RuntimeDomInputCoordinator<TMessage, TOptimistic> {
     this.emitDirectScrollDiagnostic('scroll.direct.begin', input)
   }
 
-  writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): void {
+  writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): boolean {
     const container = this.deps.registry.getContainer()
 
     if (!container || this.deps.getState() === 'DESTROYED') {
-      return
+      return false
     }
 
     this.deps.setScrollbarDragIntentActive(true)
@@ -55,6 +55,7 @@ export class RuntimeDomInputCoordinator<TMessage, TOptimistic> {
     this.emitDirectScrollDiagnostic('scroll.direct.write', input, {
       scrollTop: container.scrollTop,
     })
+    return true
   }
 
   endDirectScroll(input: DirectScrollInput): void {

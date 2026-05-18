@@ -120,24 +120,20 @@ export function CustomScrollbar({
     scrollTop: number,
     source: DirectScrollSource,
   ) => {
-    runtime.writeDirectScrollTop(scrollTop, directScrollInput(source))
+    return runtime.writeDirectScrollTop(scrollTop, directScrollInput(source))
   }
 
   const commitDirectScrollTop = (
     nextScrollTop: number,
     source: DirectScrollSource,
-  ) => {
+  ): boolean => {
     if (!container) {
-      return
+      return false
     }
 
-    // runtime 负责记录 direct-scroll 语义、取消 motion 和驱动后续测量；
-    // 这里的 DOM 写入兜底只保证当前拖拽交互即时生效，避免 runtime 尚未附着
-    // 或容器引用切换时出现“thumb 可拖但 scrollTop 不动”的功能回退。
-    writeDirectScrollTop(nextScrollTop, source)
-    if (Math.abs(container.scrollTop - nextScrollTop) >= scrollWriteEpsilonPx) {
-      container.scrollTop = nextScrollTop
-    }
+    // runtime 是 scrollTop 写入的唯一 owner；React 只提交几何换算后的目标值。
+    // 返回 false 说明 runtime 当前没有可写容器，React 不能自行兜底写 DOM。
+    return writeDirectScrollTop(nextScrollTop, source)
   }
 
   const endDirectScroll = (source: DirectScrollSource) => {
@@ -268,7 +264,11 @@ export function CustomScrollbar({
       return
     }
 
-    commitDirectScrollTop(nextScrollTop, 'custom-scrollbar-drag')
+    if (!commitDirectScrollTop(nextScrollTop, 'custom-scrollbar-drag')) {
+      setVisible(true)
+      clearHideTimer()
+      return
+    }
     syncNow({ reveal: true, keepVisible: true })
   }
 
@@ -597,9 +597,14 @@ export function CustomScrollbar({
         : Math.min(geometry.maxScrollTop, container.scrollTop + viewportPage)
 
     beginDirectScroll('custom-scrollbar-track')
-    commitDirectScrollTop(nextScrollTop, 'custom-scrollbar-track')
+    const committed = commitDirectScrollTop(nextScrollTop, 'custom-scrollbar-track')
     endDirectScroll('custom-scrollbar-track')
-    syncNow({ reveal: true })
+    if (committed) {
+      syncNow({ reveal: true })
+    } else {
+      setVisible(true)
+      clearHideTimer()
+    }
   }
 
   const onScrollbarPointerEnter = () => {

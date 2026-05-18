@@ -770,6 +770,57 @@ describe('MessageViewportRuntime', () => {
     expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight)
   })
 
+  it('keeps local send auto-scroll intent when a storm refresh supersedes its motion', async () => {
+    const { runtime, scheduler } = createRuntime({
+      debug: {
+        diagnostics: {
+          channels: ['motion', 'transaction'],
+          emitEvents: false,
+          maxEntries: 100,
+        },
+      },
+    })
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 80, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    runtime.dispatch({ type: 'jump', target: { messageId: 'm-80' } })
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+    await flushMotion(scheduler)
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+
+    runtime.setDataSnapshot(
+      createSnapshot({ count: 181, revision: 2, effect: 'auto-scroll-to-bottom' }),
+    )
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+    expect(runtime.getDebugSnapshot().motionActive).toBe(true)
+
+    runtime.setDataSnapshot(createSnapshot({ count: 181, revision: 3, effect: 'items-change' }))
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+    expect(runtime.getDebugSnapshot().motionActive).toBe(true)
+
+    await flushMotion(scheduler)
+
+    expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
+    expect(container.scrollTop).toBe(container.scrollHeight - container.clientHeight)
+    expect(runtime.getDiagnosticRecords()).toContainEqual(
+      expect.objectContaining({
+        name: 'destinationMotion.cancel',
+        details: expect.objectContaining({
+          reason: 'transaction-supersede',
+          transactionKind: 'resize',
+        }),
+      }),
+    )
+  })
+
   it('recomputes latest window for locked item refresh before scrolling to bottom', async () => {
     const { runtime, scheduler } = createRuntime({
       window: {
@@ -2429,6 +2480,30 @@ describe('MessageViewportRuntime', () => {
         code: 'viewport-modifier-anchor-risk-not-implemented',
       }),
     )
+  })
+
+  it('reports whether direct scrollbar scrollTop write reaches an attached container', () => {
+    const { runtime } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    expect(
+      runtime.writeDirectScrollTop(120, { source: 'custom-scrollbar-drag' }),
+    ).toBe(false)
+    expect(container.scrollTop).toBe(0)
+
+    runtime.attach(container)
+
+    expect(
+      runtime.writeDirectScrollTop(120, { source: 'custom-scrollbar-drag' }),
+    ).toBe(true)
+    expect(container.scrollTop).toBe(120)
+
+    runtime.destroy()
+
+    expect(
+      runtime.writeDirectScrollTop(240, { source: 'custom-scrollbar-drag' }),
+    ).toBe(false)
+    expect(container.scrollTop).toBe(120)
   })
 
   it('treats custom scrollbar drag as user edge intent', async () => {

@@ -66,6 +66,10 @@ export type ViewportTransactionDeps<TMessage, TOptimistic> = {
     scrollTop: number,
     commandId?: string,
   ) => void
+  ensureActiveFollowBottomIntent: (
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+    scrollTop: number,
+  ) => void
   hasActiveFollowBottomIntent: (
     data: MessageDataSnapshot<TMessage, TOptimistic>,
   ) => boolean
@@ -130,6 +134,12 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     // BottomLocked 只代表 feed latest 的底部；hasMoreAfter=true 时，
     // 当前物理底部只是已加载 DataWindow 的 after edge，不能被 append page 追底。
     this.deps.reconcileBottomLockFromViewport(data, 'append-before-follow-check')
+    // 本地发送属于明确的追底意图。即使用户之前处于 UNLOCKED，
+    // 后续 storm/resize 事务打断本次 motion，也必须继续追到底部。
+    if (effect === 'auto-scroll-to-bottom') {
+      this.deps.ensureActiveFollowBottomIntent(data, container.scrollTop)
+    }
+
     const hasActiveFollowBottomIntent =
       this.deps.hasActiveFollowBottomIntent(data)
     const shouldFollow =

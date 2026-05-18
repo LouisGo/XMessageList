@@ -491,12 +491,13 @@ type MessageDataSnapshotChange = {
     | 'delete'
     | 'identityRebind'
     | 'reset';
-  viewportEffect:
+  viewportModifier:
     | 'none'
-    | 'possible-height-change'
-    | 'identity-remap'
-    | 'anchor-risk'
-    | 'full-reset';
+    | 'prepend'
+    | 'append'
+    | 'items-change'
+    | 'auto-scroll-to-bottom'
+    | 'reset';
 };
 ```
 

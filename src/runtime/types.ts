@@ -69,8 +69,8 @@ export type ViewportModifier =
   | 'reset'
 
 /**
- * Reserved modifiers are documented design slots, but they must not silently
- * degrade into refresh behavior until the runtime has dedicated transactions.
+ * 这些 modifier 是已命名的保留设计槽位。runtime 没有专用 transaction 前，
+ * 不能把它们静默降级成普通 refresh。
  */
 export type ReservedViewportModifier =
   | 'remove-from-start'
@@ -79,8 +79,8 @@ export type ReservedViewportModifier =
   | 'anchor-risk'
 
 /**
- * @deprecated Use ViewportModifier / viewportModifier. Kept as an input
- * compatibility alias while older call sites migrate.
+ * @deprecated 请使用 ViewportModifier / viewportModifier。
+ * 这里仅作为迁移期输入兼容别名保留。
  */
 export type ViewportEffect = ViewportModifier | ReservedViewportModifier
 
@@ -95,7 +95,7 @@ export type MessageDataSnapshotChange = {
     | 'reset'
   viewportModifier?: ViewportModifier | ReservedViewportModifier
   /**
-   * @deprecated Use viewportModifier.
+   * @deprecated 请使用 viewportModifier。
    */
   viewportEffect?: ViewportEffect
 }
