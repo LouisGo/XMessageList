@@ -2,7 +2,7 @@ import type {
   DestinationState,
   TransactionState,
   ViewportPhase,
-} from '../types'
+} from '../../types'
 import type { ReadySubstate } from './runtimeTypes'
 
 export type RuntimeStateAxesSnapshot = {

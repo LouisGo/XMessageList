@@ -1,10 +1,10 @@
 import type { DestinationIntentCoordinator } from './destinationIntentCoordinator'
-import type { RuntimeStateAxes } from './runtimeStateAxes'
+import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import type {
   MessageRuntimeCommand,
   RuntimeState,
-} from '../types'
-import type { RuntimeDiagnosticEmitter } from './runtimeTypes'
+} from '../../types'
+import type { RuntimeDiagnosticEmitter } from '../state/runtimeTypes'
 
 type RuntimeCommandRouterDeps<TMessage, TOptimistic> = {
   getState: () => RuntimeState

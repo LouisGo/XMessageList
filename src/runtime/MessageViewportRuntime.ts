@@ -1,4 +1,4 @@
-import { MessageViewportRuntimeController } from './core/MessageViewportRuntimeController'
+import { MessageViewportRuntimeController } from './core/controller/MessageViewportRuntimeController'
 import type {
   AnchorState,
   MessageDataSnapshot,
@@ -17,8 +17,8 @@ import type {
 /**
  * Public viewport runtime facade.
  *
- * The implementation lives in `core/MessageViewportRuntimeController` so this
- * file stays focused on the stable consumer-facing runtime surface.
+ * The implementation lives under `core/controller` so this file stays focused
+ * on the stable consumer-facing runtime surface.
  */
 export class MessageViewportRuntime<
   TMessage = unknown,

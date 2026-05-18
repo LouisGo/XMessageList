@@ -1,23 +1,23 @@
-import type { DomRegistry } from '../dom/domRegistry'
-import type { ProjectionStore } from './projectionStore'
-import type { SpacerEngine } from '../window/spacerEngine'
+import type { DomRegistry } from '../../dom/domRegistry'
+import type { ProjectionStore } from '../state/projectionStore'
+import type { SpacerEngine } from '../../window/spacerEngine'
 import type {
   MessageDataItem,
   MessageDataSnapshot,
   MessageViewportSnapshot,
   RenderWindow,
   ViewportEdgeState,
-} from '../types'
+} from '../../types'
 import {
   areRuntimeItemKeysEqual,
   getItemContentVersion,
   getRuntimeItemKey,
-} from '../shared/utils'
+} from '../../shared/utils'
 import type {
   PublishProjectionInput,
   PublishResult,
   RuntimeDiagnosticEmitter,
-} from './runtimeTypes'
+} from '../state/runtimeTypes'
 
 const MAX_PROJECTED_ITEMS_CACHE_ENTRIES = 48
 

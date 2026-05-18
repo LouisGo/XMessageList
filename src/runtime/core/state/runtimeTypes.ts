@@ -14,9 +14,9 @@ import type {
   ViewportPhase,
   TransactionState,
   DestinationState,
-} from '../types'
-import type { RuntimeDiagnosticInput } from '../debug/diagnosticRecorder'
-import type { ScrollMotionSource } from '../scroll/scrollMotionEngine'
+} from '../../types'
+import type { RuntimeDiagnosticInput } from '../../debug/diagnosticRecorder'
+import type { ScrollMotionSource } from '../../scroll/scrollMotionEngine'
 
 export type DestinationMotionForcedStart = 'beforeTarget' | 'afterTarget'
 

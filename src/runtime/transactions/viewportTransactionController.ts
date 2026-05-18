@@ -1,11 +1,11 @@
 import type { AnchorCoordinator } from '../dom/anchorCoordinator'
-import type { CommitCoordinator } from '../core/commitCoordinator'
+import type { CommitCoordinator } from '../core/projection/commitCoordinator'
 import type { DestinationMotionCoordinator } from '../scroll/destinationMotionCoordinator'
 import type { DomRegistry } from '../dom/domRegistry'
-import type { LifecycleGuard } from '../core/lifecycleGuard'
+import type { LifecycleGuard } from '../core/state/lifecycleGuard'
 import type { MeasurementEngine } from '../dom/measurementEngine'
-import type { ProjectionCoordinator } from '../core/projectionCoordinator'
-import type { ProjectionStore } from '../core/projectionStore'
+import type { ProjectionCoordinator } from '../core/projection/projectionCoordinator'
+import type { ProjectionStore } from '../core/state/projectionStore'
 import type { RenderWindowEngine } from '../window/renderWindowEngine'
 import type { ScrollIntentEngine } from '../scroll/scrollIntentEngine'
 import type {
@@ -29,7 +29,7 @@ import type {
   ContainerSize,
   DestinationMotionForcedStart,
   RuntimeDiagnosticEmitter,
-} from '../core/runtimeTypes'
+} from '../core/state/runtimeTypes'
 import { runBootstrapTransaction } from './bootstrapTransactions'
 import {
   runPrependTransaction,

@@ -9,7 +9,7 @@ import {
   CUSTOM_SCROLLBAR_DRAG_END_EVENT,
   CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
   CUSTOM_SCROLLBAR_DRAG_START_EVENT,
-} from '../runtime/scroll/customScrollbarEvents'
+} from '../../runtime/scroll/customScrollbarEvents'
 import {
   computeCustomScrollbarGeometry,
   type CustomScrollbarGeometry,

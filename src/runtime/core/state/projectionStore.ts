@@ -2,7 +2,7 @@ import type {
   MessageViewportSnapshot,
   RuntimeListener,
   ViewportEdgeState,
-} from '../types'
+} from '../../types'
 
 const EMPTY_EDGE_STATE: ViewportEdgeState = {
   before: 'idle',

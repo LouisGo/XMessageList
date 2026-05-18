@@ -1,5 +1,5 @@
 import type { DomRegistry } from './domRegistry'
-import type { ProjectionStore } from '../core/projectionStore'
+import type { ProjectionStore } from '../core/state/projectionStore'
 import type { RenderWindowEngine } from '../window/renderWindowEngine'
 import type {
   AnchorState,
@@ -13,8 +13,8 @@ import {
   areRuntimeItemKeysEqual,
   getRuntimeItemKey,
 } from '../shared/utils'
-import type { MeasurableRow, RestoreTarget } from '../core/runtimeTypes'
-import { isAnchorState } from '../core/runtimeTypes'
+import type { MeasurableRow, RestoreTarget } from '../core/state/runtimeTypes'
+import { isAnchorState } from '../core/state/runtimeTypes'
 
 export class AnchorCoordinator<TMessage, TOptimistic> {
   constructor(

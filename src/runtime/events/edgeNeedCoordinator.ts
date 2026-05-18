@@ -1,8 +1,8 @@
 import type { DomRegistry } from '../dom/domRegistry'
-import type { ProjectionStore } from '../core/projectionStore'
+import type { ProjectionStore } from '../core/state/projectionStore'
 import type {
   ScrollFrameMetrics,
-} from '../core/runtimeTypes'
+} from '../core/state/runtimeTypes'
 import type {
   MessageDataSnapshot,
   MessageViewportRuntimeEvent,

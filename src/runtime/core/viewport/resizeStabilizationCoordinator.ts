@@ -1,24 +1,24 @@
-import type { HeightDelta, MeasurementEngine } from '../dom/measurementEngine'
-import type { DomRegistry } from '../dom/domRegistry'
-import type { LifecycleGuard } from './lifecycleGuard'
-import type { ProjectionStore } from './projectionStore'
-import type { RenderWindowEngine } from '../window/renderWindowEngine'
-import type { ScrollIntentEngine } from '../scroll/scrollIntentEngine'
-import type { SpacerEngine } from '../window/spacerEngine'
-import type { TransactionRunner } from '../transactions/transactionRunner'
-import type { ViewportTransactionController } from '../transactions/viewportTransactionController'
-import type { DestinationMotionCoordinator } from '../scroll/destinationMotionCoordinator'
+import type { HeightDelta, MeasurementEngine } from '../../dom/measurementEngine'
+import type { DomRegistry } from '../../dom/domRegistry'
+import type { LifecycleGuard } from '../state/lifecycleGuard'
+import type { ProjectionStore } from '../state/projectionStore'
+import type { RenderWindowEngine } from '../../window/renderWindowEngine'
+import type { ScrollIntentEngine } from '../../scroll/scrollIntentEngine'
+import type { SpacerEngine } from '../../window/spacerEngine'
+import type { TransactionRunner } from '../../transactions/transactionRunner'
+import type { ViewportTransactionController } from '../../transactions/viewportTransactionController'
+import type { DestinationMotionCoordinator } from '../../scroll/destinationMotionCoordinator'
 import type {
   AnchorState,
   MessageDataSnapshot,
   RuntimeObserverFactory,
   RuntimeScheduler,
   ViewportAnchorChangeReason,
-} from '../types'
+} from '../../types'
 import type {
   ContainerSize,
   RuntimeDiagnosticEmitter,
-} from './runtimeTypes'
+} from '../state/runtimeTypes'
 
 export type ResizeStabilizationDeps<TMessage, TOptimistic> = {
   scheduler: RuntimeScheduler

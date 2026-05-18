@@ -1,26 +1,26 @@
-import { DomRegistry } from '../dom/domRegistry'
-import { LifecycleGuard } from './lifecycleGuard'
-import { MeasurementEngine, type HeightDelta } from '../dom/measurementEngine'
-import { ProjectionStore, createEmptySnapshot } from './projectionStore'
-import { RenderWindowEngine } from '../window/renderWindowEngine'
-import { ScrollIntentEngine } from '../scroll/scrollIntentEngine'
-import { SpacerEngine, type HeightCache } from '../window/spacerEngine'
-import { TransactionRunner } from '../transactions/transactionRunner'
-import { CommitCoordinator } from './commitCoordinator'
-import { ProjectionCoordinator } from './projectionCoordinator'
-import { ResizeStabilizationCoordinator } from './resizeStabilizationCoordinator'
-import { DestinationIntentCoordinator } from './destinationIntentCoordinator'
-import { RuntimeStateAxes } from './runtimeStateAxes'
-import { RuntimeCommandRouter } from './runtimeCommandRouter'
-import { RuntimeLifecycleCoordinator } from './runtimeLifecycleCoordinator'
+import { DomRegistry } from '../../dom/domRegistry'
+import { LifecycleGuard } from '../state/lifecycleGuard'
+import { MeasurementEngine, type HeightDelta } from '../../dom/measurementEngine'
+import { ProjectionStore, createEmptySnapshot } from '../state/projectionStore'
+import { RenderWindowEngine } from '../../window/renderWindowEngine'
+import { ScrollIntentEngine } from '../../scroll/scrollIntentEngine'
+import { SpacerEngine, type HeightCache } from '../../window/spacerEngine'
+import { TransactionRunner } from '../../transactions/transactionRunner'
+import { CommitCoordinator } from '../projection/commitCoordinator'
+import { ProjectionCoordinator } from '../projection/projectionCoordinator'
+import { ResizeStabilizationCoordinator } from '../viewport/resizeStabilizationCoordinator'
+import { DestinationIntentCoordinator } from '../commands/destinationIntentCoordinator'
+import { RuntimeStateAxes } from '../state/runtimeStateAxes'
+import { RuntimeCommandRouter } from '../commands/runtimeCommandRouter'
+import { RuntimeLifecycleCoordinator } from '../viewport/runtimeLifecycleCoordinator'
 import {
   readScrollFrameMetrics,
   ScrollFrameCoordinator,
-} from './scrollFrameCoordinator'
+} from '../viewport/scrollFrameCoordinator'
 import {
   DiagnosticRecorder,
   type RuntimeDiagnosticInput,
-} from '../debug/diagnosticRecorder'
+} from '../../debug/diagnosticRecorder'
 import {
   BOOTSTRAP_HEIGHT_EPSILON_PX,
   BOOTSTRAP_SETTLE_TIMEOUT_MS,
@@ -35,16 +35,16 @@ import {
   type DestinationMotionForcedStart,
   type ReadySubstate,
   type ScrollFrameMetrics,
-} from './runtimeTypes'
-import { AnchorCoordinator } from '../dom/anchorCoordinator'
-import { EdgeNeedCoordinator } from '../events/edgeNeedCoordinator'
-import { DestinationMotionCoordinator } from '../scroll/destinationMotionCoordinator'
-import { ViewportTransactionController } from '../transactions/viewportTransactionController'
+} from '../state/runtimeTypes'
+import { AnchorCoordinator } from '../../dom/anchorCoordinator'
+import { EdgeNeedCoordinator } from '../../events/edgeNeedCoordinator'
+import { DestinationMotionCoordinator } from '../../scroll/destinationMotionCoordinator'
+import { ViewportTransactionController } from '../../transactions/viewportTransactionController'
 import {
   CUSTOM_SCROLLBAR_DRAG_END_EVENT,
   CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
   CUSTOM_SCROLLBAR_DRAG_START_EVENT,
-} from '../scroll/customScrollbarEvents'
+} from '../../scroll/customScrollbarEvents'
 import type {
   AnchorState,
   MessageDataItem,
@@ -71,7 +71,7 @@ import type {
   ViewportAnchorChangeReason,
   ViewportDiagnosticRecord,
   NormalizedWindowConfig,
-} from '../types'
+} from '../../types'
 import {
   DEFAULT_BOTTOM_LOCK_THRESHOLD_PX,
   DEFAULT_BOTTOM_UNLOCK_THRESHOLD_PX,
@@ -79,7 +79,7 @@ import {
   createDefaultScheduler,
   getRuntimeItemKey,
   mergeWindowConfig,
-} from '../shared/utils'
+} from '../../shared/utils'
 
 /**
  * MessageViewportRuntimeController 是独立于 React 的 IM viewport engine 实现体。

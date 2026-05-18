@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeCustomScrollbarGeometry } from '../customScrollbarGeometry'
+import { computeCustomScrollbarGeometry } from '../scrollbar/customScrollbarGeometry'
 
 describe('computeCustomScrollbarGeometry', () => {
   it('hides when content does not overflow', () => {

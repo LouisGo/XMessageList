@@ -1,27 +1,27 @@
-import type { DestinationIntentCoordinator } from './destinationIntentCoordinator'
-import type { RuntimeStateAxes } from './runtimeStateAxes'
-import type { ProjectionStore } from './projectionStore'
-import type { LifecycleGuard } from './lifecycleGuard'
+import type { DestinationIntentCoordinator } from '../commands/destinationIntentCoordinator'
+import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
+import type { ProjectionStore } from '../state/projectionStore'
+import type { LifecycleGuard } from '../state/lifecycleGuard'
 import type { ResizeStabilizationCoordinator } from './resizeStabilizationCoordinator'
-import type { DestinationMotionCoordinator } from '../scroll/destinationMotionCoordinator'
-import type { EdgeNeedCoordinator } from '../events/edgeNeedCoordinator'
-import type { DomRegistry } from '../dom/domRegistry'
-import type { MeasurementEngine } from '../dom/measurementEngine'
-import type { ScrollIntentEngine } from '../scroll/scrollIntentEngine'
-import type { TransactionRunner } from '../transactions/transactionRunner'
-import type { CommitCoordinator } from './commitCoordinator'
-import type { RenderWindowEngine } from '../window/renderWindowEngine'
-import type { SpacerEngine, HeightCache } from '../window/spacerEngine'
+import type { DestinationMotionCoordinator } from '../../scroll/destinationMotionCoordinator'
+import type { EdgeNeedCoordinator } from '../../events/edgeNeedCoordinator'
+import type { DomRegistry } from '../../dom/domRegistry'
+import type { MeasurementEngine } from '../../dom/measurementEngine'
+import type { ScrollIntentEngine } from '../../scroll/scrollIntentEngine'
+import type { TransactionRunner } from '../../transactions/transactionRunner'
+import type { CommitCoordinator } from '../projection/commitCoordinator'
+import type { RenderWindowEngine } from '../../window/renderWindowEngine'
+import type { SpacerEngine, HeightCache } from '../../window/spacerEngine'
 import type {
   RuntimeEventListener,
   RuntimeState,
-} from '../types'
+} from '../../types'
 import type {
   ContainerSize,
   RuntimeDiagnosticEmitter,
-} from './runtimeTypes'
-import { createEmptySnapshot } from './projectionStore'
-import { getDistanceToBottom } from '../shared/utils'
+} from '../state/runtimeTypes'
+import { createEmptySnapshot } from '../state/projectionStore'
+import { getDistanceToBottom } from '../../shared/utils'
 
 type RuntimeLifecycleDeps<TMessage, TOptimistic> = {
   registry: DomRegistry

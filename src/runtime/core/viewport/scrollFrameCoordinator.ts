@@ -1,13 +1,13 @@
-import type { AnchorCoordinator } from '../dom/anchorCoordinator'
-import type { EdgeNeedCoordinator } from '../events/edgeNeedCoordinator'
-import type { DomRegistry } from '../dom/domRegistry'
-import type { LifecycleGuard } from './lifecycleGuard'
-import type { ProjectionCoordinator } from './projectionCoordinator'
-import type { ProjectionStore } from './projectionStore'
-import type { RenderWindowEngine } from '../window/renderWindowEngine'
-import type { ScrollIntentEngine } from '../scroll/scrollIntentEngine'
-import type { TransactionRunner } from '../transactions/transactionRunner'
-import type { ViewportTransactionController } from '../transactions/viewportTransactionController'
+import type { AnchorCoordinator } from '../../dom/anchorCoordinator'
+import type { EdgeNeedCoordinator } from '../../events/edgeNeedCoordinator'
+import type { DomRegistry } from '../../dom/domRegistry'
+import type { LifecycleGuard } from '../state/lifecycleGuard'
+import type { ProjectionCoordinator } from '../projection/projectionCoordinator'
+import type { ProjectionStore } from '../state/projectionStore'
+import type { RenderWindowEngine } from '../../window/renderWindowEngine'
+import type { ScrollIntentEngine } from '../../scroll/scrollIntentEngine'
+import type { TransactionRunner } from '../../transactions/transactionRunner'
+import type { ViewportTransactionController } from '../../transactions/viewportTransactionController'
 import type {
   AnchorState,
   MessageDataItem,
@@ -17,12 +17,12 @@ import type {
   RuntimeState,
   ScrollSource,
   ViewportAnchorChangeReason,
-} from '../types'
+} from '../../types'
 import type {
   ReadySubstate,
   RuntimeDiagnosticEmitter,
   ScrollFrameMetrics,
-} from './runtimeTypes'
+} from '../state/runtimeTypes'
 
 export type ScrollFrameDeps<TMessage, TOptimistic> = {
   scheduler: RuntimeScheduler

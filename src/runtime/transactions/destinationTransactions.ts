@@ -9,7 +9,7 @@ import type {
   DestinationMotionForcedStart,
   MeasurableRow,
   RestoreTarget,
-} from '../core/runtimeTypes'
+} from '../core/state/runtimeTypes'
 import { areRuntimeItemKeysEqual } from '../shared/utils'
 import { getJumpResolution } from './transactionShared'
 

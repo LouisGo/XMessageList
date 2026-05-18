@@ -5,8 +5,8 @@ import {
 } from './scrollMotionEngine'
 import { ScrollIntentEngine } from './scrollIntentEngine'
 import type { DomRegistry } from '../dom/domRegistry'
-import type { ProjectionStore } from '../core/projectionStore'
-import type { ProjectionCoordinator } from '../core/projectionCoordinator'
+import type { ProjectionStore } from '../core/state/projectionStore'
+import type { ProjectionCoordinator } from '../core/projection/projectionCoordinator'
 import type {
   MessageDataSnapshot,
   MessageViewportSnapshot,
@@ -22,7 +22,7 @@ import type {
   DestinationMotionSettle,
   RuntimeDiagnosticEmitter,
   ReadySubstate,
-} from '../core/runtimeTypes'
+} from '../core/state/runtimeTypes'
 
 export type DestinationMotionCancelContext = {
   transactionKind?: ViewportTransactionKind

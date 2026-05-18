@@ -11,16 +11,16 @@ import {
 import {
   getRuntimeItemKey,
   serializeRuntimeItemKey,
-} from '../runtime'
+} from '../../runtime'
 import type {
   MessageDataItem,
   MessageRuntimeItemKey,
   MessageViewportRuntime,
   ViewportAnchorChangedEvent,
   MessageViewportSnapshot,
-} from '../runtime'
-import { useMessageViewportRuntime } from './useMessageViewportRuntime'
-import { CustomScrollbar } from './CustomScrollbar'
+} from '../../runtime'
+import { useMessageViewportRuntime } from '../hooks/useMessageViewportRuntime'
+import { CustomScrollbar } from '../scrollbar/CustomScrollbar'
 
 export type MessageRowProjectionProps<
   TMessage = unknown,

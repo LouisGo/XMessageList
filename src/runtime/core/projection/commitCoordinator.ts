@@ -3,8 +3,8 @@ import type {
   ProjectionCommit,
   RuntimeScheduler,
   ViewportTransactionKind,
-} from '../types'
-import type { PublishResult, RuntimeCommitTimeoutMs } from './runtimeTypes'
+} from '../../types'
+import type { PublishResult, RuntimeCommitTimeoutMs } from '../state/runtimeTypes'
 
 type PendingCommit = {
   feedId: string

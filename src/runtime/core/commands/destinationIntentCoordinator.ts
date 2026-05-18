@@ -1,8 +1,8 @@
-import type { EdgeNeedCoordinator } from '../events/edgeNeedCoordinator'
-import type { RenderWindowEngine } from '../window/renderWindowEngine'
-import type { ScrollIntentEngine } from '../scroll/scrollIntentEngine'
-import type { DestinationMotionCancelContext } from '../scroll/destinationMotionCoordinator'
-import type { LifecycleGuard } from './lifecycleGuard'
+import type { EdgeNeedCoordinator } from '../../events/edgeNeedCoordinator'
+import type { RenderWindowEngine } from '../../window/renderWindowEngine'
+import type { ScrollIntentEngine } from '../../scroll/scrollIntentEngine'
+import type { DestinationMotionCancelContext } from '../../scroll/destinationMotionCoordinator'
+import type { LifecycleGuard } from '../state/lifecycleGuard'
 import {
   USER_SCROLL_DIRECTION_EPSILON_PX,
   type ActiveFollowBottomIntent,
@@ -12,7 +12,7 @@ import {
   type PendingFollowBottom,
   type ReadySubstate,
   type RuntimeDiagnosticEmitter,
-} from './runtimeTypes'
+} from '../state/runtimeTypes'
 import {
   cloneDestinationCommandTarget,
   getIdentityTarget,
@@ -28,7 +28,7 @@ import type {
   MessageViewportSnapshot,
   MessageViewportRuntimeEvent,
   ScrollSource,
-} from '../types'
+} from '../../types'
 
 const DESTINATION_REBUILD_SPACER_THRESHOLD_PX = 10_000
 

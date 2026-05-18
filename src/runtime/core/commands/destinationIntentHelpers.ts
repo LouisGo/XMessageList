@@ -2,13 +2,13 @@ import {
   cloneAnchorState,
   isAnchorState,
   type DestinationMotionForcedStart,
-} from './runtimeTypes'
+} from '../state/runtimeTypes'
 import type {
   AnchorState,
   MessageDataSnapshot,
   MessageIdentityAnchor,
-} from '../types'
-import type { RenderWindowEngine } from '../window/renderWindowEngine'
+} from '../../types'
+import type { RenderWindowEngine } from '../../window/renderWindowEngine'
 
 export function hasCommittedMessage<TMessage, TOptimistic>(
   renderWindow: RenderWindowEngine,

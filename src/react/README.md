@@ -2,6 +2,14 @@
 
 React 18 projection layer for the framework-independent runtime.
 
+## Directory Layout
+
+- `index.ts` is the public adapter entry.
+- `components/` owns the projection DOM shell.
+- `hooks/` owns React subscription / commit-ack wiring.
+- `scrollbar/` owns the custom scrollbar component and its geometry helpers.
+- `__tests__/` keeps adapter and geometry regression tests.
+
 Rules:
 
 - subscribe with `useSyncExternalStore`
