@@ -65,8 +65,12 @@ Runtime 内部观测能力。
 所有会改变 DOM window、spacer 或 scrollTop 的事务都在这里执行，并由 `TransactionRunner` 串行化。
 
 - `transactionRunner.ts`：事务队列和 supersede 管理。
-- `viewportTransactionController.ts`：prepend、append、jump、restore、follow-bottom、projection refresh、window slide、container resize、reset。
+- `viewportTransactionController.ts`：事务 facade 和依赖接线，只路由到具体事务实现。
 - `bootstrapTransactions.ts`：latest / restored bootstrap 的独立事务流程。
+- `anchorTransactions.ts`：prepend、window slide 这类 anchor-preserving projection/correction 流程。
+- `destinationTransactions.ts`：jump / restore 的目标 DOM 解析、滚动目的地和 settle 事件流程。
+- `followBottomTransactions.ts`：follow-bottom 的 latest projection、commit 后吸底和 pending latest-window 流程。
+- `transactionShared.ts`：事务间共享的无状态小工具。
 
 ### `dom/`
 

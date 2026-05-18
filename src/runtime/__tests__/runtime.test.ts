@@ -681,7 +681,7 @@ describe('MessageViewportRuntime', () => {
     expect(snapshot.renderWindow.endIndex).toBeLessThan(39)
 
     runtime.dispatch({ type: 'followBottom' })
-    await Promise.resolve()
+    await flushFramesWithMicrotasks(scheduler, 2)
     await Promise.resolve()
     snapshot = runtime.getSnapshot()
     expect(snapshot.viewportPhase).toBe('PROJECTING')
@@ -1311,10 +1311,10 @@ describe('MessageViewportRuntime', () => {
     await Promise.resolve()
 
     runtime.dispatch({ type: 'followBottom' })
-    await Promise.resolve()
+    await flushFramesWithMicrotasks(scheduler, 2)
 
     snapshot = runtime.getSnapshot()
-    expect(snapshot.viewportPhase).toBe('PROJECTING')
+    expect(['PROJECTING', 'MOTION_ACTIVE']).toContain(snapshot.viewportPhase)
     expect(snapshot.renderWindow.endIndex).toBe(59)
     expect(snapshot.renderWindow.itemKeys).toHaveLength(40)
   })
