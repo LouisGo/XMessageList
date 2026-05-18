@@ -8,6 +8,11 @@ import { SpacerEngine, type HeightCache } from '../window/spacerEngine'
 import { TransactionRunner } from '../transactions/transactionRunner'
 import { CommitCoordinator } from './commitCoordinator'
 import { ProjectionCoordinator } from './projectionCoordinator'
+import { ResizeStabilizationCoordinator } from './resizeStabilizationCoordinator'
+import {
+  readScrollFrameMetrics,
+  ScrollFrameCoordinator,
+} from './scrollFrameCoordinator'
 import {
   DiagnosticRecorder,
   type RuntimeDiagnosticInput,
@@ -110,6 +115,13 @@ export class MessageViewportRuntimeController<
 
   private readonly measurement: MeasurementEngine
 
+  private readonly resizeStabilization: ResizeStabilizationCoordinator<
+    TMessage,
+    TOptimistic
+  >
+
+  private readonly scrollFrame: ScrollFrameCoordinator<TMessage, TOptimistic>
+
   private readonly scrollIntent: ScrollIntentEngine
 
   private readonly projection: ProjectionCoordinator<TMessage, TOptimistic>
@@ -167,15 +179,7 @@ export class MessageViewportRuntimeController<
 
   private destinationCommandCounter = 0
 
-  private scrollRaf: number | null = null
-
-  private stabilizationRaf: number | null = null
-
-  private resizeRaf: number | null = null
-
   private anchorIdleTimer: number | null = null
-
-  private scrollbarDragEdgeRecheckRaf: number | null = null
 
   private currentFrame = 0
 
@@ -183,17 +187,11 @@ export class MessageViewportRuntimeController<
 
   private lastDiagnosticScrollSource: ScrollSource | null = null
 
-  private lastDiagnosticBottomLockState:
-    | MessageViewportSnapshot['bottomLockState']
-    | null = null
-
   private lastUserScrollTop = 0
 
   private lastUserDistanceToBottom = 0
 
   private retainedScrollTop: number | null = null
-
-  private containerResizeObserver: ResizeObserver | null = null
 
   private lastContainerSize: ContainerSize | null = null
 
@@ -209,7 +207,7 @@ export class MessageViewportRuntimeController<
       this.scrollIntent.markUserIntent(this.currentFrame)
     }
 
-    this.scheduleScrollRaf()
+    this.scrollFrame.scheduleScrollRaf()
   }
 
   private readonly handleUserScrollIntent = (): void => {
@@ -247,7 +245,7 @@ export class MessageViewportRuntimeController<
   private readonly handleCustomScrollbarDragScroll = (): void => {
     this.scrollbarDragIntentActive = true
     this.scrollIntent.markUserIntent(this.currentFrame)
-    this.scheduleScrollRaf()
+    this.scrollFrame.scheduleScrollRaf()
   }
 
   private readonly handleCustomScrollbarDragEnd = (): void => {
@@ -296,7 +294,7 @@ export class MessageViewportRuntimeController<
     this.measurement = new MeasurementEngine(
       this.heightCache,
       this.observerFactory,
-      () => this.scheduleHeightStabilization(),
+      () => this.resizeStabilization.scheduleHeightStabilization(),
     )
     this.scrollIntent = new ScrollIntentEngine(
       options.bottomLockThresholdPx ?? DEFAULT_BOTTOM_LOCK_THRESHOLD_PX,
@@ -424,6 +422,85 @@ export class MessageViewportRuntimeController<
       emitDiagnostic: (input) => this.emitDiagnostic(input),
       emitError: (code) => this.emitError(code),
     })
+    this.scrollFrame = new ScrollFrameCoordinator({
+      scheduler: this.scheduler,
+      registry: this.registry,
+      lifecycle: this.lifecycle,
+      store: this.store,
+      scrollIntent: this.scrollIntent,
+      projection: this.projection,
+      edge: this.edge,
+      anchor: this.anchor,
+      renderWindow: this.renderWindow,
+      transactions: this.transactions,
+      transactionController: this.transactionController,
+      getDataSnapshot: () => this.dataSnapshot,
+      getCurrentFrame: () => this.currentFrame,
+      setCurrentFrame: (frame) => {
+        this.currentFrame = frame
+      },
+      getState: () => this.state,
+      getReadySubstate: () => this.readySubstate,
+      getScrollbarDragIntentActive: () => this.scrollbarDragIntentActive,
+      getScrollbarDragEdgeIntent: () => this.scrollbarDragEdgeIntent,
+      setScrollbarDragEdgeIntent: (edge) => {
+        this.scrollbarDragEdgeIntent = edge
+      },
+      getLastUserScrollTop: () => this.lastUserScrollTop,
+      setLastUserScrollTop: (scrollTop) => {
+        this.lastUserScrollTop = scrollTop
+      },
+      getLastUserDistanceToBottom: () => this.lastUserDistanceToBottom,
+      setLastUserDistanceToBottom: (distance) => {
+        this.lastUserDistanceToBottom = distance
+      },
+      getLastDiagnosticScrollSource: () => this.lastDiagnosticScrollSource,
+      setLastDiagnosticScrollSource: (source) => {
+        this.lastDiagnosticScrollSource = source
+      },
+      setLastScrollSource: (source) => {
+        this.lastScrollSource = source
+      },
+      getEdgeLoadThresholdPx: () => this.edgeLoadThresholdPx,
+      updatePendingFollowBottomForUserScroll: (scrollTop) =>
+        this.updatePendingFollowBottomForUserScroll(scrollTop),
+      updateActiveFollowBottomIntentForScroll: (data, scrollTop, source) =>
+        this.updateActiveFollowBottomIntentForScroll(data, scrollTop, source),
+      scheduleViewportAnchorIdleEvent: () => this.scheduleViewportAnchorIdleEvent(),
+      runAnchorlessWindowSlideTransaction: (nextWindow, expectedData) =>
+        this.runAnchorlessWindowSlideTransaction(nextWindow, expectedData),
+      emitViewportAnchorChanged: (reason, anchor) =>
+        this.emitViewportAnchorChanged(reason, anchor),
+      emitDiagnostic: (input) => this.emitDiagnostic(input),
+      getEdgeThresholdPx: (metrics) => this.getEdgeThresholdPx(metrics),
+    })
+    this.resizeStabilization = new ResizeStabilizationCoordinator({
+      scheduler: this.scheduler,
+      observerFactory: this.observerFactory,
+      registry: this.registry,
+      lifecycle: this.lifecycle,
+      store: this.store,
+      measurement: this.measurement,
+      spacer: this.spacer,
+      motion: this.motion,
+      scrollIntent: this.scrollIntent,
+      renderWindow: this.renderWindow,
+      transactions: this.transactions,
+      transactionController: this.transactionController,
+      getDataSnapshot: () => this.dataSnapshot,
+      getCurrentFrame: () => this.currentFrame,
+      setCurrentFrame: (frame) => {
+        this.currentFrame = frame
+      },
+      getLastContainerSize: () => this.lastContainerSize,
+      setLastContainerSize: (size) => {
+        this.lastContainerSize = size
+      },
+      captureViewportAnchor: () => this.captureViewportAnchor(),
+      emitViewportAnchorChanged: (reason, anchor) =>
+        this.emitViewportAnchorChanged(reason, anchor),
+      emitDiagnostic: (input) => this.emitDiagnostic(input),
+    })
   }
 
   attach(container: HTMLElement): void {
@@ -475,7 +552,7 @@ export class MessageViewportRuntimeController<
     window.addEventListener('pointerup', this.handleScrollbarDragEnd)
     window.addEventListener('mouseup', this.handleScrollbarDragEnd)
     window.addEventListener('blur', this.handleScrollbarDragEnd)
-    this.setupContainerObserver(container)
+    this.resizeStabilization.setupContainerObserver(container)
     this.edge.setupIntersectionObserver(container)
     this.state =
       this.store.getSnapshot().bootstrapState === 'READY' ? 'READY' : 'ATTACHED'
@@ -518,8 +595,7 @@ export class MessageViewportRuntimeController<
     this.motion.cancel('detach')
     this.commit.cancelPendingCommit()
     this.cancelScheduledWork()
-    this.containerResizeObserver?.disconnect()
-    this.containerResizeObserver = null
+    this.resizeStabilization.disconnectContainerObserver()
     this.edge.disconnect()
     this.measurement.disconnect()
     this.transactions.clear()
@@ -1767,242 +1843,8 @@ export class MessageViewportRuntimeController<
     return this.anchor.captureViewportAnchor()
   }
 
-  private scheduleScrollRaf(): void {
-    if (this.scrollRaf !== null) {
-      return
-    }
-
-    const token = this.lifecycle.getCurrent()
-    this.scrollRaf = this.scheduler.requestAnimationFrame(() => {
-      this.scrollRaf = null
-      this.currentFrame += 1
-
-      if (!this.lifecycle.isCurrent(token.feedId, token.generation)) {
-        return
-      }
-
-      this.handleScrollFrame()
-    })
-  }
-
   private scheduleScrollbarDragEdgeRecheck(reason: string): void {
-    if (
-      !this.scrollbarDragIntentActive ||
-      this.scrollbarDragEdgeRecheckRaf !== null
-    ) {
-      return
-    }
-
-    const token = this.lifecycle.getCurrent()
-    this.scrollbarDragEdgeRecheckRaf = this.scheduler.requestAnimationFrame(() => {
-      this.scrollbarDragEdgeRecheckRaf = null
-      this.currentFrame += 1
-
-      if (!this.lifecycle.isCurrent(token.feedId, token.generation)) {
-        return
-      }
-
-      this.handleScrollbarDragEdgeRecheckFrame(reason)
-    })
-  }
-
-  private handleScrollbarDragEdgeRecheckFrame(reason: string): void {
-    if (!this.scrollbarDragIntentActive || this.state !== 'READY') {
-      return
-    }
-
-    const data = this.dataSnapshot
-    const container = this.registry.getContainer()
-
-    if (!data || !container) {
-      return
-    }
-
-    const metrics = this.readScrollFrameMetrics(container)
-    const edgeMetrics = this.getScrollbarDragEdgeIntentMetrics(data, metrics)
-    this.lastScrollSource = 'user'
-    this.emitDiagnostic({
-      channel: 'edge',
-      severity: 'debug',
-      name: 'edge.scrollbarDragRecheck',
-      details: () => ({
-        reason,
-        edgeIntent: this.scrollbarDragEdgeIntent,
-        scrollTop: edgeMetrics.scrollTop,
-        distanceToBottom: edgeMetrics.distanceToBottom,
-        actualScrollTop: metrics.scrollTop,
-        actualDistanceToBottom: metrics.distanceToBottom,
-        scrollHeight: edgeMetrics.scrollHeight,
-        clientHeight: edgeMetrics.clientHeight,
-      }),
-    })
-    this.edge.emitEdgeNeeds({
-      data,
-      metrics: edgeMetrics,
-      scrollSource: 'user',
-      lastUserScrollTop: this.lastUserScrollTop,
-      lastUserDistanceToBottom: this.lastUserDistanceToBottom,
-    })
-    if (this.scrollbarDragEdgeIntent) {
-      this.edge.emitScrollbarDragEdgeNeed({
-        data,
-        edge: this.scrollbarDragEdgeIntent,
-      })
-    }
-    this.lastUserScrollTop = edgeMetrics.scrollTop
-    this.lastUserDistanceToBottom = edgeMetrics.distanceToBottom
-  }
-
-  private handleScrollFrame(): void {
-    const data = this.dataSnapshot
-    const container = this.registry.getContainer()
-
-    if (!data || !container) {
-      return
-    }
-
-    const metrics = this.readScrollFrameMetrics(container)
-    const scrollSource = this.scrollIntent.classifyScroll(this.currentFrame)
-    this.lastScrollSource = scrollSource
-    this.updateActiveFollowBottomIntentForScroll(
-      data,
-      metrics.scrollTop,
-      scrollSource,
-    )
-    if (this.lastDiagnosticScrollSource !== scrollSource) {
-      this.lastDiagnosticScrollSource = scrollSource
-      this.emitDiagnostic({
-        channel: 'scroll',
-        severity: 'debug',
-        name: 'scroll.sourceChanged',
-        details: () => ({
-          source: scrollSource,
-          scrollTop: metrics.scrollTop,
-          distanceToBottom: metrics.distanceToBottom,
-        }),
-      })
-    }
-    const previousBottomLockState = this.scrollIntent.getBottomLockState()
-    const changed = this.updateBottomLockForDataWindow(
-      data,
-      metrics.distanceToBottom,
-      scrollSource,
-    )
-
-    if (changed) {
-      const nextBottomLockState = this.scrollIntent.getBottomLockState()
-      if (this.lastDiagnosticBottomLockState !== nextBottomLockState) {
-        this.lastDiagnosticBottomLockState = nextBottomLockState
-        this.emitDiagnostic({
-          channel: 'scroll',
-          severity: 'info',
-          name: 'scroll.bottomLockChanged',
-          details: () => ({
-            previousBottomLockState,
-            nextBottomLockState,
-            source: scrollSource,
-            distanceToBottom: metrics.distanceToBottom,
-            hasMoreAfter: data.hasMoreAfter,
-          }),
-        })
-      }
-      this.projection.publish({
-        data,
-        renderWindow: this.keepCurrentWindow(data.items),
-        bootstrapState: this.store.getSnapshot().bootstrapState,
-        bottomLockState: this.scrollIntent.getBottomLockState(),
-      })
-    }
-
-    this.edge.emitEdgeNeeds({
-      data,
-      metrics,
-      scrollSource,
-      lastUserScrollTop: this.lastUserScrollTop,
-      lastUserDistanceToBottom: this.lastUserDistanceToBottom,
-    })
-
-    if (scrollSource === 'user') {
-      this.updateScrollbarDragEdgeIntent(data, metrics)
-      // 只有真实用户滚动能更新用户意图基线；runtime 写 scrollTop 不应影响 edge latch 释放。
-      this.updatePendingFollowBottomForUserScroll(metrics.scrollTop)
-      this.lastUserScrollTop = metrics.scrollTop
-      this.lastUserDistanceToBottom = metrics.distanceToBottom
-      this.scheduleViewportAnchorIdleEvent()
-    }
-
-    if (this.state === 'READY') {
-      this.maybeSlideWindow(data, metrics)
-    }
-  }
-
-  private updateScrollbarDragEdgeIntent(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    metrics: ScrollFrameMetrics,
-  ): void {
-    if (!this.scrollbarDragIntentActive) {
-      return
-    }
-
-    const snapshot = this.store.getSnapshot()
-
-    if (
-      data.hasMoreBefore &&
-      snapshot.renderWindow.startIndex === 0 &&
-      metrics.scrollTop <= this.edgeLoadThresholdPx
-    ) {
-      this.scrollbarDragEdgeIntent = 'before'
-      return
-    }
-
-    if (
-      data.hasMoreAfter &&
-      snapshot.renderWindow.endIndex >= data.items.length - 1 &&
-      metrics.distanceToBottom <= this.edgeLoadThresholdPx
-    ) {
-      this.scrollbarDragEdgeIntent = 'after'
-    }
-  }
-
-  private getScrollbarDragEdgeIntentMetrics(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    metrics: ScrollFrameMetrics,
-  ): ScrollFrameMetrics {
-    if (this.scrollbarDragEdgeIntent === 'before' && data.hasMoreBefore) {
-      return {
-        ...metrics,
-        scrollTop: 0,
-        distanceToBottom: Math.max(0, metrics.scrollHeight - metrics.clientHeight),
-      }
-    }
-
-    if (this.scrollbarDragEdgeIntent === 'after' && data.hasMoreAfter) {
-      return {
-        ...metrics,
-        scrollTop: Math.max(0, metrics.scrollHeight - metrics.clientHeight),
-        distanceToBottom: 0,
-      }
-    }
-
-    return metrics
-  }
-
-  private updateBottomLockForDataWindow(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    distanceToBottom: number,
-    scrollSource: ScrollSource,
-  ): boolean {
-    // hasMoreAfter=true 说明当前 DOM 底部不是会话最新消息底部，
-    // 只能作为向下分页边界，不能进入 BottomLocked 心智模型。
-    if (data.hasMoreAfter) {
-      return this.scrollIntent.setBottomLockState('UNLOCKED')
-    }
-
-    return this.scrollIntent.updateBottomLockFromDistance(
-      distanceToBottom,
-      this.currentFrame,
-      scrollSource,
-    )
+    this.scrollFrame.scheduleScrollbarDragEdgeRecheck(reason)
   }
 
   private reconcileReadyBottomLockFromViewport(reason: string): boolean {
@@ -2036,14 +1878,13 @@ export class MessageViewportRuntimeController<
       return false
     }
 
-    const metrics = this.readScrollFrameMetrics(container)
+    const metrics = readScrollFrameMetrics(container)
     const previousBottomLockState = this.scrollIntent.getBottomLockState()
     const changed = this.scrollIntent.reconcileBottomLockFromDistance(
       metrics.distanceToBottom,
     )
 
     if (changed) {
-      this.lastDiagnosticBottomLockState = this.scrollIntent.getBottomLockState()
       this.emitDiagnostic({
         channel: 'scroll',
         severity: 'info',
@@ -2062,107 +1903,6 @@ export class MessageViewportRuntimeController<
     }
 
     return changed
-  }
-
-  private maybeSlideWindow(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    metrics: ScrollFrameMetrics,
-  ): void {
-    if (this.readySubstate === 'READY_MOTION_ACTIVE') {
-      return
-    }
-
-    const snapshot = this.store.getSnapshot()
-    const edgeThresholdPx = this.getEdgeThresholdPx(metrics)
-    const nearTop = metrics.scrollTop < snapshot.topSpacer + edgeThresholdPx
-    const nearBottom =
-      metrics.distanceToBottom <
-      snapshot.bottomSpacer + edgeThresholdPx
-
-    if (!nearTop && !nearBottom) {
-      return
-    }
-
-    const anchor = this.captureViewportAnchor()
-
-    if (!anchor) {
-      const estimatedAnchorIndex = this.renderWindow.findEstimatedIndexAtOffset(
-        data.items,
-        metrics.scrollTop + metrics.clientHeight / 2,
-        metrics.clientWidth,
-      )
-      const nextWindow =
-        estimatedAnchorIndex >= 0
-          ? this.renderWindow.computeWindowAroundAnchor({
-              items: data.items,
-              anchorIndex: estimatedAnchorIndex,
-              viewportHeight: metrics.clientHeight,
-              viewportWidth: metrics.clientWidth,
-            })
-          : null
-
-      this.emitDiagnostic({
-        channel: 'anchor',
-        severity: 'warn',
-        name: 'anchor.captureMissing',
-        correlationId:
-          `data:${data.feedId}:${data.generation}:${this.store.getSnapshot().revision}`,
-        details: () => ({
-          reason: 'window-slide',
-          scrollTop: metrics.scrollTop,
-          distanceToBottom: metrics.distanceToBottom,
-          topSpacer: snapshot.topSpacer,
-          bottomSpacer: snapshot.bottomSpacer,
-          estimatedAnchorIndex,
-        }),
-      })
-
-      if (
-        nextWindow &&
-        !this.projection.isRenderWindowEqual(snapshot.renderWindow, nextWindow)
-      ) {
-        this.transactions.enqueue(
-          'resize',
-          () =>
-            this.runAnchorlessWindowSlideTransaction(nextWindow, {
-              feedId: data.feedId,
-              generation: data.generation,
-              revision: data.revision,
-            }),
-          'window-slide',
-        )
-      }
-      return
-    }
-
-    const anchorIndex = this.renderWindow.findIndexByKey(data.items, anchor.key)
-
-    if (anchorIndex < 0) {
-      return
-    }
-
-    // window slide 围绕当前可见 anchor 重新裁剪，不改变阅读位置，只减少远端 DOM 压力。
-    const nextWindow = this.renderWindow.computeWindowAroundAnchor({
-      items: data.items,
-      anchorIndex,
-      viewportHeight: metrics.clientHeight,
-      viewportWidth: metrics.clientWidth,
-    })
-
-    if (this.projection.isRenderWindowEqual(snapshot.renderWindow, nextWindow)) {
-      return
-    }
-
-    this.transactions.enqueue(
-      'resize',
-      () =>
-        this.transactionController.runWindowSlideTransaction(anchor, nextWindow, {
-          feedId: data.feedId,
-          generation: data.generation,
-          revision: data.revision,
-        }),
-      'window-slide',
-    )
   }
 
   private async runAnchorlessWindowSlideTransaction(
@@ -2223,174 +1963,6 @@ export class MessageViewportRuntimeController<
     }
   }
 
-  private scheduleHeightStabilization(): void {
-    if (this.stabilizationRaf !== null) {
-      return
-    }
-
-    const token = this.lifecycle.getCurrent()
-    this.stabilizationRaf = this.scheduler.requestAnimationFrame(() => {
-      this.stabilizationRaf = null
-      this.currentFrame += 1
-
-      if (!this.lifecycle.isCurrent(token.feedId, token.generation)) {
-        return
-      }
-
-      this.stabilizeDirtyHeights()
-    })
-  }
-
-  private stabilizeDirtyHeights(): void {
-    const data = this.dataSnapshot
-    const container = this.registry.getContainer()
-
-    if (!data || !container) {
-      return
-    }
-
-    const deltas = this.measurement.flushPendingHeightDeltas(
-      this.store.getSnapshot().revision,
-      container.clientWidth,
-    )
-
-    if (deltas.length === 0) {
-      return
-    }
-
-    const totalDelta = deltas.reduce((total, delta) => total + delta.delta, 0)
-    this.spacer.invalidateEstimateCache()
-
-    if (this.motion.isActive()) {
-      // motion 期间高度变化会改变目的地坐标，先取消再按当前 anchor/bottom lock 恢复。
-      this.motion.cancel('resize-during-motion')
-    }
-
-    if (
-      this.scrollIntent.getBottomLockState() === 'LOCKED' &&
-      !data.hasMoreAfter
-    ) {
-      this.emitDiagnostic({
-        channel: 'measurement',
-        severity: 'info',
-        name: 'measurement.heightStabilized',
-        correlationId:
-          `data:${data.feedId}:${data.generation}:${this.store.getSnapshot().revision}`,
-        details: () => ({
-          deltaCount: deltas.length,
-          totalDelta,
-          deltaAboveAnchor: null,
-          anchorKey: null,
-          bottomLockState: this.scrollIntent.getBottomLockState(),
-          action: 'scroll-to-bottom',
-        }),
-      })
-      this.motion.scrollToBottom('programmatic')
-      this.emitViewportAnchorChanged('transaction-settle')
-      return
-    }
-
-    const anchor = this.captureViewportAnchor()
-
-    if (!anchor) {
-      this.emitDiagnostic({
-        channel: 'anchor',
-        severity: 'warn',
-        name: 'anchor.captureMissing',
-        correlationId:
-          `data:${data.feedId}:${data.generation}:${this.store.getSnapshot().revision}`,
-        details: () => ({
-          reason: 'height-stabilization',
-          deltaCount: deltas.length,
-          totalDelta,
-        }),
-      })
-      return
-    }
-
-    const anchorIndex = this.renderWindow.findIndexByKey(data.items, anchor.key)
-
-    // 只补偿 anchor 之前的高度变化；anchor 之后的内容变高不应推动当前阅读位置。
-    const deltaAboveAnchor = deltas.reduce((total, delta) => {
-      const deltaIndex = this.renderWindow.findIndexByKey(data.items, delta.key)
-      return deltaIndex >= 0 && deltaIndex < anchorIndex ? total + delta.delta : total
-    }, 0)
-
-    this.emitDiagnostic({
-      channel: 'measurement',
-      severity: 'info',
-      name: 'measurement.heightStabilized',
-      correlationId:
-        `data:${data.feedId}:${data.generation}:${this.store.getSnapshot().revision}`,
-      details: () => ({
-        deltaCount: deltas.length,
-        totalDelta,
-        deltaAboveAnchor,
-        anchorKey: anchor.key,
-        bottomLockState: this.scrollIntent.getBottomLockState(),
-      }),
-    })
-
-    if (Math.abs(deltaAboveAnchor) > 0.5) {
-      this.motion.writeScrollTop(container.scrollTop + deltaAboveAnchor, 'recovery')
-    }
-
-    this.emitViewportAnchorChanged('transaction-settle', anchor)
-  }
-
-  private setupContainerObserver(container: HTMLElement): void {
-    this.containerResizeObserver?.disconnect()
-    this.containerResizeObserver = this.observerFactory.createResizeObserver(() => {
-      this.scheduleResizeRaf()
-    })
-    this.containerResizeObserver?.observe(container)
-  }
-
-  private scheduleResizeRaf(): void {
-    if (this.resizeRaf !== null) {
-      return
-    }
-
-    const token = this.lifecycle.getCurrent()
-    this.resizeRaf = this.scheduler.requestAnimationFrame(() => {
-      this.resizeRaf = null
-      this.currentFrame += 1
-
-      if (!this.lifecycle.isCurrent(token.feedId, token.generation)) {
-        return
-      }
-
-      const container = this.registry.getContainer()
-      const data = this.dataSnapshot
-
-      if (!container || !data || this.store.getSnapshot().bootstrapState === 'INITIAL') {
-        return
-      }
-
-      const previousSize = this.lastContainerSize ?? this.readContainerSize(container)
-      const nextSize = this.readContainerSize(container)
-
-      this.lastContainerSize = nextSize
-
-      if (
-        previousSize.width === nextSize.width &&
-        previousSize.height === nextSize.height
-      ) {
-        return
-      }
-
-      this.transactions.enqueue(
-        'resize',
-        () =>
-          this.transactionController.runContainerResizeTransaction(
-            previousSize,
-            nextSize,
-          ),
-        'resize',
-      )
-    })
-  }
-
   private scheduleViewportAnchorIdleEvent(): void {
     if (this.anchorIdleTimer !== null) {
       this.scheduler.clearTimeout(this.anchorIdleTimer)
@@ -2444,20 +2016,6 @@ export class MessageViewportRuntimeController<
 
   private getEdgeThresholdPx(metrics: ScrollFrameMetrics): number {
     return metrics.clientHeight * this.config.overscan
-  }
-
-  private readScrollFrameMetrics(container: HTMLElement): ScrollFrameMetrics {
-    const scrollTop = container.scrollTop
-    const clientHeight = container.clientHeight
-    const scrollHeight = container.scrollHeight
-
-    return {
-      scrollTop,
-      clientHeight,
-      clientWidth: container.clientWidth,
-      scrollHeight,
-      distanceToBottom: Math.max(0, scrollHeight - scrollTop - clientHeight),
-    }
   }
 
   private isScrollbarDragScrollEvent(event: Event): boolean {
@@ -2539,20 +2097,8 @@ export class MessageViewportRuntimeController<
   }
 
   private cancelScheduledWork(): void {
-    if (this.scrollRaf !== null) {
-      this.scheduler.cancelAnimationFrame(this.scrollRaf)
-      this.scrollRaf = null
-    }
-
-    if (this.stabilizationRaf !== null) {
-      this.scheduler.cancelAnimationFrame(this.stabilizationRaf)
-      this.stabilizationRaf = null
-    }
-
-    if (this.resizeRaf !== null) {
-      this.scheduler.cancelAnimationFrame(this.resizeRaf)
-      this.resizeRaf = null
-    }
+    this.scrollFrame.cancelScheduledWork()
+    this.resizeStabilization.cancelScheduledWork()
 
     if (this.anchorIdleTimer !== null) {
       this.scheduler.clearTimeout(this.anchorIdleTimer)
