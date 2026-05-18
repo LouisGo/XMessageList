@@ -40,7 +40,7 @@ function createSnapshot(input?: {
     hasMoreAfter: input?.hasMoreAfter ?? false,
     change: {
       kind: 'initial',
-      viewportEffect: 'reset',
+      viewportModifier: 'reset',
     },
   }
 }
@@ -710,7 +710,7 @@ describe('React adapter', () => {
     })
   })
 
-  it('maps custom thumb dragging to native scrollTop without dispatching runtime commands', async () => {
+  it('maps custom thumb dragging to native scrollTop through runtime direct-scroll APIs', async () => {
     const runtime = createMockRuntime()
     const host = document.createElement('div')
     const root = createRoot(host)
@@ -760,9 +760,82 @@ describe('React adapter', () => {
     })
 
     expect(scrollContainer.scrollTop).toBeGreaterThan(0)
+    expect(runtime.beginDirectScroll).toHaveBeenCalledWith({
+      source: 'custom-scrollbar-drag',
+    })
+    expect(runtime.writeDirectScrollTop).toHaveBeenCalledWith(
+      expect.any(Number),
+      { source: 'custom-scrollbar-drag' },
+    )
+    expect(runtime.endDirectScroll).toHaveBeenCalledWith({
+      source: 'custom-scrollbar-drag',
+    })
     expect(runtime.dispatch).not.toHaveBeenCalled()
     expect(document.body.classList.contains('x-message-scrollbar-dragging')).toBe(
       false,
+    )
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('keeps thumb dragging functional even if runtime direct-scroll write does not mutate DOM', async () => {
+    const runtime = createMockRuntime({ directScrollWritesDom: false })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
+    })
+
+    const scrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    expect(scrollContainer).not.toBeNull()
+    if (!scrollContainer) {
+      return
+    }
+
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      value: 1200,
+    })
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      configurable: true,
+      writable: true,
+      value: 0,
+    })
+
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+
+    const thumb = host.querySelector<HTMLElement>(
+      '[data-testid="custom-scrollbar-thumb"]',
+    )
+    expect(thumb).not.toBeNull()
+    if (!thumb) {
+      return
+    }
+
+    await act(async () => {
+      thumb.dispatchEvent(createPointerEvent('pointerdown', 20, 1))
+      document.dispatchEvent(createPointerEvent('pointermove', 80, 1))
+      document.dispatchEvent(createPointerEvent('pointerup', 80, 1))
+    })
+
+    expect(scrollContainer.scrollTop).toBeGreaterThan(0)
+    expect(runtime.beginDirectScroll).toHaveBeenCalledWith({
+      source: 'custom-scrollbar-drag',
+    })
+    expect(runtime.writeDirectScrollTop).toHaveBeenCalledWith(
+      expect.any(Number),
+      { source: 'custom-scrollbar-drag' },
     )
 
     await act(async () => {
@@ -1066,9 +1139,15 @@ describe('React adapter', () => {
   })
 })
 
-function createMockRuntime(): MessageViewportRuntime<TestMessage> & {
+function createMockRuntime(options?: {
+  directScrollWritesDom?: boolean
+}): MessageViewportRuntime<TestMessage> & {
   dispatch: ReturnType<typeof vi.fn>
+  beginDirectScroll: ReturnType<typeof vi.fn>
+  writeDirectScrollTop: ReturnType<typeof vi.fn>
+  endDirectScroll: ReturnType<typeof vi.fn>
 } {
+  let attachedContainer: HTMLElement | null = null
   const snapshot: MessageViewportSnapshot<TestMessage> = {
     feedId: 'feed',
     generation: 1,
@@ -1093,11 +1172,26 @@ function createMockRuntime(): MessageViewportRuntime<TestMessage> & {
   return {
     getSnapshot: () => snapshot,
     subscribe: vi.fn(() => () => {}),
-    attach: vi.fn(),
-    detach: vi.fn(),
+    attach: vi.fn((container: HTMLElement) => {
+      attachedContainer = container
+    }),
+    detach: vi.fn(() => {
+      attachedContainer = null
+    }),
     destroy: vi.fn(),
     setDataSnapshot: vi.fn(),
     dispatch: vi.fn(),
+    beginDirectScroll: vi.fn(),
+    writeDirectScrollTop: vi.fn((scrollTop: number) => {
+      if (options?.directScrollWritesDom === false) {
+        return
+      }
+
+      if (attachedContainer) {
+        attachedContainer.scrollTop = scrollTop
+      }
+    }),
+    endDirectScroll: vi.fn(),
     notifyProjectionCommitted: vi.fn(),
     registerRow: vi.fn(),
     registerTopSentinel: vi.fn(),
@@ -1110,6 +1204,9 @@ function createMockRuntime(): MessageViewportRuntime<TestMessage> & {
     getDebugSnapshot: vi.fn(),
   } as unknown as MessageViewportRuntime<TestMessage> & {
     dispatch: ReturnType<typeof vi.fn>
+    beginDirectScroll: ReturnType<typeof vi.fn>
+    writeDirectScrollTop: ReturnType<typeof vi.fn>
+    endDirectScroll: ReturnType<typeof vi.fn>
   }
 }
 

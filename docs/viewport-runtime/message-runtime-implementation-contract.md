@@ -207,18 +207,22 @@ Runtime 不能只看 `revision` 数字。
 必须同时读取：
 
 ```text
-snapshot.change.viewportEffect
+snapshot.change.viewportModifier
 ```
 
 建议策略：
 
-| Viewport Effect        | Runtime Response                    |
+| Viewport Modifier      | Runtime Response                    |
 | ---------------------- | ----------------------------------- |
 | none                   | update projection only              |
-| possible-height-change | observe + coalesce stabilization    |
-| identity-remap         | rebind keys / anchor / height cache |
-| anchor-risk            | verify anchor, fallback if missing  |
-| full-reset             | run reset bootstrap                 |
+| prepend                | run prepend transaction             |
+| append                 | run append transaction              |
+| items-change           | refresh projection + stabilize      |
+| auto-scroll-to-bottom  | append and follow latest if allowed |
+| reset                  | run reset bootstrap                 |
+
+`remove-from-start`、`item-location`、`identity-remap`、`anchor-risk` 是保留设计槽位；
+在 runtime 有专门 transaction 前，不能作为普通 refresh 静默降级。
 
 ---
 

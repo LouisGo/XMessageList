@@ -1,6 +1,7 @@
 import { MessageViewportRuntimeController } from './core/controller/MessageViewportRuntimeController'
 import type {
   AnchorState,
+  DirectScrollInput,
   MessageDataSnapshot,
   MessageRuntimeCommand,
   MessageRuntimeItemKey,
@@ -53,6 +54,18 @@ export class MessageViewportRuntime<
 
   dispatch(command: MessageRuntimeCommand): void {
     this.controller.dispatch(command)
+  }
+
+  beginDirectScroll(input: DirectScrollInput): void {
+    this.controller.beginDirectScroll(input)
+  }
+
+  writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): void {
+    this.controller.writeDirectScrollTop(scrollTop, input)
+  }
+
+  endDirectScroll(input: DirectScrollInput): void {
+    this.controller.endDirectScroll(input)
   }
 
   subscribe(listener: RuntimeListener): () => void {

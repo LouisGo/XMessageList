@@ -13,6 +13,10 @@ import { DestinationIntentCoordinator } from '../commands/destinationIntentCoord
 import { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import { RuntimeCommandRouter } from '../commands/runtimeCommandRouter'
 import { RuntimeLifecycleCoordinator } from '../viewport/runtimeLifecycleCoordinator'
+import { RuntimeDomInputCoordinator } from '../input/runtimeDomInputCoordinator'
+import { RuntimeEventHub } from '../events/runtimeEventHub'
+import { RuntimeDataSnapshotCoordinator } from '../data/runtimeDataSnapshotCoordinator'
+import { RuntimeRecoveryAndMeasurement } from '../recovery/runtimeRecoveryAndMeasurement'
 import {
   readScrollFrameMetrics,
   ScrollFrameCoordinator,
@@ -40,13 +44,9 @@ import { AnchorCoordinator } from '../../dom/anchorCoordinator'
 import { EdgeNeedCoordinator } from '../../events/edgeNeedCoordinator'
 import { DestinationMotionCoordinator } from '../../scroll/destinationMotionCoordinator'
 import { ViewportTransactionController } from '../../transactions/viewportTransactionController'
-import {
-  CUSTOM_SCROLLBAR_DRAG_END_EVENT,
-  CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
-  CUSTOM_SCROLLBAR_DRAG_START_EVENT,
-} from '../../scroll/customScrollbarEvents'
 import type {
   AnchorState,
+  DirectScrollInput,
   MessageDataItem,
   MessageDataSnapshot,
   MessageIdentityAnchor,
@@ -77,7 +77,6 @@ import {
   DEFAULT_BOTTOM_UNLOCK_THRESHOLD_PX,
   createDefaultObserverFactory,
   createDefaultScheduler,
-  getRuntimeItemKey,
   mergeWindowConfig,
 } from '../../shared/utils'
 
@@ -116,6 +115,8 @@ export class MessageViewportRuntimeController<
 
   private readonly scrollFrame: ScrollFrameCoordinator<TMessage, TOptimistic>
 
+  private readonly domInput: RuntimeDomInputCoordinator<TMessage, TOptimistic>
+
   private readonly destinationIntent: DestinationIntentCoordinator<
     TMessage,
     TOptimistic
@@ -147,7 +148,16 @@ export class MessageViewportRuntimeController<
     TOptimistic
   >
 
+  private readonly dataSnapshotCoordinator: RuntimeDataSnapshotCoordinator<
+    TMessage,
+    TOptimistic
+  >
+
+  private readonly recovery: RuntimeRecoveryAndMeasurement<TMessage, TOptimistic>
+
   private readonly eventListeners = new Set<RuntimeEventListener>()
+
+  private readonly eventHub: RuntimeEventHub
 
   private readonly commitTimeoutMs: Required<
     NonNullable<MessageViewportRuntimeOptions['commitTimeoutMs']>
@@ -188,59 +198,6 @@ export class MessageViewportRuntimeController<
   private scrollbarDragIntentActive = false
 
   private scrollbarDragEdgeIntent: 'before' | 'after' | null = null
-
-  private readonly handleScroll = (event: Event): void => {
-    if (
-      this.isScrollbarDragScrollEvent(event) &&
-      !this.scrollIntent.hasActiveScrollWrite(this.currentFrame)
-    ) {
-      this.scrollIntent.markUserIntent(this.currentFrame)
-    }
-
-    this.scrollFrame.scheduleScrollRaf()
-  }
-
-  private readonly handleUserScrollIntent = (): void => {
-    this.scrollIntent.markUserIntent(this.currentFrame)
-    this.motion.cancel('user-interrupt')
-  }
-
-  private readonly handlePointerScrollIntent = (event: PointerEvent): void => {
-    if (this.isLikelyScrollbarPointerEvent(event)) {
-      this.scrollbarDragIntentActive = true
-    }
-
-    this.handleUserScrollIntent()
-  }
-
-  private readonly handleMouseScrollIntent = (event: MouseEvent): void => {
-    if (this.isLikelyScrollbarPointerEvent(event)) {
-      this.scrollbarDragIntentActive = true
-    }
-
-    this.handleUserScrollIntent()
-  }
-
-  private readonly handleScrollbarDragEnd = (): void => {
-    this.scrollbarDragIntentActive = false
-    this.scrollbarDragEdgeIntent = null
-  }
-
-  private readonly handleCustomScrollbarDragStart = (): void => {
-    this.scrollbarDragIntentActive = true
-    this.scrollIntent.markUserIntent(this.currentFrame)
-    this.handleUserScrollIntent()
-  }
-
-  private readonly handleCustomScrollbarDragScroll = (): void => {
-    this.scrollbarDragIntentActive = true
-    this.scrollIntent.markUserIntent(this.currentFrame)
-    this.scrollFrame.scheduleScrollRaf()
-  }
-
-  private readonly handleCustomScrollbarDragEnd = (): void => {
-    this.handleScrollbarDragEnd()
-  }
 
   constructor(options: MessageViewportRuntimeOptions = {}) {
     const feedId = options.feedId ?? ''
@@ -290,6 +247,12 @@ export class MessageViewportRuntimeController<
       options.bottomLockThresholdPx ?? DEFAULT_BOTTOM_LOCK_THRESHOLD_PX,
       options.bottomUnlockThresholdPx ?? DEFAULT_BOTTOM_UNLOCK_THRESHOLD_PX,
     )
+    this.eventHub = new RuntimeEventHub({
+      eventListeners: this.eventListeners,
+      emitDiagnostic: (input) => this.emitDiagnostic(input),
+      getCurrentToken: () => this.lifecycle.getCurrent(),
+      captureViewportAnchor: () => this.captureViewportAnchor(),
+    })
     this.projection = new ProjectionCoordinator(
       this.store,
       this.registry,
@@ -502,6 +465,21 @@ export class MessageViewportRuntimeController<
       emitDiagnostic: (input) => this.emitDiagnostic(input),
       getEdgeThresholdPx: (metrics) => this.getEdgeThresholdPx(metrics),
     })
+    this.domInput = new RuntimeDomInputCoordinator({
+      registry: this.registry,
+      scrollIntent: this.scrollIntent,
+      motion: this.motion,
+      scrollFrame: this.scrollFrame,
+      getState: () => this.state,
+      getCurrentFrame: () => this.currentFrame,
+      setScrollbarDragIntentActive: (active) => {
+        this.scrollbarDragIntentActive = active
+      },
+      setScrollbarDragEdgeIntent: (edge) => {
+        this.scrollbarDragEdgeIntent = edge
+      },
+      emitDiagnostic: (input) => this.emitDiagnostic(input),
+    })
     this.resizeStabilization = new ResizeStabilizationCoordinator({
       scheduler: this.scheduler,
       observerFactory: this.observerFactory,
@@ -578,6 +556,45 @@ export class MessageViewportRuntimeController<
         this.emitViewportAnchorChanged(reason),
       emitDiagnostic: (input) => this.emitDiagnostic(input),
     })
+    this.recovery = new RuntimeRecoveryAndMeasurement({
+      scheduler: this.scheduler,
+      registry: this.registry,
+      lifecycle: this.lifecycle,
+      store: this.store,
+      measurement: this.measurement,
+      spacer: this.spacer,
+      motion: this.motion,
+      projection: this.projection,
+      scrollIntent: this.scrollIntent,
+      getState: () => this.state,
+      setState: (state) => {
+        this.state = state
+      },
+      getCurrentFrame: () => this.currentFrame,
+      setCurrentFrame: (frame) => {
+        this.currentFrame = frame
+      },
+      emitDiagnostic: (input) => this.emitDiagnostic(input),
+    })
+    this.dataSnapshotCoordinator = new RuntimeDataSnapshotCoordinator({
+      renderWindow: this.renderWindow,
+      runtimeLifecycle: this.runtimeLifecycle,
+      scrollIntent: this.scrollIntent,
+      transactions: this.transactions,
+      destinationIntent: this.destinationIntent,
+      getDataSnapshot: () => this.dataSnapshot,
+      setDataSnapshot: (snapshot) => {
+        this.dataSnapshot = snapshot
+      },
+      getState: () => this.state,
+      emitDiagnostic: (input) => this.emitDiagnostic(input),
+      emitError: (code) => this.emitError(code),
+      tryRunPendingBootstrap: () => this.tryRunPendingBootstrap(),
+      enqueuePrependTransaction: () => this.enqueuePrependTransaction(),
+      enqueueAppendTransaction: (effect) => this.enqueueAppendTransaction(effect),
+      enqueueProjectionRefresh: () => this.enqueueProjectionRefresh(),
+      enqueueResetTransaction: (reason) => this.enqueueResetTransaction(reason),
+    })
   }
 
   attach(container: HTMLElement): void {
@@ -593,111 +610,23 @@ export class MessageViewportRuntimeController<
   }
 
   setDataSnapshot(snapshot: MessageDataSnapshot<TMessage, TOptimistic>): void {
-    if (this.state === 'DESTROYED') {
-      return
-    }
-
-    const previous = this.dataSnapshot
-    const generationChanged =
-      previous?.feedId !== snapshot.feedId ||
-      previous?.generation !== snapshot.generation
-    const dataIdentityChanged =
-      generationChanged ||
-      previous?.revision !== snapshot.revision
-
-    if (generationChanged) {
-      // feed/generation 是 runtime 隔离边界；旧 generation 的 measurement、事务和 edge latch 都不能复用。
-      this.resetForGeneration(snapshot.feedId, snapshot.generation)
-    } else if (dataIdentityChanged) {
-      // 派生 index/range cache 只能在同一个 data revision 内复用；不能把 items array 引用当作数据身份。
-      this.renderWindow.invalidateIndexCache()
-    }
-
-    this.dataSnapshot = snapshot
-    if (generationChanged) {
-      this.emitDiagnostic({
-        channel: 'lifecycle',
-        severity: 'info',
-        name: 'lifecycle.generationReset',
-        correlationId:
-          `data:${snapshot.feedId}:${snapshot.generation}:${snapshot.revision}`,
-        details: () => ({
-          previousFeedId: previous?.feedId ?? null,
-          previousGeneration: previous?.generation ?? null,
-          nextFeedId: snapshot.feedId,
-          nextGeneration: snapshot.generation,
-        }),
-      })
-    }
-    this.emitDiagnostic({
-      channel: 'data',
-      severity: 'debug',
-      name: 'data.setSnapshot',
-      correlationId:
-        `data:${snapshot.feedId}:${snapshot.generation}:${snapshot.revision}`,
-      details: () => ({
-        revision: snapshot.revision,
-        itemCount: snapshot.items.length,
-        effect: snapshot.change.viewportEffect,
-        kind: snapshot.change.kind,
-        hasMoreBefore: snapshot.hasMoreBefore,
-        hasMoreAfter: snapshot.hasMoreAfter,
-        anchor: snapshot.anchor ?? null,
-        anchorStatus: snapshot.anchorStatus ?? null,
-        firstKey: snapshot.items[0]
-          ? getRuntimeItemKey(snapshot.items[0])
-          : null,
-        lastKey: snapshot.items[snapshot.items.length - 1]
-          ? getRuntimeItemKey(snapshot.items[snapshot.items.length - 1])
-          : null,
-        generationChanged,
-      }),
-    })
-
-    if (snapshot.hasMoreAfter && this.scrollIntent.getBottomLockState() === 'LOCKED') {
-      // 只有真正到达 feed latest 才能保持 LOCKED；partial after window 的物理底部不是会话底部。
-      this.scrollIntent.setBottomLockState('UNLOCKED')
-    }
-
-    if (snapshot.change.viewportEffect !== 'none') {
-      this.transactions.dropBySupersedeKey('window-slide')
-    }
-
-    if (this.tryRunPendingBootstrap()) {
-      return
-    }
-
-    if (this.destinationIntent.drivePendingFollowBottom(snapshot)) {
-      return
-    }
-
-    if (this.destinationIntent.drivePendingDestinationRequest(snapshot)) {
-      return
-    }
-
-    if (this.state === 'INITIAL' || this.state === 'ATTACHED') {
-      return
-    }
-
-    switch (snapshot.change.viewportEffect) {
-      case 'prepend':
-        this.enqueuePrependTransaction()
-        break
-      case 'append':
-      case 'auto-scroll-to-bottom':
-        this.enqueueAppendTransaction(snapshot.change.viewportEffect)
-        break
-      case 'reset':
-        this.dispatch({ type: 'reset', reason: 'data-reset' })
-        break
-      default:
-        this.enqueueProjectionRefresh()
-        break
-    }
+    this.dataSnapshotCoordinator.setDataSnapshot(snapshot)
   }
 
   dispatch(command: MessageRuntimeCommand): void {
     this.commandRouter.dispatch(command)
+  }
+
+  beginDirectScroll(input: DirectScrollInput): void {
+    this.domInput.beginDirectScroll(input)
+  }
+
+  writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): void {
+    this.domInput.writeDirectScrollTop(scrollTop, input)
+  }
+
+  endDirectScroll(input: DirectScrollInput): void {
+    this.domInput.endDirectScroll(input)
   }
 
   subscribe(listener: RuntimeListener): () => void {
@@ -705,11 +634,7 @@ export class MessageViewportRuntimeController<
   }
 
   subscribeEvent(listener: RuntimeEventListener): () => void {
-    this.eventListeners.add(listener)
-
-    return () => {
-      this.eventListeners.delete(listener)
-    }
+    return this.eventHub.subscribeEvent(listener)
   }
 
   getSnapshot(): MessageViewportSnapshot<TMessage, TOptimistic> {
@@ -811,10 +736,6 @@ export class MessageViewportRuntimeController<
       this.stateAxes.getReadySubstate() === 'READY_IDLE' &&
       snapshot.bootstrapState === 'READY'
     )
-  }
-
-  private resetForGeneration(feedId: string, generation: number): void {
-    this.runtimeLifecycle.resetForGeneration(feedId, generation)
   }
 
   private enqueuePrependTransaction(): void {
@@ -959,36 +880,7 @@ export class MessageViewportRuntimeController<
   private recoverAfterCommitFailure(
     input: CommitRecoveryInput<TMessage, TOptimistic>,
   ): void {
-    if (!this.lifecycle.isCurrent(input.token.feedId, input.token.generation)) {
-      return
-    }
-
-    this.emitDiagnostic({
-      channel: 'recovery',
-      severity: 'warn',
-      name: 'recovery.commitFailure',
-      details: () => ({
-        token: input.token,
-        nextState: input.nextState,
-        restoreBottomLockState: input.restoreBottomLockState ?? null,
-        hasRestoreSnapshot: Boolean(input.restoreSnapshot),
-        hasRestoreProjection: Boolean(input.restoreProjection),
-      }),
-    })
-
-    // 先恢复 runtime 内部状态，再发布 projection；这样订阅者拿到新 snapshot 时，
-    // debug state / 后续 command 判断都已经脱离失败事务的中间态。
-    this.state = input.nextState
-
-    if (typeof input.restoreBottomLockState === 'string') {
-      this.scrollIntent.setBottomLockState(input.restoreBottomLockState)
-    }
-
-    if (input.restoreSnapshot) {
-      this.store.setSnapshot(input.restoreSnapshot)
-    } else if (input.restoreProjection) {
-      this.projection.publish(input.restoreProjection)
-    }
+    this.recovery.recoverAfterCommitFailure(input)
   }
 
   /**
@@ -998,52 +890,11 @@ export class MessageViewportRuntimeController<
   private deriveRuntimeStateFromSnapshot(
     snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
   ): RuntimeState {
-    if (!this.registry.getContainer()) {
-      return 'INITIAL'
-    }
-
-    return snapshot.bootstrapState === 'READY' || snapshot.bootstrapState === 'READY_EMPTY'
-      ? 'READY'
-      : 'ATTACHED'
+    return this.recovery.deriveRuntimeStateFromSnapshot(snapshot)
   }
 
   private measureCurrentWindow(): HeightDelta[] {
-    const snapshot = this.store.getSnapshot()
-    const container = this.registry.getContainer()
-
-    if (!container) {
-      return []
-    }
-
-    const deltas = this.measurement.measureMountedRows(
-      snapshot.items,
-      snapshot.revision,
-      container.clientWidth,
-    )
-
-    if (deltas.length > 0) {
-      this.spacer.invalidateEstimateCache()
-      this.emitDiagnostic({
-        channel: 'measurement',
-        severity: 'debug',
-        name: 'measurement.mountedRows',
-        correlationId:
-          `data:${snapshot.feedId}:${snapshot.generation}:${snapshot.revision}`,
-        details: () => ({
-          revision: snapshot.revision,
-          deltaCount: deltas.length,
-          totalDelta: deltas.reduce((total, delta) => total + delta.delta, 0),
-          sample: deltas.slice(0, 5).map((delta) => ({
-            key: delta.serializedKey,
-            previousHeight: delta.previousHeight,
-            nextHeight: delta.nextHeight,
-            delta: delta.delta,
-          })),
-        }),
-      })
-    }
-
-    return deltas
+    return this.recovery.measureCurrentWindow()
   }
 
   private keepCurrentWindow(items: MessageDataItem<TMessage, TOptimistic>[]): RenderWindow {
@@ -1234,27 +1085,6 @@ export class MessageViewportRuntimeController<
     return metrics.clientHeight * this.config.overscan
   }
 
-  private isScrollbarDragScrollEvent(event: Event): boolean {
-    return this.scrollbarDragIntentActive && (event.isTrusted || event instanceof UIEvent)
-  }
-
-  private isLikelyScrollbarPointerEvent(event: MouseEvent | PointerEvent): boolean {
-    const container = this.registry.getContainer()
-
-    if (!container || event.target !== container) {
-      return false
-    }
-
-    const rect = container.getBoundingClientRect()
-    const verticalScrollbarWidth = container.offsetWidth - container.clientWidth
-
-    if (verticalScrollbarWidth <= 0) {
-      return true
-    }
-
-    return event.clientX >= rect.right - verticalScrollbarWidth - 2
-  }
-
   private readContainerSize(container: HTMLElement): ContainerSize {
     return {
       width: container.clientWidth,
@@ -1263,53 +1093,11 @@ export class MessageViewportRuntimeController<
   }
 
   private attachDomListeners(container: HTMLElement): void {
-    container.addEventListener('scroll', this.handleScroll, { passive: true })
-    container.addEventListener('wheel', this.handleUserScrollIntent, { passive: true })
-    container.addEventListener('touchstart', this.handleUserScrollIntent, {
-      passive: true,
-    })
-    container.addEventListener('pointerdown', this.handlePointerScrollIntent)
-    container.addEventListener('mousedown', this.handleMouseScrollIntent)
-    container.addEventListener('keydown', this.handleUserScrollIntent)
-    container.addEventListener(
-      CUSTOM_SCROLLBAR_DRAG_START_EVENT,
-      this.handleCustomScrollbarDragStart as EventListener,
-    )
-    container.addEventListener(
-      CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
-      this.handleCustomScrollbarDragScroll as EventListener,
-    )
-    container.addEventListener(
-      CUSTOM_SCROLLBAR_DRAG_END_EVENT,
-      this.handleCustomScrollbarDragEnd as EventListener,
-    )
-    window.addEventListener('pointerup', this.handleScrollbarDragEnd)
-    window.addEventListener('mouseup', this.handleScrollbarDragEnd)
-    window.addEventListener('blur', this.handleScrollbarDragEnd)
+    this.domInput.attachDomListeners(container)
   }
 
   private detachDomListeners(container: HTMLElement): void {
-    container.removeEventListener('scroll', this.handleScroll)
-    container.removeEventListener('wheel', this.handleUserScrollIntent)
-    container.removeEventListener('touchstart', this.handleUserScrollIntent)
-    container.removeEventListener('pointerdown', this.handlePointerScrollIntent)
-    container.removeEventListener('mousedown', this.handleMouseScrollIntent)
-    container.removeEventListener('keydown', this.handleUserScrollIntent)
-    container.removeEventListener(
-      CUSTOM_SCROLLBAR_DRAG_START_EVENT,
-      this.handleCustomScrollbarDragStart as EventListener,
-    )
-    container.removeEventListener(
-      CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
-      this.handleCustomScrollbarDragScroll as EventListener,
-    )
-    container.removeEventListener(
-      CUSTOM_SCROLLBAR_DRAG_END_EVENT,
-      this.handleCustomScrollbarDragEnd as EventListener,
-    )
-    window.removeEventListener('pointerup', this.handleScrollbarDragEnd)
-    window.removeEventListener('mouseup', this.handleScrollbarDragEnd)
-    window.removeEventListener('blur', this.handleScrollbarDragEnd)
+    this.domInput.detachDomListeners(container)
   }
 
   private async waitForBootstrapSettle(
@@ -1341,7 +1129,6 @@ export class MessageViewportRuntimeController<
       previousScrollHeight = nextScrollHeight
 
       if (this.scrollIntent.getBottomLockState() === 'LOCKED') {
-        // 图片等异步内容继续撑高 scrollHeight 时，吸底 bootstrap 需要跨稳定帧追到底。
         this.motion.scrollToBottom('followBottom')
       }
     }
@@ -1373,45 +1160,7 @@ export class MessageViewportRuntimeController<
   }
 
   private emitEvent(event: MessageViewportRuntimeEvent): void {
-    if (event.type !== 'viewportDiagnostic') {
-      this.emitEventDiagnostic(event)
-    }
-
-    for (const listener of this.eventListeners) {
-      listener(event)
-    }
-  }
-
-  private emitEventDiagnostic(event: MessageViewportRuntimeEvent): void {
-    switch (event.type) {
-      case 'needMoreBefore':
-      case 'needMoreAfter':
-      case 'needLatestMessages':
-      case 'needMessagesAround':
-        this.emitDiagnostic({
-          channel: 'edge',
-          severity: 'info',
-          name: `event.${event.type}`,
-          details: () => ({
-            event,
-          }),
-        })
-        break
-      case 'viewportReady':
-      case 'destinationSettled':
-        this.emitDiagnostic({
-          channel: 'lifecycle',
-          severity: 'info',
-          name: `event.${event.type}`,
-          details: () => ({
-            event,
-          }),
-        })
-        break
-      case 'viewportError':
-      case 'viewportAnchorChanged':
-        break
-    }
+    this.eventHub.emitEvent(event)
   }
 
   private emitDiagnostic(input: RuntimeDiagnosticInput): void {
@@ -1450,21 +1199,6 @@ export class MessageViewportRuntimeController<
   }
 
   private emitError(code: string): void {
-    const token = this.lifecycle.getCurrent()
-    this.emitDiagnostic({
-      channel: 'recovery',
-      severity: 'error',
-      name: 'runtime.error',
-      details: () => ({
-        code,
-        token,
-      }),
-    })
-    this.emitEvent({
-      type: 'viewportError',
-      feedId: token.feedId,
-      generation: token.generation,
-      code,
-    })
+    this.eventHub.emitError(code)
   }
 }

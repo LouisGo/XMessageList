@@ -5,11 +5,7 @@ import {
   useEffect,
   useRef,
 } from 'react'
-import {
-  CUSTOM_SCROLLBAR_DRAG_END_EVENT,
-  CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
-  CUSTOM_SCROLLBAR_DRAG_START_EVENT,
-} from '../../runtime/scroll/customScrollbarEvents'
+import type { DirectScrollSource, MessageViewportRuntime } from '../../runtime'
 import {
   computeCustomScrollbarGeometry,
   type CustomScrollbarGeometry,
@@ -17,6 +13,7 @@ import {
 
 type CustomScrollbarProps = {
   container: HTMLElement | null
+  runtime: MessageViewportRuntime<unknown, unknown>
   enabled?: boolean
   geometryVersion?: number
 }
@@ -92,6 +89,7 @@ body.x-message-scrollbar-dragging {
 
 export function CustomScrollbar({
   container,
+  runtime,
   enabled = true,
   geometryVersion,
 }: CustomScrollbarProps) {
@@ -112,8 +110,38 @@ export function CustomScrollbar({
   const dragStateRef = useRef<DragState | null>(null)
   const hoverRef = useRef(false)
 
-  const dispatchScrollbarEvent = (eventName: string) => {
-    containerRef.current?.dispatchEvent(new CustomEvent(eventName))
+  const directScrollInput = (source: DirectScrollSource) => ({ source })
+
+  const beginDirectScroll = (source: DirectScrollSource) => {
+    runtime.beginDirectScroll(directScrollInput(source))
+  }
+
+  const writeDirectScrollTop = (
+    scrollTop: number,
+    source: DirectScrollSource,
+  ) => {
+    runtime.writeDirectScrollTop(scrollTop, directScrollInput(source))
+  }
+
+  const commitDirectScrollTop = (
+    nextScrollTop: number,
+    source: DirectScrollSource,
+  ) => {
+    if (!container) {
+      return
+    }
+
+    // runtime 负责记录 direct-scroll 语义、取消 motion 和驱动后续测量；
+    // 这里的 DOM 写入兜底只保证当前拖拽交互即时生效，避免 runtime 尚未附着
+    // 或容器引用切换时出现“thumb 可拖但 scrollTop 不动”的功能回退。
+    writeDirectScrollTop(nextScrollTop, source)
+    if (Math.abs(container.scrollTop - nextScrollTop) >= scrollWriteEpsilonPx) {
+      container.scrollTop = nextScrollTop
+    }
+  }
+
+  const endDirectScroll = (source: DirectScrollSource) => {
+    runtime.endDirectScroll(directScrollInput(source))
   }
 
   const setVisible = (visible: boolean) => {
@@ -194,6 +222,8 @@ export function CustomScrollbar({
 
     const pointerTrackY = drag.pointerY - trackRect.top
 
+    // 内容高度变化后 thumb 位置会重新计算；保持指针相对 thumb 的抓取点不变，
+    // 否则分页追加/预加载会让正在拖拽的 thumb 在手指下跳动。
     dragStateRef.current = {
       ...drag,
       grabOffset: pointerTrackY - geometry.thumbTop,
@@ -238,8 +268,7 @@ export function CustomScrollbar({
       return
     }
 
-    container.scrollTop = nextScrollTop
-    dispatchScrollbarEvent(CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT)
+    commitDirectScrollTop(nextScrollTop, 'custom-scrollbar-drag')
     syncNow({ reveal: true, keepVisible: true })
   }
 
@@ -281,6 +310,8 @@ export function CustomScrollbar({
       return
     }
 
+    // 指针拖出 track 边界时仍持续写入边缘 scrollTop，让 runtime 的 edge
+    // recheck 可以继续触发分页；如果本帧没有实际滚动，就停止续帧避免 storm。
     const beforeScrollTop = container.scrollTop
     writeScrollTopFromPointer(drag.pointerY, drag)
 
@@ -460,7 +491,7 @@ export function CustomScrollbar({
       clearDragFrame()
       document.body.classList.remove('x-message-scrollbar-dragging')
       trackRef.current?.classList.remove('is-dragging')
-      dispatchScrollbarEvent(CUSTOM_SCROLLBAR_DRAG_END_EVENT)
+      endDirectScroll('custom-scrollbar-drag')
       scheduleHide()
     }
 
@@ -476,7 +507,7 @@ export function CustomScrollbar({
       document.removeEventListener('pointercancel', endDrag)
       clearDragFrame()
     }
-  }, [container, enabled])
+  }, [container, enabled, runtime])
 
   useEffect(() => {
     return () => {
@@ -485,11 +516,11 @@ export function CustomScrollbar({
         clearDragFrame()
         document.body.classList.remove('x-message-scrollbar-dragging')
         trackRef.current?.classList.remove('is-dragging')
-        dispatchScrollbarEvent(CUSTOM_SCROLLBAR_DRAG_END_EVENT)
+        endDirectScroll('custom-scrollbar-drag')
       }
       clearHideTimer()
     }
-  }, [])
+  }, [runtime])
 
   const startDrag = (
     event: ReactPointerEvent<HTMLDivElement>,
@@ -518,7 +549,7 @@ export function CustomScrollbar({
     trackRef.current?.classList.add('is-dragging')
     setVisible(true)
     clearHideTimer()
-    dispatchScrollbarEvent(CUSTOM_SCROLLBAR_DRAG_START_EVENT)
+    beginDirectScroll('custom-scrollbar-drag')
     scheduleDragContinuation()
   }
 
@@ -565,10 +596,9 @@ export function CustomScrollbar({
         ? Math.max(0, container.scrollTop - viewportPage)
         : Math.min(geometry.maxScrollTop, container.scrollTop + viewportPage)
 
-    dispatchScrollbarEvent(CUSTOM_SCROLLBAR_DRAG_START_EVENT)
-    container.scrollTop = nextScrollTop
-    dispatchScrollbarEvent(CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT)
-    dispatchScrollbarEvent(CUSTOM_SCROLLBAR_DRAG_END_EVENT)
+    beginDirectScroll('custom-scrollbar-track')
+    commitDirectScrollTop(nextScrollTop, 'custom-scrollbar-track')
+    endDirectScroll('custom-scrollbar-track')
     syncNow({ reveal: true })
   }
 

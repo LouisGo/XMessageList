@@ -343,6 +343,7 @@ export function MessageViewport<
       </RuntimeScrollContainer>
       <CustomScrollbar
         container={containerElement}
+        runtime={runtime}
         enabled={customScrollbar}
         geometryVersion={snapshot.revision}
       />

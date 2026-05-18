@@ -67,8 +67,8 @@ Virtuoso 的主要价值是 scroll modifier，而不是具体动画执行。
 
 转译到本 runtime：
 
-- `MessageDataSnapshot.change.viewportEffect` 是 runtime 的 scroll modifier 等价物。
-- React 不传滚动策略 prop，runtime 在 transaction 内解释 effect。
+- `MessageDataSnapshot.change.viewportModifier` 是 runtime 的 scroll modifier 等价物。
+- 旧 `viewportEffect` 只作为迁移期输入兼容；React 不传滚动策略 prop，runtime 在 transaction 内解释 modifier。
 - 动画只在 effect / command 已经确定目标语义后发生。
 - `auto-scroll-to-bottom` 只作为外部库术语参考；本 runtime 不新增同名 public
   command，LOCKED append 追底由 runtime 内部处理。
@@ -441,6 +441,8 @@ command jump(target identity, optional origin identity)
   作为实际定位目标；`destinationSettled` 保留原始 `target`，并通过
   `resolution: 'fallback-deleted'` 和 `resolvedTarget` 暴露 fallback 结果。
   展示层可以据此提示“原消息已删除”，不应该把 fallback 行伪装成原目标高亮。
+- 如果 data runtime 返回 `unavailable`，不应发布普通 destination-ready snapshot
+  给 viewport runtime；该状态由 data/app 层按 unavailable/error 策略消费。
 - target DOM fallback 仍按现有 nearest measurable row 逻辑。
 - 如果 command 被新的 jump / followBottom supersede，取消当前 motion。
 - 动画期间 scroll source 是 `jump`。

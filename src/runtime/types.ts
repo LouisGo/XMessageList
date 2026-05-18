@@ -57,20 +57,32 @@ export type MessageDataItem<TMessage = unknown, TOptimistic = unknown> =
   | TombstoneMessageDataItem
 
 /**
- * 数据变化对 viewport 的语义影响。它借鉴 scroll modifier 的显式建模，
- * 但只进入 runtime transaction，不作为 React prop 暴露。
+ * 数据 revision 对 viewport transaction 的显式提示。它借鉴 scroll modifier
+ * 的显式建模，但只进入 runtime transaction，不作为 React prop 暴露。
  */
-export type ViewportEffect =
+export type ViewportModifier =
   | 'none'
   | 'prepend'
   | 'append'
   | 'items-change'
-  | 'remove-from-start'
   | 'auto-scroll-to-bottom'
+  | 'reset'
+
+/**
+ * Reserved modifiers are documented design slots, but they must not silently
+ * degrade into refresh behavior until the runtime has dedicated transactions.
+ */
+export type ReservedViewportModifier =
+  | 'remove-from-start'
   | 'item-location'
   | 'identity-remap'
   | 'anchor-risk'
-  | 'reset'
+
+/**
+ * @deprecated Use ViewportModifier / viewportModifier. Kept as an input
+ * compatibility alias while older call sites migrate.
+ */
+export type ViewportEffect = ViewportModifier | ReservedViewportModifier
 
 export type MessageDataSnapshotChange = {
   kind:
@@ -81,7 +93,11 @@ export type MessageDataSnapshotChange = {
     | 'delete'
     | 'identityRebind'
     | 'reset'
-  viewportEffect: ViewportEffect
+  viewportModifier?: ViewportModifier | ReservedViewportModifier
+  /**
+   * @deprecated Use viewportModifier.
+   */
+  viewportEffect?: ViewportEffect
 }
 
 export type MessageDataSnapshot<TMessage = unknown, TOptimistic = unknown> = {
@@ -184,6 +200,16 @@ export type MessageRuntimeCommand =
   | { type: 'restore'; target: AnchorState | MessageIdentityAnchor }
   | { type: 'followBottom' }
   | { type: 'reset'; reason: string }
+
+// direct-scroll 只允许表达 runtime 已知的自定义滚动条输入来源。
+// 新 source 需要先明确是否等价于用户滚动，以及是否要取消当前 motion。
+export type DirectScrollSource =
+  | 'custom-scrollbar-drag'
+  | 'custom-scrollbar-track'
+
+export type DirectScrollInput = {
+  source: DirectScrollSource
+}
 
 export type RuntimeListener = () => void
 

@@ -15,6 +15,8 @@ export type {
   CommittedMessageDataItem,
   DiagnosticChannel,
   DiagnosticSeverity,
+  DirectScrollInput,
+  DirectScrollSource,
   HeightRecord,
   MessageDataItem,
   MessageDataSnapshot,
@@ -42,5 +44,6 @@ export type {
   ViewportDiagnosticRecord,
   ViewportEdgeState,
   ViewportEffect,
+  ViewportModifier,
   WindowConfig,
 } from './types'

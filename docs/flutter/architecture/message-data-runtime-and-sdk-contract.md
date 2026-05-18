@@ -143,17 +143,19 @@ MessageDataSnapshot {
 
 MessageDataSnapshotChange {
   kind: initial | append | prepend | patch | delete | identityRebind | reset
-  viewportEffect:
+  viewportModifier:
     none
-    possibleHeightChange
-    identityRemap
-    anchorRisk
-    fullReset
+    prepend
+    append
+    itemsChange
+    autoScrollToBottom
+    reset
 }
 ```
 
 `revision` 表达 data snapshot identity 已变化，不代表 viewport 必须滚动。
-Viewport runtime 必须同时读取 `change.viewportEffect`。
+Viewport runtime 必须同时读取 `change.viewportModifier`。`unavailable` 不进入普通
+destination-ready snapshot；只有 `normal | deleted` 会交给 viewport runtime 定位。
 
 ## 6. Entry Protocols
 

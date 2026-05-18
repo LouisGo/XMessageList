@@ -29,7 +29,7 @@ React 只拥有：
 
 - message row JSX
 - unread marker / loading indicator / bottom-follow affordance / local interaction UI
-- custom scrollbar overlay：只隐藏 native scrollbar 外观、绘制 thumb，并在 thumb drag / track click 时写现有 scroll container 的 `scrollTop`
+- custom scrollbar overlay：只隐藏 native scrollbar 外观、绘制 thumb，并在 thumb drag / track click 时通过 runtime direct-scroll API 写现有 scroll container 的 `scrollTop`
 - `useSyncExternalStore` 订阅 runtime snapshot
 - 通过 ref callback 把 DOM 节点注册给 runtime
 - 在订阅建立后 attach scroll container，避免 pending bootstrap projection 丢失 commit ack
@@ -37,8 +37,9 @@ React 只拥有：
 
 Custom scrollbar 不进入 viewport runtime core。Runtime 仍以同一个 scroll
 container 的原生 scroll event、`scrollTop`、`clientHeight`、`scrollHeight`
-作为真相；overlay 不能拥有 RenderWindow、anchor、edge paging、bottom lock 或
-scroll motion 语义。
+作为真相；overlay 只能通过 `beginDirectScroll` / `writeDirectScrollTop` /
+`endDirectScroll` 表达 direct manipulation，不能拥有 RenderWindow、anchor、
+edge paging、bottom lock 或 scroll motion 语义。
 
 `src/react` 不是 demo-only 的薄包装。它应该提供标准 IM viewport shell：
 
@@ -79,6 +80,10 @@ neighbor fallback。Viewport runtime 只做 projection 内的 DOM fallback：目
 当 `anchorStatus: deleted` 时，Viewport runtime 必须把 `snapshot.anchor` 作为
 实际 jump/restore 目标消费，不能继续要求原始 deleted messageId 出现在
 DataWindow 中。
+
+当 data runtime 判断目标 `unavailable` 时，不发布普通 destination-ready
+`MessageDataSnapshot` 给 viewport runtime；它应发布 data unavailable/error
+状态或按 app policy 回退。Viewport runtime 当前只消费 `normal | deleted`。
 
 ## 当前代码形态
 

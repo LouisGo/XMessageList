@@ -10,11 +10,6 @@ import {
   serializeRuntimeItemKey,
 } from '..'
 import {
-  CUSTOM_SCROLLBAR_DRAG_END_EVENT,
-  CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT,
-  CUSTOM_SCROLLBAR_DRAG_START_EVENT,
-} from '../../runtime/scroll/customScrollbarEvents'
-import {
   createContainer,
   createFakeObservers,
   FakeScheduler,
@@ -69,7 +64,7 @@ function createSnapshot(input: {
           : input.effect === 'append' || input.effect === 'auto-scroll-to-bottom'
             ? 'append'
             : 'initial',
-      viewportEffect: input.effect,
+      viewportModifier: input.effect,
     },
   }
 }
@@ -94,7 +89,7 @@ function cloneSnapshotWithItems(
         : snapshot.anchor,
     change: {
       kind: 'patch',
-      viewportEffect: input.effect ?? 'items-change',
+      viewportModifier: input.effect ?? 'items-change',
     },
   }
 }
@@ -2406,6 +2401,36 @@ describe('MessageViewportRuntime', () => {
     expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
   })
 
+  it('rejects reserved viewport modifiers instead of silently refreshing', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 10, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    runtime.setDataSnapshot({
+      ...createSnapshot({ count: 10, revision: 2, effect: 'items-change' }),
+      change: {
+        kind: 'patch',
+        viewportModifier: 'anchor-risk',
+      },
+    })
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'viewportError',
+        code: 'viewport-modifier-anchor-risk-not-implemented',
+      }),
+    )
+  })
+
   it('treats custom scrollbar drag as user edge intent', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
@@ -2421,13 +2446,47 @@ describe('MessageViewportRuntime', () => {
     await flushBootstrap(runtime, scheduler, container)
     await flushScrollFrames(container, scheduler, 3)
 
-    container.dispatchEvent(new CustomEvent(CUSTOM_SCROLLBAR_DRAG_START_EVENT))
-    container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
-    container.dispatchEvent(new CustomEvent(CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT))
+    runtime.beginDirectScroll({ source: 'custom-scrollbar-drag' })
+    runtime.writeDirectScrollTop(
+      Math.max(0, container.scrollHeight - container.clientHeight),
+      { source: 'custom-scrollbar-drag' },
+    )
     await flushTrustedScrollFrame(container, scheduler)
-    container.dispatchEvent(new CustomEvent(CUSTOM_SCROLLBAR_DRAG_END_EVENT))
+    runtime.endDirectScroll({ source: 'custom-scrollbar-drag' })
 
     expect(events.filter((event) => event === 'needMoreAfter')).toHaveLength(1)
+  })
+
+  it('cancels active motion when direct scrollbar drag begins', async () => {
+    const { runtime, scheduler } = createRuntime({
+      debug: {
+        diagnostics: {
+          channels: ['motion', 'scroll'],
+          emitEvents: false,
+          maxEntries: 100,
+        },
+      },
+    })
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 80, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    await startFollowBottomMotionFromMiddle({ runtime, scheduler, container })
+
+    runtime.beginDirectScroll({ source: 'custom-scrollbar-drag' })
+
+    expect(runtime.getDebugSnapshot().motionActive).toBe(false)
+    expect(runtime.getDiagnosticRecords()).toContainEqual(
+      expect.objectContaining({
+        name: 'destinationMotion.cancel',
+        details: expect.objectContaining({
+          reason: 'user-interrupt',
+        }),
+      }),
+    )
   })
 
   it('continues top edge paging after prepend while scrollbar drag stays at the edge', async () => {
@@ -2534,9 +2593,11 @@ describe('MessageViewportRuntime', () => {
     await flushBootstrap(runtime, scheduler, container)
     await flushScrollFrames(container, scheduler, 3)
 
-    container.dispatchEvent(new CustomEvent(CUSTOM_SCROLLBAR_DRAG_START_EVENT))
-    container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
-    container.dispatchEvent(new CustomEvent(CUSTOM_SCROLLBAR_DRAG_SCROLL_EVENT))
+    runtime.beginDirectScroll({ source: 'custom-scrollbar-drag' })
+    runtime.writeDirectScrollTop(
+      Math.max(0, container.scrollHeight - container.clientHeight),
+      { source: 'custom-scrollbar-drag' },
+    )
     await flushTrustedScrollFrame(container, scheduler)
     expect(events.filter((event) => event === 'needMoreAfter')).toHaveLength(1)
 
@@ -2561,7 +2622,7 @@ describe('MessageViewportRuntime', () => {
 
     expect(events.filter((event) => event === 'needMoreAfter')).toHaveLength(1)
 
-    container.dispatchEvent(new CustomEvent(CUSTOM_SCROLLBAR_DRAG_END_EVENT))
+    runtime.endDirectScroll({ source: 'custom-scrollbar-drag' })
   })
 
   it('does not release top edge latch for recovery scroll after prepend', async () => {
