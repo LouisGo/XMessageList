@@ -80,7 +80,6 @@ import {
   getDistanceToBottom,
   getRuntimeItemKey,
   mergeWindowConfig,
-  serializeRuntimeItemKey,
 } from '../shared/utils'
 
 /**
@@ -2310,20 +2309,10 @@ export class MessageViewportRuntimeController<
     }
 
     const anchorIndex = this.renderWindow.findIndexByKey(data.items, anchor.key)
-    const itemIndexByKey = new Map<string, number>()
-
-    for (let index = 0; index < data.items.length; index += 1) {
-      const item = data.items[index]
-
-      if (item) {
-        itemIndexByKey.set(serializeRuntimeItemKey(getRuntimeItemKey(item)), index)
-      }
-    }
 
     // 只补偿 anchor 之前的高度变化；anchor 之后的内容变高不应推动当前阅读位置。
     const deltaAboveAnchor = deltas.reduce((total, delta) => {
-      const deltaIndex =
-        itemIndexByKey.get(serializeRuntimeItemKey(delta.key)) ?? -1
+      const deltaIndex = this.renderWindow.findIndexByKey(data.items, delta.key)
       return deltaIndex >= 0 && deltaIndex < anchorIndex ? total + delta.delta : total
     }, 0)
 
