@@ -906,6 +906,103 @@ describe('MessageViewportRuntime', () => {
     expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
   })
 
+  it('rebuilds the latest window before follow-bottom when spacer is too large', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 300,
+      revision: 1,
+      effect: 'reset',
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    expect(runtime.getSnapshot().topSpacer).toBeGreaterThan(10_000)
+    events.length = 0
+
+    runtime.dispatch({ type: 'followBottom' })
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'needLatestMessages',
+        reason: 'bottom-follow',
+      }),
+    )
+  })
+
+  it('requests an around-target rebuild for local jumps when spacer is too large', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 300,
+      revision: 1,
+      effect: 'reset',
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    events.length = 0
+
+    runtime.dispatch({ type: 'jump', target: { messageId: 'm-100' } })
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'needMessagesAround',
+        reason: 'jump',
+        target: { messageId: 'm-100' },
+      }),
+    )
+  })
+
+  it('requests an around-target rebuild for local restores when spacer is too large', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 300,
+      revision: 1,
+      effect: 'reset',
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    events.length = 0
+
+    runtime.dispatch({
+      type: 'restore',
+      target: {
+        key: { kind: 'committed', messageId: 'm-100' },
+        offsetWithinMessage: 24,
+      },
+    })
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'needMessagesAround',
+        reason: 'restore',
+        target: { messageId: 'm-100' },
+      }),
+    )
+  })
+
   it('re-resolves jump destination when a data transaction supersedes motion', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })

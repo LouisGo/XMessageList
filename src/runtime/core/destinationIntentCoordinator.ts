@@ -25,9 +25,12 @@ import type {
   DestinationState,
   MessageDataSnapshot,
   MessageIdentityAnchor,
+  MessageViewportSnapshot,
   MessageViewportRuntimeEvent,
   ScrollSource,
 } from '../types'
+
+const DESTINATION_REBUILD_SPACER_THRESHOLD_PX = 10_000
 
 type DestinationIntentDeps<TMessage, TOptimistic> = {
   lifecycle: LifecycleGuard
@@ -35,6 +38,7 @@ type DestinationIntentDeps<TMessage, TOptimistic> = {
   scrollIntent: ScrollIntentEngine
   edge: EdgeNeedCoordinator<TMessage, TOptimistic>
   getDataSnapshot: () => MessageDataSnapshot<TMessage, TOptimistic> | null
+  getViewportSnapshot: () => MessageViewportSnapshot<TMessage, TOptimistic>
   getScrollTop: () => number
   setReadySubstate: (state: ReadySubstate) => void
   getReadySubstate: () => ReadySubstate
@@ -76,7 +80,7 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
     const scrollTop = this.deps.getScrollTop()
     const commandId = this.startActiveFollowBottomIntent(data, scrollTop).commandId
 
-    if (data.hasMoreAfter) {
+    if (data.hasMoreAfter || this.shouldRebuildDestinationWindow()) {
       // followBottom 面向 feed latest；当前 DataWindow 还缺 latest page 时请求 latest window。
       this.startPendingFollowBottom(data, scrollTop, commandId)
       return
@@ -97,6 +101,14 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
 
     const forceAnimateFrom = getJumpForcedStart(origin, target)
     const animateOnResolve = forceAnimateFrom !== undefined
+
+    if (this.shouldRebuildDestinationWindow()) {
+      this.startPendingDestinationRequest('jump', target, target, {
+        forceAnimateFrom,
+        animateOnResolve,
+      })
+      return
+    }
 
     if (!this.hasCommittedMessage(data, target.messageId)) {
       this.startPendingDestinationRequest('jump', target, target, {
@@ -121,6 +133,11 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
     }
 
     const identityTarget = getIdentityTarget(target)
+
+    if (identityTarget && this.shouldRebuildDestinationWindow()) {
+      this.startPendingDestinationRequest('restore', identityTarget, target)
+      return
+    }
 
     if (identityTarget && !this.hasCommittedMessage(data, identityTarget.messageId)) {
       this.startPendingDestinationRequest('restore', identityTarget, target)
@@ -594,5 +611,13 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
     target: MessageIdentityAnchor,
   ): MessageIdentityAnchor | null {
     return resolvePendingJumpTarget(this.deps.renderWindow, snapshot, target)
+  }
+
+  private shouldRebuildDestinationWindow(): boolean {
+    const snapshot = this.deps.getViewportSnapshot()
+    return (
+      snapshot.topSpacer > DESTINATION_REBUILD_SPACER_THRESHOLD_PX ||
+      snapshot.bottomSpacer > DESTINATION_REBUILD_SPACER_THRESHOLD_PX
+    )
   }
 }

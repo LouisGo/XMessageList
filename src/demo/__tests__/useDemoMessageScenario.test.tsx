@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
   AnchorState,
+  MessageViewportSnapshot,
   MessageViewportRuntime,
   MessageViewportRuntimeEvent,
 } from '../../runtime'
@@ -34,7 +35,11 @@ const mockWriteDemoLog = vi.mocked(writeDemoLog)
 
 type RuntimeStub = Pick<
   MessageViewportRuntime<DemoMessage>,
-  'setDataSnapshot' | 'dispatch' | 'subscribeEvent' | 'getViewportAnchorState'
+  | 'setDataSnapshot'
+  | 'dispatch'
+  | 'subscribeEvent'
+  | 'getViewportAnchorState'
+  | 'getSnapshot'
 >
 
 type RuntimeStubController = {
@@ -74,6 +79,19 @@ function createRuntimeStub(
   viewportAnchor: AnchorState | null = null,
 ): RuntimeStubController {
   let listener: ((event: MessageViewportRuntimeEvent) => void) | null = null
+  const snapshot: MessageViewportSnapshot<DemoMessage> = {
+    feedId: 'feed-runtime',
+    generation: 1,
+    revision: 1,
+    items: [],
+    renderWindow: { startIndex: 0, endIndex: -1, itemKeys: [] },
+    topSpacer: 0,
+    bottomSpacer: 0,
+    bottomLockState: 'UNLOCKED',
+    bootstrapState: 'READY',
+    viewportPhase: 'IDLE',
+    edgeState: { before: 'idle', after: 'idle' },
+  }
 
   return {
     runtime: {
@@ -86,6 +104,7 @@ function createRuntimeStub(
         }
       }),
       getViewportAnchorState: vi.fn(() => viewportAnchor),
+      getSnapshot: vi.fn(() => snapshot),
     },
     emitEvent: (event) => {
       listener?.(event)
@@ -300,6 +319,90 @@ describe('useDemoMessageScenario', () => {
         phase: 'skip',
         feedId: 'feed-runtime',
         details: expect.objectContaining({ reason: 'runtime-cache-hit' }),
+      }),
+    )
+  })
+
+  it('reloads a cached runtime on feed switch when its spacer is too large', async () => {
+    const runtimeFeed = createRuntimeStub()
+    const runtimeFeedReload = createRuntimeStub()
+    const runtimeRelease = createRuntimeStub()
+    vi.mocked(runtimeFeed.runtime.getSnapshot).mockReturnValue({
+      feedId: 'feed-runtime',
+      generation: 1,
+      revision: 1,
+      items: [],
+      renderWindow: { startIndex: 0, endIndex: -1, itemKeys: [] },
+      topSpacer: 0,
+      bottomSpacer: 12_001,
+      bottomLockState: 'UNLOCKED',
+      bootstrapState: 'READY',
+      viewportPhase: 'IDLE',
+      edgeState: { before: 'idle', after: 'idle' },
+    })
+    const runtimeByFeed = new Map<string, RuntimeStub>([
+      ['feed-runtime', runtimeFeed.runtime],
+      ['feed-release', runtimeRelease.runtime],
+    ])
+    const runtimeCache: DemoFeedRuntimeCache = {
+      getRuntime: vi.fn((feedId) => {
+        if (feedId === 'feed-runtime' && !runtimeByFeed.has(feedId)) {
+          runtimeByFeed.set(feedId, runtimeFeedReload.runtime)
+        }
+
+        const runtime = runtimeByFeed.get(feedId)
+
+        if (!runtime) {
+          throw new Error(`missing runtime for ${feedId}`)
+        }
+
+        return runtime as MessageViewportRuntime<DemoMessage>
+      }),
+      hasRuntime: vi.fn((feedId) => runtimeByFeed.has(feedId)),
+      deleteRuntime: vi.fn((feedId) => runtimeByFeed.delete(feedId)),
+      getCachedFeedIds: vi.fn(() => Array.from(runtimeByFeed.keys())),
+      destroyAll: vi.fn(),
+    }
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    await act(async () => {
+      root.render(
+        <TestHarness runtimeCache={runtimeCache} onScenario={(next) => {
+          scenario = next
+        }}
+        />,
+      )
+    })
+    await flushTimers(180)
+
+    await act(async () => {
+      scenario?.selectFeed('feed-release')
+    })
+    await flushTimers(180)
+
+    await act(async () => {
+      scenario?.selectFeed('feed-runtime')
+    })
+
+    expect(runtimeCache.deleteRuntime).toHaveBeenCalledWith('feed-runtime')
+    expect(scenario?.pendingFeedId).toBe('feed-runtime')
+    expect(scenario?.activeRuntime).toBe(runtimeRelease.runtime)
+
+    await flushTimers(180)
+
+    expect(scenario?.activeRuntime).toBe(runtimeFeedReload.runtime)
+    expect(runtimeFeedReload.runtime.setDataSnapshot).toHaveBeenCalled()
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'feed.select',
+        feedId: 'feed-release',
+        details: expect.objectContaining({
+          nextFeedId: 'feed-runtime',
+          runtimeCacheHit: false,
+          cacheRebuildReason: 'spacer-threshold',
+        }),
       }),
     )
   })

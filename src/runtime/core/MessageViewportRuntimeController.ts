@@ -327,6 +327,7 @@ export class MessageViewportRuntimeController<
       scrollIntent: this.scrollIntent,
       edge: this.edge,
       getDataSnapshot: () => this.dataSnapshot,
+      getViewportSnapshot: () => this.store.getSnapshot(),
       getScrollTop: () => this.registry.getContainer()?.scrollTop ?? 0,
       setReadySubstate: (substate) =>
         this.stateAxes.setReadySubstate(substate),

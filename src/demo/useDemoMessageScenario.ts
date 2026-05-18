@@ -62,6 +62,7 @@ const RESTORE_AFTER_PAGE_SIZE = PAGE_SIZE
 const JUMP_AROUND_BEFORE_PAGE_SIZE = PAGE_SIZE
 const JUMP_AROUND_AFTER_PAGE_SIZE = PAGE_SIZE
 const JUMP_HIGHLIGHT_DURATION_MS = 1_400
+const DESTINATION_REBUILD_SPACER_THRESHOLD_PX = 10_000
 const REACTION_EMOJIS = ['😀', '😂', '🔥', '👍', '🎉', '😭', '👀', '❤️', '🚀', '🥲']
 
 const OPERATION_DELAYS: Record<
@@ -116,6 +117,16 @@ type RunLoggedOperationInput = {
   onSuccess?: (result: LoggedOperationResult) => void
   /** 为 true 时跳过 apply 后的 persistCurrentFeed（apply 自行处理持久化）。 */
   skipPersist?: boolean
+}
+
+function shouldRebuildRuntimeForDestination(
+  runtime: MessageViewportRuntime<DemoMessage>,
+): boolean {
+  const snapshot = runtime.getSnapshot()
+  return (
+    snapshot.topSpacer > DESTINATION_REBUILD_SPACER_THRESHOLD_PX ||
+    snapshot.bottomSpacer > DESTINATION_REBUILD_SPACER_THRESHOLD_PX
+  )
 }
 
 type CachedFeedSessionState = {
@@ -1898,8 +1909,20 @@ export function useDemoMessageScenario(
     setSelectedFeedId(feedId)
 
     const cachedState = feedSessionStateRef.current.get(feedId)
-    const runtimeCacheHit = runtimeCache.hasRuntime(feedId) && !!cachedState
-    const nextRuntime = runtimeCache.getRuntime(feedId)
+    const hasCachedRuntime = runtimeCache.hasRuntime(feedId)
+    const cachedRuntime = hasCachedRuntime
+      ? runtimeCache.getRuntime(feedId)
+      : null
+    const shouldRebuildCachedRuntime =
+      !!cachedRuntime && shouldRebuildRuntimeForDestination(cachedRuntime)
+    if (shouldRebuildCachedRuntime) {
+      runtimeCache.deleteRuntime(feedId)
+    }
+    const runtimeCacheHit =
+      hasCachedRuntime && !!cachedState && !shouldRebuildCachedRuntime
+    const nextRuntime = runtimeCacheHit && cachedRuntime
+      ? cachedRuntime
+      : runtimeCache.getRuntime(feedId)
     nextFeedSwitchRuntimeCacheHitRef.current = runtimeCacheHit
 
     if (runtimeCacheHit && cachedState) {
@@ -1913,7 +1936,13 @@ export function useDemoMessageScenario(
       phase: 'start',
       feedId: previousFeedId,
       messageCount: previousMessageCount,
-      details: { nextFeedId: feedId, runtimeCacheHit },
+      details: {
+        nextFeedId: feedId,
+        runtimeCacheHit,
+        cacheRebuildReason: shouldRebuildCachedRuntime
+          ? 'spacer-threshold'
+          : null,
+      },
     })
 
     const token = loadTokenRef.current + 1
