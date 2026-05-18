@@ -9,6 +9,7 @@ import { TransactionRunner } from '../transactions/transactionRunner'
 import { CommitCoordinator } from './commitCoordinator'
 import { ProjectionCoordinator } from './projectionCoordinator'
 import { ResizeStabilizationCoordinator } from './resizeStabilizationCoordinator'
+import { DestinationIntentCoordinator } from './destinationIntentCoordinator'
 import {
   readScrollFrameMetrics,
   ScrollFrameCoordinator,
@@ -23,27 +24,18 @@ import {
   BOOTSTRAP_STABLE_FRAMES,
   DEFAULT_EDGE_LOAD_THRESHOLD_PX,
   DEFAULT_SCROLL_MOTION_OPTIONS,
-  USER_SCROLL_DIRECTION_EPSILON_PX,
   VIEWPORT_ANCHOR_IDLE_MS,
-  type ActiveFollowBottomIntent,
   cloneAnchorState,
-  isAnchorState,
   type BootstrapCommand,
   type CommitRecoveryInput,
   type ContainerSize,
   type DestinationMotionForcedStart,
-  type DestinationMotionSettle,
-  type PendingDestinationRequest,
-  type PendingFollowBottom,
   type ReadySubstate,
   type ScrollFrameMetrics,
 } from './runtimeTypes'
 import { AnchorCoordinator } from '../dom/anchorCoordinator'
 import { EdgeNeedCoordinator } from '../events/edgeNeedCoordinator'
-import {
-  DestinationMotionCoordinator,
-  type DestinationMotionCancelContext,
-} from '../scroll/destinationMotionCoordinator'
+import { DestinationMotionCoordinator } from '../scroll/destinationMotionCoordinator'
 import { ViewportTransactionController } from '../transactions/viewportTransactionController'
 import {
   CUSTOM_SCROLLBAR_DRAG_END_EVENT,
@@ -122,6 +114,11 @@ export class MessageViewportRuntimeController<
 
   private readonly scrollFrame: ScrollFrameCoordinator<TMessage, TOptimistic>
 
+  private readonly destinationIntent: DestinationIntentCoordinator<
+    TMessage,
+    TOptimistic
+  >
+
   private readonly scrollIntent: ScrollIntentEngine
 
   private readonly projection: ProjectionCoordinator<TMessage, TOptimistic>
@@ -168,16 +165,6 @@ export class MessageViewportRuntimeController<
   private dataSnapshot: MessageDataSnapshot<TMessage, TOptimistic> | null = null
 
   private pendingBootstrap: BootstrapCommand | null = null
-
-  private pendingFollowBottom: PendingFollowBottom | null = null
-
-  private activeFollowBottomIntent: ActiveFollowBottomIntent | null = null
-
-  private pendingDestinationRequest: PendingDestinationRequest | null = null
-
-  private followBottomCommandCounter = 0
-
-  private destinationCommandCounter = 0
 
   private anchorIdleTimer: number | null = null
 
@@ -328,9 +315,32 @@ export class MessageViewportRuntimeController<
       () => this.dataSnapshot,
       () => this.lastScrollSource,
       () => this.canEmitEdgeNeeds(),
-      () => this.pendingFollowBottom !== null,
+      () => this.destinationIntent.hasPendingFollowBottom(),
       (event) => this.emitEvent(event),
     )
+    this.destinationIntent = new DestinationIntentCoordinator({
+      lifecycle: this.lifecycle,
+      renderWindow: this.renderWindow,
+      scrollIntent: this.scrollIntent,
+      edge: this.edge,
+      getDataSnapshot: () => this.dataSnapshot,
+      getScrollTop: () => this.registry.getContainer()?.scrollTop ?? 0,
+      setReadySubstate: (substate) => {
+        this.readySubstate = substate
+      },
+      getReadySubstate: () => this.readySubstate,
+      setDestinationState: (state) => {
+        this.setDestinationState(state)
+      },
+      getDestinationState: () => this.destinationState,
+      enqueueFollowBottomTransaction: () => this.enqueueFollowBottomTransaction(),
+      enqueueJumpTransaction: (target, options) =>
+        this.enqueueJumpTransaction(target, options),
+      enqueueRestoreTransaction: (target) =>
+        this.enqueueRestoreTransaction(target),
+      emitEvent: (event) => this.emitEvent(event),
+      emitDiagnostic: (input) => this.emitDiagnostic(input),
+    })
     this.motion = new DestinationMotionCoordinator(
       this.registry,
       this.store,
@@ -347,11 +357,14 @@ export class MessageViewportRuntimeController<
       () => this.currentFrame,
       () => this.state === 'DESTROYED',
       (reason) => this.emitViewportAnchorChanged(reason),
-      (settle) => this.handleDestinationMotionSettle(settle),
+      (settle) => this.destinationIntent.handleDestinationMotionSettle(settle),
       (settle, context) =>
-        this.handleDestinationMotionSupersede(settle, context),
+        this.destinationIntent.handleDestinationMotionSupersede(settle, context),
       (scrollTop, source) =>
-        this.recordActiveFollowBottomIntentScrollWrite(scrollTop, source),
+        this.destinationIntent.recordActiveFollowBottomIntentScrollWrite(
+          scrollTop,
+          source,
+        ),
       (input) => this.emitDiagnostic(input),
     )
     this.transactions = new TransactionRunner({
@@ -399,11 +412,11 @@ export class MessageViewportRuntimeController<
       },
       tryRunPendingBootstrap: () => this.tryRunPendingBootstrap(),
       startPendingFollowBottom: (data, scrollTop) =>
-        this.startPendingFollowBottom(data, scrollTop),
+        this.destinationIntent.startPendingFollowBottom(data, scrollTop),
       hasActiveFollowBottomIntent: (data) =>
-        this.hasActiveFollowBottomIntent(data),
+        this.destinationIntent.hasActiveFollowBottomIntent(data),
       clearActiveFollowBottomIntent: (reason) =>
-        this.clearActiveFollowBottomIntent(reason),
+        this.destinationIntent.clearActiveFollowBottomIntent(reason),
       reconcileBottomLockFromViewport: (data, reason) =>
         this.reconcileBottomLockFromViewport(data, reason),
       keepCurrentWindow: (items) => this.keepCurrentWindow(items),
@@ -416,7 +429,8 @@ export class MessageViewportRuntimeController<
         this.deriveRuntimeStateFromSnapshot(snapshot),
       emitViewportAnchorChanged: (reason, anchor) =>
         this.emitViewportAnchorChanged(reason, anchor),
-      emitDestinationSettled: (event) => this.emitDestinationSettled(event),
+      emitDestinationSettled: (event) =>
+        this.destinationIntent.emitDestinationSettled(event),
       invalidateSpacerCache: () => this.spacer.invalidateEstimateCache(),
       emitEvent: (event) => this.emitEvent(event),
       emitDiagnostic: (input) => this.emitDiagnostic(input),
@@ -463,9 +477,13 @@ export class MessageViewportRuntimeController<
       },
       getEdgeLoadThresholdPx: () => this.edgeLoadThresholdPx,
       updatePendingFollowBottomForUserScroll: (scrollTop) =>
-        this.updatePendingFollowBottomForUserScroll(scrollTop),
+        this.destinationIntent.updatePendingFollowBottomForUserScroll(scrollTop),
       updateActiveFollowBottomIntentForScroll: (data, scrollTop, source) =>
-        this.updateActiveFollowBottomIntentForScroll(data, scrollTop, source),
+        this.destinationIntent.updateActiveFollowBottomIntentForScroll(
+          data,
+          scrollTop,
+          source,
+        ),
       scheduleViewportAnchorIdleEvent: () => this.scheduleViewportAnchorIdleEvent(),
       runAnchorlessWindowSlideTransaction: (nextWindow, expectedData) =>
         this.runAnchorlessWindowSlideTransaction(nextWindow, expectedData),
@@ -589,9 +607,9 @@ export class MessageViewportRuntimeController<
       }),
     })
     this.lifecycle.suspend()
-    this.clearPendingFollowBottom()
-    this.clearActiveFollowBottomIntent('detach')
-    this.clearPendingDestinationRequest()
+    this.destinationIntent.clearPendingFollowBottom()
+    this.destinationIntent.clearActiveFollowBottomIntent('detach')
+    this.destinationIntent.clearPendingDestinationRequest()
     this.motion.cancel('detach')
     this.commit.cancelPendingCommit()
     this.cancelScheduledWork()
@@ -655,9 +673,9 @@ export class MessageViewportRuntimeController<
     this.detach()
     this.lifecycle.destroy()
     this.transactions.stop()
-    this.clearPendingFollowBottom()
-    this.clearActiveFollowBottomIntent('destroy')
-    this.clearPendingDestinationRequest()
+    this.destinationIntent.clearPendingFollowBottom()
+    this.destinationIntent.clearActiveFollowBottomIntent('destroy')
+    this.destinationIntent.clearPendingDestinationRequest()
     this.motion.cancel('destroy')
     this.heightCache.clear()
     this.eventListeners.clear()
@@ -744,11 +762,11 @@ export class MessageViewportRuntimeController<
       return
     }
 
-    if (this.drivePendingFollowBottom(snapshot)) {
+    if (this.destinationIntent.drivePendingFollowBottom(snapshot)) {
       return
     }
 
-    if (this.drivePendingDestinationRequest(snapshot)) {
+    if (this.destinationIntent.drivePendingDestinationRequest(snapshot)) {
       return
     }
 
@@ -795,23 +813,23 @@ export class MessageViewportRuntimeController<
         this.tryRunPendingBootstrap()
         break
       case 'followBottom':
-        this.clearPendingDestinationRequest()
-        this.startFollowBottomCommand()
+        this.destinationIntent.clearPendingDestinationRequest()
+        this.destinationIntent.startFollowBottomCommand()
         break
       case 'jump':
-        this.clearPendingFollowBottom()
-        this.clearActiveFollowBottomIntent('jump')
-        this.startJumpCommand(command.target, command.origin)
+        this.destinationIntent.clearPendingFollowBottom()
+        this.destinationIntent.clearActiveFollowBottomIntent('jump')
+        this.destinationIntent.startJumpCommand(command.target, command.origin)
         break
       case 'restore':
-        this.clearPendingFollowBottom()
-        this.clearActiveFollowBottomIntent('restore')
-        this.startRestoreCommand(command.target)
+        this.destinationIntent.clearPendingFollowBottom()
+        this.destinationIntent.clearActiveFollowBottomIntent('restore')
+        this.destinationIntent.startRestoreCommand(command.target)
         break
       case 'reset':
-        this.clearPendingFollowBottom()
-        this.clearActiveFollowBottomIntent('reset')
-        this.clearPendingDestinationRequest()
+        this.destinationIntent.clearPendingFollowBottom()
+        this.destinationIntent.clearActiveFollowBottomIntent('reset')
+        this.destinationIntent.clearPendingDestinationRequest()
         this.enqueueResetTransaction(command.reason)
         break
     }
@@ -948,459 +966,6 @@ export class MessageViewportRuntimeController<
     return true
   }
 
-  private startFollowBottomCommand(): void {
-    const data = this.dataSnapshot
-
-    if (!data) {
-      return
-    }
-
-    const commandId = this.startActiveFollowBottomIntent(
-      data,
-      this.registry.getContainer()?.scrollTop ?? 0,
-    ).commandId
-
-    if (data.hasMoreAfter) {
-      // followBottom 面向 feed latest；当前 DataWindow 还缺 latest page 时请求 latest window。
-      this.startPendingFollowBottom(
-        data,
-        this.registry.getContainer()?.scrollTop ?? 0,
-        commandId,
-      )
-      return
-    }
-
-    this.enqueueFollowBottomTransaction()
-  }
-
-  private startJumpCommand(
-    target: MessageIdentityAnchor,
-    origin?: MessageIdentityAnchor,
-  ): void {
-    const data = this.dataSnapshot
-
-    if (!data) {
-      return
-    }
-
-    const forceAnimateFrom = this.getJumpForcedStart(origin, target)
-    const animateOnResolve = forceAnimateFrom !== undefined
-
-    if (!this.hasCommittedMessage(data, target.messageId)) {
-      this.startPendingDestinationRequest('jump', target, target, {
-        forceAnimateFrom,
-        animateOnResolve,
-      })
-      return
-    }
-
-    this.clearPendingDestinationRequest()
-    this.enqueueJumpTransaction(target, {
-      animate: animateOnResolve,
-      allowPreposition: false,
-    })
-  }
-
-  private startRestoreCommand(target: AnchorState | MessageIdentityAnchor): void {
-    const data = this.dataSnapshot
-
-    if (!data) {
-      return
-    }
-
-    const identityTarget = this.getIdentityTarget(target)
-
-    if (identityTarget && !this.hasCommittedMessage(data, identityTarget.messageId)) {
-      this.startPendingDestinationRequest('restore', identityTarget, target)
-      return
-    }
-
-    this.clearPendingDestinationRequest()
-    this.enqueueRestoreTransaction(target)
-  }
-
-  private drivePendingFollowBottom(
-    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
-  ): boolean {
-    const pending = this.pendingFollowBottom
-
-    if (!pending) {
-      return false
-    }
-
-    if (
-      pending.feedId !== snapshot.feedId ||
-      pending.generation !== snapshot.generation
-    ) {
-      this.clearPendingFollowBottom()
-      this.clearActiveFollowBottomIntent('generation-change')
-      return false
-    }
-
-    if (snapshot.hasMoreAfter) {
-      // 每个 data revision 最多发一次 latest-window need，避免 BFF 未返回时重复拉取。
-      this.emitPendingFollowBottomNeed(snapshot)
-      return true
-    }
-
-    this.clearPendingFollowBottom()
-    this.enqueueFollowBottomTransaction()
-    return true
-  }
-
-  private drivePendingDestinationRequest(
-    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
-  ): boolean {
-    const pending = this.pendingDestinationRequest
-
-    if (!pending) {
-      return false
-    }
-
-    if (
-      pending.feedId !== snapshot.feedId ||
-      pending.generation !== snapshot.generation
-    ) {
-      this.clearPendingDestinationRequest()
-      return false
-    }
-
-    const resolvedJumpTarget =
-      pending.intent === 'jump'
-        ? this.resolvePendingJumpTarget(snapshot, pending.target)
-        : null
-
-    if (
-      pending.intent === 'jump'
-        ? !resolvedJumpTarget
-        : !this.hasCommittedMessage(snapshot, pending.target.messageId)
-    ) {
-      this.emitPendingDestinationNeed(snapshot)
-      return true
-    }
-
-    this.clearPendingDestinationRequest()
-
-    if (pending.intent === 'jump') {
-      this.enqueueJumpTransaction(resolvedJumpTarget, {
-        forceAnimateFrom: pending.forceAnimateFrom,
-        animate: pending.animateOnResolve,
-        originalTarget: pending.target,
-      })
-      return true
-    }
-
-    this.enqueueRestoreTransaction(pending.commandTarget)
-    return true
-  }
-
-  private emitPendingFollowBottomNeed(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-  ): void {
-    const pending = this.pendingFollowBottom
-
-    if (!pending || pending.emittedAfterRevision === data.revision) {
-      return
-    }
-
-    pending.emittedAfterRevision = data.revision
-    this.edge.setAfterEdgeLatched(true)
-    this.emitEvent({
-      type: 'needLatestMessages',
-      feedId: data.feedId,
-      generation: data.generation,
-      reason: 'bottom-follow',
-    })
-  }
-
-  private emitPendingDestinationNeed(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-  ): void {
-    const pending = this.pendingDestinationRequest
-
-    if (!pending || pending.emittedAfterRevision === data.revision) {
-      return
-    }
-
-    pending.emittedAfterRevision = data.revision
-    this.emitEvent({
-      type: 'needMessagesAround',
-      feedId: data.feedId,
-      generation: data.generation,
-      reason: pending.intent,
-      target: { ...pending.target },
-    })
-  }
-
-  private clearPendingFollowBottom(): void {
-    if (!this.pendingFollowBottom) {
-      return
-    }
-
-    this.pendingFollowBottom = null
-
-    if (this.readySubstate === 'READY_FOLLOW_BOTTOM_PENDING') {
-      this.readySubstate = 'READY_IDLE'
-    }
-    if (this.destinationState === 'pendingData') {
-      this.setDestinationState('idle')
-    }
-  }
-
-  private clearPendingDestinationRequest(): void {
-    if (!this.pendingDestinationRequest) {
-      return
-    }
-
-    this.pendingDestinationRequest = null
-
-    if (this.readySubstate === 'READY_DESTINATION_PENDING') {
-      this.readySubstate = 'READY_IDLE'
-    }
-    if (this.destinationState !== 'motionActive') {
-      this.setDestinationState('idle')
-    }
-  }
-
-  private startActiveFollowBottomIntent(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    scrollTop: number,
-  ): ActiveFollowBottomIntent {
-    this.followBottomCommandCounter += 1
-    const intent = {
-      feedId: data.feedId,
-      generation: data.generation,
-      commandId: `follow-bottom-${this.followBottomCommandCounter}`,
-      lastScrollTop: scrollTop,
-    }
-
-    this.activeFollowBottomIntent = intent
-    this.emitDiagnostic({
-      channel: 'motion',
-      severity: 'info',
-      name: 'followBottom.intent.start',
-      correlationId: `command:${intent.commandId}`,
-      details: () => ({
-        revision: data.revision,
-        itemCount: data.items.length,
-        hasMoreAfter: data.hasMoreAfter,
-        scrollTop,
-      }),
-    })
-    return intent
-  }
-
-  private ensureActiveFollowBottomIntent(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    scrollTop: number,
-  ): ActiveFollowBottomIntent {
-    if (this.hasActiveFollowBottomIntent(data)) {
-      const intent = this.activeFollowBottomIntent as ActiveFollowBottomIntent
-      intent.lastScrollTop = scrollTop
-      return intent
-    }
-
-    return this.startActiveFollowBottomIntent(data, scrollTop)
-  }
-
-  private hasActiveFollowBottomIntent(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-  ): boolean {
-    return (
-      this.activeFollowBottomIntent?.feedId === data.feedId &&
-      this.activeFollowBottomIntent.generation === data.generation
-    )
-  }
-
-  private clearActiveFollowBottomIntent(reason: string): void {
-    const intent = this.activeFollowBottomIntent
-
-    if (!intent) {
-      return
-    }
-
-    this.activeFollowBottomIntent = null
-    this.emitDiagnostic({
-      channel: 'motion',
-      severity: 'debug',
-      name: 'followBottom.intent.clear',
-      correlationId: `command:${intent.commandId}`,
-      details: () => ({
-        reason,
-        feedId: intent.feedId,
-        generation: intent.generation,
-        lastScrollTop: intent.lastScrollTop,
-      }),
-    })
-  }
-
-  private updateActiveFollowBottomIntentForScroll(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    scrollTop: number,
-    scrollSource: ScrollSource,
-  ): void {
-    const intent = this.activeFollowBottomIntent
-
-    if (!intent) {
-      return
-    }
-
-    if (intent.feedId !== data.feedId || intent.generation !== data.generation) {
-      this.clearActiveFollowBottomIntent('generation-change')
-      return
-    }
-
-    if (
-      scrollSource === 'user' &&
-      scrollTop < intent.lastScrollTop - USER_SCROLL_DIRECTION_EPSILON_PX
-    ) {
-      this.clearActiveFollowBottomIntent('user-scroll-up')
-      this.clearPendingFollowBottom()
-      return
-    }
-
-    intent.lastScrollTop = scrollTop
-  }
-
-  private recordActiveFollowBottomIntentScrollWrite(
-    scrollTop: number,
-    source: ScrollSource,
-  ): void {
-    const intent = this.activeFollowBottomIntent
-    const data = this.dataSnapshot
-
-    if (
-      !intent ||
-      !data ||
-      source !== 'followBottom' ||
-      intent.feedId !== data.feedId ||
-      intent.generation !== data.generation
-    ) {
-      return
-    }
-
-    intent.lastScrollTop = scrollTop
-  }
-
-  private handleDestinationMotionSettle(
-    settle: DestinationMotionSettle<TMessage, TOptimistic>,
-  ): void {
-    if (settle.destination) {
-      this.emitDestinationSettled(settle.destination)
-    }
-
-    if (
-      settle.source !== 'followBottom' ||
-      settle.bottomLockState !== 'LOCKED' ||
-      !this.hasActiveFollowBottomIntent(settle.data)
-    ) {
-      return
-    }
-
-    this.clearActiveFollowBottomIntent('settled-locked')
-  }
-
-  private handleDestinationMotionSupersede(
-    settle: DestinationMotionSettle<TMessage, TOptimistic>,
-    context: DestinationMotionCancelContext | null,
-  ): void {
-    const destination = settle.destination
-
-    if (!destination || destination.intent !== 'jump') {
-      return
-    }
-
-    const data = this.dataSnapshot
-
-    if (!data) {
-      return
-    }
-
-    const originalTarget = destination.target
-    const resolvedTarget =
-      destination.resolvedTarget && this.hasCommittedMessage(
-        data,
-        destination.resolvedTarget.messageId,
-      )
-        ? destination.resolvedTarget
-        : this.resolvePendingJumpTarget(data, originalTarget)
-
-    this.emitDiagnostic({
-      channel: 'motion',
-      severity: 'info',
-      name: 'destinationMotion.reschedule',
-      correlationId:
-        `motion:${settle.source}:${settle.data.feedId}:${settle.data.generation}:${settle.data.revision}`,
-      details: () => ({
-        source: settle.source,
-        intent: destination.intent,
-        reason: 'transaction-supersede',
-        transactionKind: context?.transactionKind ?? null,
-        transactionId: context?.transactionId ?? null,
-        target: originalTarget,
-        resolvedTarget: resolvedTarget ?? null,
-      }),
-    })
-
-    if (!resolvedTarget) {
-      this.startPendingDestinationRequest('jump', originalTarget, originalTarget, {
-        animateOnResolve: true,
-        preserveBottomLockState: true,
-      })
-      return
-    }
-
-    this.clearPendingDestinationRequest()
-    this.enqueueJumpTransaction(resolvedTarget, {
-      animate: true,
-      allowPreposition: false,
-      originalTarget,
-    })
-  }
-
-  private emitDestinationSettled(event: {
-    intent: 'jump'
-    target: MessageIdentityAnchor
-    resolution: 'target' | 'fallback-deleted'
-    resolvedTarget?: MessageIdentityAnchor
-  }): void {
-    const token = this.dataSnapshot
-      ? {
-          feedId: this.dataSnapshot.feedId,
-          generation: this.dataSnapshot.generation,
-        }
-      : this.lifecycle.getCurrent()
-
-    this.emitEvent({
-      type: 'destinationSettled',
-      feedId: token.feedId,
-      generation: token.generation,
-      intent: event.intent,
-      target: { ...event.target },
-      resolution: event.resolution,
-      resolvedTarget: event.resolvedTarget
-        ? { ...event.resolvedTarget }
-        : undefined,
-    })
-  }
-
-  private updatePendingFollowBottomForUserScroll(scrollTop: number): void {
-    const pending = this.pendingFollowBottom
-
-    if (!pending) {
-      return
-    }
-
-    if (scrollTop < pending.lastScrollTop - USER_SCROLL_DIRECTION_EPSILON_PX) {
-      // 用户主动向上阅读时，pending follow-bottom 必须让位，不能继续追逐 latest。
-      this.clearPendingFollowBottom()
-      this.clearActiveFollowBottomIntent('user-scroll-up')
-      return
-    }
-
-    pending.lastScrollTop = scrollTop
-  }
-
   private canEmitEdgeNeeds(): boolean {
     const snapshot = this.store.getSnapshot()
 
@@ -1411,151 +976,10 @@ export class MessageViewportRuntimeController<
     )
   }
 
-  private startPendingFollowBottom(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    scrollTop: number,
-    commandId?: string,
-  ): void {
-    const resolvedCommandId =
-      commandId ?? this.ensureActiveFollowBottomIntent(data, scrollTop).commandId
-    this.pendingFollowBottom = {
-      feedId: data.feedId,
-      generation: data.generation,
-      commandId: resolvedCommandId,
-      emittedAfterRevision: null,
-      lastScrollTop: scrollTop,
-    }
-    this.readySubstate = 'READY_FOLLOW_BOTTOM_PENDING'
-    this.setDestinationState('pendingData')
-    this.scrollIntent.setBottomLockState('UNLOCKED')
-    this.emitDiagnostic({
-      channel: 'motion',
-      severity: 'info',
-      name: 'followBottom.pending',
-      correlationId: `command:${resolvedCommandId}`,
-      details: () => ({
-        revision: data.revision,
-        itemCount: data.items.length,
-        hasMoreBefore: data.hasMoreBefore,
-        hasMoreAfter: data.hasMoreAfter,
-        scrollTop,
-      }),
-    })
-    this.emitPendingFollowBottomNeed(data)
-  }
-
-  private startPendingDestinationRequest(
-    intent: 'jump' | 'restore',
-    target: MessageIdentityAnchor,
-    commandTarget: AnchorState | MessageIdentityAnchor,
-    options: {
-      forceAnimateFrom?: DestinationMotionForcedStart
-      animateOnResolve?: boolean
-      preserveBottomLockState?: boolean
-    } = {},
-  ): void {
-    const data = this.dataSnapshot
-
-    if (!data) {
-      return
-    }
-
-    this.destinationCommandCounter += 1
-    this.pendingDestinationRequest = {
-      feedId: data.feedId,
-      generation: data.generation,
-      commandId: `${intent}-${this.destinationCommandCounter}`,
-      intent,
-      target: { ...target },
-      commandTarget: this.cloneDestinationCommandTarget(commandTarget),
-      emittedAfterRevision: null,
-      forceAnimateFrom: options.forceAnimateFrom,
-      animateOnResolve: options.animateOnResolve ?? true,
-    }
-    this.readySubstate = 'READY_DESTINATION_PENDING'
-    this.setDestinationState('pendingData')
-    if (!options.preserveBottomLockState) {
-      this.scrollIntent.setBottomLockState('UNLOCKED')
-    }
-    this.emitPendingDestinationNeed(data)
-  }
-
-  private hasCommittedMessage(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    messageId: string,
-  ): boolean {
-    return this.renderWindow.findCommittedMessageIndex(data.items, messageId) >= 0
-  }
-
-  private resolvePendingJumpTarget(
-    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
-    target: MessageIdentityAnchor,
-  ): MessageIdentityAnchor | null {
-    if (this.hasCommittedMessage(snapshot, target.messageId)) {
-      return target
-    }
-
-    if (
-      snapshot.anchorStatus === 'deleted' &&
-      snapshot.anchor &&
-      this.hasCommittedMessage(snapshot, snapshot.anchor.messageId)
-    ) {
-      return { ...snapshot.anchor }
-    }
-
-    return null
-  }
-
-  private getIdentityTarget(
-    target: AnchorState | MessageIdentityAnchor,
-  ): MessageIdentityAnchor | null {
-    if (!isAnchorState(target)) {
-      return { ...target }
-    }
-
-    if (target.key.kind !== 'committed') {
-      return null
-    }
-
-    return { messageId: target.key.messageId }
-  }
-
-  private getJumpForcedStart(
-    origin: MessageIdentityAnchor | undefined,
-    target: MessageIdentityAnchor,
-  ): DestinationMotionForcedStart | undefined {
-    if (
-      !origin ||
-      !Number.isFinite(origin.position) ||
-      !Number.isFinite(target.position)
-    ) {
-      return undefined
-    }
-
-    const originPosition = origin.position as number
-    const targetPosition = target.position as number
-
-    if (targetPosition < originPosition) {
-      return 'afterTarget'
-    }
-
-    if (targetPosition > originPosition) {
-      return 'beforeTarget'
-    }
-
-    return undefined
-  }
-
-  private cloneDestinationCommandTarget(
-    target: AnchorState | MessageIdentityAnchor,
-  ): AnchorState | MessageIdentityAnchor {
-    return isAnchorState(target) ? cloneAnchorState(target) : { ...target }
-  }
-
   private resetForGeneration(feedId: string, generation: number): void {
-    this.clearPendingFollowBottom()
-    this.clearActiveFollowBottomIntent('generation-change')
-    this.clearPendingDestinationRequest()
+    this.destinationIntent.clearPendingFollowBottom()
+    this.destinationIntent.clearActiveFollowBottomIntent('generation-change')
+    this.destinationIntent.clearPendingDestinationRequest()
     this.motion.cancel('generation-change')
     this.lifecycle.reset(feedId, generation)
     this.transactions.clear()
