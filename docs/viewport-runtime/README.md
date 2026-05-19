@@ -23,6 +23,8 @@ Diagnostics owns invariant enforcement.
 | [scroll-motion-and-animation.md](./scroll-motion-and-animation.md) | 自定义滚动条拖拽、motion、thumb freeze、scrollTop 写入权。 |
 | [react-projection-adapter-contract.md](./react-projection-adapter-contract.md) | React projection 的 DOM、ref、commit ack 和 custom scrollbar 边界。 |
 | [message-runtime-implementation-contract.md](./message-runtime-implementation-contract.md) | 从零实现 runtime 时的外部合同。 |
+| [roadmap.md](./roadmap.md) | 实施路线和 phase 追踪。 |
+| [performance-optimization-guide.md](./performance-optimization-guide.md) | MessageViewport 专用性能策略、新特性使用边界和禁止事项。 |
 | [lifecycle-and-testing.md](./lifecycle-and-testing.md) | 生命周期、generation safety、未来验证矩阵。 |
 | [research-notes.md](./research-notes.md) | 外部参考如何转译到本架构。 |
 

@@ -555,7 +555,7 @@ resolve target in data space
 
 ## 13. Diagnostics Contract
 
-每次状态变化或 scroll frame 必须能输出：
+状态变化、transaction boundary、commit ack、settle 完成点，或被 diagnostics 显式采样的 scroll frame，必须能输出：
 
 ```ts
 type ViewportDiagnostics = {
@@ -597,6 +597,8 @@ type ViewportDiagnostics = {
 };
 ```
 
+默认采样策略是状态变化、事务边界和 settle 点。普通 scroll frame 只更新 physical metrics；diagnostics 不独立存储每帧记录，除非 dev-only debug sampling 明确开启，且不能触发 React 每帧 rerender。
+
 违约分级：
 
 | Diagnostic | Severity | Required action |
@@ -620,6 +622,6 @@ type ViewportDiagnostics = {
 1. `segmentId` 的生成方式。
 2. `MAX_PHYSICAL_SCROLL_HEIGHT` 默认值和 viewport multiplier 优先级。
 3. `minimumSafeBuffer` 的默认高度。
-4. diagnostics 是否独立存储每帧记录，还是只在状态变化采样。
+4. diagnostics ring buffer 的保留策略、payload 压缩方式和 dev-only high-frequency sampling 开关。
 
 这些点不能在实现中散落成临时 guard。必须在进入代码重构前补到本文或对应子文档。
