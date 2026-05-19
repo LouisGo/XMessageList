@@ -108,6 +108,13 @@ safe scroll range
 - 真正的 `SegmentShift` 到达触发带时，目标 segment 必须尽量已可构建。
 - 如果 prefetch 失败，用户仍可继续滚动，但 diagnostics 必须记录 `adjacentPrefetchBefore/After = 'needed'` 或 `'in-flight'`。
 
+Prefetch 是 data readiness，不是 geometry mutation。它禁止：
+
+- 改变 `activeSegment` / `segmentRevision` / `physicalWindowHeight`
+- 改变 current projection rows / spacers / render window
+- 发布新的 committed physical metrics
+- 根据相邻数据提前移动 `scrollTop`
+
 ## 3. Hard Invariants
 
 这些是不变量，不是优化目标。
@@ -224,8 +231,8 @@ bottomSpacer = loaded items after renderWindow
 新语义：
 
 ```text
-topSpacer = active segment 内 viewport 上方的 overscan buffer
-bottomSpacer = active segment 内 viewport 下方的 overscan buffer
+topSpacer = active segment 内真实 row 之前的 local blank budget
+bottomSpacer = active segment 内真实 row 之后的 local blank budget
 ```
 
 因此 window 计算必须按高度预算裁剪，而不是只按 item count 裁剪。
@@ -233,8 +240,8 @@ bottomSpacer = active segment 内 viewport 下方的 overscan buffer
 ```text
 select anchor
 -> walk rows by estimated height within physical budget
--> ensure real-row coverage for viewport and safe buffer
--> clamp mountedRowsHeight + spacers to physicalWindowHeight
+-> ensure safe-scroll-range row coverage
+-> solve local spacers so mountedRowsHeight + spacers == physicalWindowHeight
 -> publish projection
 ```
 
@@ -416,6 +423,27 @@ Measurement correction 分两级：
 | --- | --- |
 | 小偏差，可由 spacer 反向吸收且不破坏 coverage/cap | local spacer correction |
 | 大偏差，无法守恒或破坏 coverage/cap | segment relayout |
+
+## 8.1 Projection Refresh Hard Boundary
+
+`projectionRefresh` 只能刷新 active projection 内的 row payload。它不是 geometry transaction。
+
+允许：
+
+- 更新已经挂载 item 的内容字段。
+- 增删不在 active render window 内的 DataWindow item。
+- 发布新的 projection revision / commit token。
+
+禁止：
+
+- 改变 `segmentId` / `segmentRevision` / `logicalSegmentId`
+- 改变 `physicalWindowHeight` / `scrollHeightCap` / `capMode`
+- 重选 render window start/end
+- 改变 top/bottom spacer
+- 写 `scrollTop`
+- 触发 pagination
+
+如果 row payload 变化导致测量 delta，后续只能进入 local spacer correction 或 `SegmentRelayout`，不能在 `projectionRefresh` 中顺手修 geometry。
 
 ## 9. State Axes
 

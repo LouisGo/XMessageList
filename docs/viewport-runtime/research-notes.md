@@ -21,7 +21,8 @@
 
 - `viewportModifier` 是数据变化语义，不是 physical transaction kind。
 - `prepend` / `append` 只更新 DataWindow。
-- active geometry 由 `SegmentShift`、`SegmentRelayout`、`projectionRefresh` 或 `followBottom` 消费数据结果。
+- active geometry 只由 `SegmentShift`、`SegmentRelayout`、`followBottom` 和 `jump/restore` 消费数据结果。
+- `projectionRefresh` 只刷新 active payload，不消费几何结果。
 
 不采用：
 

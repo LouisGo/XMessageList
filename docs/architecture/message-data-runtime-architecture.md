@@ -438,7 +438,9 @@ bottom edge MessageIdentityAnchor
 new DataWindow snapshot
 ```
 
-anchor recovery 属于 viewport runtime。
+Data Runtime 不发布 spacer、physical height、scrollTop、render window 或 segment revision。`prepend` / `append` 只是 DataWindow merge 语义，不能被实现成 viewport 几何事务。
+
+anchor recovery / segment shift / relayout 属于 viewport runtime。
 
 ---
 
@@ -500,6 +502,8 @@ type MessageDataSnapshotChange = {
     | 'reset';
 };
 ```
+
+`viewportModifier` 是数据变化提示，不是 physical transaction kind。Viewport runtime 必须把它重新判定为 `segmentShift`、`segmentRelayout`、`projectionRefresh`、`followBottom` 或 no-op；禁止把 `prepend` / `append` 直接映射成几何恢复流程。
 
 `revision` 用于表达：
 

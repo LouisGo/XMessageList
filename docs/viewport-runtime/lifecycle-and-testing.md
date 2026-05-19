@@ -104,6 +104,15 @@ Runtime 不应该静默吞掉 architecture violation。必须输出 diagnostics�
 
 这些是后续实现的验收场景，不是当前阶段必须补测试。
 
+### 0. Geometry Decoupling Guardrails
+
+后续实现必须先验证这些硬边界：
+
+- `projectionRefresh` 不改变 segment id/revision、logical bounds、render window、spacer、`physicalWindowHeight` 或 `scrollTop`。
+- prefetch band 只改变 data readiness / adjacent prefetch diagnostics，不改变 committed physical metrics。
+- `prepend` / `append` 只作为 DataWindow modifier 存在，不能作为 viewport transaction kind。
+- safe scroll range coverage 用 `realRowCoveragePx >= minRealRowCoveragePx` 验证；short-feed 是显式特例，不是 normal segment 的 spacer 暴露。
+
 ### A. Bootstrap
 
 目标：

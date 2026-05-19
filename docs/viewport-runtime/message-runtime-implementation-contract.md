@@ -134,14 +134,16 @@ Command 只表达语义目的地。它不能携带物理 scrollTop。
 
 | Modifier | New response |
 | --- | --- |
-| `prepend` | update DataWindow; satisfy pending shift-before or relayout active segment if needed |
-| `append` | update DataWindow; refresh active segment or latest follow intent |
+| `prepend` | update DataWindow; satisfy pending shift-before or adjacent prefetch only |
+| `append` | update DataWindow; satisfy latest follow intent or adjacent prefetch only |
 | `auto-scroll-to-bottom` | ensure latest segment and follow bottom |
-| `items-change` | refresh active segment or relayout if measurement/coverage invalid |
+| `items-change` | projectionRefresh active rows; later measurement may request relayout if coverage/cap invalid |
 | `reset` | reset physical segment and bootstrap |
 | `none` | store data, no geometry mutation unless pending intent consumes it |
 
 Reserved modifiers must still error until a dedicated transaction exists.
+
+`viewportModifier` 是 data hint。它不能直接选择 physical transaction，也不能携带 height、spacer、scrollTop 或 global offset。
 
 ## 6. Transaction Kinds
 
@@ -160,6 +162,8 @@ type ViewportTransactionKind =
 `prepend` and `append` are no longer physical transaction kinds.
 
 `segmentRelayout` is a required transaction kind, not an implementation option.
+
+`projectionRefresh` is a pure payload refresh. It must keep `physicalSegmentId`, `physicalSegmentRevision`, logical bounds, render window keys, spacers, `physicalWindowHeight`, and `scrollTop` unchanged.
 
 ## 7. Commit Contract
 

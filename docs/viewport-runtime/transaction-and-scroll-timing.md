@@ -36,12 +36,14 @@ data arrival -> directly expand scrollHeight
 | `bootstrap` | 初次构造 latest / restored / target segment。 |
 | `segmentShift` | 切换到相邻或目标 physical segment。 |
 | `segmentRelayout` | 不跨 segment，重建当前 segment 的 window/spacer。 |
-| `projectionRefresh` | data patch 不改变 active segment 几何时刷新 rows。 |
+| `projectionRefresh` | data patch 不改变 active segment 几何时刷新 active rows payload。 |
 | `followBottom` | 确保 latest segment 并移动到底部。 |
 | `jump` / `restore` | 解析目标数据，构造 target segment。 |
 | `reset` | 清空当前几何状态，重新 bootstrap。 |
 
-旧 `prepend` / `append` 不再是几何事务名称。它们是 data revision modifier。是否需要 shift、relayout、refresh 或 follow-bottom，由 runtime 在收到数据后决定。
+旧 `prepend` / `append` 不再是几何事务名称。它们是 data revision modifier。Runtime 只能在检查 pending intent、active logical bounds、render window keys 和 bottom-follow intent 后，选择 `segmentShift`、`segmentRelayout`、`projectionRefresh`、`followBottom` 或 no-op；禁止按 modifier 名称直接映射几何事务。
+
+`projectionRefresh` 的边界必须收紧：它不得改变 `segmentRevision`、render window、spacer、`physicalWindowHeight`、`scrollTop` 或 bottom lock。只要需要任何几何变化，就必须改走 `segmentRelayout`、`segmentShift`、`followBottom`、`jump/restore` 或 `reset`。
 
 ## 3. Data Arrival Order
 
@@ -60,6 +62,8 @@ setDataSnapshot
 如果 `READY_SEGMENT_SHIFT_PENDING` 存在，目标数据到达后优先执行 `segmentShift`。不要再执行 legacy continuous-scroll anchor recovery，否则会重新把 spacer 绑定到全局数据高度。
 
 如果 `READY_FOLLOW_BOTTOM_PENDING` 存在，latest data 到达后必须由 `followBottom` intent 消费。它的优先级高于普通 `append` refresh / relayout，避免最新页数据被当成当前 history segment 的 patch。
+
+`active segment range still valid` 只表示当前 `logicalSegmentId`、logical bounds 和 render window item keys 仍可从 DataWindow 解析。它不允许因为 DataWindow 变长就扩张 scrollHeight，也不允许因为 prepend / append 到达就重算 spacer。
 
 ## 4. Segment Shift
 
