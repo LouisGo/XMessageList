@@ -1,12 +1,10 @@
-# Lifecycle 与测试合同
+# Lifecycle 与验证合同
 
-## 1. Scope
+本文定义 physical segment runtime 的生命周期、安全清理和未来验证矩阵。这里不要求当前阶段编写测试，但实现重构必须能被这些不变量验证。
 
-本文档定义 runtime 生命周期、异步资源清理、generation safety 和测试矩阵。
+## 1. Generation Contract
 
-## 2. Generation Contract
-
-每个 runtime 实例都必须带：
+每个 runtime 实例都带：
 
 ```ts
 type RuntimeGeneration = {
@@ -15,428 +13,242 @@ type RuntimeGeneration = {
 };
 ```
 
-所有异步回调必须捕获 generation：
+所有异步回调执行前检查 generation：
 
 - commit ack
 - requestAnimationFrame
 - setTimeout
 - ResizeObserver
 - IntersectionObserver
-- data snapshot response
-- external event callback
-
-回调执行前先检查：
+- physical metrics subscriber
+- data response
+- event callback
 
 ```ts
 if (!lifecycleGuard.isCurrent(feedId, generation)) return;
 ```
 
-## 3. Attach / Detach / Destroy
+## 2. Attach / Detach / Destroy
 
 `attach(container)`：
 
-- 保存 container。
-- 清掉上一激活期的瞬时 scroll intent / `lastScrollSource`。
-- 将 retained `scrollTop` 恢复标记为 programmatic scroll write。
-- 注册 scroll listener。
-- 注册 container ResizeObserver。
-- 注册 sentinel IntersectionObserver。
-- 如已有 snapshot 且未 READY，继续 bootstrap。
+- 保存 scroll container。
+- 恢复 retained physical scroll position，但标记为 programmatic write。
+- 注册 scroll listener、ResizeObserver、IntersectionObserver。
+- 初始化 physical metrics。
+- 如已有 pending bootstrap / pending segment shift，恢复事务驱动。
 
 `detach()`：
 
-- 在清理 DOM refs 前 capture 当前 viewport anchor，并发出
-  `viewportAnchorChanged(reason: 'detach')`。
-- 保存当前 container `scrollTop`，供同一 runtime 再次 attach 时恢复。
-- 移除 scroll listener。
-- disconnect container observer。
-- disconnect row ResizeObserver。
-- disconnect IntersectionObserver。
-- cancel rAF。
-- clear pending commit。
-- 清掉瞬时 scroll intent / `lastScrollSource`，避免缓存 runtime 复用时误触发 edge need。
-- 保留 feed generation 和可复用 height cache。
+- capture viewport anchor，并发出 `viewportAnchorChanged(reason: 'detach')`。
+- 保存 active segment、segmentRevision、scrollTop 和 projection snapshot。
+- 取消 active motion、pending commit、rAF、drag lock。
+- disconnect observers。
+- 清 DOM refs。
+- 保留可复用 height cache 和数据层状态。
 
 `destroy()`：
 
 - 调用 detach。
-- 清空 command queue。
-- 清空 height cache。
-- 清空 row registry。
-- 清空 snapshot listeners。
-- 标记 DESTROYED。
+- 清 command queue、height cache、listeners、diagnostics buffer。
+- 标记 `DESTROYED`。
+- 拒绝后续 command / snapshot / direct scroll。
 
-`detach` 用于 React projection 临时卸载；`destroy` 用于 runtime 彻底废弃。
+`detach` 用于 React projection 临时卸载。`destroy` 用于 runtime 彻底废弃。
 
-## 3.1 Feed Runtime Cache
+## 3. Feed Runtime Cache
 
-生产级 IM 页面不应该把 `MessageViewportRuntime` 绑定到单个 viewport 组件的
-`useMemo` 生命周期上。更合理的 ownership 是：
-
-- conversation / session host 按 `feedId` 持有 runtime cache。
-- React projection 只接收当前 active runtime。
-- feed 切走时 projection 对旧 runtime 执行 `detach()`，保留 height cache、
-  anchor、scrollTop 和 projection snapshot；最后一次 anchor 通过
-  `viewportAnchorChanged(reason: 'detach')` 交给 host 持久化。
-- feed 切回且 runtime cache 命中时，不应重新 bootstrap 同一 runtime；host 只恢复
-  该 feed 的本地 data-window/session state。
-- feed 切换但 runtime cache miss 时，host 应采用 staged activation：先保留当前
-  active runtime 和 projection，后台准备目标 feed 的 data window，并对目标 runtime
-  完成 `setDataSnapshot + bootstrap` 后再切换 active runtime。
-- LRU 淘汰、显式关闭会话或页面最终销毁时，host 才调用 `destroy()`。
-
-缓存策略属于 app / demo policy，不属于 viewport runtime core。runtime core 只保证：
-
-- 同一个 runtime 可经历 `attach -> detach -> attach`。
-- `destroy()` 后拒绝继续接收 command / snapshot。
-- 异步回调仍按 `feedId + generation` 丢弃 stale work。
-- React adapter 透传完整 `viewportAnchorChanged` event，host 按 event 的
-  `feedId + generation` 写回对应 feed session，不能用当前 active feed 代替。
-
-React 18 StrictMode 下，host 如果在 effect cleanup 中释放 cache，必须延后一拍或
-采用等价 guard，避免开发环境的模拟 cleanup 把仍会复用的 runtime 销毁。
-
-首次进入页面且没有旧 runtime 可保留时，React projection 可以在数据就绪前呈现空白；
-是否展示 loading 文案或 skeleton 属于 app 视觉策略，不属于 viewport runtime core。
-
-## 4. Cleanup Order
-
-推荐 teardown 顺序：
-
-```text
-mark generation inactive
--> stop accepting commands
--> cancel pending commit timeout
--> cancel rAF
--> disconnect observers
--> remove event listeners
--> clear DOM refs
--> publish terminal or reset snapshot if needed
-```
-
-先 mark inactive，可以阻止清理过程中排队的旧回调继续修改状态。
-
-## 5. Command Queue Safety
-
-```ts
-type QueuedCommand = {
-  id: string;
-  generation: number;
-  command: MessageRuntimeCommand;
-  supersedeKey?: string;
-};
-```
+生产 IM 页面应由 conversation/session host 按 feed 持有 runtime cache。
 
 规则：
 
-- later jump supersedes earlier pending jump。
-- reset supersedes all pending commands。
-- generation change drops all pending commands。
-- destroyed state rejects all commands。
-- detached state queues only bootstrap/reset，其他命令拒绝或丢弃。
-
-## 6. Observer Safety
-
-Row ResizeObserver：
-
-- 只 observe 当前 mounted row。
-- row unmount 时 unobserve。
-- observer callback 不持有 React fiber 或 component state。
-
-IntersectionObserver：
-
-- observe sentinels。
-- root 使用 scroll container。
-- detach 时 disconnect。
-
-Container ResizeObserver：
-
-- 宽度变化触发 resize transaction。
-- 高度变化触发 viewportHeight 重新计算和 window threshold 更新。
-
-## 7. Error Recovery
-
-Runtime error 分三类：
-
-| Error | Recovery |
-| --- | --- |
-| commit timeout | cancel transaction, request reset or retry projection once |
-| anchor missing | nearest visible fallback, then reset if unavailable |
-| DOM registry inconsistent | detach observers, force projection revision, wait commit |
-
-Runtime 不吞掉不可恢复错误。它发布 `viewportError`，由上层决定显示恢复 UI 还是重建 runtime。
-
-## 8. Unit Test Harness
-
-纯 runtime 测试用 fake DOM adapter：
-
-- fake container scroll metrics。
-- fake row rect registry。
-- fake rAF scheduler。
-- fake ResizeObserver events。
-- fake commit ack。
-
-可测：
-
-- command queue supersede。
-- generation stale discard。
-- spacer estimation。
-- identity rebind cache migration。
-- bottom lock hysteresis。
-- snapshot revision 粒度。
-
-## 9. Browser Integration Tests
-
-真实浏览器测试必须覆盖：
-
-- `scrollTop` correction。
-- dynamic row height。
-- ResizeObserver callback。
-- IntersectionObserver prefetch signal。
-- React commit ack timing。
-
-推荐场景：
-
-1. latest bootstrap 后处于 bottom locked。
-2. 高视口 + 稀疏消息时，latest / followBottom window 不应退化成只挂内部最小 mounted 条数。
-3. prepend 50 条动态高度消息，目标 anchor 视觉位置不变。
-4. 图片 decode 后高度增长，anchor 上方变化时 scrollTop 补偿。
-5. bottom locked 时 append 新消息，1 frame 内追底。
-6. user scroll up 后 append 新消息，不追底。
-7. jump 到历史消息，目标消息可见且有上下文。
-8. feed 切换后旧 ResizeObserver 回调不污染新 feed。
-9. StrictMode 下 attach/detach/attach 不重复 observer。
-10. LRU 复用 feed runtime 时，切回未淘汰 feed 不丢失 projection/height cache。
-11. LRU 淘汰 feed runtime 时必须调用 `destroy()`，被淘汰 feed 再切回走新 runtime + restore/latest。
-12. data snapshot + pending restored bootstrap 先于 React 挂载时，adapter attach 后必须完成 commit ack 并进入 READY，不能出现 `commit-timeout-bootstrap`。
-13. bootstrap commit timeout / recovery 后，top/bottom sentinel 不得触发 `needMoreBefore` / `needMoreAfter`。
-14. 缓存 runtime `detach -> attach` 恢复 scrollTop 时，sentinel / scroll 副作用不得触发 `needMoreBefore` / `needMoreAfter`；只有新的用户滚动意图可以重新打开 edge paging。
-15. restored bootstrap / cached attach 如果真实距离已经在 latest bottom lock threshold 内，必须把 stale `UNLOCKED` 校准为 `LOCKED`；后续 append / refresh 要按锁底继续追底。
-16. React runtime prop 变化时，旧 runtime detach 必须早于新 projection DOM mutation；测试要断言 detach 看到的仍是旧 feed DOM。
-17. 整棵 React viewport unmount 时，anchor event subscription 必须保持到
-    `detach()` 完成之后，测试要断言 app 仍收到 `reason: 'detach'` 的最后
-    `viewportAnchorChanged` checkpoint。
-
-### 9.1 Targeted Regression Matrix
-
-这组测试是为最近几轮状态机重构和架构收敛定制的，不再按“点按钮看一遍”设计，而是直接围绕 runtime 的关键轴：
-
-- lifecycle / bootstrap
-- transaction / projection / settle
-- destination / motion / interrupt
-- bottom lock / followBottom
-- edge paging / native scroll / drag edge
-- quote jump / restore / session switch
-
-执行前要求：
-
-- 清空 `.logs/`，只保留当前轮次日志。
-- 每个场景都同时采集页面状态、runtime diagnostics、demo log、console warn/error。
-- 结论必须区分 demo policy、React projection、runtime state machine、浏览器时序四类归因。
-
-#### A. Bootstrap / Lifecycle
-
-目的：确认 `INITIAL -> ATTACHED -> BOOTSTRAPPING -> READY` 的首屏链路没有引入新回归。
-
-覆盖点：
-
-- latest bootstrap 到 bottom locked。
-- restored bootstrap 先于 React 挂载到达时，attach 后必须完成 commit ack。
-- commit timeout / recovery 后不能误触发 edge paging。
-- StrictMode 下 `attach -> detach -> attach` 不重复 observer。
-
-断言：
-
-- 首屏不白屏、不闪回顶部。
-- `bootstrapState` 与实际视觉状态一致。
-- `viewportPhase` 在 projection / measurement / correcting 时切换合理。
-
-#### B. Session Switch / Restore
-
-目的：验证 feed 切换、LRU 复用、缓存恢复和 anchor persistence 没有状态污染。
-
-覆盖点：
-
-- feed A 中间位置切换到 feed B，再切回 A。
-- LRU 复用 feed runtime 时，返回未淘汰 feed 不丢失 projection / height cache。
-- LRU 淘汰 feed runtime 时必须 destroy，新 runtime 重新 bootstrap。
-- detaching 期间必须仍能拿到最后一次 `viewportAnchorChanged(reason: 'detach')`。
-
-断言：
-
-- 不出现旧 feed 残影。
-- restored position 不跳到错误区间。
-- `bottomLockState` 不从旧会话污染到新会话。
-
-#### C. Top Paging / Prepend Stability
-
-目的：专门验证 `needMoreBefore`、anchor correction、prepend settle 是否稳定。
-
-覆盖点：
-
-- 慢速靠近顶部触发。
-- 快速甩到顶部触发。
-- scrollbar drag 到顶部边缘触发。
-- 连续 prepend 时 anchor 视觉位置稳定。
-
-断言：
-
-- prepend 后不会整体下跳。
-- 不会在 recovery 期重复触发异常分页。
-- `scrollTop` correction 不会把 viewport 锚点打散。
-
-#### D. Bottom Paging / FollowBottom
-
-目的：把 `followBottom`、`needMoreAfter`、底部锁定和动画完成语义分开验证。
-
-覆盖点：
-
-- 中部向下滚动到 near-bottom 触发 after edge。
-- 点击 Bottom / floating follow-bottom。
-- scrollbar drag 到最底部边缘并停留。
-- append / resize 过程中 followBottom 的连续追底。
-
-断言：
-
-- partial window 不应伪装成真正锁底。
-- followBottom 不应先失焦再恢复成看似正确的状态。
-- 动画结束前不提前发 settled anchor。
-
-#### E. Quote Jump / Restore
-
-目的：验证 destination resolve、motion settle 和高亮目标一致性。
-
-覆盖点：
-
-- 点击 quote 区域跳转到中部、远距离、边缘消息。
-- jump 被 append / resize supersede 后重解析目标。
-- jump 过程中被 wheel / drag 打断。
-- jump 后立刻切换会话，再切回。
-
-断言：
-
-- 目标消息居中或按定义落点，不应停在顶部错位。
-- 高亮锚点与实际目标一致。
-- `destinationSettled` 只在真实 settle 后出现。
-- user interrupt 后不自动重启 jump。
-
-#### F. Event Storm / Bot Push / Dynamic Height
-
-目的：专门压测状态机在并发数据、动态高度和自动追加下的连贯性。
-
-覆盖点：
-
-- Event Storm 中点击 quote jump。
-- Event Storm 中 followBottom / append / scroll 混跑。
-- Bot Push 干扰下手动阅读历史。
-- Dynamic Height 开启后做 switch / prepend / jump / followBottom。
-
-断言：
-
-- 不抢滚，不白屏，不出现 bottom button 错隐。
-- 视图不会因高度变化产生明显错位。
-- 诊断里能串起 `command -> transaction -> projection -> motion -> settle`。
-
-#### G. Native Scrollbar Edge Drag
-
-目的：覆盖最近修过的原生滚动条边缘拖拽路径。
-
-覆盖点：
-
-- scrollbar drag 到顶部边缘持续停留。
-- scrollbar drag 到底部边缘持续停留。
-- drag 结束后的 intent 清理。
-
-断言：
-
-- edge paging 只在真实用户意图存在时触发。
-- 不会把恢复态 / 程序滚动误判为用户滚动。
-- drag 边缘信号不会污染下一次分页判断。
-
-### 9.2 Evidence Contract
-
-每个 E2E 场景都必须记录以下证据：
-
-- 当前 feed / generation / revision。
-- 当前大致 scroll 位置。
-- 当前按钮状态：Load History / Bottom / follow bottom / Event Storm / Bot Push / Dynamic Height。
-- 当前计数器状态：message count / loaded count / pending operation / last event。
-- 关键 runtime diagnostics：`projection.publish`、`transaction`、`viewportPhase`、`destinationState`、`viewportAnchorChanged`、`needMoreBefore` / `needMoreAfter`、`destinationMotion.start` / `settle` / `cancel`。
-- console warn/error。
-
-如果日志不足以判断归因，必须明确写“证据不足”，并指出缺失的是：
-
-- command / transaction / motion 的 correlation id。
-- projection commit ack。
-- 目标 resolve 结果。
-- 用户输入源和浏览器 scroll source 的区分。
-
-### 9.3 Shortest-Repro Priority
-
-当某个问题偶现时，E2E 应优先收集最短复现路径，而不是扩大操作量：
-
-1. 先做单一操作复现，例如只点 quote 或只点 Bottom。
-2. 再叠加一个干扰源，例如 Event Storm 或 Dynamic Height。
-3. 最后才加入会话切换、drag edge、快速滚动这类组合干扰。
-
-这样能更快判断问题归因是：
-
-- demo policy / mock 数据过激
-- runtime 状态机流转不一致
-- React projection 过早或过晚 commit
-- 浏览器时序 / input event loop 竞争
-
-## 10. Test Assertions
-
-优先断言 observable behavior：
-
-```ts
-expect(anchorRectAfter.top).toBeCloseTo(anchorRectBefore.top, 1);
-expect(distanceToBottom(container)).toBeLessThanOrEqual(LOCK_THRESHOLD_PX);
-expect(snapshot.renderWindow.itemKeys).toContain(targetKey);
+- feed 切走时 detach，不 destroy。
+- feed 切回且 runtime cache 命中时，不重新 bootstrap 同一 runtime。
+- LRU 淘汰、会话关闭或页面销毁时 destroy。
+- React StrictMode 的模拟 cleanup 不能误销毁仍会复用的 runtime。
+- detach anchor event 必须带 feedId + generation，host 不能用当前 active feed 代替。
+
+## 4. Cleanup Order
+
+推荐顺序：
+
+```text
+mark generation inactive
+-> stop accepting direct scroll and commands
+-> cancel active motion
+-> clear drag lock
+-> cancel pending commit timeout
+-> cancel rAF
+-> disconnect observers
+-> remove DOM listeners
+-> clear DOM refs
+-> retain stable segment/projection state if detach
 ```
 
-避免断言私有字段：
+先 mark inactive，防止清理过程中旧回调继续修改物理几何。
 
-```ts
-expect(runtime.privateTransaction.phase).toBe(...)
+## 5. Recovery Policy
+
+| Violation | Production recovery | Dev/test behavior |
+| --- | --- | --- |
+| `physical.scrollHeightExceededCap` | segment relayout or exceptional cap | assert if repeated |
+| `physical.spacerOnlyViewport` | immediate anchor-based relayout | hard fail acceptable |
+| `physical.segmentShiftLoop` | suppress next shift and rebase safe zone | hard fail after threshold |
+| `physical.spacerOscillationSameRevision` | freeze local correction, one relayout | assert diagnostic |
+| stale shift target data | remain pending and emit need event | assert no blank segment |
+| drag lock stolen | cancel conflicting writer | hard fail acceptable |
+
+Runtime 不应该静默吞掉 architecture violation。必须输出 diagnostics，且 recovery 路径不能重新扩大 DataWindow scrollHeight。
+
+## 6. Validation Matrix
+
+这些是后续实现的验收场景，不是当前阶段必须补测试。
+
+### A. Bootstrap
+
+目标：
+
+- latest bootstrap 构造 latest segment。
+- restored bootstrap 构造 target segment。
+- bootstrap 期间不触发 edge need、segment shift、follow-bottom。
+- READY 后正常态 `scrollHeight` 不超过 physical cap；exceptional-row 例外但必须有诊断。
+
+关键断言：
+
+```text
+bootstrapState MOUNTING/MEASURING/STABILIZING 权限不越界
+viewport 内没有 spacer-only 空洞
+safe scroll range 内 realRowCoveragePx >= minRealRowCoveragePx
+latest LOCKED 只在 hasMoreAfter=false 且 active segment latest 时成立
 ```
 
-私有字段可以通过 debug API 在开发环境暴露，但测试不要依赖它们作为主要合同。
+### B. Segment Shift
 
-## 11. Debug Instrumentation
+覆盖：
 
-开发环境建议提供：
+- wheel 到 top threshold 触发 shift-before。
+- wheel 到 bottom threshold 触发 shift-after。
+- target data 缺失进入 `READY_SEGMENT_SHIFT_PENDING`。
+- prefetch band 提前发起相邻 segment 数据需求。
+- data 到达后 pending shift 优先消费。
+- shift commit 后 rebase 到安全区，不立即二次 shift。
 
-```ts
-type RuntimeDebugSnapshot = {
-  state: RuntimeState;
-  activeTransaction?: string;
-  pendingCommands: number;
-  observedRows: number;
-  heightCacheSize: number;
-  lastScrollSource?: ScrollSource;
-  lastCorrectionPx?: number;
-};
+关键断言：
+
+```text
+rows + spacers 同一 projection commit
+ProjectionCommitToken 匹配后才测量和提交 metrics
+physicalSegmentRevision 递增
+normal cap 保持，exceptional-row 需有 diagnostic
+viewport 不白屏
 ```
 
-Debug snapshot 不进入 React projection snapshot。
+### C. Drag
 
-## 12. Performance Budgets
+覆盖：
 
-初始预算：
+- thumb drag 期间 `isDragLocked=true`。
+- drag 到边界只记录 shift intent，不执行 shift。
+- pointerup 后执行 pending shift。
+- shift commit 前 thumb freeze，commit 后同步新 metrics。
+- drag 期间 motion / resize correction 不能抢写。
+- pendingEdgeOverflowPx 可观测。
 
-| Scenario                 | Budget                  |
-| ------------------------ | ----------------------- |
-| scroll handler JS        | < 2ms per rAF           |
-| prepend correction       | same frame after commit |
-| bottom follow            | <= 1 rAF after commit   |
-| row ResizeObserver batch | coalesced per rAF       |
-| mounted DOM rows         | prototype default <= 200; raise only after profiling |
+关键断言：
 
-超过预算时优先检查：
+```text
+thumb geometry 与 data item count 无关
+direct scroll delta 线性映射到 current physical segment
+```
 
-- 是否在 scroll event 内同步测量过多 row。
-- 是否把 height cache 更新推入 React state。
-- 是否频繁重建 observer。
-- 是否 trim 太激进导致反复 mount/unmount。
+### D. Segment Relayout
+
+覆盖：
+
+- container width 改变导致 row wrap。
+- mounted row height 大幅增长。
+- 单条超大消息超过 configured cap。
+- same revision spacer oscillation。
+- measurement delta 由 spacer 反向吸收，不能改变同 revision 的 physicalWindowHeight。
+
+关键断言：
+
+```text
+relayout 不跨 segment
+relayout 不改变 logicalSegmentId / logicalRole / logicalAnchorKey
+relayout 不自动发 pagination
+coverage/cap 恢复
+capExceededByRow 有诊断
+```
+
+### E. Jump / Restore
+
+覆盖：
+
+- 目标已在 DataWindow 内。
+- 目标缺失，发 `needMessagesAround`。
+- 数据到达后构造 target segment。
+- target segment 内做局部 anchor correction。
+
+关键断言：
+
+```text
+不使用全局 scrollHeight 动画
+motion 只发生在 target segment 内
+```
+
+### F. Follow Bottom
+
+覆盖：
+
+- 当前 hasMoreAfter=true，followBottom 进入 pending latest。
+- latest data 到达后由 READY_FOLLOW_BOTTOM_PENDING 优先消费并构造 latest segment。
+- motion settle 后才 `LOCKED`。
+- history segment physical bottom 不会 `LOCKED`。
+
+### G. Edge Need
+
+覆盖：
+
+- edge latch key 包含 data revision + physical segment id/revision + edge。
+- segment relayout 后旧 edge intent 不误触发。
+- drag edge intent 不重复发同一页请求。
+- pending shift 目标数据到达后不重复 needMore。
+- adjacent prefetch in-flight 时不重复发同一 edge need。
+
+### H. Wheel / Momentum
+
+覆盖：
+
+- trackpad momentum 到边界只排队一次 shift。
+- residual delta 被 `suppressedMomentumDeltaPx` 记录并默认丢弃。
+- shift commit 后至少一帧 safe zone 稳定再释放 latch。
+- macOS overscroll bounce 不触发反向 shift loop。
+
+### I. Diagnostics
+
+覆盖：
+
+- 每次 segment shift / relayout 输出 segment id/revision。
+- 同一 data revision spacer 震荡被检测。
+- scrollHeight 超 cap 被检测。
+- `physicalWindowHeight === domScrollHeight`、总高度守恒和 `maxScrollPosition` 派生关系被检测。
+- `scrollHeightCap`、`capMode`、`safeScrollRangeStart/End`、`realRowCoveragePx`、`minRealRowCoveragePx` 是一等字段。
+- `isThumbFrozen`、`isMomentumLatched`、`suppressedMomentumDeltaPx`、`segmentRelayoutState/reason` 是一等字段。
+- `adjacentPrefetchBefore/After` 是一等字段。
+- thumb geometry 不能由 DataWindow 长度驱动。
+- drag lock 期间其他 writer 被拒绝或取消。
+
+## 7. Browser Integration Notes
+
+真实浏览器验证必须使用实际 layout、ResizeObserver、IntersectionObserver 和 pointer events。纯 fake DOM 只能覆盖状态机，不足以证明：
+
+- row height measurement
+- thumb freeze 视觉连续性
+- scrollHeight cap
+- spacer-only viewport
+- safe scroll range coverage
+- wheel / trackpad momentum latch
+- pointer capture / release timing
+
+浏览器验证不需要先写完整自动化，但每次实现 segment shift、drag lock、relayout 后都必须人工或自动确认这些视觉不变量。

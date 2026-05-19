@@ -532,8 +532,9 @@ revision 不因为以下情况递增：
 viewport runtime 根据 semantic operation 决定：
 
 - bootstrap
-- prepend recovery
-- append follow
+- segmentShift
+- segmentRelayout
+- followBottom / latest segment
 - jump
 - restore
 

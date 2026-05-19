@@ -1,310 +1,232 @@
-# RenderWindow 与 Spacer 算法
+# Window 与 Spacer 算法
 
-## 1. Scope
+本文定义 physical segment 下的 window、spacer 和 measurement 策略。Spacer 只代表当前 active segment 内的局部 overscan。
 
-本文档定义滚动容器内部的 window 滑动、trim 和 spacer 估算策略。
+## 1. Core Rule
 
-目标不是精确全局 offset，而是在 IM 场景下维持稳定可感知视口。
-
-## 2. Terms
-
-```ts
-type RenderWindow = {
-  startIndex: number;
-  endIndex: number;
-  itemKeys: MessageRuntimeItemKey[];
-};
-
-type WindowConfig = {
-  overscan?: number;
-  maxMountedItems?: number;
-};
+```text
+segmentContentHeight = topSpacer + mountedRowsHeight + bottomSpacer
 ```
 
-当前原型默认配置：
-
-| Field             | Value |
-| ----------------- | ----- |
-| `overscan`        | 3     |
-| `maxMountedItems` | 200   |
-
-`overscan` 是 viewport 倍数，不是像素阈值。`maxMountedItems` 是硬上限，不是目标 DOM 数量；实际 mounted row count 由 viewport、消息高度、数据边界和内部安全下限共同决定。
-
-Runtime 内部保留 `MIN_MOUNTED_ITEMS = 40` 和 `DEFAULT_ITEM_ESTIMATE_PX = 104`。正常文档流方案不把高度估算作为公开配置；估算只用于未测量区域的 spacer/window 粗估，真实稳定性依赖 commit 后同步测量、ResizeObserver dirty batching 和 anchor rect correction。
-
-## 3. Window Sliding Trigger
-
-Runtime 同时使用 scroll position 和 sentinels：
-
-- scroll rAF tick 是权威触发。
-- IntersectionObserver sentinel 是提前预热信号。
-
-触发条件：
+该值只属于 active physical segment。稳定帧中 DOM `scrollHeight` 必须和 runtime 暴露的 `physicalWindowHeight`、custom scrollbar 使用的 `physicalWindowSize` 对齐：
 
 ```ts
-const edgeThresholdPx = clientHeight * config.overscan;
-const nearTop = scrollTop < topSpacer + edgeThresholdPx;
-const nearBottom =
-  scrollHeight - scrollTop - clientHeight < bottomSpacer + edgeThresholdPx;
+segmentContentHeight =
+  topSpacer + mountedRowsHeight + bottomSpacer;
+physicalWindowHeight =
+  max(clientHeight, segmentContentHeight);
+domScrollHeight = physicalWindowHeight;
+maxScrollPosition = max(0, physicalWindowHeight - clientHeight);
 ```
 
-sentinel 进入 root margin 时可以提前发出 `needMoreBefore` / `needMoreAfter`，但不能直接修改 window。Window 修改必须进入 transaction。
+`scrollHeightCap` 是 normal cap，不能作为 thumb size 的基线。thumb size 使用 committed `physicalWindowHeight`。
 
-## 4. Window Recompute
-
-Window 以当前 viewport anchor 为中心重算。
+## 2. Inputs
 
 ```ts
-function computeWindowAroundAnchor(input: {
-  items: MessageDataItem[];
-  anchorIndex: number;
+type PhysicalWindowInput = {
+  data: MessageDataSnapshot;
+  anchor: AnchorState | null;
   viewportHeight: number;
-  heightCache: HeightCache;
-  config: WindowConfig;
-}): RenderWindow {
-  const targetPxBefore = input.viewportHeight * input.config.overscan;
-  const targetPxAfter = input.viewportHeight * input.config.overscan * 1.25;
+  viewportWidth: number;
+  physicalWindowHeight: number;
+  directionHint?: 'before' | 'after' | 'target' | 'latest';
+};
+```
 
-  const startIndex = walkBackwardByEstimatedHeight(
-    input.anchorIndex,
-    targetPxBefore,
-  );
-  const endIndex = walkForwardByEstimatedHeight(
-    input.anchorIndex,
-    targetPxAfter,
-  );
+本文中的 `viewportHeight` 必须来自 scroll container 的 `clientHeight`。推导 DOM 几何等式时使用 `clientHeight` 命名，避免把预算高度和实际视口高度混在一起。
 
-  return clampMountedCount({ startIndex, endIndex }, input.config);
+`data.items.length` 不决定 physical height。它只决定哪些 row 可以被选入 active segment。`input.physicalWindowHeight` 是已提交的 segmentRevision 常量，window/spacer 算法只能在这个高度内重新分配 rows 和 spacer，不能根据 measurement 重新拟合它。
+
+## 3. Segment Window Selection
+
+推荐流程：
+
+```text
+choose anchor key
+-> resolve anchor index inside DataWindow
+-> walk backward by estimated row height until top buffer target or cap
+-> walk forward by estimated row height until bottom buffer target or cap
+-> ensure safe-scroll-range row coverage
+-> clamp by maxMountedHeight and maxMountedItems
+-> compute local top/bottom spacer
+```
+
+伪代码：
+
+```ts
+function computePhysicalSegmentWindow(input: PhysicalWindowInput): RenderWindow {
+  const topTarget = input.viewportHeight * TOP_BUFFER_VIEWPORTS;
+  const bottomTarget = input.viewportHeight * BOTTOM_BUFFER_VIEWPORTS;
+  const maxMountedHeight =
+    input.physicalWindowHeight - input.viewportHeight * MIN_SPACER_VIEWPORTS;
+
+  const range = walkAroundAnchorByEstimatedHeight({
+    items: input.data.items,
+    anchor: input.anchor,
+    topTarget,
+    bottomTarget,
+    maxMountedHeight,
+    width: input.viewportWidth,
+  });
+
+  return clampRangeByCoverageAndCount(range);
 }
+```
+
+`maxMountedItems` 是安全阀，不是主预算。主预算是 mounted rows 的估算高度。
+
+## 4. Spacer Semantics
+
+```ts
+type LocalSpacerPlan = {
+  topSpacer: number;
+  bottomSpacer: number;
+  mountedRowsHeightEstimate: number;
+  physicalWindowHeight: number;
+};
 ```
 
 规则：
 
-- `latest bootstrap`、`followBottom`、bottom locked append 不再只依赖固定条数窗口；当前实现会把最后一条 item 作为局部 anchor，走同一套 viewport-aware window 计算。
-- 如果 container 暂时拿不到有效 viewport 尺寸，latest window 会退回到尾部内部最小 mounted 条数的保守 fallback。
-- 内部最小 mounted 条数和 `maxMountedItems` 约束的是 mounted projection rows，不承诺等于业务 message 条数。
-- `anchorIndex` 只是当前 DataSnapshot 内的派生值。
-- 持久恢复和跨层定位不能使用 index。
-- 如果当前 anchor 不存在，先使用 nearest visible item，再必要时 reset bootstrap。
-- 当 anchor 靠近数据边界、窗口条数仍低于内部最小 mounted 条数时，缺少的 quota 会尽量向还有剩余数据的一侧补齐。
+- `topSpacer` 是 active segment 内真实 row 之前的 local blank budget。
+- `bottomSpacer` 是 active segment 内真实 row 之后的 local blank budget。
+- 两者不能包含 DataWindow 中远离 active segment 的累计历史高度。
+- spacer 计算必须和 selected rows 同一个 revision / segmentRevision。
+- spacer 变更必须通过 projection commit，不允许直接改 DOM style。
 
-## 5. Trim Order
-
-Trim 必须与 spacer 更新在同一个 projection revision 中提交。
-
-正确顺序：
-
-```text
-capture anchor
--> compute next window
--> compute spacer delta
--> publish snapshot(items slice + spacer)
--> wait commit
--> measure
--> correct scrollTop if needed
-```
-
-禁止：
-
-```text
-remove rows
--> next frame
--> increase spacer
-```
-
-## 6. Height Cache
+预算校验：
 
 ```ts
-type HeightRecord = {
-  height: number;
-  measuredAtRevision: number;
-  contentVersion: number;
-  widthBucket: number;
-};
+topSpacer + mountedRowsHeightEstimate + bottomSpacer === physicalWindowHeight
 ```
 
-Cache key 使用 `MessageRuntimeItemKey`。
-
-失效条件：
-
-- feed generation 变化。
-- container width bucket 变化。
-- message content version 变化。
-- density / font / theme 影响布局。
-- optimistic rebind 后内容不等价。
-
-当前原型里的 cache trim 比较保守：
-
-- 只在 `heightCache.size > 1000` 时触发删除。
-- 优先删除已经不在当前 data snapshot 里的 key。
-- 尚未实现文档草案里的 window-adjacent LRU 分层回收。
-
-派生缓存必须和持久 height cache 区分：
-
-- height cache 按 `MessageRuntimeItemKey` 跨 projection revision 复用。
-- RenderWindow index、projection slice、spacer range 这类派生缓存只能在同一个
-  `feedId + generation + data.revision` 内复用。
-- `items` 数组引用相同不代表 data 未变化；只要 `revision` 变化，派生缓存就必须
-  失效或切换到新的 revision cache。
-- 派生 range / slice cache 必须有容量上限，避免长 DataWindow 内频繁 window slide
-  把 CPU 优化变成内存增长。
-
-## 7. Spacer Estimation
-
-单条估算：
+同一 `segmentRevision` 内该等式必须守恒。测量后真实 mounted rows 发生 delta 时，优先对 top/bottom spacer 做反向 correction：
 
 ```ts
-function estimateItemHeight(item: MessageDataItem): number {
-  return (
-    heightCache.get(getRuntimeItemKey(item))?.height ??
-    item.estimatedHeight ??
-    DEFAULT_ITEM_ESTIMATE_PX
-  );
-}
+mountedRowsDelta + topSpacerDelta + bottomSpacerDelta === 0
 ```
 
-范围估算：
+如果 spacer 无法吸收 delta，或吸收后破坏 safe scroll range coverage，进入 `SegmentRelayout` 或 exceptional cap。
 
-```ts
-function estimateRangeHeight(
-  items: MessageDataItem[],
-  start: number,
-  end: number,
-): number {
-  let height = 0;
-  for (let index = start; index < end; index += 1) {
-    height += estimateItemHeight(getRuntimeItemKey(items[index]));
-  }
-  return height;
-}
-```
+## 5. Coverage Rule
 
-Spacer：
-
-```ts
-topSpacer = estimateRangeHeight(items, 0, renderWindow.startIndex);
-bottomSpacer = estimateRangeHeight(
-  items,
-  renderWindow.endIndex + 1,
-  items.length,
-);
-```
-
-Spacer 高度必须 clamp 到 `>= 0`。
-
-## 8. Prepend Spacer Correction
-
-Prepend 前：
+任何稳定帧中，safe scroll range 必须满足：
 
 ```text
-capture anchor rect top
-capture old topSpacer
+realRowCoveragePx >= minRealRowCoveragePx
 ```
 
-Prepend projection：
+默认 `minRealRowCoveragePx = clientHeight`。这表示 viewport 在 safe scroll range 内必须被连续真实 row 或真实 placeholder 覆盖，不能只有 5% row 和 95% spacer。
 
-```text
-new items inserted
-new topSpacer estimated
-```
+如果 `mountedRowsHeight < clientHeight`，进入 short-feed 语义。短 feed 的自然空白允许存在，但不得伪装成正常 segment 的 top/bottom spacer 暴露。
 
-Commit 后：
+允许的空白：
+
+- feed empty
+- loading placeholder 是真实 projection item
+- 短 feed 的自然剩余空间
+
+禁止的空白：
+
+- viewport 中只有 topSpacer / bottomSpacer
+- viewport 中大部分是 topSpacer / bottomSpacer，只在边缘擦到一条 row
+- shift pending 时把用户拖进没有 row 的物理区
+- resize 后 cap 被 row 高度吃掉但未 relayout
+
+## 6. Measurement Correction
+
+ResizeObserver 和同步测量只产生 height deltas。delta 不能直接改全局 spacer。
+
+分类：
 
 ```ts
-const newAnchorTop = measureAnchorTop(anchorKey);
-const delta = newAnchorTop - oldAnchorTop;
-container.scrollTop += delta;
+type MeasurementCorrection =
+  | { kind: 'local-spacer-correction'; topDelta: number; bottomDelta: number }
+  | { kind: 'segment-relayout'; reason: SegmentRelayoutReason };
 ```
 
-之后用实测 prepended rows 更新 height cache。
+进入 `local-spacer-correction` 的条件：
 
-当前实现不会在同一个 prepend transaction 里再额外 publish 一次 spacer-correction projection；measured height 会写回 cache，并在后续 projection 重算 `topSpacer` / `bottomSpacer` 时生效。prepend 当帧的视觉稳定仍然主要依赖 anchor rect correction。
+- cap 仍满足
+- safe scroll range 真实 row coverage 仍满足
+- correction 不会让当前 scrollTop 落入 spacer-only 区
+- 同一 data revision 下没有出现 spacer 震荡
 
-## 9. Append Spacer Correction
+进入 `segment-relayout` 的条件：
 
-Append 在 unlocked 状态下不自动追底。
+- mountedRowsHeight 超过 physical budget
+- safe scroll range coverage 不足
+- resize 改变 row wrap 模型
+- 同一 revision 下 local spacer correction 反复摆动
 
-Append 在 locked 状态下：
+## 7. Segment Shift Trigger
+
+Trigger 只产生 intent：
+
+```ts
+const topThreshold = viewportHeight * SHIFT_TOP_VIEWPORTS;
+const bottomThreshold = viewportHeight * SHIFT_BOTTOM_VIEWPORTS;
+
+const needShiftBefore = scrollTop <= topThreshold;
+const needShiftAfter =
+  scrollTop >= physicalWindowHeight - viewportHeight - bottomThreshold;
+```
+
+规则：
+
+- drag 期间不 shift，只记录 `pendingShiftDirection` 和 `pendingEdgeOverflowPx`。
+- wheel / keyboard 可以排队 shift，但仍必须进入 transaction。
+- target data 缺失时进入 `READY_SEGMENT_SHIFT_PENDING`。
+- data 到达后由 segment shift / followBottom 消费，不再跑 legacy continuous-scroll anchor recovery。
+
+## 8. Short Feed
+
+短 feed 不强行制造大物理空间。
 
 ```text
-publish appended projection
+shortFeedContentHeight = topSpacer + mountedRowsHeight + bottomSpacer
+physicalWindowHeight = max(clientHeight, shortFeedContentHeight)
+domScrollHeight = physicalWindowHeight
+maxScrollPosition = max(0, physicalWindowHeight - clientHeight)
+```
+
+如果 `shortFeedContentHeight < clientHeight`，committed `physicalWindowHeight` 仍然等于 `clientHeight`，`maxScrollPosition = 0`，custom scrollbar 不显示可拖动 thumb。短 feed 可以没有 shift。latest short feed 在 `hasMoreAfter === false` 且接近物理底时可以 `LOCKED`。
+
+## 9. Latest Segment
+
+latest segment 是唯一允许 bottom lock 的 segment。
+
+`followBottom` 不是滚到当前 physical bottom。它必须：
+
+```text
+ensure latest data
+-> build latest physical segment
 -> commit
--> measure
--> scrollToBottom in rAF correction phase
+-> scroll to latest segment bottom
+-> set LOCKED
 ```
 
-不要依赖 exact equality：
+如果 `hasMoreAfter === true`，即使当前 physical segment 滚到底，也不能 `LOCKED`。
 
-```ts
-distanceToBottom = scrollHeight - scrollTop - clientHeight;
-```
+## 10. Diagnostics
 
-该值只能在 transaction 稳定点读取。
+Window/spacer 层必须输出：
 
-## 10. Bottom Lock Distance
+- `physical.windowSelected`
+- `physical.segmentRelayout`
+- `physical.scrollHeightExceededCap`
+- `physical.spacerOnlyViewport`
+- `physical.spacerOscillationSameRevision`
+- `physical.capExceededByRow`
 
-默认使用物理 DOM 计算：
-
-```ts
-function getDistanceToBottom(container: HTMLElement): number {
-  return Math.max(
-    0,
-    container.scrollHeight - container.scrollTop - container.clientHeight,
-  );
-}
-```
-
-使用双阈值：
-
-```ts
-const LOCK_THRESHOLD_PX = 40;
-const UNLOCK_THRESHOLD_PX = 120;
-```
-
-规则：
-
-- `distance <= LOCK_THRESHOLD_PX` -> LOCKED
-- `distance > UNLOCK_THRESHOLD_PX` -> UNLOCKED
-- 中间区域保持当前状态
-
-Bottom sentinel 可以作为辅助校验，但不作为唯一 truth。原因是 sentinel callback 与 layout/scroll event 不保证同一时序。
-
-## 11. Identity Rebind
-
-收到 `identity-remap`：
+所有 diagnostics 必须携带：
 
 ```text
-pause window sliding
--> migrate height cache key
--> migrate row registry key if DOM still mounted
--> migrate anchor key if anchor points to optimistic item
--> publish snapshot with committed key
--> wait commit
--> verify anchor rect
+dataRevision, physicalSegmentId, physicalSegmentRevision,
+renderWindowStart, renderWindowEnd,
+topSpacer, bottomSpacer, mountedRowsHeight,
+domScrollHeight, physicalWindowHeight, maxScrollPosition, scrollHeightCap,
+capMode, safeScrollRangeStart, safeScrollRangeEnd,
+realRowCoveragePx, minRealRowCoveragePx
 ```
-
-React row key 策略：
-
-- projection key 使用 runtime item key。
-- optimistic -> committed 必须由 runtime 发出同一 transaction 的 remap 语义。
-- 如果 React 必然 remount row，runtime 需要用 commit 后 rect correction 保持视觉位置。
-
-## 12. Empty And Edge States
-
-`items.length === 0` 时：
-
-- `topSpacer = 0`
-- `bottomSpacer = 0`
-- no row measurement
-- bootstrap 可以进入 READY_EMPTY
-
-推荐 edge model：
-
-```ts
-type ViewportEdgeState = {
-  before: 'idle' | 'loading' | 'exhausted' | 'error';
-  after: 'idle' | 'loading' | 'exhausted' | 'error';
-};
-```
-
-edge loading indicator 是 projection item 或 spacer 邻接元素，但不参与 message height cache。

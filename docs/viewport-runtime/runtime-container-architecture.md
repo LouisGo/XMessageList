@@ -1,17 +1,14 @@
 # Runtime 容器内核架构
 
+本文定义 physical segment 架构下的 runtime 内核。主规范见 [physical-segment-architecture.md](./physical-segment-architecture.md)。
+
 ## 1. Scope
 
-本文档定义滚动视图容器 runtime 的内部模块和公开 surface。
+Runtime 是 renderer 内部的 imperative viewport engine。它拥有滚动几何、DOM window、measurement、transaction、anchor、bottom lock 和 diagnostics。
 
-本文不讨论：
+React 只渲染 projection，不拥有 geometry。
 
-- 数据如何从 SDK 读取
-- anchor 如何跨 main / renderer 传递
-- message row 的视觉设计
-- legacy 容器迁移方案
-
-## 2. Runtime Shape
+## 2. Public Surface
 
 推荐核心对象：
 
@@ -35,48 +32,50 @@ class MessageViewportRuntime {
   registerTopSentinel(element: HTMLElement | null): void;
   registerBottomSentinel(element: HTMLElement | null): void;
 
-  notifyProjectionCommitted(commit: ProjectionCommit): void;
+  notifyProjectionCommitted(commit: ProjectionCommitToken): void;
+
+  getPhysicalScrollMetrics(): PhysicalScrollMetrics;
+  subscribePhysicalScroll(listener: RuntimeListener): () => void;
+  beginDirectScroll(input: DirectScrollInput): void;
+  writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): boolean;
+  endDirectScroll(input: DirectScrollInput): void;
 }
 ```
 
-`register*` 是 React projection 和 runtime 的 DOM 桥。Runtime 不通过 React state 获取 DOM，也不要求 React 传业务 message 对象给 measurement。
-
-说明：
-
-- `getViewportAnchorState()` 是 renderer 本地恢复位点导出能力，只返回当前 viewport 的 `AnchorState`，不跨进程。
-- 诊断辅助（例如 `getDebugSnapshot()`）不属于稳定合同，因此不在这里列为公开 surface。
+`getPhysicalScrollMetrics` 和 `subscribePhysicalScroll` 面向标准 React adapter / custom scrollbar，不是业务 app 的滚动控制入口。业务层仍然只发 semantic command。
 
 ## 3. Internal Modules
 
-| Module | Responsibility | React 可见 |
-| --- | --- | --- |
-| MessageViewportRuntime | 稳定 public facade，保持接入 API 不扩散 | 直接接入 |
-| MessageViewportRuntimeController | 组合 runtime parts、维护生命周期状态、路由 command / data effect | 不直接可见 |
-| ProjectionStore | 保存并发布 `MessageViewportSnapshot` | 通过 `getSnapshot` |
-| ProjectionCoordinator | 计算 projection snapshot、spacer、revision equality | 通过 snapshot |
-| CommitCoordinator | 等待 React commit ack、处理 timeout / cancel | 不直接可见 |
-| DomRegistry | container、row、spacer、sentinel refs | 不可见 |
-| AnchorCoordinator | 捕获 viewport anchor、解析 restore target、选择 nearest measurable row | 不直接可见 |
-| RenderWindowEngine | 计算 mount item 范围和 trim 计划 | `renderWindow` |
-| SpacerEngine | 估算并修正 spacer 高度 | `topSpacer` / `bottomSpacer` |
-| MeasurementEngine | 同步测量、ResizeObserver、height cache | 不直接可见 |
-| ScrollIntentEngine | 区分 user / programmatic / recovery / follow bottom / jump | `bottomLockState` |
-| ScrollMotionEngine | 执行 bounded JS scroll motion、同步取消和 settle 回调 | 不直接可见 |
-| DestinationMotionCoordinator | 持有目的地滚动 settle/cancel 语义，并协调 final anchor event | 不直接可见 |
-| TransactionRunner | 串行化 transaction queue | 不直接可见 |
-| ViewportTransactionController | 执行 bootstrap / prepend / append / jump / restore / followBottom / resize transaction body | 不直接可见 |
-| EdgeNeedCoordinator | sentinel、edge latch、needMoreBefore / needMoreAfter 事件 | 不直接可见 |
-| LifecycleGuard | generation、destroy、detach、异步资源清理 | 不直接可见 |
+| Module | Responsibility |
+| --- | --- |
+| `MessageViewportRuntimeController` | 组合 runtime parts，维护 lifecycle 和状态轴。 |
+| `RuntimeDataSnapshotCoordinator` | 接收 DataWindow revision，只更新数据真相，不直接修改物理滚动空间。 |
+| `PhysicalSegmentCoordinator` | 选择 active segment，维护 `segmentId / segmentRevision / logicalSegmentId / physicalWindowHeight`。 |
+| `RenderWindowEngine` | 在 active segment 预算内选择 mounted rows。 |
+| `SpacerEngine` | 计算当前 segment 内 local top/bottom spacer。禁止计算全局累计 spacer。 |
+| `ProjectionCoordinator` | 发布 `items + renderWindow + local spacers + ProjectionCommitToken`。 |
+| `CommitCoordinator` | 等待并校验 React commit token ack。 |
+| `MeasurementEngine` | 测量 mounted rows，产出 local correction 或 segment relayout intent。 |
+| `ScrollGeometryCoordinator` | 计算 physical scroll metrics、custom scrollbar thumb 输入和 cap diagnostics。 |
+| `ScrollIntentEngine` | 分类 user / wheel / keyboard / momentum / programmatic / recovery / followBottom / jump / drag 输入。 |
+| `DirectScrollCoordinator` | custom scrollbar drag / track 的写入仲裁，维护 `isDragLocked`。 |
+| `MomentumLatchCoordinator` | trackpad / wheel 边界残余 delta 抑制，维护 `isMomentumLatched`。 |
+| `SegmentTransactionController` | 执行 `SegmentShift` 和 `SegmentRelayout`。 |
+| `ViewportTransactionController` | 执行 bootstrap、jump、restore、followBottom、reset 等语义事务。 |
+| `ScrollMotionEngine` | 只在目标 segment 内做 bounded motion。 |
+| `EdgeNeedCoordinator` | 用 data revision + physical segment revision 共同 latch edge need，并维护 adjacent segment prefetch 状态。 |
+| `DiagnosticRecorder` | 检测 physical invariant 违约并输出恢复线索。 |
 
 ## 4. Snapshot Boundary
 
-只有 projection 必须渲染的字段进入 snapshot。
+Projection snapshot 只回答“React 应渲染什么”。
 
 ```ts
 type MessageViewportSnapshot = {
   feedId: string;
   generation: number;
   revision: number;
+  commitToken: ProjectionCommitToken;
   items: MessageDataItem[];
   renderWindow: RenderWindow;
   topSpacer: number;
@@ -88,60 +87,71 @@ type MessageViewportSnapshot = {
 };
 ```
 
-必须进入 snapshot：
-
-- `items`
-- `renderWindow`
-- `topSpacer`
-- `bottomSpacer`
-- `bottomLockState`
-- `bootstrapState`
-- `viewportPhase`
-- 边缘 loading / exhausted 状态
-
-禁止进入 snapshot：
+不进入 projection snapshot：
 
 - `scrollTop`
-- measured row rects
-- ResizeObserver entries
-- internal transaction object
-- command queue
+- `scrollHeight`
+- row rects
 - height cache map
-- raw DOM refs
-- momentum / wheel event details
+- transaction queue
+- command queue
+- `isDragLocked`
+- `physicalSegmentId` as React render state
+- custom scrollbar thumb geometry
 
-规则：
+`commitToken` 是 commit ack metadata。React adapter 必须原样回传它，但不能用它推导 thumb geometry 或业务滚动状态。
 
-```text
-会改变 React 要渲染什么，才进入 snapshot。
-只影响 runtime 如何稳定视口，不进入 snapshot。
+`snapshot.revision === snapshot.commitToken.projectionRevision` 必须成立。
+
+这些进入 physical metrics 或 diagnostics：
+
+```ts
+type PhysicalScrollMetrics = {
+  physicalSegmentId: string | null;
+  physicalSegmentRevision: number;
+  viewportSize: number;
+  physicalWindowSize: number;
+  domScrollHeight: number;
+  scrollPosition: number;
+  maxScrollPosition: number;
+  scrollHeightCap: number;
+  capMode: 'normal' | 'short-feed' | 'exceptional-row';
+  safeScrollRangeStart: number;
+  safeScrollRangeEnd: number;
+  isDragLocked: boolean;
+  isThumbFrozen: boolean;
+  isSegmentShiftPending: boolean;
+  pendingShiftDirection: 'before' | 'after' | null;
+  pendingEdgeOverflowPx: number;
+  isSegmentShifting: boolean;
+  isMomentumLatched: boolean;
+  suppressedMomentumDeltaPx: number;
+  segmentRelayoutState: 'idle' | 'pending' | 'running';
+  segmentRelayoutReason: SegmentRelayoutReason | null;
+  adjacentPrefetchBefore: 'idle' | 'needed' | 'in-flight' | 'ready';
+  adjacentPrefetchAfter: 'idle' | 'needed' | 'in-flight' | 'ready';
+};
 ```
 
-## 5. Snapshot Revision
+`SegmentRelayoutReason` 使用主规范 [physical-segment-architecture.md](./physical-segment-architecture.md) 中的枚举。
 
-Runtime snapshot revision 只在 projection 输出变化时递增：
+原因：projection snapshot 不能因每一帧 `scrollTop` 变化而触发 React row tree rerender。Custom scrollbar 可以订阅 physical metrics，message projection 订阅 projection snapshot。
 
-- renderWindow item keys 变化
-- spacer 高度变化
-- bottom lock UI 状态变化
-- bootstrap / edge 状态变化
-- data item projection 版本变化
+稳定帧中：
 
-以下变化不递增 snapshot revision：
+```text
+physicalWindowSize === domScrollHeight
+maxScrollPosition === max(0, physicalWindowSize - viewportSize)
+```
 
-- 用户滚动但 window 未滑动
-- height cache 更新但 spacer 不变
-- ResizeObserver 回调被合并但无需 projection
-- runtime 内部 command queue 变化
+如果这两个等式不成立，runtime 必须输出 diagnostics，而不是让 custom scrollbar 自行兜底。
 
-React adapter 依赖 revision 做 commit 回执，但不能把 revision 当作业务数据版本。
+## 5. DOM Contract
 
-## 6. DOM Contract
-
-推荐 DOM 结构：
+DOM 仍是正常文档流：
 
 ```html
-<div data-message-viewport>
+<div data-message-scroll-container>
   <div data-top-sentinel></div>
   <div data-top-spacer style="height: ...px"></div>
   <div data-message-window>
@@ -154,21 +164,18 @@ React adapter 依赖 revision 做 commit 回执，但不能把 revision 当作�
 
 约束：
 
-- row 必须处于正常文档流。
-- spacer 也是正常文档流元素。
-- container 是唯一 scroll container。
-- `overflow-anchor: none` 放在 scroll container 或 message window 根节点。
-- row key 必须使用 `MessageRuntimeItemKey`，不能使用 render index。
+- native scrollbar 隐藏，但 container 仍是唯一 scroll container。
+- row 必须在正常文档流中。
+- spacer 只能是 active segment 的 local spacer。
+- `topSpacer + mountedRowsHeight + bottomSpacer === physicalWindowHeight`。
+- `physicalWindowHeight` 在同一 `segmentRevision` 内冻结。
+- `physicalWindowHeight` 默认必须小于等于 configured cap；`capMode='exceptional-row'` 例外但必须诊断。
+- `overflow-anchor: none` 放在 scroll container 或 window 根节点。
+- row key 使用 `MessageRuntimeItemKey`，不使用 render index。
 
-## 7. Runtime State Machine
+## 6. State Axes
 
-Runtime 是分层状态机，不是单一 `RuntimeState`。实现和接入层都不能只用
-`state === READY` 判断用户动作已经完成；必须结合 `ReadySubstate`、transaction
-队列、active motion、`viewportPhase` 和 `bottomLockState`。
-
-本节描述当前实现的目标模型。它不是把所有状态塞进一个 enum，而是把 runtime
-拆成多条正交状态轴：生命周期、bootstrap、transaction、destination、visual
-phase、bottom lock。每条轴只回答一个问题，任何代码都不应跨轴复用语义。
+Lifecycle：
 
 ```ts
 type RuntimeState =
@@ -180,392 +187,56 @@ type RuntimeState =
   | 'DESTROYED';
 ```
 
-转移规则：
-
-| From | Event | To |
-| --- | --- | --- |
-| INITIAL | attach | ATTACHED |
-| ATTACHED | bootstrap command + data ready | BOOTSTRAPPING |
-| BOOTSTRAPPING | settle | READY |
-| READY | transaction start | READY |
-| READY | transaction commit | READY |
-| ATTACHED / READY | detach | DETACHED |
-| DETACHED | attach | ATTACHED |
-| any non-destroyed | destroy | DESTROYED |
-
-`detach` 不等同于 `destroy`。React StrictMode 下允许 `attach -> detach -> attach`，runtime 必须保持幂等。
-
-```mermaid
-stateDiagram-v2
-  [*] --> INITIAL
-  INITIAL --> ATTACHED: attach
-  ATTACHED --> BOOTSTRAPPING: bootstrap + data ready
-  BOOTSTRAPPING --> READY: settle / empty feed
-  READY --> DETACHED: detach
-  DETACHED --> ATTACHED: attach
-  INITIAL --> DESTROYED: destroy
-  ATTACHED --> DESTROYED: destroy
-  BOOTSTRAPPING --> DESTROYED: destroy
-  READY --> DESTROYED: destroy
-  DETACHED --> DESTROYED: destroy
-```
-
-`READY` 可以有 runtime 私有子状态，但这些子状态不进入 public snapshot：
+READY 子状态：
 
 ```ts
 type ReadySubstate =
   | 'READY_IDLE'
   | 'READY_FOLLOW_BOTTOM_PENDING'
   | 'READY_DESTINATION_PENDING'
+  | 'READY_SEGMENT_SHIFT_PENDING'
+  | 'READY_SEGMENT_SHIFTING'
   | 'READY_MOTION_ACTIVE';
 ```
 
-规则：
-
-- `READY_FOLLOW_BOTTOM_PENDING` 表示显式 `followBottom` 已经转成
-  `needLatestMessages(bottom-follow)`，正在等待 latest DataWindow；它不是 transaction。
-- `READY_DESTINATION_PENDING` 表示显式 `jump` / `restore` 的目标不在当前
-  DataWindow，runtime 已发出 `needMessagesAround`，正在等待接入层围绕目标
-  重建窗口；它也不是 transaction。
-- `READY_MOTION_ACTIVE` 表示 `ScrollMotionEngine` 正在拥有 `scrollTop` 写入权。
-- 任意新 transaction 启动前，`TransactionRunner` 必须同步取消 active motion。
-- Motion settle 可以保持 public state 为 `READY`，但必须在 settle 后再 emit
-  `viewportAnchorChanged(transaction-settle)`。
-
-```mermaid
-stateDiagram-v2
-  [*] --> READY_IDLE
-  READY_IDLE --> READY_FOLLOW_BOTTOM_PENDING: followBottom waits latest data
-  READY_IDLE --> READY_DESTINATION_PENDING: jump / restore waits around data
-  READY_FOLLOW_BOTTOM_PENDING --> READY_MOTION_ACTIVE: latest window resolved
-  READY_DESTINATION_PENDING --> READY_MOTION_ACTIVE: target DOM resolved
-  READY_MOTION_ACTIVE --> READY_IDLE: settle / cancel cleanup
-```
-
-### 7.1 Orthogonal State Layers
-
-这些状态层相互正交，分别表达不同所有权：
-
-| Layer | Owner | Meaning |
-| --- | --- | --- |
-| `RuntimeState` | runtime lifecycle | attach/bootstrap/detach/destroy |
-| `ReadySubstate` | runtime command intent | pending latest / pending destination / active motion |
-| `TransactionState` | transaction serialization | queued / active / settling / idle |
-| `DestinationState` | destination intent | pendingData / resolvingDom / motionActive / settled / interrupted |
-| `TransactionRunner` | mutation serialization | window、spacer、DOM commit、measurement 的串行所有权 |
-| `ScrollMotionEngine` | scroll writer | animation 期间唯一写 `scrollTop` 的 owner |
-| `bottomLockState` | scroll intent | 只表达 latest bottom lock |
-| `viewportPhase` | visual phase | projection、measurement、correction、motion 中间态 |
-
-`bottomLockState` 只能是 `LOCKED / UNLOCKED`。Projection/recovery/motion 的中间态
-必须由 `viewportPhase` 表达，不能再塞回 bottom lock。`TransactionState` 和
-`DestinationState` 只用于 controller 内部诊断与守卫，不进入 public snapshot。
-
-稳定语义只能来自最终 settle：
-
-- jump / restore：目标 DOM commit、测量、motion settle 后才算完成。
-- followBottom：latest window commit、motion 到达物理 latest bottom 后才算 `LOCKED`。
-- prepend / resize / refresh：anchor correction 完成后才允许 emit settled anchor。
-
-### 7.2 Bootstrap State Axis
-
-Bootstrap 是独立子状态机。`RuntimeState.BOOTSTRAPPING` 只表示 runtime 处于首屏启动
-生命周期；具体允许哪些副作用必须看 `BootstrapState`。
-
-```mermaid
-stateDiagram-v2
-  [*] --> INITIAL
-  INITIAL --> MOUNTING: initial projection
-  MOUNTING --> MEASURING: commit ack
-  MEASURING --> STABILIZING: first measurement done
-  STABILIZING --> READY: correction settled
-  INITIAL --> READY_EMPTY: empty feed
-  READY_EMPTY --> [*]
-  READY --> [*]
-```
-
-阶段许可表必须和实现保持一致：
-
-| BootstrapState | Projection | Measurement | Correction | Trim | Edge Need |
-| --- | --- | --- | --- | --- | --- |
-| `MOUNTING` | allowed | forbidden | forbidden | forbidden | forbidden |
-| `MEASURING` | allowed | allowed | forbidden | forbidden | forbidden |
-| `STABILIZING` | allowed | allowed | allowed | forbidden | forbidden |
-| `READY` | allowed | allowed | allowed | allowed | allowed |
-
-关键约束：
-
-- `MEASURING` 可以读 DOM / height，但不能写 correction，也不能触发分页。
-- `STABILIZING` 可以做首屏必要 correction，但仍不能 trim，也不能发 edge need。
-- `READY_EMPTY` 是空 feed 的稳定完成态，不是中间态。
-- 普通 READY 事务不能借用 bootstrap 禁令；它们由 transaction / viewportPhase 约束。
-
-### 7.3 Transaction State Axis
-
-`TransactionState` 只描述 projection、DOM commit、measurement、correction 的串行化。
-它不代表用户目的地完成，也不改变 `RuntimeState`。
-
-```mermaid
-stateDiagram-v2
-  [*] --> idle
-  idle --> active: first transaction starts
-  idle --> queued: enqueue behind active transaction
-  queued --> active: runner drains next
-  active --> settling: correction / final write
-  settling --> idle: finalized
-  active --> idle: no correction needed
-  queued --> idle: drop / clear / stop
-```
-
-语义边界：
-
-- `active` 表示 transaction body 正在持有 mutation 串行权。
-- `settling` 表示 transaction 已进入最终 correction / anchor settle 阶段。
-- `queued` 只表示还有等待执行的 transaction，不表示当前 active transaction 仍未完成。
-- transaction 可以启动 destination motion，但 motion 本身不是 transaction。
-
-当前实现说明：
-
-- `TransactionRunner` 是真实队列执行器。
-- controller diagnostics 会输出 `transactionState`，用于串联日志。
-- 事务体仍会在局部阶段写 `active / settling / idle`。这符合当前行为，但不是最终最干净的单一真源模型；后续收敛时应让 `TransactionRunner` 统一发布 queue/active/idle，事务体只表达 `settling` 或更细的 transaction phase。
-
-### 7.4 Destination State Axis
-
-`DestinationState` 只描述 jump / restore / followBottom 的用户目的地意图生命周期。
-它不代表 DOM projection 是否完成，也不等同于 bottom lock。
-
-```mermaid
-stateDiagram-v2
-  [*] --> idle
-  idle --> pendingData: target data missing
-  idle --> resolvingDom: target data already present
-  pendingData --> resolvingDom: data window resolved
-  resolvingDom --> motionActive: target DOM measured
-  motionActive --> settled: motion reached destination
-  motionActive --> interrupted: user interrupt
-  motionActive --> pendingData: transaction supersede requires re-resolve
-  settled --> pendingData: next command
-  settled --> resolvingDom: next command
-  interrupted --> pendingData: next command
-  interrupted --> resolvingDom: next command
-```
-
-语义边界：
-
-- `pendingData` 表示 runtime 已保留用户意图，并请求 latest / around data。
-- `resolvingDom` 表示 data 已在当前 window，正在等待 projection commit 后解析 DOM。
-- `motionActive` 表示目的地坐标已经解析，scroll writer 由 motion 接管。
-- `settled` / `interrupted` 是终态诊断值，可以保留到下一次目的地命令覆盖。
-
-关键禁令：
-
-- `transaction-supersede` 不能把 `motionActive` 直接变成 `settled`。
-- 真实用户 wheel / drag / gesture 才能把目的地意图终止为 `interrupted`。
-- jump 的 `destinationSettled` 只能在目标 DOM resolve 且最终 motion settle 后发送。
-- followBottom 的 `LOCKED` 只能在 latest window + 物理底部 settle 后发布。
-
-### 7.5 Viewport Phase Axis
-
-`ViewportPhase` 是 React 可见的视觉中间态。它解释 projection 正在经历什么，
-但不承载业务吸底语义，也不承载用户目的地意图。
-
-```mermaid
-stateDiagram-v2
-  [*] --> IDLE
-  IDLE --> PROJECTING: publish projection
-  PROJECTING --> MEASURING: commit ack / measure DOM
-  MEASURING --> CORRECTING: anchor correction
-  CORRECTING --> IDLE: correction settled
-  PROJECTING --> MOTION_ACTIVE: destination motion starts
-  MOTION_ACTIVE --> IDLE: motion settle / cancel cleanup
-```
-
-React adapter 可以读取 `viewportPhase` 做稳定 projection 判断，但不能接管 scroll 语义。
-例如 follow-bottom slot 是否存在，应由 runtime snapshot 的稳定业务状态和 projection
-共同决定，不能在 adapter 中用临时冻结补偿 runtime 状态机缺陷。
-
-### 7.6 Bottom Lock Axis
-
-`bottomLockState` 只表达当前 viewport 是否锁在 feed latest。
-
-```mermaid
-stateDiagram-v2
-  [*] --> UNLOCKED
-  UNLOCKED --> LOCKED: latest bottom reached
-  LOCKED --> UNLOCKED: user reads away / partial window / explicit jump
-```
-
-约束：
-
-- `LOCKED` 不表示 motion 正在恢复，也不表示 projection 已完成。
-- `UNLOCKED + MOTION_ACTIVE` 是合法状态，例如 quote jump 动画期间。
-- `LOCKED + PROJECTING` 是合法状态，例如 bottom locked append projection 期间。
-- `hasMoreAfter=true` 的 partial window 不能投影成 `LOCKED`。
-
-### 7.7 Supersede Rules
-
-`transaction-supersede` 只表示旧 motion 的坐标失效，不表示用户意图取消。
-
-- active `followBottom` 被 append / resize supersede 后，必须在新 projection commit 后
-  重新计算 latest bottom target 并继续 motion。
-- active `jump` 被 data / resize supersede 后，必须重新解析 target DOM 和 `targetTop`；
-  被取消的半程 motion 不能 emit `destinationSettled`。
-- user interrupt 与 transaction supersede 必须分离：真实用户 wheel / drag / gesture
-  取消 jump 后不能自动重启，也不能保留 pending destination。
-- reset / generation change / detach / destroy 是隔离边界，必须清掉 pending intent、
-  active motion、commit wait 和 measurement cache。
-
-```mermaid
-sequenceDiagram
-  participant User
-  participant Runtime
-  participant Tx as TransactionRunner
-  participant Motion
-  participant React
-
-  User->>Runtime: jump / followBottom
-  Runtime->>Tx: enqueue transaction
-  Tx->>Motion: cancel(transaction-supersede)
-  Tx->>React: publish projection
-  React-->>Tx: commit ack
-  Tx->>Runtime: resolve target / targetTop
-  Runtime->>Motion: start motion
-  Motion-->>Runtime: settle
-  Runtime->>React: publish final bottomLock + IDLE phase
-  Runtime-->>User: destinationSettled / anchorChanged
-```
-
-### 7.8 Current Implementation Review Notes
-
-当前实现已经完成的正向收敛：
-
-- `RuntimeState` 已从业务事务状态中抽离，只表达 attach/bootstrap/detach/destroy。
-- `BottomLockState` 已删除 `RECOVERING`，只保留 `LOCKED / UNLOCKED`。
-- `viewportPhase` 已成为 projection / measurement / correction / motion 的视觉出口。
-- Bootstrap 已有阶段许可表，`MEASURING / STABILIZING` 的副作用边界明确。
-- jump / followBottom 的稳定完成语义已下沉到 motion settle，而不是 transaction commit。
-
-仍需保持警惕的收敛点：
-
-- `TransactionState` 目前同时由 `TransactionRunner` 回调和 transaction body 写入；
-  长期应收敛为单一写入模型，避免 diagnostics 中出现 queue/active/idle 时序偏差。
-- `DestinationState` 的 `settled / interrupted` 当前是 sticky diagnostic terminal state；
-  这是可解释的，但必须明确它不是“当前仍在执行目的地命令”。
-- 如果未来新增 `transactionPhase`，应只描述 transaction body 的内部阶段，不能再把它
-  混回 lifecycle、destination 或 bottom lock。
-
-## 8. Public Events
-
-Runtime 可以向外发出 view-level 事件：
+Viewport phase：
 
 ```ts
-type MessageViewportRuntimeEvent =
-  | {
-      type: 'needMoreBefore';
-      feedId: string;
-      generation: number;
-      reason: 'near-top' | 'prepend-recovery';
-    }
-  | {
-      type: 'needMoreAfter';
-      feedId: string;
-      generation: number;
-      reason: 'near-bottom';
-    }
-  | {
-      type: 'needLatestMessages';
-      feedId: string;
-      generation: number;
-      reason: 'bottom-follow';
-    }
-  | {
-      type: 'needMessagesAround';
-      feedId: string;
-      generation: number;
-      reason: 'jump' | 'restore';
-      target: MessageIdentityAnchor;
-    }
-  | {
-      type: 'destinationSettled';
-      feedId: string;
-      generation: number;
-      intent: 'jump';
-      target: MessageIdentityAnchor;
-      resolution: 'target' | 'fallback-deleted';
-      resolvedTarget?: MessageIdentityAnchor;
-    }
-  | {
-      type: 'viewportAnchorChanged';
-      feedId: string;
-      generation: number;
-      reason: 'scroll-idle' | 'transaction-settle' | 'detach';
-      anchor: AnchorState | null;
-    }
-  | { type: 'viewportReady'; feedId: string; generation: number }
-  | { type: 'viewportError'; feedId: string; generation: number; code: string };
+type ViewportPhase =
+  | 'IDLE'
+  | 'RECOVERING'
+  | 'SEGMENT_SHIFTING'
+  | 'DESTINATION_PENDING'
+  | 'MOTION_ACTIVE';
 ```
 
-这些事件只能表达 viewport 需求，不携带 SDK query 细节。
+`BottomLockState` 只表达 feed latest lock：
 
-当前实现会在用户接近 after edge 时发出 `needMoreAfter(reason: 'near-bottom')`。
-这是“用户向下浏览”的逐页分页信号。
+```ts
+type BottomLockState = 'LOCKED' | 'UNLOCKED';
+```
 
-`needMoreBefore` / `needMoreAfter` 只能在 runtime 已经完成 bootstrap、public
-state 为 `READY`、内部子状态为 `READY_IDLE`、projection `bootstrapState` 为
-`READY`，且 scroll source 是 user / momentum 时发出。user / momentum 必须
-来自当前激活期的近期用户输入意图；unknown scroll、container attach 恢复
-`scrollTop`、restore 对齐、旧 feed 激活期残留的 `lastScrollSource` 都不能触发
-edge paging。BOOTSTRAPPING / MOUNTING、commit timeout recovery、pending
-follow-bottom、pending destination 和 motion active 期间也都不能发 edge paging
-event。否则恢复失败或 runtime 自己写 `scrollTop` 会被 sentinel 放大成错误分页。
+`isDragLocked` 独立存在。它不能塞进 bottom lock，也不能用 `MOTION_ACTIVE` 代替。
 
-bottom lock 可以在非用户生命周期边界做只进不退校准：当 `hasMoreAfter=false`
-且真实 `distanceToBottom` 已在 lock threshold 内，runtime 可以把 stale
-`UNLOCKED` 提升为 `LOCKED`。这用于 restored bootstrap、cached attach 以及
-append / refresh 追底判断前的状态修正；它不能把 programmatic 远离底部解释成
-用户离底，也不能在 `hasMoreAfter=true` 的 partial window 上锁底。
+## 7. Ownership Rules
 
-外部显式 `followBottom` 但当前 DataWindow 仍有 `hasMoreAfter=true` 时，runtime
-发出 `needLatestMessages(reason: 'bottom-follow')`。接入方必须直接请求 latest
-window 并替换 DataWindow，不能沿当前 after edge 逐页补齐中间空洞。
+- Data revision 到达只能改变 DataWindow。它不能直接扩张 scrollHeight。
+- Segment shift 消费 DataWindow 结果，负责改变 physical geometry。
+- Resize / measurement 只能触发 local correction 或 segment relayout，不能隐式跨 segment。
+- Motion 不能跨不存在的全局高度。远距离 jump / restore 先选 target segment。
+- Edge need 不能只看 sentinels。必须检查 active segment 是否已经在对应 data edge。
+- Diagnostics 不是 debug 附件。它是 invariant enforcement surface。
 
-外部显式 `jump` / `restore` 但目标不在当前 DataWindow 时，runtime 发出
-`needMessagesAround(reason: 'jump' | 'restore', target)`。接入方必须围绕 target
-执行 around query 并替换 DataWindow，不能顺序补齐当前窗口和目标之间的消息。
+## 8. Recovery Principles
 
-显式 `followBottom` 的 `bottom-follow` 语义由 runtime pending command 保持。
-在 pending 期间，runtime 不发普通 `near-bottom`，也不把当前 DataWindow 的物理
-底部解释成 feed latest bottom。用户主动向上滚动、jump / restore / reset、
-generation change 或 detach 会取消 pending command。`jump` / `restore` 的
-around-target pending 由后续 matching snapshot 消费；新的 destination command、
-reset、generation change 或 detach 会取消它。
+生产路径不 hard fail，但必须可恢复：
 
-React/demo 层不得用 raw `scrollTop` / `scrollHeight` 自行重建向下分页判断；
-否则会绕过 runtime 的 scroll source classification、edge latch 和 transaction
-时序，导致吸底与向下分页相互打架。
+| Violation | Recovery |
+| --- | --- |
+| spacer-only viewport | anchor-based segment relayout |
+| scrollHeight cap exceeded | reduce mounted rows or exceptional cap |
+| segment shift loop | suppress next shift and rebase to safe zone |
+| same-revision spacer oscillation | freeze local correction, run one relayout |
+| stale data for pending shift | remain `READY_SEGMENT_SHIFT_PENDING` |
 
-React/demo 层也不得 query projection DOM 或注册 raw scroll listener 来保存
-恢复位点。Runtime 在 scroll rAF / transaction settle 后发出
-`viewportAnchorChanged`，并且在 `detach()` 清掉 DOM refs 前发出
-`viewportAnchorChanged(reason: 'detach')` 作为 viewport deactivation checkpoint。
-React adapter 必须透传完整 event，包括 `feedId` 和 `generation`；是否持久化、
-持久化到哪里属于 data/demo/app 层。
-
-如果某次 transaction 之后启动了 scroll motion，`transaction-settle` 事件由
-motion settle callback 发出；transaction commit callback 不得为同一目的地滚动
-提前发出第二次 anchor event。没有 motion 的 transaction 仍可在同步 correction
-完成后发出 `transaction-settle`。
-
-## 9. Implementation Order
-
-推荐顺序：
-
-1. ProjectionStore + `useSyncExternalStore` adapter。
-2. DomRegistry + commit 回执。
-3. latest bootstrap 到 bottom locked。
-4. prepend transaction。
-5. dynamic height stabilization。
-6. RenderWindow sliding 和 trim。
-7. jump / restore。
-8. feed teardown 和 StrictMode 压测。
+开发和测试环境可以对 architecture error hard assert。

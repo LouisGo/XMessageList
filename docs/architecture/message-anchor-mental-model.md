@@ -129,10 +129,10 @@ type AnchorState = {
 
 它服务于：
 
-- prepend recovery
+- segment shift / relayout anchor correction
 - resize stabilization
-- trim continuity
-- history restore after mount
+- physical segment continuity
+- history restore after target segment mount
 
 它不能作为 main 进程合同。
 
@@ -196,10 +196,11 @@ Bottom Anchor 还必须满足一个数据边界前提：
 hasMoreAfter === false
 ```
 
-如果 `hasMoreAfter === true`，当前 DOM 底部只是已加载 DataWindow 的 after edge，
-不是会话最新消息底部。此时接近底部只能触发 `needMoreAfter`，不能进入
+如果 `hasMoreAfter === true`，当前 DOM 底部只是 active physical segment 的 after
+edge，不是会话最新消息底部。此时接近底部只能产生 edge intent，不能进入
 `BottomLocked`。显式 `followBottom` 不是连续向下浏览，runtime 必须发出
-`needLatestMessages`，由接入层直接重建 latest DataWindow。
+`needLatestMessages`，由接入层提供 latest 数据，再由 viewport runtime 构造 latest
+physical segment。
 
 ---
 
@@ -437,8 +438,8 @@ MessageIdentityAnchor
 ```text
 identity target
 -> data window
--> mount target window
--> scroll semantic operation
+-> build target physical segment
+-> local anchor correction
 -> capture viewport anchor
 ```
 
@@ -452,9 +453,9 @@ identity target -> scrollTop
 
 ---
 
-## 7.3 Prepend
+## 7.3 DataWindow Edge Load
 
-prepend 之前 capture：
+加载 before / after edge 前，viewport runtime 可以 capture：
 
 ```text
 ViewportAnchor / AnchorState
@@ -468,10 +469,10 @@ edge MessageIdentityAnchor
 
 如果窗口边缘是 optimistic item，必须向内寻找最近的 committed edge anchor。
 
-prepend 之后恢复：
+数据到达后不直接做旧式滚动恢复。viewport runtime 根据当前 physical state 决定：
 
 ```text
-same ViewportAnchor / AnchorState visual position
+SegmentShift / SegmentRelayout / projectionRefresh
 ```
 
 这两个 anchor 属于不同层。

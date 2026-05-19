@@ -1,25 +1,8 @@
 # Message Runtime 实现合同
 
-## 1. Scope
+本文定义从零实现 physical segment viewport runtime 时必须固定的外部合同。
 
-本文档定义：
-
-```text
-从零实现 runtime 时必须固定的外部合同
-```
-
-不重复定义：
-
-- anchor 语义
-- data merge 规则
-- viewport 架构原则
-- legacy 迁移边界
-
----
-
-# 2. Runtime Public API
-
-推荐核心对象：
+## 1. Public API
 
 ```ts
 class MessageViewportRuntime {
@@ -31,282 +14,258 @@ class MessageViewportRuntime {
   dispatch(command: MessageRuntimeCommand): void;
 
   subscribe(listener: RuntimeListener): () => void;
-  subscribeEvent(listener: RuntimeEventListener): () => void;
   getSnapshot(): MessageViewportSnapshot;
+
+  subscribeEvent(listener: RuntimeEventListener): () => void;
   getViewportAnchorState(): AnchorState | null;
 
-  notifyProjectionCommitted(commit: ProjectionCommit): void;
+  registerRow(key: MessageRuntimeItemKey, element: HTMLElement | null): void;
+  registerTopSpacer(element: HTMLElement | null): void;
+  registerBottomSpacer(element: HTMLElement | null): void;
+  registerTopSentinel(element: HTMLElement | null): void;
+  registerBottomSentinel(element: HTMLElement | null): void;
+
+  notifyProjectionCommitted(commit: ProjectionCommitToken): void;
+
+  getPhysicalScrollMetrics(): PhysicalScrollMetrics;
+  subscribePhysicalScroll(listener: RuntimeListener): () => void;
+  beginDirectScroll(input: DirectScrollInput): void;
+  writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): boolean;
+  endDirectScroll(input: DirectScrollInput): void;
+
+  getDiagnosticRecords(): ViewportDiagnosticRecord[];
 }
 ```
 
-Runtime 必须：
+业务层不直接写 `scrollTop`。标准 React adapter 可以使用 direct-scroll API 实现 custom scrollbar。
 
-- 脱离 React
-- 命令式
-- 可销毁
-- feed scoped
-- generation scoped
+## 2. Projection Snapshot
 
----
-
-# 3. Snapshot Contract
-
-Runtime 发布给 React 的是：
-
-```text
-projection snapshot
-```
-
-而不是 internal state。
-
-推荐模型：
+Projection snapshot 只驱动 React rows / spacers / slots。
 
 ```ts
 type MessageViewportSnapshot = {
   feedId: string;
   generation: number;
   revision: number;
-  renderWindow: RenderWindow;
+  commitToken: ProjectionCommitToken;
   items: MessageDataItem[];
+  renderWindow: RenderWindow;
   topSpacer: number;
   bottomSpacer: number;
   bottomLockState: BottomLockState;
   bootstrapState: BootstrapState;
+  viewportPhase: ViewportPhase;
+  edgeState: ViewportEdgeState;
 };
 ```
 
-React 只订阅：
+`physicalSegmentId` 不作为 React 渲染状态使用，但必须通过 `commitToken` 进入 projection snapshot metadata，供 commit ack 原样回传。`scrollTop` 和 thumb geometry 不进 projection snapshot，它们进入 physical metrics / diagnostics。
 
-```text
-snapshot
-```
+`snapshot.revision` 必须与 `snapshot.commitToken.projectionRevision` 保持同值。
 
-不读取 runtime 内部字段。
-
----
-
-# 4. React Commit Contract
-
-Runtime 发布 projection 后，必须等待 React commit 回执。
-
-推荐回执：
+## 3. Physical Metrics
 
 ```ts
-type ProjectionCommit = {
-  feedId: string;
-  generation: number;
-  revision: number;
+type PhysicalScrollMetrics = {
+  physicalSegmentId: string | null;
+  physicalSegmentRevision: number;
+  viewportSize: number;
+  physicalWindowSize: number;
+  domScrollHeight: number;
+  scrollPosition: number;
+  maxScrollPosition: number;
+  scrollHeightCap: number;
+  capMode: 'normal' | 'short-feed' | 'exceptional-row';
+  safeScrollRangeStart: number;
+  safeScrollRangeEnd: number;
+  isDragLocked: boolean;
+  isThumbFrozen: boolean;
+  isSegmentShiftPending: boolean;
+  pendingShiftDirection: 'before' | 'after' | null;
+  pendingEdgeOverflowPx: number;
+  isSegmentShifting: boolean;
+  isMomentumLatched: boolean;
+  suppressedMomentumDeltaPx: number;
+  segmentRelayoutState: 'idle' | 'pending' | 'running';
+  segmentRelayoutReason: SegmentRelayoutReason | null;
+  adjacentPrefetchBefore: 'idle' | 'needed' | 'in-flight' | 'ready';
+  adjacentPrefetchAfter: 'idle' | 'needed' | 'in-flight' | 'ready';
 };
 ```
 
-正确时序：
+`SegmentRelayoutReason` 使用主规范 [physical-segment-architecture.md](./physical-segment-architecture.md) 中的枚举。
+
+更新触发：
+
+- scroll frame
+- segment shift / relayout
+- resize
+- direct drag begin/end
+- motion start/settle/cancel
+
+Projection snapshot revision 不应因为普通 scroll frame 递增。
+
+稳定帧中：
 
 ```text
-runtime publishes projection
--> React renders
--> layout effect / ref callback
--> notifyProjectionCommitted
--> runtime measures
--> runtime stabilizes
+physicalWindowSize === domScrollHeight
+maxScrollPosition === max(0, physicalWindowSize - viewportSize)
 ```
 
-禁止：
+Custom scrollbar 必须使用这组 metrics，不能直接从 DataWindow 或裸 DOM 推导 thumb geometry。
 
-```text
-publish projection
--> immediately measure
-```
-
-因为 React 18 不保证同步 commit。
-
----
-
-# 5. Transaction Model
-
-所有 viewport mutation 必须进入 transaction。
-
-```ts
-type ViewportTransaction =
-  | 'bootstrap'
-  | 'prepend'
-  | 'append'
-  | 'jump'
-  | 'restore'
-  | 'resize'
-  | 'identityRebind'
-  | 'reset';
-```
-
-Transaction 负责：
-
-- freeze scroll intent
-- publish projection
-- wait commit
-- measure
-- correct scrollTop
-- update spacer
-- commit AnchorState
-- release scroll intent
-
-Transaction 不是：
-
-```text
-React render transaction
-```
-
-它是 viewport runtime 的原子语义单元。
-
----
-
-# 6. Command Queue
-
-命令必须串行化。
-
-推荐命令：
+## 4. Commands
 
 ```ts
 type MessageRuntimeCommand =
-  | {
-      type: 'bootstrap';
-      mode: 'latest' | 'unread' | 'restored';
-      target?: AnchorState | MessageIdentityAnchor;
-    }
+  | { type: 'bootstrap'; mode: 'latest' | 'unread' | 'restored'; target?: AnchorState | MessageIdentityAnchor }
   | { type: 'jump'; target: MessageIdentityAnchor; origin?: MessageIdentityAnchor }
   | { type: 'restore'; target: AnchorState | MessageIdentityAnchor }
   | { type: 'followBottom' }
   | { type: 'reset'; reason: string };
 ```
 
-规则：
+Command 只表达语义目的地。它不能携带物理 scrollTop。
 
-| Runtime State | Command Behavior                                  |
-| ------------- | ------------------------------------------------- |
-| INITIAL       | only bootstrap accepted                           |
-| BOOTSTRAPPING | latest bootstrap wins, jump replaces pending jump |
-| READY         | commands execute sequentially                     |
-| DESTROYED     | command rejected                                  |
+## 5. Data Revision Handling
 
-Supersede 规则：
+`MessageDataSnapshot.change.viewportModifier` 是数据变化语义，不是几何事务名。
 
-- later jump cancels earlier pending jump
-- reset cancels all pending commands
-- feed generation change cancels all old commands
-- followBottom is ignored when not READY
+| Modifier | New response |
+| --- | --- |
+| `prepend` | update DataWindow; satisfy pending shift-before or relayout active segment if needed |
+| `append` | update DataWindow; refresh active segment or latest follow intent |
+| `auto-scroll-to-bottom` | ensure latest segment and follow bottom |
+| `items-change` | refresh active segment or relayout if measurement/coverage invalid |
+| `reset` | reset physical segment and bootstrap |
+| `none` | store data, no geometry mutation unless pending intent consumes it |
 
-当前 prototype 状态：
+Reserved modifiers must still error until a dedicated transaction exists.
 
-- `bootstrap(latest)`、`bootstrap(restored)`、`restore` 已落地。
-- `bootstrap(unread)` 仍保留在合同中，但当前实现会显式返回 `not-implemented`，不能当作已完成能力依赖。
+## 6. Transaction Kinds
 
----
-
-# 7. Data Revision Handling
-
-Runtime 不能只看 `revision` 数字。
-
-必须同时读取：
-
-```text
-snapshot.change.viewportModifier
+```ts
+type ViewportTransactionKind =
+  | 'bootstrap'
+  | 'segmentShift'
+  | 'segmentRelayout'
+  | 'projectionRefresh'
+  | 'followBottom'
+  | 'jump'
+  | 'restore'
+  | 'reset';
 ```
 
-建议策略：
+`prepend` and `append` are no longer physical transaction kinds.
 
-| Viewport Modifier      | Runtime Response                    |
-| ---------------------- | ----------------------------------- |
-| none                   | update projection only              |
-| prepend                | run prepend transaction             |
-| append                 | run append transaction              |
-| items-change           | refresh projection + stabilize      |
-| auto-scroll-to-bottom  | append and follow latest if allowed |
-| reset                  | run reset bootstrap                 |
+`segmentRelayout` is a required transaction kind, not an implementation option.
 
-`remove-from-start`、`item-location`、`identity-remap`、`anchor-risk` 是保留设计槽位；
-在 runtime 有专门 transaction 前，不能作为普通 refresh 静默降级。
+## 7. Commit Contract
 
----
+```ts
+type ProjectionCommitToken = {
+  feedId: string;
+  generation: number;
+  projectionRevision: number;
+  segmentId: string;
+  segmentRevision: number;
+  transactionId: string;
+};
 
-# 8. FlushSync Policy
-
-默认不使用：
-
-```text
-flushSync
+type ProjectionCommit = ProjectionCommitToken;
 ```
 
-允许使用的场景：
-
-- transaction 已冻结 scroll intent
-- 必须在用户可见前完成 projection commit
-- 范围局限于 message viewport projection
-- 有测试覆盖
-
-禁止把 flushSync 作为：
+Runtime sequence:
 
 ```text
-常规 React 同步方案
+publish projection with ProjectionCommitToken
+-> React commit ack echoes the same ProjectionCommitToken
+-> runtime synchronous measurement
+-> runtime correction / rebase
+-> runtime promotes pending physical metrics
 ```
 
-primary contract 仍然是：
+No measurement before commit ack. No pending `segmentRevision` may appear in committed physical metrics before its token is acknowledged.
 
-```text
-publish -> commit callback -> measure -> correct
+## 8. Bottom Lock Contract
+
+```ts
+type BottomLockState = 'LOCKED' | 'UNLOCKED';
 ```
 
----
+`LOCKED` requires all conditions:
 
-# 9. Performance Budgets
+- active segment role is `latest`
+- `hasMoreAfter === false`
+- distance to latest segment physical bottom is within lock threshold
+- no segment shift / destination pending
 
-预算用于验证，不用于改变架构。
+Current physical bottom alone is insufficient.
 
-建议目标：
+## 9. Diagnostics Contract
 
-| Scenario                        | Budget                  |
-| ------------------------------- | ----------------------- |
-| Bootstrap first stable viewport | <= 300ms                |
-| Jump target visible             | <= 150ms                |
-| Prepend visible drift           | 0 frame observable jump |
-| Bottom follow after append      | <= 1 frame after commit |
-| Resize stabilization            | coalesced per frame     |
+Runtime diagnostics must expose physical geometry:
 
-超过预算时：
-
-```text
-先找 transaction / measurement / commit 问题
+```ts
+type ViewportDiagnostics = {
+  ts: number;
+  physicalSegmentId: string | null;
+  physicalSegmentRevision: number;
+  renderWindowStart: MessageRuntimeItemKey | null;
+  renderWindowEnd: MessageRuntimeItemKey | null;
+  topSpacer: number;
+  bottomSpacer: number;
+  mountedRowsHeight: number;
+  scrollTop: number;
+  scrollHeight: number;
+  domScrollHeight: number;
+  clientHeight: number;
+  physicalWindowHeight: number;
+  maxScrollPosition: number;
+  scrollHeightCap: number;
+  capMode: 'normal' | 'short-feed' | 'exceptional-row';
+  safeScrollRangeStart: number;
+  safeScrollRangeEnd: number;
+  realRowCoveragePx: number;
+  minRealRowCoveragePx: number;
+  isDragLocked: boolean;
+  isThumbFrozen: boolean;
+  isSegmentShiftPending: boolean;
+  pendingShiftDirection: 'before' | 'after' | null;
+  pendingEdgeOverflowPx: number;
+  isSegmentShifting: boolean;
+  isMomentumLatched: boolean;
+  suppressedMomentumDeltaPx: number;
+  segmentRelayoutState: 'idle' | 'pending' | 'running';
+  segmentRelayoutReason: SegmentRelayoutReason | null;
+  adjacentPrefetchBefore: 'idle' | 'needed' | 'in-flight' | 'ready';
+  adjacentPrefetchAfter: 'idle' | 'needed' | 'in-flight' | 'ready';
+  bottomLockState: BottomLockState;
+  viewportPhase: ViewportPhase;
+  dataRevision: number;
+};
 ```
 
-不要引入：
+At minimum, diagnostics must detect:
 
-```text
-global exact offsets
-```
+- scrollHeight cap exceeded
+- spacer-only viewport
+- real-row coverage insufficient
+- same-revision spacer oscillation
+- segment shift loop
+- thumb geometry coupled to data size
+- drag lock stolen by another writer
+- pending segmentRevision exposed before commit token ack
+- momentum residual causing shift loop
 
----
+## 10. Performance Budget
 
-# 10. Test Contract
+Performance budgets validate implementation. They do not justify changing architecture.
 
-最小测试矩阵：
+Required properties:
 
-- latest bootstrap enters bottom locked
-- unread bootstrap keeps context around marker
-- restored missing anchor uses nearest neighbor
-- prepend keeps AnchorState visual position
-- delete anchor falls back deterministically
-- optimistic rebind preserves item continuity
-- reaction height change stabilizes
-- bottom lock uses dual threshold hysteresis
-- later jump supersedes pending jump
-- feed generation discards stale commit
-- React commit callback gates measurement
-
-测试必须断言：
-
-```text
-observable viewport behavior
-```
-
-而不是：
-
-```text
-private implementation fields
-```
+- scroll frame does not rerender row tree
+- segment shift commits target rows and spacers in one projection
+- no unbounded spacer growth with data count
+- no custom scrollbar geometry recomputation from DataWindow length
