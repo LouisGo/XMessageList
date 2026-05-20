@@ -1,11 +1,11 @@
-/* eslint-disable react-hooks/immutability, react-hooks/exhaustive-deps */
+/* eslint-disable react-hooks/exhaustive-deps */
 import {
   type PointerEvent as ReactPointerEvent,
   useLayoutEffect,
   useEffect,
   useRef,
 } from 'react'
-import type { DirectScrollSource, MessageViewportRuntime } from '../../runtime'
+import type { DirectScrollSource, MessageViewportRuntime } from '../../runtime.deprecated'
 import {
   computeCustomScrollbarGeometry,
   type CustomScrollbarGeometry,

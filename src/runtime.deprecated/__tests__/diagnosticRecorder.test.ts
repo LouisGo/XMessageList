@@ -1,3 +1,4 @@
+// 旧 runtime 的 deprecated contract test：只保护现有诊断行为，不作为 runtime-next 设计门禁。
 import { describe, expect, it } from 'vitest'
 import { DiagnosticRecorder } from '../debug/diagnosticRecorder'
 import type { ViewportDiagnosticEvent } from '../types'

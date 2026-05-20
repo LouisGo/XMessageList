@@ -5,17 +5,18 @@
 ## 1. Runtime Lineage
 
 ```text
-src/runtime            -> legacy runtime at current baseline
-src/runtime.deprecated -> required name after first implementation step
-src/runtime-next       -> new Physical Segment Windowing runtime
+src/runtime            -> removed after P1 structure isolation
+src/runtime.deprecated -> deprecated runtime reference
+src/runtime-next       -> P1 structure-only skeleton for the new runtime
 ```
 
-当前仓库还没有 `src/runtime-next` 代码。后续实现的第一步是把现有 `src/runtime` 隔离为 `src/runtime.deprecated`，然后新建 `src/runtime-next`。在此之前，`src/runtime` 只能被当作 deprecated reference 阅读。
+当前仓库已经完成 P1 路径隔离：旧实现位于 `src/runtime.deprecated`，新实现入口位于 `src/runtime-next`。
+P1 的 `runtime-next` 只包含 README、导出占位和类型骨架；真实 geometry、paging、measurement、motion 和 scrollbar 仍必须从后续阶段开始实现。
 
 旧 runtime 可以参考的内容：
 
 - public facade 的使用形态
-- demo 与 React adapter 需要的最小外围接口
+- demo 与 deprecated React adapter 需要的最小外围接口
 - 已经存在的用户可见行为样本
 - 测试数据和 fake DOM 工具
 
@@ -27,6 +28,7 @@ src/runtime-next       -> new Physical Segment Windowing runtime
 - scroll frame 内直接改 render window / spacer 的路径
 - bottom lock 与当前 DOM physical bottom 混用的路径
 - React adapter 或 demo 参与 runtime 几何判断的路径
+- `src/react` 里的组件、hook、custom scrollbar 实现
 
 ## 2. Ownership Model
 
@@ -68,6 +70,7 @@ src/runtime-next/
   index.ts
   MessageViewportRuntime.ts
   types.ts
+  components/
   geometry/
   projection/
   transactions/
@@ -79,12 +82,15 @@ src/runtime-next/
   __tests__/
 ```
 
+P1 阶段只落地 `README.md`、`index.ts`、`types.ts` 和 `components/README.md`。下表是 P2 之后逐步扩展的目标形态，不是把旧 runtime 或 `src/react` 文件搬进来的清单。
+
 职责：
 
 | Module | Responsibility |
 | --- | --- |
 | `MessageViewportRuntime.ts` | public facade, no geometry logic |
 | `types.ts` | public contracts and stable snapshot/metrics types |
+| `components/` | runtime-next-owned React projection adapter and custom scrollbar, rewritten from scratch |
 | `geometry/` | physical segment state, render row selection, local spacer solver, metrics derivation |
 | `projection/` | projection snapshot publishing and commit token matching |
 | `transactions/` | bootstrap, projectionRefresh, segmentRelayout, segmentShift, jump/restore, followBottom |
@@ -101,6 +107,7 @@ geometry can be consumed by transactions/projection/diagnostics.
 geometry cannot import React/demo/deprecated runtime.
 commands/data/React cannot import geometry internals that mutate state.
 runtime-next cannot import runtime.deprecated.
+runtime-next cannot import src/react.
 ```
 
 ## 4. Engineering Constraints

@@ -4,10 +4,10 @@
 
 ## 当前结论
 
-- 当前代码基线：`a43999d4f13f382fd2a6c65ac2cf15c22a7b38b3`。
-- 旧 runtime：当前仍位于 `src/runtime`，后续第一轮实现必须明确改名为 `src/runtime.deprecated`，只作为行为备份和必要参考。
-- 新 runtime：后续新建 `src/runtime-next`，从零增量实现核心 runtime。
-- 当前阶段：`P0` 文档和边界重建。本文完成前，不进入 runtime-next 代码实现。
+- 当前工作树基线：`a911061`。
+- 旧 runtime：已隔离到 `src/runtime.deprecated`，只作为行为备份和必要参考。
+- 新 runtime：`src/runtime-next` 已建立 P1 结构占位，只保留 README、components README、导出占位和类型骨架。
+- 当前阶段：`P1` 仓库结构隔离已完成；下一阶段是 `P2 runtime-next 合同骨架`。
 
 ## 总原则
 
@@ -107,20 +107,30 @@ Review 检查点：
 目标：
 
 - 在代码层隔离旧实现，避免后续 import 或测试继续默认落回旧 runtime 心智。
-- 保留 demo / React / test 底座，作为后续接 runtime-next 的外围环境。
+- 保留 demo / deprecated React / test 底座，作为旧 runtime 行为参考；runtime-next 的 React adapter 必须进入自身 `components/` 并完全重写。
 
 任务：
 
-- [ ] 将当前 `src/runtime` 改名为 `src/runtime.deprecated`。
-- [ ] 新建空的 `src/runtime-next` 目录，只允许 README、导出占位和类型骨架。
-- [ ] 更新 package/export 入口，使默认 demo 仍能在旧 runtime 上运行，runtime-next 以显式实验入口存在。
-- [ ] 标记旧 runtime 测试为 deprecated contract tests，避免作为 runtime-next 设计门禁。
-- [ ] 建立 import guard，禁止 runtime-next import `src/runtime.deprecated`。
-- [ ] 在 runtime-next README 中写入文件大小、类型拆分、co-located 组织和中文注释规则。
+- [x] 将当前 `src/runtime` 改名为 `src/runtime.deprecated`。
+- [x] 新建空的 `src/runtime-next` 目录，只允许 README、components README、导出占位和类型骨架。
+- [x] 更新 package/export 入口，使默认 demo 仍能在旧 runtime 上运行，runtime-next 以显式实验入口存在。
+- [x] 标记旧 runtime 测试为 deprecated contract tests，避免作为 runtime-next 设计门禁。
+- [x] 建立 import guard，禁止 runtime-next import `src/runtime.deprecated` 和旧 `src/react`。
+- [x] 在 runtime-next README 中写入文件大小、类型拆分、co-located 组织和中文注释规则。
+
+P1 实施记录：
+
+- 旧 runtime 已迁移到 `src/runtime.deprecated`。
+- `src/runtime-next` 已建立结构占位，仅含 `README.md`、`components/README.md`、`index.ts`、`types.ts`。
+- 根导出已保留 deprecated runtime，并新增 `./runtime-next` package 实验入口。
+- 旧 runtime tests 已标记为 deprecated contract tests。
+- `runtime-next` import guard 已加入 ESLint 与源码扫描测试，覆盖 deprecated runtime 与旧 React adapter。
+- 验证：`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build` 已通过；`x-message-list/runtime-next` package 子路径可导入 `RUNTIME_NEXT_STATUS.phase === 'P1_STRUCTURE_ONLY'`。
 
 本阶段禁止：
 
 - 从旧 runtime 复制 transaction、projection、spacer、scrollFrame、bottom lock 实现。
+- 从旧 `src/react` 复制 component、hook、custom scrollbar 实现。
 - 在 runtime-next 中实现真实 paging、measurement、motion 或 scrollbar。
 - 让 runtime-next API 默默转发到 deprecated runtime。
 - 删除 demo 或旧 runtime 行为参考。

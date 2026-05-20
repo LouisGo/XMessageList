@@ -12,6 +12,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/x-message-list.js",
       "require": "./dist/x-message-list.umd.cjs"
+    },
+    "./runtime-next": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/x-message-list.js",
+      "require": "./dist/x-message-list.umd.cjs"
     }
   },
   "files": [

@@ -1,6 +1,10 @@
-# React Adapter
+# Deprecated React Adapter
 
-React 18 projection layer for the framework-independent runtime.
+React 18 projection layer for `src/runtime.deprecated`.
+
+本目录与 `src/runtime.deprecated` 一起冻结，只服务旧 demo / 旧合同。runtime-next
+不能 import 或复用这里的组件、hook、custom scrollbar；新的 React projection
+adapter 必须进入 `src/runtime-next/components` 并完全重写。
 
 ## Directory Layout
 

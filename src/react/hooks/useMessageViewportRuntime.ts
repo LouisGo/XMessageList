@@ -3,7 +3,7 @@ import type {
   MessageViewportRuntime,
   MessageViewportSnapshot,
   RuntimeListener,
-} from '../../runtime'
+} from '../../runtime.deprecated'
 
 /**
  * React adapter 的唯一状态入口。React 在 render 阶段读取 runtime snapshot，

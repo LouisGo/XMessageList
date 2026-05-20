@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageViewportRuntime } from '../runtime'
+import { MessageViewportRuntime } from '../runtime.deprecated'
 import type { DemoMessage } from './demoData'
 import { LRUCache } from './utils/lru'
 

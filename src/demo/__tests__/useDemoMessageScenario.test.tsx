@@ -8,7 +8,7 @@ import type {
   MessageViewportSnapshot,
   MessageViewportRuntime,
   MessageViewportRuntimeEvent,
-} from '../../runtime'
+} from '../../runtime.deprecated'
 import { createDemoMessages, type DemoMessage } from '../demoData'
 import {
   type PersistedDemoFeed,

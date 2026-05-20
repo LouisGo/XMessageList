@@ -3,7 +3,7 @@ import type {
   MessageIdentityAnchor,
   MessageDataSnapshot,
   ViewportEffect,
-} from '../runtime'
+} from '../runtime.deprecated'
 
 export type DemoMessageKind = 'text' | 'longText' | 'image' | 'video' | 'album'
 

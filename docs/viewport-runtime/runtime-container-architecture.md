@@ -2,7 +2,7 @@
 
 本文定义 runtime-next 的容器内核边界。主 ownership 文档见 [runtime-next-architecture.md](./runtime-next-architecture.md)，几何主规范见 [physical-segment-architecture.md](./physical-segment-architecture.md)。
 
-本文中的模块名是 runtime-next 的目标职责切分，不是旧 `src/runtime` 目录结构的迁移清单。旧实现后续应隔离为 `src/runtime.deprecated`，不能作为本文模块的源码来源。
+本文中的模块名是 runtime-next 的目标职责切分，不是旧 `src/runtime.deprecated` 目录结构的迁移清单。旧实现不能作为本文模块的源码来源。
 
 ## 1. Scope
 

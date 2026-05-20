@@ -11,7 +11,7 @@ import type {
   MessageViewportRuntime,
   ViewportAnchorChangedEvent,
   ViewportEffect,
-} from '../runtime'
+} from '../runtime.deprecated'
 import {
   type DemoMessage,
   createDemoMessages,

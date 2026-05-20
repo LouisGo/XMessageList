@@ -9,7 +9,7 @@
 - `SegmentShift` 是几何事务，不是 prepend / append 的副作用。
 - custom scrollbar 是几何层，不是只隐藏 native scrollbar 的皮肤。
 - diagnostics 必须检测 scrollHeight cap、spacer-only viewport、shift loop、thumb 数据耦合等架构违约。
-- 旧 `src/runtime` 必须隔离为 `src/runtime.deprecated`，只作为参考。
+- 旧 runtime 已隔离为 `src/runtime.deprecated`，只作为参考。
 - 新实现必须进入 `src/runtime-next`，不能继续在旧 runtime 上 graft。
 
 请从这里继续：

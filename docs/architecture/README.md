@@ -2,7 +2,7 @@
 
 本目录沉淀消息运行时的跨层架构。Viewport runtime 的当前主规范已经迁移到 `docs/viewport-runtime`，并以 runtime-next from scratch + physical segment 为唯一新设计基线。
 
-旧 `src/runtime` 不再是新架构承载体，后续必须隔离为 `src/runtime.deprecated`。新实现进入 `src/runtime-next`。
+旧 runtime 已隔离为 `src/runtime.deprecated`，不再是新架构承载体。新实现进入 `src/runtime-next`。
 
 ## 阅读入口
 

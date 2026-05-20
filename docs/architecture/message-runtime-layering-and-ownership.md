@@ -15,7 +15,7 @@
 - viewport stabilization pipeline
 - 迁移步骤
 
-当前 viewport runtime 的实现路线是 runtime-next from scratch。旧 `src/runtime` 后续应隔离为 `src/runtime.deprecated`，只作参考；新几何实现进入 `src/runtime-next`。本文中的 Renderer Viewport Runtime 指 runtime-next 的目标职责，不指旧 runtime 代码结构。
+当前 viewport runtime 的实现路线是 runtime-next from scratch。旧 runtime 已隔离为 `src/runtime.deprecated`，只作参考；新几何实现进入 `src/runtime-next`。本文中的 Renderer Viewport Runtime 指 runtime-next 的目标职责，不指旧 runtime 代码结构。
 
 ---
 

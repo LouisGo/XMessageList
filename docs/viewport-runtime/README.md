@@ -1,6 +1,6 @@
 # Message Viewport Runtime 文档
 
-本目录描述新的 IM viewport runtime。当前重构口径已经切换为 **runtime-next from scratch**：旧 `src/runtime` 不再承载新架构，后续必须先隔离为 `src/runtime.deprecated`，再新建 `src/runtime-next`。
+本目录描述新的 IM viewport runtime。当前重构口径已经切换为 **runtime-next from scratch**：旧实现已经隔离到 `src/runtime.deprecated`，新的结构占位位于 `src/runtime-next`。
 
 `runtime-next` 仍以 **Physical Segment Windowing** 为核心，不再把已加载数据连续暴露为单一 `scrollHeight`。
 
@@ -58,13 +58,13 @@ React、demo、业务层都不能根据 raw `scrollTop` / `scrollHeight` 自行�
 
 | Path | Status | Rule |
 | --- | --- | --- |
-| `src/runtime` | 旧 runtime，当前代码仍在此目录 | 只读参考；后续第一步改名为 `src/runtime.deprecated`。 |
-| `src/runtime.deprecated` | 目标旧 runtime 名称 | 保留备份和必要行为参考，不接受新架构实现。 |
-| `src/runtime-next` | 目标新 runtime 目录 | 从零增量实现 Physical Segment Windowing。 |
-| `src/react` | React projection adapter | 可复用外围底座，但不能拥有几何。 |
+| `src/runtime` | 已移除 | 不再作为实现或 import 入口。 |
+| `src/runtime.deprecated` | 旧 runtime 参考实现 | 保留备份和必要行为参考，不接受新架构实现。 |
+| `src/runtime-next` | P1 结构占位 | 只包含 README、components README、导出占位和类型骨架；后续从零增量实现 runtime 与 React projection adapter。 |
+| `src/react` | deprecated React projection adapter | 与 `src/runtime.deprecated` 一起冻结，只服务旧 demo / 旧合同；不能被 runtime-next import 或复用。 |
 | `src/demo` | demo / data host | 可复用 mock 与场景，不得实现第二套 geometry engine。 |
 
-旧 runtime 的行为可以作为场景参考，但实现结构不能迁入 runtime-next。尤其不能继承 DataWindow sized spacer、native `scrollHeight` 语义、旧 projection window slide 或旧 bottom lock 判断。
+旧 runtime 和旧 React adapter 的行为可以作为场景参考，但实现结构不能迁入 runtime-next。尤其不能继承 DataWindow sized spacer、native `scrollHeight` 语义、旧 projection window slide、旧 bottom lock 判断或旧 custom scrollbar 实现。
 
 ## 架构断点
 

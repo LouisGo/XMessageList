@@ -1,6 +1,6 @@
 # Deprecated Runtime Reference
 
-`src/runtime` 是当前基线里的旧 runtime。新的重构路线要求后续把它改名为 `src/runtime.deprecated`，只作为备份和必要行为参考。
+`src/runtime.deprecated` 是当前基线里的旧 runtime，只作为备份和必要行为参考。
 
 不要在本目录继续 graft Physical Segment Windowing。runtime-next 必须在新的 `src/runtime-next` 中从零增量实现，几何 ownership 以 `docs/viewport-runtime/runtime-next-architecture.md` 和 `docs/viewport-runtime/physical-segment-architecture.md` 为准。
 
@@ -158,7 +158,7 @@ Runtime event 的边界触发。
 
 维护旧 runtime 时先判断归属：
 
-- 修复旧 demo 必需回归：可以小范围改 `src/runtime`，但不得引入 runtime-next 设计。
+- 修复旧 demo 必需回归：可以小范围改 `src/runtime.deprecated`，但不得引入 runtime-next 设计。
 - 新 runtime 滚动语义、测量、window、anchor、事务：进入后续 `src/runtime-next`。
 - 改 projection DOM 结构、slot、loading/follow-bottom UI：放在 `src/react`。
 - 改数据请求、分页策略、feed 切换策略：放在 data/demo/adapter 层，不要塞进 runtime。
@@ -176,4 +176,4 @@ npm run test
 npm run build
 ```
 
-针对旧 scroll motion 或 transaction 时序的改动，还应优先补充 `src/runtime/__tests__/` 下的回归测试。runtime-next 的测试应进入后续 `src/runtime-next/__tests__/`，并以 physical geometry invariant 为门禁。
+针对旧 scroll motion 或 transaction 时序的改动，还应优先补充 `src/runtime.deprecated/__tests__/` 下的 deprecated contract tests。runtime-next 的测试应进入后续 `src/runtime-next/__tests__/`，并以 physical geometry invariant 为门禁。

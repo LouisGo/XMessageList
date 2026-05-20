@@ -11,14 +11,14 @@ import {
 import {
   getRuntimeItemKey,
   serializeRuntimeItemKey,
-} from '../../runtime'
+} from '../../runtime.deprecated'
 import type {
   MessageDataItem,
   MessageRuntimeItemKey,
   MessageViewportRuntime,
   ViewportAnchorChangedEvent,
   MessageViewportSnapshot,
-} from '../../runtime'
+} from '../../runtime.deprecated'
 import { useMessageViewportRuntime } from '../hooks/useMessageViewportRuntime'
 import { CustomScrollbar } from '../scrollbar/CustomScrollbar'
 

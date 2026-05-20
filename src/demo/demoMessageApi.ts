@@ -2,7 +2,7 @@ import type {
   CommittedMessageDataItem,
   MessageDataSnapshot,
   ViewportEffect,
-} from '../runtime/types'
+} from '../runtime.deprecated/types'
 import type { DemoMessage } from './demoData'
 import { estimateDemoMessageHeight } from './demoData'
 import { loadPersistedDemoFeed } from './demoLocalStoreClient'

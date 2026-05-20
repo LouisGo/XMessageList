@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { MessageViewportRuntime } from '../../runtime'
+import type { MessageViewportRuntime } from '../../runtime.deprecated'
 import type { DemoMessage } from '../demoData'
 import { createDemoFeedRuntimeCache } from '../useDemoFeedRuntimeCache'
 

@@ -24,6 +24,32 @@ export default defineConfig([
     },
   },
   {
+    files: ['src/runtime-next/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: [
+            '../runtime.deprecated',
+            '../runtime.deprecated/*',
+            '../../runtime.deprecated',
+            '../../runtime.deprecated/*',
+            '../../../runtime.deprecated',
+            '../../../runtime.deprecated/*',
+            '**/runtime.deprecated',
+            '**/runtime.deprecated/*',
+            '../react',
+            '../react/*',
+            '../../react',
+            '../../react/*',
+            '../../../react',
+            '../../../react/*',
+          ],
+          message: 'runtime-next must not import deprecated runtime or old React adapter.',
+        }],
+      }],
+    },
+  },
+  {
     files: ['vite.config.ts', 'vitest.config.ts', 'tools/**/*.ts'],
     extends: appTypeScriptRules,
     languageOptions: {
