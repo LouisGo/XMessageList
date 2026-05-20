@@ -183,7 +183,8 @@ const needShiftAfter =
 
 规则：
 
-- drag 期间不 shift，只记录 `pendingShiftDirection` 和 `pendingEdgeOverflowPx`。
+- drag 期间允许受控 `DragSegmentHandoff`，但不得让用户进入 spacer-only 区。
+- 没有 ready target 时，只记录 `pendingShiftDirection` 和 `pendingEdgeOverflowPx`，保持当前 segment edge soft-stop。
 - wheel / keyboard 可以排队 shift，但仍必须进入 transaction。
 - target data 缺失时进入 `READY_SEGMENT_SHIFT_PENDING`。
 - data 到达后由 segment shift / followBottom 消费，不再跑 legacy continuous-scroll anchor recovery。

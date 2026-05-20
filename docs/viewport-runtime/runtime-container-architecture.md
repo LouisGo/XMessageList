@@ -46,6 +46,8 @@ class MessageViewportRuntime {
 
 `getPhysicalScrollMetrics` 和 `subscribePhysicalScroll` 面向标准 React adapter / custom scrollbar，不是业务 app 的滚动控制入口。业务层仍然只发 semantic command。
 
+`beginDirectScroll` / `writeDirectScrollTop` / `endDirectScroll` 在 custom scrollbar drag 中组成一个 pointer-owned drag session。active `DragSegmentHandoff` 期间，runtime 可以临时拒绝旧 segment direct write 并通过 physical metrics 发布 handoff / freeze 状态；React adapter 不应结束 pointer capture。
+
 ## 3. Internal Modules
 
 | Module | Responsibility |
@@ -60,7 +62,7 @@ class MessageViewportRuntime {
 | `MeasurementEngine` | 测量 mounted rows，产出 local correction 或 segment relayout intent。 |
 | `ScrollGeometryCoordinator` | 计算 physical scroll metrics、custom scrollbar thumb 输入和 cap diagnostics。 |
 | `ScrollIntentEngine` | 分类 user / wheel / keyboard / momentum / programmatic / recovery / followBottom / jump / drag 输入。 |
-| `DirectScrollCoordinator` | custom scrollbar drag / track 的写入仲裁，维护 `isDragLocked`。 |
+| `DirectScrollCoordinator` | custom scrollbar drag / track 的写入仲裁，维护 `isDragLocked`，并协调 active drag handoff。 |
 | `MomentumLatchCoordinator` | trackpad / wheel 边界残余 delta 抑制，维护 `isMomentumLatched`。 |
 | `SegmentTransactionController` | 执行 `SegmentShift` 和 `SegmentRelayout`。 |
 | `ViewportTransactionController` | 执行 bootstrap、jump、restore、followBottom、reset 等语义事务。 |

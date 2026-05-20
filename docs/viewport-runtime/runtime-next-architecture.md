@@ -205,6 +205,7 @@ Only scroll arbitration inside runtime-next may write `scrollTop`.
 Allowed writers:
 
 - drag direct scroll within current segment
+- drag segment handoff rebase inside an accepted `DragSegmentHandoff`
 - segment shift rebase
 - relayout / bootstrap / restore anchor correction
 - bounded motion inside a committed target segment

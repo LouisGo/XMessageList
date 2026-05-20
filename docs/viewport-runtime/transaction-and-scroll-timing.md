@@ -175,13 +175,13 @@ else:
 
 | Writer | When |
 | --- | --- |
-| direct drag | `isDragLocked === true`，仅当前 segment 内。 |
+| direct drag | `isDragLocked === true`，当前 segment 内线性写入；跨段只能通过 `DragSegmentHandoff` 事务。 |
 | segment shift rebase | shift correction phase。 |
 | anchor correction | relayout / bootstrap / restore correction phase。 |
 | motion engine | target segment 已稳定后。 |
 | follow-bottom instant write | reduced motion 或 motion disabled。 |
 
-新 transaction 启动前必须同步取消 active motion。drag 期间不能启动 shift；pointerup 后再排队。
+新 transaction 启动前必须同步取消 active motion。drag 期间不能启动无关 shift；只有 custom scrollbar drag 到达边界并由 runtime 接受 handoff 时，才允许在同一 drag session 内排队 `SegmentShift`。handoff 的 rebase 必须通过同一个 writer arbitration surface，不能和 direct drag pointer write 并发。
 
 ## 10. Commit Ack
 

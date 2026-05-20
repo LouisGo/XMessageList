@@ -322,6 +322,12 @@ P4 实施记录：
 - Review hardening 新增覆盖：pending target 多页到达、pending need 重发、relayout
   bounds 缺失 recovery、feed/generation mismatch 拒绝，以及 measurement estimate
   baseline + measured fact 的 local spacer correction。
+- P4 hardening 已修复 review findings：measurement local correction 必须通过第二次
+  correction projection ack 后才能 promote metrics；timeout / abort 会恢复上一稳定
+  projection；`segmentShift` 只构造当前 logical bounds 的相邻 segment；`auto-scroll-to-bottom`
+  data hint 会进入 follow-bottom 语义；physical metrics 高频订阅不再唤醒 projection
+  subscriber；direct scroll 在 P4 只允许 committed segment 内 bounded write；detach 会发出
+  viewport anchor event；runtime transaction 已接入 `physical.*` geometry diagnostics。
 
 本阶段禁止：
 
@@ -358,7 +364,7 @@ Review 检查点：
 
 - [ ] 实现 custom scrollbar metrics 消费。
 - [ ] 实现 direct scroll API 和 drag lock。
-- [ ] 实现 pointerup 后的 pending shift 与 thumb freeze。
+- [ ] 实现 active drag session 内的 `DragSegmentHandoff`、drag continuation rebase 与 thumb freeze。
 - [ ] 实现 wheel / trackpad momentum latch。
 - [ ] 实现 target segment 内 bounded motion。
 - [ ] 实现 latest-only bottom lock。
@@ -366,7 +372,7 @@ Review 检查点：
 
 本阶段禁止：
 
-- drag 期间执行 segment shift。
+- drag 期间绕过 `DragSegmentHandoff` 直接执行 segment shift。
 - residual wheel delta 默认灌入新 segment。
 - custom scrollbar 读取 DataWindow length 或 raw DOM `scrollHeight` 推导 thumb。
 - history segment 的 physical bottom 设置 `LOCKED`。
@@ -375,7 +381,7 @@ Review 检查点：
 退出标准：
 
 - Thumb geometry 只依赖 committed physical metrics。
-- Drag 在当前 segment 内线性、稳定，pointerup 后才 shift。
+- Drag 在当前 segment 内线性、稳定；到边界后可以在同一 pointer session 内 handoff 到相邻 segment，并把 thumb 回收到 drag continuation band 后继续拖拽。
 - Momentum 不形成 shift loop。
 - Bottom lock 只可能发生在 latest segment 且 `hasMoreAfter === false`。
 
@@ -383,7 +389,7 @@ Review 检查点：
 
 - 是否有多 writer 同时写 `scrollTop`。
 - custom scrollbar 是否能在 projection rerender 之外更新。
-- drag / motion / shift 的取消与 freeze 边界是否可观测。
+- drag handoff / motion / shift 的取消与 freeze 边界是否可观测。
 
 ## P6 demo cutover and hardening
 

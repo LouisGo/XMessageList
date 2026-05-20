@@ -108,9 +108,13 @@ pointerdown thumb
 -> runtime.beginDirectScroll({ source: 'custom-scrollbar-drag' })
 -> pointermove
 -> runtime.writeDirectScrollTop(nextPhysicalScrollTop, ...)
+-> runtime may enter DragSegmentHandoff while pointer remains captured
+-> pointermove continues after target metrics are committed
 -> pointerup
 -> runtime.endDirectScroll(...)
 ```
+
+Adapter 在 active drag handoff 中只保留 pointer capture 并继续转发 pointer movement。它不能因为 thumb 被 runtime rebase 到轨道中段就合成 pointerup / pointerdown，也不能自己修正 `scrollTop` 或重建 thumb geometry。
 
 Track click：
 

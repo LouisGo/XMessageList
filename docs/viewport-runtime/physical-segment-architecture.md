@@ -31,7 +31,8 @@ SegmentShift is the only bridge between them.
 | `SegmentShift` | 从当前 physical segment 原子切换到相邻或目标 segment 的事务。 |
 | `SegmentRelayout` | 不跨 logical segment，只因 resize / measurement 重新裁剪当前 segment 的事务。 |
 | `CustomScrollbar` | 隐藏 native scrollbar 后的唯一 thumb 几何层。thumb 只反映 physical segment 内的位置。 |
-| `DragLock` | custom scrollbar drag 期间的独立锁。它冻结跨段切换，不冻结当前 segment 内的线性滚动。 |
+| `DragLock` | custom scrollbar drag session 的独立锁。它阻止无关 writer 抢写，但允许 runtime 在同一 drag session 内执行受控跨段 handoff。 |
+| `DragSegmentHandoff` | custom scrollbar thumb 仍按住时，由 runtime 接管的跨段 `SegmentShift`。它 freeze thumb、commit target segment、rebase 到 continuation band，并继续同一次 pointer drag。 |
 
 推荐内部模型：
 
@@ -132,8 +133,8 @@ Prefetch 是 data readiness，不是 geometry mutation。它禁止：
 7. `topSpacer` 和 `bottomSpacer` 只表达当前 physical segment 内的 local blank budget，不表达 DataWindow 中未挂载历史的累计高度。
 8. safe scroll range 内 viewport 必须满足真实 row coverage 下限，不能只和一条 row 边缘相交。
 9. custom scrollbar thumb size 只依赖 viewport size 和 committed physical window size，不依赖 DataWindow item count。
-10. custom scrollbar drag 必须线性映射到当前 physical segment 的 `scrollTop`。禁止按数据总量额外缩放用户输入。
-11. drag 期间不执行 `SegmentShift`。只记录 shift intent，pointerup 后再执行。
+10. custom scrollbar drag 在单个 committed physical segment 内必须线性映射到该 segment 的 `scrollTop`。跨段 handoff 后重新绑定到新的 committed segment，禁止按数据总量额外缩放用户输入。
+11. drag 期间允许 runtime 执行受控 `DragSegmentHandoff`：它必须复用 `SegmentShift` transaction、保留 pointer capture、冻结 thumb、commit 后把 `scrollTop` rebase 到新 segment 的 drag continuation band。禁止在 pointermove / React adapter 中直接替换 rows 或 spacer。
 12. `SegmentShift` 和 `SegmentRelayout` 必须是事务。禁止在 scroll handler 中直接替换 rows。
 13. `BottomLockState.LOCKED` 只有在 active segment 是 latest segment 且 `hasMoreAfter === false` 时才可能成立。
 14. 任一时刻只能有一个 `scrollTop` writer。drag、motion、anchor correction、shift rebase 必须走同一写入仲裁。
@@ -335,12 +336,15 @@ pointer delta -> thumb progress -> physical scrollTop
 Drag 期间：
 
 - `isDragLocked = true`
-- 不执行 segment shift
-- 到达边界只记录 `pendingShiftDirection`
-- 指针越界距离记录为 `pendingEdgeOverflowPx`，用于 diagnostics 和 pointerup 决策
-- thumb 保持在当前 segment 的合法 track 内
+- 当前 segment 内的 pointer delta 仍线性映射到 `scrollTop`
+- 到达边界先记录 `pendingShiftDirection`
+- 指针越界距离记录为 `pendingEdgeOverflowPx`，用于 diagnostics、prefetch 和 handoff 决策
+- 如果相邻 segment 数据已 ready，或 pending need 在 pointer 仍按下时 resolve，runtime 可以在同一 drag session 内启动 `DragSegmentHandoff`
+- handoff commit 前 thumb freeze，禁止继续把 pointer delta 写入旧 segment
+- handoff commit 后将 `scrollTop` rebase 到新 segment 的 drag continuation band，重置 drag baseline，然后继续消费后续 pointer delta
+- target data 缺失时 thumb 保持在当前 segment 合法 edge；这只是等待态，不允许把用户拖进 spacer-only 区
 
-pointerup 后如果处于 shift trigger 区，立即排队 `SegmentShift`。shift commit 前 thumb 需要 freeze，commit 后下一帧同步到新 segment 的安全位置。
+pointerup 只结束 drag session。正常体验不依赖 pointerup 才跨段；如果 pointerup 时仍有未完成 boundary intent，可作为 fallback 排队普通 `SegmentShift` 或保持当前 segment edge，具体取决于 target data 是否可用。
 
 ## 7. Segment Shift Transaction
 
@@ -359,11 +363,11 @@ freeze scroll intent
 -> rebase scrollTop away from shift boundary
 -> promote pending segment metrics to committed metrics
 -> commit anchor state
--> release drag / scroll intent
+-> resume drag writer if pointer is still down, otherwise release scroll intent
 -> return READY_IDLE
 ```
 
-Rebase 必须落在安全区：
+非 drag shift 的 rebase 必须落在安全区：
 
 ```text
 shift before -> scrollTop = physicalWindowHeight - clientHeight - bottomThreshold - epsilon
@@ -371,6 +375,15 @@ shift after  -> scrollTop = topThreshold + epsilon
 ```
 
 目标是避免 commit 后下一帧立即再次触发 shift。
+
+custom scrollbar drag handoff 使用另一条 continuation rebase。它的目标不是靠近新 segment 的边界，而是把 thumb 回收到轨道中段附近，同时不离开 safe scroll range：
+
+```text
+desired = maxScrollPosition * 0.5
+drag handoff -> scrollTop = clamp(desired, safeScrollRangeStart, safeScrollRangeEnd)
+```
+
+`0.5` 是默认 continuation ratio，后续可配置但必须保持在中段安全区语义内。如果 safe range 过窄，则选择最接近轨道中段的合法位置。这样向上拖到顶部 boundary 后，thumb 回落到轨道中段附近；向下拖到底部 boundary 后，thumb 上升到轨道中段附近，并继续响应同一次 pointer drag。
 
 ## 8. Segment Relayout
 

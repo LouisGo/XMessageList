@@ -175,6 +175,8 @@ pointerdown
 -> setPointerCapture(pointerId)
 -> runtime.beginDirectScroll
 -> pointermove writes current segment scrollTop through runtime
+-> boundary handoff, if accepted, runs one SegmentShift while pointer capture is retained
+-> commit rebase to drag continuation band and continue the same pointer session
 -> pointerup / pointercancel runtime.endDirectScroll + releasePointerCapture(pointerId)
 ```
 
@@ -185,12 +187,14 @@ pointerdown
 - 高频 thumb position 可以用 rAF imperative sync，但数据源仍必须是 runtime metrics。
 - thumb 可在 drag/freeze 期间使用 `transform` 更新。
 - drag surface 应在交互期间禁止文本选择和浏览器手势干扰。
+- drag boundary handoff 必须去重；同一 pointer session 同一方向只能有一个 in-flight handoff。
 
 一定不能做：
 
 - 不要在 pointermove 中 set React state。
 - 不要从 DOM `scrollHeight` 或 DataWindow item count 计算 thumb。
 - 不要让 ResizeObserver、motion、anchor correction 抢写 drag 中的 `scrollTop`。
+- 不要在每个 pointermove 都触发 segment shift 或同步测量。
 - 不要把 `will-change` 长期开在整个 viewport 或 row tree 上；最多用于正在交互的 thumb。
 - 不要让拖拽依赖未捕获的 pointer 事件。
 

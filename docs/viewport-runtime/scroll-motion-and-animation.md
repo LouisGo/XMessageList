@@ -77,7 +77,7 @@ if (maxScrollPosition === 0) {
 beginDirectScroll(custom-scrollbar-drag)
 -> set isDragLocked true
 -> cancel active motion
--> freeze segment shift execution
+-> create active drag session
 ```
 
 拖拽中：
@@ -86,59 +86,78 @@ beginDirectScroll(custom-scrollbar-drag)
 pointer movement
 -> linear thumb progress
 -> write current segment scrollTop
--> if boundary reached: clamp thumb at edge, record pendingShiftDirection and pendingEdgeOverflowPx
+-> if boundary reached:
+     clamp thumb at current segment edge
+     record pendingShiftDirection and pendingEdgeOverflowPx
+     if target segment is ready: start DragSegmentHandoff
 ```
+
+`DragSegmentHandoff` 是 active drag session 内的受控跨段切换：
+
+```text
+freeze thumb at current legal edge
+-> suppress further direct writes into old segment
+-> run SegmentShift transaction
+-> commit target segment
+-> rebase scrollTop to target segment drag continuation band
+-> reset drag baseline against current pointer position
+-> unfreeze thumb and continue the same pointer drag session
+```
+
+handoff 期间的 committed / pending metrics 必须能表达该状态：`isDragLocked = true`、`isSegmentShifting = true`、`isThumbFrozen = true`，并保留 `pendingShiftDirection` 与 `pendingEdgeOverflowPx` 直到 handoff settle。
 
 拖拽结束：
 
 ```text
 endDirectScroll(custom-scrollbar-drag)
 -> set isDragLocked false
--> if pendingShiftDirection: enqueue SegmentShift
+-> release pointer-owned drag writer
 ```
 
 禁止：
 
-- drag 中执行 segment shift
+- drag 中绕过 `DragSegmentHandoff` 直接执行 segment shift
 - drag 中根据数据量缩放 pointer delta
 - drag 中让 thumb 越出 track
 - drag 中由 ResizeObserver 或 motion 抢写 `scrollTop`
+- 每个 pointermove 都重复启动 handoff；同一 drag session 同一方向只能有一个 in-flight handoff
 
 ### 3.1 Drag Continuity
 
-跨段拖拽的连续感来自“边界软停 + 松手后 shift”，不是拖拽中途 rebase。
+跨段拖拽的连续感来自 active drag session 内的 `DragSegmentHandoff`，不是松手后再进入新 segment。
 
 规则：
 
-- 同一次 pointer drag session 内不执行 `SegmentShift`，也不做跨段 rebase。
-- 指针越过 track 边界时，thumb 固定在合法 edge，runtime 继续记录 `pendingShiftDirection` 和 `pendingEdgeOverflowPx`。
-- `pendingEdgeOverflowPx` 只用于 diagnostics 和 pointerup 后的 shift 决策，不能在当前 segment 内继续扩大 `scrollTop`。
-- pointerup 后如果触发 shift，当前 drag session 结束；下一次 pointerdown 才能进入新 segment 的拖拽。
-- 如果 shift abort，thumb 回到 release 时所在的合法 edge，不使用任何 speculative next-segment 位置。
+- 同一次 pointer drag session 可以跨多个 physical segment，但每次跨段都必须是一个完整 `SegmentShift` transaction。
+- 指针越过 track 边界时，thumb 先固定在当前 segment 合法 edge；如果目标 segment 未 ready，runtime 保持 edge soft-stop 并继续等待 data / prefetch。
+- `pendingEdgeOverflowPx` 用于 diagnostics、prefetch 和 handoff 决策；它不能在旧 segment 内继续扩大 `scrollTop`。
+- handoff commit 后，thumb 必须回收到 target segment 的 drag continuation band，默认是轨道中段对应的 scrollTop 并 clamp 到 safe scroll range，而不是停留在新 segment 边界。
+- handoff 后必须重置 drag baseline：后续 pointer delta 从当前 pointer 位置和新 segment metrics 重新线性映射。
+- 如果 shift abort，thumb 回到当前 stable segment 的合法 edge 或最近 safe point，不使用任何 speculative next-segment 位置。
 
 ## 4. Thumb Freeze
 
-pointerup 后如果立刻执行 shift，custom scrollbar 必须短暂 freeze thumb。
+active drag handoff 期间，custom scrollbar 必须短暂 freeze thumb。
 
 ```text
-release pointer
--> freeze thumb at release visual position
+boundary handoff accepted
+-> freeze thumb at current legal edge
 -> run SegmentShift
 -> commit target segment
--> rebase scrollTop to safe zone
+-> rebase scrollTop to drag continuation band
 -> next frame unfreeze and sync target metrics
 ```
 
 Freeze 生命周期是确定的：
 
 ```text
-start: pointerup accepted a pending shift
+start: drag boundary intent is accepted for handoff
 end: segmentShift commit/abort has published final physical metrics and one paint frame has passed
 ```
 
 freeze 期间 `isThumbFrozen = true`，custom scrollbar 不从旧 DOM `scrollTop` 重新计算 thumb。
 
-没有 thumb freeze，用户会看到松手瞬间 thumb teleport。这是架构缺陷，不是视觉瑕疵。
+没有 thumb freeze，用户会看到 boundary 到 continuation band 的跳变。这是架构缺陷，不是视觉瑕疵。
 
 ## 5. Track Click
 
@@ -255,6 +274,9 @@ followBottom command
 - `scroll.dragLock.changed`
 - `scroll.thumb.freeze`
 - `scroll.thumb.unfreeze`
+- `scroll.dragSegmentHandoff.start`
+- `scroll.dragSegmentHandoff.complete`
+- `scroll.dragSegmentHandoff.abort`
 - `motion.start`
 - `motion.cancel`
 - `motion.settle`

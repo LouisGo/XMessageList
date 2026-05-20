@@ -41,6 +41,8 @@ class MessageViewportRuntime {
 
 业务层不直接写 `scrollTop`。标准 React adapter 可以使用 direct-scroll API 实现 custom scrollbar。
 
+custom scrollbar drag 的 direct-scroll API 表示一个 pointer-owned drag session，而不只是单次 `scrollTop` 写入。`writeDirectScrollTop` 在 active `DragSegmentHandoff` 期间可以返回 `false` 来拒绝旧 segment 写入；这不是 adapter 失败信号。Adapter 必须继续保持 pointer capture，并在 runtime 提交 target segment metrics 后继续转发同一次 pointer session 的后续 movement。
+
 ## 2. Projection Snapshot
 
 Projection snapshot 只驱动 React rows / spacers / slots。

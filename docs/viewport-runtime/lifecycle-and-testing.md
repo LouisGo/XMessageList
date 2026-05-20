@@ -157,9 +157,9 @@ viewport 不白屏
 覆盖：
 
 - thumb drag 期间 `isDragLocked=true`。
-- drag 到边界只记录 shift intent，不执行 shift。
-- pointerup 后执行 pending shift。
-- shift commit 前 thumb freeze，commit 后同步新 metrics。
+- drag 到边界时，如果 target segment ready，执行 active `DragSegmentHandoff`；如果 target 缺失，保持 edge soft-stop 并发/等待 need。
+- handoff commit 前 thumb freeze，commit 后 rebase 到 drag continuation band，并在同一个 pointer session 内继续拖拽。
+- pointerup 只结束 drag session，不是正常跨段的必要条件。
 - drag 期间 motion / resize correction 不能抢写。
 - pendingEdgeOverflowPx 可观测。
 
@@ -168,6 +168,7 @@ viewport 不白屏
 ```text
 thumb geometry 与 data item count 无关
 direct scroll delta 线性映射到 current physical segment
+handoff 后 direct scroll delta 重新线性映射到 target physical segment
 ```
 
 ### D. Segment Relayout
