@@ -1,10 +1,11 @@
 import type {
+  MessageRuntimeItemKey,
   RuntimeNextFeedId,
   RuntimeNextGeneration,
   RuntimeNextRevision,
   RuntimeNextSegmentId,
   RuntimeNextTransactionId,
-} from '../types'
+} from '../identity/types'
 
 export type ProjectionCommitToken = {
   readonly feedId: RuntimeNextFeedId
@@ -15,25 +16,84 @@ export type ProjectionCommitToken = {
   readonly transactionId: RuntimeNextTransactionId
 }
 
-export type ProjectionRow<TPayload = unknown> = {
-  readonly key: string
-  readonly payload: TPayload
+export type ProjectionCommit = ProjectionCommitToken
+
+export type CommittedMessageDataItem<TMessage = unknown> = {
+  readonly kind: 'committed'
+  readonly key: Extract<MessageRuntimeItemKey, { kind: 'committed' }>
+  readonly message: TMessage
+  readonly version: number
+  readonly contentVersion?: number
+  readonly estimatedHeight?: number
 }
 
-export type ProjectionEdgeState = {
-  readonly before: 'idle' | 'loading' | 'exhausted'
-  readonly after: 'idle' | 'loading' | 'exhausted'
+export type OptimisticMessageDataItem<TOptimistic = unknown> = {
+  readonly kind: 'optimistic'
+  readonly key: Extract<MessageRuntimeItemKey, { kind: 'optimistic' }>
+  readonly draft: TOptimistic
+  readonly status: 'sending' | 'failed'
+  readonly version: number
+  readonly contentVersion?: number
+  readonly estimatedHeight?: number
 }
 
-export type MessageViewportSnapshot<TPayload = unknown> = {
+export type TombstoneMessageDataItem = {
+  readonly kind: 'tombstone'
+  readonly key: Extract<MessageRuntimeItemKey, { kind: 'committed' }>
+  readonly reason: 'deleted' | 'unavailable'
+  readonly version: number
+  readonly estimatedHeight?: number
+}
+
+export type MessageDataItem<TMessage = unknown, TOptimistic = unknown> =
+  | CommittedMessageDataItem<TMessage>
+  | OptimisticMessageDataItem<TOptimistic>
+  | TombstoneMessageDataItem
+
+export type RenderWindow = {
+  readonly startIndex: number
+  readonly endIndex: number
+  readonly itemKeys: readonly MessageRuntimeItemKey[]
+}
+
+export type BottomLockState = 'LOCKED' | 'UNLOCKED'
+
+export type BootstrapState =
+  | 'INITIAL'
+  | 'MOUNTING'
+  | 'MEASURING'
+  | 'STABILIZING'
+  | 'READY'
+  | 'READY_EMPTY'
+
+export type ViewportPhase =
+  | 'IDLE'
+  | 'PROJECTING'
+  | 'MEASURING'
+  | 'CORRECTING'
+  | 'MOTION_ACTIVE'
+
+export type ViewportEdgeStatus = 'idle' | 'loading' | 'exhausted' | 'error'
+
+export type ViewportEdgeState = {
+  readonly before: ViewportEdgeStatus
+  readonly after: ViewportEdgeStatus
+}
+
+export type MessageViewportSnapshot<
+  TMessage = unknown,
+  TOptimistic = unknown,
+> = {
   readonly feedId: RuntimeNextFeedId
   readonly generation: RuntimeNextGeneration
-  readonly projectionRevision: RuntimeNextRevision
+  readonly revision: RuntimeNextRevision
   readonly commitToken: ProjectionCommitToken
-  readonly rows: readonly ProjectionRow<TPayload>[]
+  readonly items: readonly MessageDataItem<TMessage, TOptimistic>[]
+  readonly renderWindow: RenderWindow
   readonly topSpacer: number
   readonly bottomSpacer: number
-  readonly edgeState: ProjectionEdgeState
-  readonly followBottomVisible: boolean
+  readonly bottomLockState: BottomLockState
+  readonly bootstrapState: BootstrapState
+  readonly viewportPhase: ViewportPhase
+  readonly edgeState: ViewportEdgeState
 }
-

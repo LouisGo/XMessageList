@@ -1,17 +1,17 @@
-export type RuntimeNextCommandTarget = {
-  readonly messageId: string
-  readonly align?: 'start' | 'center' | 'end' | 'nearest'
-}
+import type { AnchorState, MessageIdentityAnchor } from '../identity/types'
+
+export type RuntimeNextCommandTarget = AnchorState | MessageIdentityAnchor
 
 export type RuntimeNextCommand =
   | {
       readonly type: 'bootstrap'
-      readonly mode: 'latest' | 'restore'
+      readonly mode: 'latest' | 'unread' | 'restored'
       readonly target?: RuntimeNextCommandTarget
     }
   | {
       readonly type: 'jump'
-      readonly target: RuntimeNextCommandTarget
+      readonly target: MessageIdentityAnchor
+      readonly origin?: MessageIdentityAnchor
     }
   | {
       readonly type: 'restore'
@@ -22,6 +22,17 @@ export type RuntimeNextCommand =
     }
   | {
       readonly type: 'reset'
-      readonly reason: 'feed-change' | 'generation-change' | 'manual'
+      readonly reason: string
     }
 
+export type MessageRuntimeCommand = RuntimeNextCommand
+
+export type ViewportTransactionKind =
+  | 'bootstrap'
+  | 'segmentShift'
+  | 'segmentRelayout'
+  | 'projectionRefresh'
+  | 'followBottom'
+  | 'jump'
+  | 'restore'
+  | 'reset'

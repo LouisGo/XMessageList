@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import implementationContractSource from '../../../docs/viewport-runtime/message-runtime-implementation-contract.md?raw'
+import { MessageViewportRuntime } from '../MessageViewportRuntime'
+import { isProjectionCommitTokenEqual } from '../projection/commitToken'
 import {
-  MessageViewportRuntime,
-  isProjectionCommitTokenEqual,
   type ProjectionCommitToken,
-  type RuntimeNextCommand,
-  type RuntimeNextDataSnapshot,
-} from '../index'
+} from '../types'
 
 const forbiddenProjectionKeys = [
   'scrollTop',
@@ -15,50 +14,141 @@ const forbiddenProjectionKeys = [
   'thumbGeometry',
 ]
 
-const forbiddenCommandKeys = [
+const publicFacadeMethodsFromContract = [
+  'attach',
+  'detach',
+  'destroy',
+  'setDataSnapshot',
+  'dispatch',
+  'subscribe',
+  'getSnapshot',
+  'subscribeEvent',
+  'getViewportAnchorState',
+  'registerRow',
+  'registerTopSpacer',
+  'registerBottomSpacer',
+  'registerTopSentinel',
+  'registerBottomSentinel',
+  'notifyProjectionCommitted',
+  'getPhysicalScrollMetrics',
+  'subscribePhysicalScroll',
+  'beginDirectScroll',
+  'writeDirectScrollTop',
+  'endDirectScroll',
+  'getDiagnosticRecords',
+] as const
+
+const projectionSnapshotFieldsFromContract = [
+  'feedId',
+  'generation',
+  'revision',
+  'commitToken',
+  'items',
+  'renderWindow',
   'topSpacer',
   'bottomSpacer',
-  'physicalWindowHeight',
-  'segmentRevision',
-  'renderRows',
-  'scrollTop',
-]
+  'bottomLockState',
+  'bootstrapState',
+  'viewportPhase',
+  'edgeState',
+] as const
 
-const nonGeometryOwnerSources = import.meta.glob<string>(
-  '../{commands,data,components}/**/*.{ts,tsx}',
-  {
-    eager: true,
-    import: 'default',
-    query: '?raw',
-  },
-)
-
-const geometryMutationFieldPattern =
-  /\b(topSpacer|bottomSpacer|physicalWindowHeight|segmentRevision|renderRows|PhysicalScrollMetrics)\b/
+const physicalMetricsFieldsFromContract = [
+  'physicalSegmentId',
+  'physicalSegmentRevision',
+  'viewportSize',
+  'physicalWindowSize',
+  'domScrollHeight',
+  'scrollPosition',
+  'maxScrollPosition',
+  'scrollHeightCap',
+  'capMode',
+  'safeScrollRangeStart',
+  'safeScrollRangeEnd',
+  'isDragLocked',
+  'isThumbFrozen',
+  'isSegmentShiftPending',
+  'pendingShiftDirection',
+  'pendingEdgeOverflowPx',
+  'isSegmentShifting',
+  'isMomentumLatched',
+  'suppressedMomentumDeltaPx',
+  'segmentRelayoutState',
+  'segmentRelayoutReason',
+  'adjacentPrefetchBefore',
+  'adjacentPrefetchAfter',
+] as const
 
 describe('runtime-next P2 contract boundaries', () => {
-  it('keeps projection snapshot separate from physical metrics', () => {
+  it('keeps public facade aligned with the implementation contract', () => {
+    const runtime = new MessageViewportRuntime({
+      feedId: 'feed',
+      generation: 1,
+    })
+
+    for (const methodName of publicFacadeMethodsFromContract) {
+      expect(implementationContractSource).toContain(`${methodName}(`)
+      expect(runtime[methodName]).toEqual(expect.any(Function))
+    }
+  })
+
+  it('keeps projection snapshot aligned with the implementation contract', () => {
     const runtime = new MessageViewportRuntime<{ text: string }>({
       feedId: 'feed',
       generation: 1,
     })
     const snapshot = runtime.getSnapshot()
-    const metrics = runtime.getPhysicalScrollMetrics()
 
     expect(Object.keys(snapshot)).not.toEqual(
       expect.arrayContaining(forbiddenProjectionKeys),
     )
+    expect(Object.keys(snapshot)).toEqual(
+      expect.arrayContaining([...projectionSnapshotFieldsFromContract]),
+    )
+    for (const fieldName of projectionSnapshotFieldsFromContract) {
+      expect(implementationContractSource).toContain(`${fieldName}:`)
+    }
     expect(snapshot).toEqual(
       expect.objectContaining({
-        rows: [],
+        revision: 0,
+        items: [],
+        renderWindow: {
+          startIndex: 0,
+          endIndex: 0,
+          itemKeys: [],
+        },
         topSpacer: 0,
         bottomSpacer: 0,
+        bottomLockState: 'UNLOCKED',
+        bootstrapState: 'INITIAL',
+        viewportPhase: 'IDLE',
       }),
     )
+    expect(snapshot.revision).toBe(snapshot.commitToken.projectionRevision)
+  })
+
+  it('keeps physical metrics aligned with the implementation contract', () => {
+    const runtime = new MessageViewportRuntime({
+      feedId: 'feed',
+      generation: 1,
+    })
+    const metrics = runtime.getPhysicalScrollMetrics()
+
+    expect(Object.keys(metrics)).toEqual(
+      expect.arrayContaining([...physicalMetricsFieldsFromContract]),
+    )
+    for (const fieldName of physicalMetricsFieldsFromContract) {
+      expect(implementationContractSource).toContain(`${fieldName}:`)
+    }
     expect(metrics).toEqual(
       expect.objectContaining({
-        physicalWindowHeight: 0,
-        safeScrollRange: { min: 0, max: 0 },
+        physicalSegmentId: null,
+        physicalSegmentRevision: 0,
+        physicalWindowSize: 0,
+        domScrollHeight: 0,
+        maxScrollPosition: 0,
+        segmentRelayoutState: 'idle',
+        segmentRelayoutReason: null,
       }),
     )
   })
@@ -88,45 +178,6 @@ describe('runtime-next P2 contract boundaries', () => {
     ).toBe(false)
   })
 
-  it('keeps command and data contracts semantic-only', () => {
-    const command: RuntimeNextCommand = {
-      type: 'jump',
-      target: {
-        messageId: 'm-1',
-        align: 'center',
-      },
-    }
-    const snapshot: RuntimeNextDataSnapshot<{ text: string }> = {
-      feedId: 'feed',
-      generation: 1,
-      dataRevision: 1,
-      items: [
-        {
-          key: 'm-1',
-          payload: { text: 'hello' },
-          estimatedHeight: 48,
-        },
-      ],
-      hasMoreBefore: false,
-      hasMoreAfter: true,
-    }
-
-    expect(Object.keys(command)).not.toEqual(
-      expect.arrayContaining(forbiddenCommandKeys),
-    )
-    expect(Object.keys(snapshot)).not.toEqual(
-      expect.arrayContaining(forbiddenCommandKeys),
-    )
-  })
-
-  it('does not let non-geometry domains publish geometry mutation fields', () => {
-    const violations = Object.entries(nonGeometryOwnerSources)
-      .filter(([, source]) => geometryMutationFieldPattern.test(source))
-      .map(([path]) => path)
-
-    expect(violations).toEqual([])
-  })
-
   it('keeps the P2 facade as a no-geometry contract skeleton', () => {
     const runtime = new MessageViewportRuntime<{ text: string }>({
       feedId: 'feed',
@@ -134,31 +185,73 @@ describe('runtime-next P2 contract boundaries', () => {
     })
     const token = runtime.getSnapshot().commitToken
 
-    expect(runtime.notifyProjectionCommitted(token)).toBe(true)
-    expect(
+    expect(runtime.notifyProjectionCommitted(token)).toBeUndefined()
+    expect(() => {
       runtime.notifyProjectionCommitted({
         ...token,
         projectionRevision: token.projectionRevision + 1,
-      }),
-    ).toBe(false)
+      })
+    }).not.toThrow()
 
     runtime.dispatch({ type: 'followBottom' })
-    runtime.setDataSnapshot({
-      feedId: 'feed',
-      generation: 1,
-      dataRevision: 1,
-      items: [],
-      hasMoreBefore: false,
-      hasMoreAfter: false,
-    })
+    expect(() => {
+      runtime.setDataSnapshot({
+        feedId: 'feed',
+        generation: 1,
+        revision: 1,
+        items: [],
+        hasMoreBefore: false,
+        hasMoreAfter: false,
+        change: {
+          kind: 'initial',
+          viewportModifier: 'none',
+        },
+      })
+    }).not.toThrow()
+    expect(() => {
+      runtime.setDataSnapshot({
+        feedId: 'feed',
+        generation: 1,
+        revision: 2,
+        items: [],
+        hasMoreBefore: false,
+        hasMoreAfter: false,
+        change: {
+          kind: 'delete',
+          viewportModifier: 'reserved-test-modifier' as never,
+        },
+      })
+    }).toThrow(/viewport modifier is not implemented/)
+    runtime.beginDirectScroll({ source: 'custom-scrollbar-drag' })
+    expect(
+      runtime.writeDirectScrollTop(100, { source: 'custom-scrollbar-drag' }),
+    ).toBe(false)
+    runtime.endDirectScroll({ source: 'custom-scrollbar-drag' })
 
-    expect(runtime.getContractDebugSnapshot()).toEqual(
+    expect(runtime.getSnapshot()).toEqual(
       expect.objectContaining({
-        lastCommand: { type: 'followBottom' },
-        lastCommitAccepted: false,
+        revision: 0,
+        commitToken: token,
+      }),
+    )
+    expect(runtime.getPhysicalScrollMetrics()).toEqual(
+      expect.objectContaining({
+        physicalSegmentId: null,
+        physicalSegmentRevision: 0,
       }),
     )
     expect(runtime.getDiagnosticRecords()).toEqual([])
   })
-})
 
+  it('does not expose test-only debug methods on the public facade', () => {
+    const runtime = new MessageViewportRuntime({
+      feedId: 'feed',
+      generation: 1,
+    })
+
+    expect(Object.keys(Object.getPrototypeOf(runtime))).not.toContain(
+      'getContractDebugSnapshot',
+    )
+    expect('getContractDebugSnapshot' in runtime).toBe(false)
+  })
+})

@@ -10,7 +10,7 @@ tests，不实现真实 geometry、paging、measurement、motion 或 scrollbar�
 - `README.md`：本地维护规则。
 - `components/README.md`：runtime-next React adapter 重写边界。
 - `index.ts`：实验入口，只导出 runtime-next 自身的 facade、helper 和类型。
-- `MessageViewportRuntime.ts`：public facade 空合同，不包含真实几何逻辑。
+- `MessageViewportRuntime.ts`：public facade 合同骨架，不包含真实几何逻辑。
 - `types.ts`：公共类型聚合入口，具体类型必须按领域 co-located。
 - `commands/`、`data/`、`diagnostics/`、`geometry/`、`projection/`：P2 类型和最小合同 helper。
 - `__tests__/`：ownership / contract guard tests。

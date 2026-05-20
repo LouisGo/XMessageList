@@ -27,6 +27,24 @@ export default defineConfig([
     files: ['src/runtime-next/**/*.{ts,tsx}'],
     rules: {
       'no-restricted-imports': ['error', {
+        paths: [
+          {
+            name: '..',
+            message: 'runtime-next must not import through the root entry.',
+          },
+          {
+            name: '../..',
+            message: 'runtime-next must not import through the root entry.',
+          },
+          {
+            name: '../../..',
+            message: 'runtime-next must not import through the root entry.',
+          },
+          {
+            name: 'x-message-list',
+            message: 'runtime-next must not import package self-reference.',
+          },
+        ],
         patterns: [{
           group: [
             '../runtime.deprecated',
@@ -37,15 +55,32 @@ export default defineConfig([
             '../../../runtime.deprecated/*',
             '**/runtime.deprecated',
             '**/runtime.deprecated/*',
+            '../index',
+            '../index.*',
+            '../../index',
+            '../../index.*',
+            '../../../index',
+            '../../../index.*',
             '../react',
             '../react/*',
             '../../react',
             '../../react/*',
             '../../../react',
             '../../../react/*',
+            'x-message-list/*',
           ],
-          message: 'runtime-next must not import deprecated runtime or old React adapter.',
+          message: 'runtime-next must not import deprecated runtime, old React adapter, root entry, or package self-reference.',
         }],
+      }],
+    },
+  },
+  {
+    files: ['src/runtime-next/**/*.{ts,tsx}'],
+    ignores: ['src/runtime-next/**/__tests__/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': ['error', {
+        selector: 'ImportExpression',
+        message: 'runtime-next production code must use static imports only.',
       }],
     },
   },

@@ -1,4 +1,4 @@
-import type { RuntimeNextModuleStatus } from './types'
+import type { RuntimeNextModuleStatus } from './moduleStatus.types'
 export { MessageViewportRuntime } from './MessageViewportRuntime'
 export { isProjectionCommitTokenEqual } from './projection/commitToken'
 

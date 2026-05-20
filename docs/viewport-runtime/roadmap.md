@@ -4,10 +4,10 @@
 
 ## 当前结论
 
-- 当前工作树基线：`a911061`。
+- 当前代码基线：以 Git HEAD 为准；路线图不再硬编码短 hash，避免进度记录漂移。
 - 旧 runtime：已隔离到 `src/runtime.deprecated`，只作为行为备份和必要参考。
-- 新 runtime：`src/runtime-next` 已建立 P1 结构占位，只保留 README、components README、导出占位和类型骨架。
-- 当前阶段：`P2 runtime-next 合同骨架` 已完成；下一阶段是 `P3 physical geometry kernel`。
+- 新 runtime：`src/runtime-next` 已补齐 P2 合同骨架，包含 public facade、projection / metrics / diagnostics / command / data 合同和 guard tests。
+- 当前阶段：`P2 runtime-next 合同骨架` 已重新验证；`P3 physical geometry kernel` 尚未开始，进入前需要独立 review 确认。
 
 ## 总原则
 
@@ -173,11 +173,14 @@ Review 检查点：
 P2 实施记录：
 
 - `src/runtime-next/MessageViewportRuntime.ts` 已提供 public facade 空合同；不实例化、不 import、不转发 deprecated runtime。
-- projection snapshot、commit token、physical metrics、diagnostics、command/data 合同已按领域 co-located。
+- projection snapshot、commit token、physical metrics、diagnostics、command/data 合同已对齐 `message-runtime-implementation-contract.md` 并按领域 co-located。
+- public facade 使用主合同类型名，并保留 `RuntimeNext*` 兼容别名，避免实现签名与合同文档再次漂移。
+- `MessageDataSnapshot.change.viewportModifier` 是必填 data hint；reserved modifier 在对应事务落地前会直接报错，不能被 P2 skeleton 静默吞掉。
 - `ProjectionCommitToken` 覆盖 `feedId + generation + projectionRevision + segmentId + segmentRevision + transactionId`，并有精确匹配 helper。
 - `geometry/publication.types.ts` 是 geometry 后续内部发布面，没有从 package 入口导出。
-- ownership guard tests 已覆盖 projection / metrics 分离、command/data semantic-only、非 geometry 领域不能发布 geometry mutation fields。
-- 验证：`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build` 已通过；`x-message-list/runtime-next` 只导出 `MessageViewportRuntime`、`RUNTIME_NEXT_STATUS`、`isProjectionCommitTokenEqual`。
+- ownership / contract guard tests 已覆盖主合同 public facade、projection / metrics 字段、command/data semantic-only、非 geometry 领域不能发布 geometry mutation fields。
+- import guard 已覆盖 deprecated runtime、旧 React adapter、root entry、package self-reference 和生产代码动态 import。
+- 验证：`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build` 已通过；`x-message-list/runtime-next` 只导出 `MessageViewportRuntime`、`RUNTIME_NEXT_STATUS`、`isProjectionCommitTokenEqual`；生产 runtime-next 源码无动态 import。
 
 本阶段禁止：
 

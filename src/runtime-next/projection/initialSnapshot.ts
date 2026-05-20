@@ -3,10 +3,13 @@ import type {
   ProjectionCommitToken,
 } from './types'
 
-export function createInitialProjectionSnapshot<TPayload>(input: {
+export function createInitialProjectionSnapshot<
+  TMessage,
+  TOptimistic = unknown,
+>(input: {
   readonly feedId: string
   readonly generation: number
-}): MessageViewportSnapshot<TPayload> {
+}): MessageViewportSnapshot<TMessage, TOptimistic> {
   const commitToken: ProjectionCommitToken = {
     feedId: input.feedId,
     generation: input.generation,
@@ -20,16 +23,22 @@ export function createInitialProjectionSnapshot<TPayload>(input: {
   return {
     feedId: input.feedId,
     generation: input.generation,
-    projectionRevision: 0,
+    revision: 0,
     commitToken,
-    rows: [],
+    items: [],
+    renderWindow: {
+      startIndex: 0,
+      endIndex: 0,
+      itemKeys: [],
+    },
     topSpacer: 0,
     bottomSpacer: 0,
+    bottomLockState: 'UNLOCKED',
+    bootstrapState: 'INITIAL',
+    viewportPhase: 'IDLE',
     edgeState: {
       before: 'idle',
       after: 'idle',
     },
-    followBottomVisible: false,
   }
 }
-

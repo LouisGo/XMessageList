@@ -1,12 +1,16 @@
 import type { PhysicalScrollMetrics } from './types'
-import type { ProjectionCommitToken, ProjectionRow } from '../projection/types'
+import type {
+  MessageDataItem,
+  ProjectionCommitToken,
+  RenderWindow,
+} from '../projection/types'
 
-export type GeometryPublication<TPayload = unknown> = {
+export type GeometryPublication<TMessage = unknown, TOptimistic = unknown> = {
   readonly commitToken: ProjectionCommitToken
-  readonly rows: readonly ProjectionRow<TPayload>[]
+  readonly items: readonly MessageDataItem<TMessage, TOptimistic>[]
+  readonly renderWindow: RenderWindow
   readonly topSpacer: number
   readonly bottomSpacer: number
   readonly physicalWindowHeight: number
   readonly metrics: PhysicalScrollMetrics
 }
-
