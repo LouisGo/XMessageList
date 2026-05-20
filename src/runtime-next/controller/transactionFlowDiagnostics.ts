@@ -7,6 +7,8 @@ import type {
   RuntimeTransactionFlowContext,
 } from './transactionFlow.types'
 
+const GEOMETRY_EPSILON_PX = 0.001
+
 export function recordPhysicalWindowDiagnostic<TMessage, TOptimistic>(
   ctx: RuntimeTransactionFlowContext<TMessage, TOptimistic>,
   pending: PendingPublication<TMessage, TOptimistic>,
@@ -54,6 +56,41 @@ export function recordPhysicalWindowDiagnostic<TMessage, TOptimistic>(
       segmentRevision: pending.publication.segment.segmentRevision,
     },
   })
+
+  if (
+    Math.abs(metrics.domScrollHeight - metrics.physicalWindowSize) >
+      GEOMETRY_EPSILON_PX
+  ) {
+    ctx.diagnostics.record({
+      kind: 'physical.domScrollHeightMismatch',
+      severity: getGeometryDiagnosticSeverity('physical.domScrollHeightMismatch'),
+      owner: 'geometry',
+      message: 'DOM scrollHeight diverged from committed physical window',
+      viewport: {
+        ...metrics,
+        ts: Date.now(),
+        renderWindowStart,
+        renderWindowEnd,
+        topSpacer: pending.publication.topSpacer,
+        bottomSpacer: pending.publication.bottomSpacer,
+        mountedRowsHeight,
+        scrollTop: metrics.scrollPosition,
+        scrollHeight: metrics.physicalWindowSize,
+        clientHeight: ctx.dom.getViewportSize().clientHeight,
+        physicalWindowHeight: pending.publication.physicalWindowHeight,
+        realRowCoveragePx: coverage.realRowCoveragePx,
+        minRealRowCoveragePx: coverage.minRealRowCoveragePx,
+        bottomLockState: ctx.getBottomLockState(),
+        viewportPhase: ctx.projection.getSnapshot().viewportPhase,
+        dataRevision: ctx.data.requireSnapshot().revision,
+      },
+      details: {
+        expectedDomScrollHeight: metrics.physicalWindowSize,
+        actualDomScrollHeight: metrics.domScrollHeight,
+        transactionId: pending.transaction.id,
+      },
+    })
+  }
 }
 
 export function recordPhysicalRelayoutDiagnostic<TMessage, TOptimistic>(

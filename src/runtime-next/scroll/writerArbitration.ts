@@ -5,6 +5,7 @@ import type { DirectScrollInput } from './types'
 
 export type ScrollWriterKind =
   | 'direct-drag'
+  | 'direct-track'
   | 'anchor-correction'
   | 'segment-shift-rebase'
   | 'follow-bottom'
@@ -83,9 +84,9 @@ export class ScrollWriterArbitration {
 export function directScrollInputToWriterKind(
   input: DirectScrollInput,
 ): ScrollWriterKind {
-  void input
-
-  return 'direct-drag'
+  return input.source === 'custom-scrollbar-track'
+    ? 'direct-track'
+    : 'direct-drag'
 }
 
 function isSameWriter(

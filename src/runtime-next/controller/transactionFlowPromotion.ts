@@ -16,10 +16,7 @@ import {
   recordPhysicalRelayoutDiagnostic,
   recordPhysicalWindowDiagnostic,
 } from './transactionFlowDiagnostics'
-import {
-  resolveTransactionScrollTop,
-  writeTransactionScrollTop,
-} from './transactionFlowScroll'
+import { resolveTransactionScrollTop } from './transactionFlowScroll'
 import type {
   PendingPublication,
   RuntimeTransactionFlowContext,
@@ -104,15 +101,19 @@ export function evaluateGeometryCommit<TMessage, TOptimistic>(
   const measurement = ctx.dom.measureRows(
     pending.publication.renderWindow.itemKeys,
   )
+  const measuredPending: PendingPublication<TMessage, TOptimistic> = {
+    ...pending,
+    measuredRowsHeight: measurement.mountedRowsHeight > 0
+      ? measurement.mountedRowsHeight
+      : pending.publication.mountedRowsHeightEstimate,
+    measuredRowHeights: measurement.measuredRowHeights,
+  }
   const promotion = decidePromotionCorrection({
     publication: pending.publication,
     dataRevision: ctx.data.requireSnapshot().revision,
     scrollTop: resolveTransactionScrollTop(
       ctx,
-      pending,
-      measurement.mountedRowsHeight > 0
-        ? measurement.mountedRowsHeight
-        : pending.publication.mountedRowsHeightEstimate,
+      measuredPending,
     ),
     clientHeight: ctx.dom.getViewportSize().clientHeight,
     measuredRowsHeight: measurement.mountedRowsHeight,
@@ -131,7 +132,7 @@ export function evaluateGeometryCommit<TMessage, TOptimistic>(
   const bottomSpacer =
     pending.publication.bottomSpacer + promotion.correction.bottomDelta
   const correctedPending: PendingPublication<TMessage, TOptimistic> = {
-    ...pending,
+    ...measuredPending,
     measuredRowsHeight: promotion.mountedRowsHeight,
     publication: {
       ...pending.publication,
@@ -157,8 +158,8 @@ export function promoteGeometry<TMessage, TOptimistic>(
   ctx: RuntimeTransactionFlowContext<TMessage, TOptimistic>,
   pending: PendingPublication<TMessage, TOptimistic>,
   segment: PhysicalSegment,
+  scrollTop: number,
 ): void {
-  const scrollTop = writeTransactionScrollTop(ctx, pending)
   const metrics = deriveCommittedMetrics({
     segmentId: segment.segmentId,
     segmentRevision: segment.segmentRevision,
@@ -173,6 +174,9 @@ export function promoteGeometry<TMessage, TOptimistic>(
     scrollHeightCap: segment.scrollHeightCap,
     capMode: segment.capMode,
     viewportSize: ctx.dom.getViewportSize(),
+    domScrollHeight: ctx.dom.getDomScrollHeight(
+      pending.publication.physicalWindowHeight,
+    ),
     scrollTop,
   })
   ctx.runner.markMeasurementCorrection(pending.transaction.id)
@@ -248,7 +252,10 @@ function publishCorrectionProjection<TMessage, TOptimistic>(
   const correctionPending: PendingPublication<TMessage, TOptimistic> = {
     ...pending,
     phase: 'correction',
-    measuredRowsHeight: pending.measuredRowsHeight ?? pending.publication.mountedRowsHeightEstimate,
+    measuredRowsHeight:
+      pending.measuredRowsHeight ??
+      pending.publication.mountedRowsHeightEstimate,
+    measuredRowHeights: pending.measuredRowHeights,
     publication,
   }
 

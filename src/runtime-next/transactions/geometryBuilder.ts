@@ -128,7 +128,7 @@ export function deriveCommittedMetrics(
     physicalSegmentRevision: input.segmentRevision,
     viewportSize: input.viewportSize.clientHeight,
     physicalWindowSize: input.physicalWindowHeight,
-    domScrollHeight: input.physicalWindowHeight,
+    domScrollHeight: input.domScrollHeight,
     scrollPosition: input.scrollTop,
     maxScrollPosition: Math.max(
       0,

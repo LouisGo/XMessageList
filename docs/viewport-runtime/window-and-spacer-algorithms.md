@@ -225,6 +225,7 @@ Window/spacer 层必须输出：
 
 - `physical.windowSelected`
 - `physical.segmentRelayout`
+- `physical.domScrollHeightMismatch`
 - `physical.scrollHeightExceededCap`
 - `physical.spacerOnlyViewport`
 - `physical.spacerOscillationSameRevision`

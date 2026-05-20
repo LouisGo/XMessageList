@@ -39,6 +39,16 @@ export class RuntimeDomRegistry {
     return toNonNegativeFinitePx(this.#container?.scrollTop ?? 0)
   }
 
+  getDomScrollHeight(fallback: number): number {
+    const domScrollHeight = toNonNegativeFinitePx(
+      this.#container?.scrollHeight ?? fallback,
+    )
+
+    return domScrollHeight > 0 || fallback === 0
+      ? domScrollHeight
+      : toNonNegativeFinitePx(fallback)
+  }
+
   registerRow(key: MessageRuntimeItemKey, element: HTMLElement | null): void {
     const id = stringifyMessageRuntimeItemKey(key)
     if (element === null) {

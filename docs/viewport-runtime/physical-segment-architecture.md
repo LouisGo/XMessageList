@@ -621,6 +621,7 @@ type ViewportDiagnostics = {
 | Diagnostic | Severity | Required action |
 | --- | --- | --- |
 | `physical.scrollHeightExceededCap` | error | segment relayout or exceptional cap |
+| `physical.domScrollHeightMismatch` | error | diagnose projection/DOM height parity break and recover through runtime transaction |
 | `physical.spacerOnlyViewport` | error | immediate anchor-based relayout |
 | `physical.realRowCoverageInsufficient` | error | relayout or shift before exposing blank space |
 | `physical.segmentShiftLoop` | error | suppress next shift, rebase to safe zone |

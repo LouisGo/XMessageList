@@ -53,6 +53,7 @@ describe('geometry diagnostics helpers', () => {
       'physical.windowSelected',
       'physical.segmentRelayout',
       'physical.scrollHeightExceededCap',
+      'physical.domScrollHeightMismatch',
       'physical.spacerOnlyViewport',
       'physical.realRowCoverageInsufficient',
       'physical.spacerOscillationSameRevision',
@@ -61,6 +62,7 @@ describe('geometry diagnostics helpers', () => {
     expect(getGeometryDiagnosticSeverity('physical.windowSelected')).toBe('info')
     expect(getGeometryDiagnosticSeverity('physical.segmentRelayout')).toBe('info')
     expect(getGeometryDiagnosticSeverity('physical.scrollHeightExceededCap')).toBe('error')
+    expect(getGeometryDiagnosticSeverity('physical.domScrollHeightMismatch')).toBe('error')
     expect(getGeometryDiagnosticSeverity('physical.spacerOnlyViewport')).toBe('error')
     expect(getGeometryDiagnosticSeverity('physical.realRowCoverageInsufficient')).toBe('error')
     expect(getGeometryDiagnosticSeverity('physical.spacerOscillationSameRevision')).toBe('warn')

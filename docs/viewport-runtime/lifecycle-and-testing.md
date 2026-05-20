@@ -92,6 +92,7 @@ mark generation inactive
 | Violation | Production recovery | Dev/test behavior |
 | --- | --- | --- |
 | `physical.scrollHeightExceededCap` | segment relayout or exceptional cap | assert if repeated |
+| `physical.domScrollHeightMismatch` | diagnose projection/DOM height parity break and recover through runtime transaction | hard fail acceptable |
 | `physical.spacerOnlyViewport` | immediate anchor-based relayout | hard fail acceptable |
 | `physical.segmentShiftLoop` | suppress next shift and rebase safe zone | hard fail after threshold |
 | `physical.spacerOscillationSameRevision` | freeze local correction, one relayout | assert diagnostic |

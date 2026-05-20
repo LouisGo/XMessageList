@@ -27,6 +27,7 @@ export type PendingPublication<TMessage, TOptimistic> = {
   readonly phase: 'initial' | 'correction'
   readonly stableSnapshot: MessageViewportSnapshot<TMessage, TOptimistic>
   readonly measuredRowsHeight?: number
+  readonly measuredRowHeights?: ReadonlyMap<string, number>
 }
 
 export type RuntimeTransactionFlowContext<TMessage, TOptimistic> = {

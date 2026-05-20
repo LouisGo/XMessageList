@@ -11,6 +11,7 @@ export type GeometryDiagnosticKind =
   | 'physical.windowSelected'
   | 'physical.segmentRelayout'
   | 'physical.scrollHeightExceededCap'
+  | 'physical.domScrollHeightMismatch'
   | 'physical.spacerOnlyViewport'
   | 'physical.realRowCoverageInsufficient'
   | 'physical.spacerOscillationSameRevision'

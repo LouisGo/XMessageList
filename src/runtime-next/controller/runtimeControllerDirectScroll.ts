@@ -20,6 +20,8 @@ export function beginDirectScrollTransaction(
   input: DirectScrollInput,
   ctx: DirectScrollContext,
 ): void {
+  if (input.source !== 'custom-scrollbar-drag') return
+
   const token = {
     transactionId: DIRECT_SCROLL_TRANSACTION_ID,
     kind: directScrollInputToWriterKind(input),
@@ -69,6 +71,18 @@ export function writeDirectScrollTopWithWriter(
     safeScrollRangeEnd: metrics.safeScrollRangeEnd,
     maxScrollPosition: metrics.maxScrollPosition,
   })
+  const acquiredForTrack = input.source === 'custom-scrollbar-track'
+    ? ctx.writer.acquire(token).acquired
+    : true
+  if (!acquiredForTrack) {
+    recordWriterIssue(
+      ctx.diagnostics,
+      'writer-arbitration',
+      'direct scroll write denied',
+    )
+    return false
+  }
+
   const wrote = ctx.writer.writeScrollTop(
     ctx.dom.getContainer(),
     boundedScrollTop,
@@ -83,6 +97,8 @@ export function writeDirectScrollTopWithWriter(
       'direct scroll write denied',
     )
   }
+  if (input.source === 'custom-scrollbar-track') ctx.writer.release(token)
+
   return wrote
 }
 
@@ -90,6 +106,8 @@ export function endDirectScrollTransaction(
   input: DirectScrollInput,
   ctx: DirectScrollContext,
 ): void {
+  if (input.source !== 'custom-scrollbar-drag') return
+
   const token = {
     transactionId: DIRECT_SCROLL_TRANSACTION_ID,
     kind: directScrollInputToWriterKind(input),

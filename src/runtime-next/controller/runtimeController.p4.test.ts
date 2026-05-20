@@ -317,6 +317,48 @@ describe('runtime-next P4 transaction integration', () => {
     expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
   })
 
+  it('does not promote followBottom when the drag writer owns scrollTop', () => {
+    const runtime = new MessageViewportRuntime<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    runtime.attach(createContainer({ height: 200 }))
+    runtime.setDataSnapshot(snapshot({
+      items: [item('m-1', 250)],
+      hasMoreAfter: true,
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    commit(runtime)
+    const stableSnapshot = runtime.getSnapshot()
+    const stableMetrics = runtime.getPhysicalScrollMetrics()
+
+    runtime.beginDirectScroll({ source: 'custom-scrollbar-drag' })
+    runtime.setDataSnapshot(snapshot({
+      items: [item('m-1', 250), item('m-2', 250)],
+      revision: 2,
+      modifier: 'auto-scroll-to-bottom',
+    }))
+    runtime.notifyProjectionCommitted(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getSnapshot()).toEqual(stableSnapshot)
+    expect(runtime.getPhysicalScrollMetrics()).toEqual(
+      expect.objectContaining({
+        physicalSegmentId: stableMetrics.physicalSegmentId,
+        physicalSegmentRevision: stableMetrics.physicalSegmentRevision,
+        isDragLocked: true,
+      }),
+    )
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+    expect(
+      runtime.getDiagnosticRecords().some((record) =>
+        record.kind === 'writer-arbitration' &&
+        record.message === 'transaction writer denied',
+      ),
+    ).toBe(true)
+
+    runtime.endDirectScroll({ source: 'custom-scrollbar-drag' })
+  })
+
   it('keeps pending jump across partial data arrivals until target exists', () => {
     const runtime = new MessageViewportRuntime<{ text: string }>({
       feedId: 'feed',
@@ -512,6 +554,29 @@ describe('runtime-next P4 transaction integration', () => {
     expect(physicalChanges).toBeGreaterThan(0)
   })
 
+  it('allows custom scrollbar track writes without entering drag lock', () => {
+    const runtime = new MessageViewportRuntime<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    const container = createContainer({ height: 200 })
+    runtime.attach(container)
+    runtime.setDataSnapshot(snapshot({
+      items: [item('m-1', 250)],
+      hasMoreAfter: true,
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    commit(runtime)
+
+    expect(runtime.writeDirectScrollTop(9999, {
+      source: 'custom-scrollbar-track',
+    })).toBe(true)
+    expect(container.scrollTop).toBe(
+      runtime.getPhysicalScrollMetrics().safeScrollRangeEnd,
+    )
+    expect(runtime.getPhysicalScrollMetrics().isDragLocked).toBe(false)
+  })
+
   it('emits a real viewport anchor on detach', () => {
     const runtime = new MessageViewportRuntime<{ text: string }>({
       feedId: 'feed',
@@ -541,6 +606,39 @@ describe('runtime-next P4 transaction integration', () => {
     ])
   })
 
+  it('restores an anchor offset by writing the target row position', () => {
+    const runtime = new MessageViewportRuntime<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    const container = createContainer({ height: 200 })
+    const items = Array.from({ length: 5 }, (_, index) =>
+      item(`m-${index + 1}`, 100))
+    runtime.attach(container)
+    runtime.setDataSnapshot(snapshot({
+      items,
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    commit(runtime)
+
+    runtime.dispatch({
+      type: 'restore',
+      target: {
+        key: items[2].key,
+        offsetWithinMessage: 30,
+      },
+    })
+    for (const key of runtime.getSnapshot().renderWindow.itemKeys) {
+      runtime.registerRow(key, row(100))
+    }
+    runtime.notifyProjectionCommitted(runtime.getSnapshot().commitToken)
+
+    expect(container.scrollTop).toBe(480)
+    expect(runtime.getPhysicalScrollMetrics().scrollPosition).toBe(480)
+  })
+
   it('records physical geometry diagnostics when metrics are promoted', () => {
     const runtime = new MessageViewportRuntime<{ text: string }>({
       feedId: 'feed',
@@ -555,6 +653,27 @@ describe('runtime-next P4 transaction integration', () => {
       runtime.getDiagnosticRecords().some((record) =>
         record.kind === 'physical.windowSelected' &&
         record.owner === 'geometry',
+      ),
+    ).toBe(true)
+  })
+
+  it('records a physical diagnostic when DOM scrollHeight diverges', () => {
+    const runtime = new MessageViewportRuntime<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    const container = createContainer({ height: 200 })
+    container.appendChild(row(123))
+    runtime.attach(container)
+    runtime.setDataSnapshot(snapshot({ items: [item('m-1')] }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    commit(runtime)
+
+    expect(runtime.getPhysicalScrollMetrics().domScrollHeight).toBe(123)
+    expect(
+      runtime.getDiagnosticRecords().some((record) =>
+        record.kind === 'physical.domScrollHeightMismatch' &&
+        record.viewport?.domScrollHeight === 123,
       ),
     ).toBe(true)
   })

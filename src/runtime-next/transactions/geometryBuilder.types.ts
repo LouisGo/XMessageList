@@ -60,6 +60,7 @@ export type MetricsDerivationInput = {
   readonly scrollHeightCap: number
   readonly capMode: PhysicalSegmentCapMode
   readonly viewportSize: RuntimeViewportSize
+  readonly domScrollHeight: number
   readonly scrollTop: number
   readonly flags?: Partial<Pick<
     PhysicalScrollMetrics,

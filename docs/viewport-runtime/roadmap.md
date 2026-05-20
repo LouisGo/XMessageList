@@ -327,7 +327,9 @@ P4 实施记录：
   projection；`segmentShift` 只构造当前 logical bounds 的相邻 segment；`auto-scroll-to-bottom`
   data hint 会进入 follow-bottom 语义；physical metrics 高频订阅不再唤醒 projection
   subscriber；direct scroll 在 P4 只允许 committed segment 内 bounded write；detach 会发出
-  viewport anchor event；runtime transaction 已接入 `physical.*` geometry diagnostics。
+  viewport anchor event；runtime transaction 已接入 `physical.*` geometry diagnostics。后续
+  hardening 又补齐了 writer-denied 不得 promote、track one-shot direct write、restore anchor
+  offset recovery 和真实 DOM scrollHeight mismatch diagnostics。
 
 本阶段禁止：
 
