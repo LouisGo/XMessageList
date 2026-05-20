@@ -176,6 +176,7 @@ P2 实施记录：
 - projection snapshot、commit token、physical metrics、diagnostics、command/data 合同已对齐 `message-runtime-implementation-contract.md` 并按领域 co-located。
 - public facade 使用主合同类型名，并保留 `RuntimeNext*` 兼容别名，避免实现签名与合同文档再次漂移。
 - `MessageDataSnapshot.change.viewportModifier` 是必填 data hint；reserved modifier 在对应事务落地前会直接报错，不能被 P2 skeleton 静默吞掉。
+- `ViewportPhase` 已对齐 physical segment / container 主规范：`IDLE | RECOVERING | SEGMENT_SHIFTING | DESTINATION_PENDING | MOTION_ACTIVE`，不再沿用旧 projection/measurement/correction phase。
 - `ProjectionCommitToken` 覆盖 `feedId + generation + projectionRevision + segmentId + segmentRevision + transactionId`，并有精确匹配 helper。
 - `geometry/publication.types.ts` 是 geometry 后续内部发布面，没有从 package 入口导出。
 - ownership / contract guard tests 已覆盖主合同 public facade、projection / metrics 字段、command/data semantic-only、非 geometry 领域不能发布 geometry mutation fields。

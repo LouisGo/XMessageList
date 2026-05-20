@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import implementationContractSource from '../../../docs/viewport-runtime/message-runtime-implementation-contract.md?raw'
+import physicalSegmentArchitectureSource from '../../../docs/viewport-runtime/physical-segment-architecture.md?raw'
+import runtimeContainerArchitectureSource from '../../../docs/viewport-runtime/runtime-container-architecture.md?raw'
 import { MessageViewportRuntime } from '../MessageViewportRuntime'
 import { isProjectionCommitTokenEqual } from '../projection/commitToken'
 import {
   type ProjectionCommitToken,
 } from '../types'
+import projectionTypesSource from '../projection/types.ts?raw'
 
 const forbiddenProjectionKeys = [
   'scrollTop',
@@ -79,6 +82,27 @@ const physicalMetricsFieldsFromContract = [
   'adjacentPrefetchAfter',
 ] as const
 
+const viewportPhaseValuesFromMainSpec = [
+  'IDLE',
+  'RECOVERING',
+  'SEGMENT_SHIFTING',
+  'DESTINATION_PENDING',
+  'MOTION_ACTIVE',
+] as const
+
+const deprecatedViewportPhaseValues = [
+  'PROJECTING',
+  'MEASURING',
+  'CORRECTING',
+] as const
+
+function extractTypeBlock(source: string, typeName: string): string {
+  const start = source.indexOf(`export type ${typeName} =`)
+  const end = source.indexOf('\n\n', start)
+
+  return source.slice(start, end)
+}
+
 describe('runtime-next P2 contract boundaries', () => {
   it('keeps public facade aligned with the implementation contract', () => {
     const runtime = new MessageViewportRuntime({
@@ -125,6 +149,23 @@ describe('runtime-next P2 contract boundaries', () => {
       }),
     )
     expect(snapshot.revision).toBe(snapshot.commitToken.projectionRevision)
+  })
+
+  it('keeps viewport phase aligned with runtime-next main specs', () => {
+    const viewportPhaseTypeSource = extractTypeBlock(
+      projectionTypesSource,
+      'ViewportPhase',
+    )
+
+    for (const phase of viewportPhaseValuesFromMainSpec) {
+      expect(physicalSegmentArchitectureSource).toContain(`| '${phase}'`)
+      expect(runtimeContainerArchitectureSource).toContain(`| '${phase}'`)
+      expect(viewportPhaseTypeSource).toContain(`| '${phase}'`)
+    }
+
+    for (const phase of deprecatedViewportPhaseValues) {
+      expect(viewportPhaseTypeSource).not.toContain(`| '${phase}'`)
+    }
   })
 
   it('keeps physical metrics aligned with the implementation contract', () => {

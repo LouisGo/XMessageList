@@ -68,9 +68,9 @@ export type BootstrapState =
 
 export type ViewportPhase =
   | 'IDLE'
-  | 'PROJECTING'
-  | 'MEASURING'
-  | 'CORRECTING'
+  | 'RECOVERING'
+  | 'SEGMENT_SHIFTING'
+  | 'DESTINATION_PENDING'
   | 'MOTION_ACTIVE'
 
 export type ViewportEdgeStatus = 'idle' | 'loading' | 'exhausted' | 'error'
