@@ -23,6 +23,21 @@ export class GeometryRelayoutBoundsError extends Error {
   }
 }
 
+export class GeometrySegmentShiftBoundsError extends Error {
+  readonly direction: 'before' | 'after'
+  readonly reason: 'missing-current-segment' | 'missing-target-data' | 'edge-exhausted'
+
+  constructor(input: {
+    readonly direction: 'before' | 'after'
+    readonly reason: 'missing-current-segment' | 'missing-target-data' | 'edge-exhausted'
+  }) {
+    super(`segmentShift cannot build adjacent segment: ${input.reason}`)
+    this.name = 'GeometrySegmentShiftBoundsError'
+    this.direction = input.direction
+    this.reason = input.reason
+  }
+}
+
 export function resolveGeometryCandidateItems<
   TMessage = unknown,
   TOptimistic = unknown,
@@ -30,6 +45,16 @@ export function resolveGeometryCandidateItems<
   input: GeometryBuildInput<TMessage, TOptimistic>,
 ): readonly MessageDataItem<TMessage, TOptimistic>[] {
   const current = input.currentSegment
+  if (input.kind === 'segmentShift') {
+    if (current === undefined) {
+      throw new GeometrySegmentShiftBoundsError({
+        direction: input.direction ?? 'after',
+        reason: 'missing-current-segment',
+      })
+    }
+
+    return sliceAdjacentShiftItems(input, current)
+  }
   if (input.kind !== 'segmentRelayout' || current === undefined) {
     return input.data.items
   }
@@ -40,6 +65,46 @@ export function resolveGeometryCandidateItems<
     current.logicalEndItemKey,
     current.logicalAnchorKey,
   )
+}
+
+function sliceAdjacentShiftItems<TMessage, TOptimistic>(
+  input: GeometryBuildInput<TMessage, TOptimistic>,
+  current: NonNullable<GeometryBuildInput<TMessage, TOptimistic>['currentSegment']>,
+): readonly MessageDataItem<TMessage, TOptimistic>[] {
+  const direction = input.direction ?? 'after'
+  const startIndex = input.data.items.findIndex((item) =>
+    isMessageRuntimeItemKeyEqual(item.key, current.logicalStartItemKey),
+  )
+  const endIndex = input.data.items.findIndex((item) =>
+    isMessageRuntimeItemKeyEqual(item.key, current.logicalEndItemKey),
+  )
+
+  if (startIndex < 0 || endIndex < 0 || endIndex < startIndex) {
+    throw new GeometrySegmentShiftBoundsError({
+      direction,
+      reason: 'missing-target-data',
+    })
+  }
+
+  if (direction === 'before') {
+    if (startIndex <= 0) {
+      throw new GeometrySegmentShiftBoundsError({
+        direction,
+        reason: input.data.hasMoreBefore ? 'missing-target-data' : 'edge-exhausted',
+      })
+    }
+
+    return input.data.items.slice(0, startIndex)
+  }
+
+  if (endIndex >= input.data.items.length - 1) {
+    throw new GeometrySegmentShiftBoundsError({
+      direction,
+      reason: input.data.hasMoreAfter ? 'missing-target-data' : 'edge-exhausted',
+    })
+  }
+
+  return input.data.items.slice(endIndex + 1)
 }
 
 export function resolveRelayoutAnchor(

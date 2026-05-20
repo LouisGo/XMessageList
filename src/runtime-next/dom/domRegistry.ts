@@ -1,4 +1,4 @@
-import type { MessageRuntimeItemKey } from '../identity/types'
+import type { AnchorState, MessageRuntimeItemKey } from '../identity/types'
 import { stringifyMessageRuntimeItemKey } from '../identity/itemKey'
 
 export type RuntimeViewportSize = {
@@ -63,6 +63,34 @@ export class RuntimeDomRegistry {
 
   registerBottomSentinel(element: HTMLElement | null): void {
     void element
+  }
+
+  resolveViewportAnchor(keys: readonly MessageRuntimeItemKey[]): AnchorState | null {
+    if (this.#container === null || keys.length === 0) {
+      return null
+    }
+
+    const containerTop = this.#container.getBoundingClientRect().top
+    let fallback: AnchorState | null = null
+
+    for (const key of keys) {
+      const element = this.#rows.get(stringifyMessageRuntimeItemKey(key))
+      if (element === undefined) continue
+      const rect = element.getBoundingClientRect()
+      const offsetWithinMessage = Math.max(0, containerTop - rect.top)
+      const candidate: AnchorState = {
+        key,
+        offsetWithinMessage,
+      }
+      if (rect.top <= containerTop && rect.bottom >= containerTop) {
+        return candidate
+      }
+      if (fallback === null) {
+        fallback = candidate
+      }
+    }
+
+    return fallback
   }
 
   measureRows(keys: readonly MessageRuntimeItemKey[]): RuntimeDomMeasurement {

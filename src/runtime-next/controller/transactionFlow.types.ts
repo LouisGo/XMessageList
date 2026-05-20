@@ -8,7 +8,7 @@ import type {
 } from '../geometry/segment/segmentRevision'
 import type { AnchorState } from '../identity/types'
 import type { ProjectionStore } from '../projection/store'
-import type { BottomLockState } from '../projection/types'
+import type { BottomLockState, MessageViewportSnapshot } from '../projection/types'
 import type { ScrollWriterArbitration } from '../scroll/writerArbitration'
 import type { GeometryBuildPlan } from '../transactions/geometryBuilder.types'
 import type { TransactionRunner } from '../transactions/transactionRunner'
@@ -17,12 +17,16 @@ import type {
   RuntimeTransactionIntent,
   TransactionAbortReason,
 } from '../transactions/types'
+import type { PendingDataIntent } from '../data/classifier.types'
 
 export type PendingPublication<TMessage, TOptimistic> = {
   readonly transaction: RuntimeTransaction<TMessage, TOptimistic>
   readonly plan: GeometryBuildPlan<TMessage, TOptimistic>
   readonly publication: PendingGeometryProjection<TMessage, TOptimistic>
   readonly promotesBottomLock: boolean
+  readonly phase: 'initial' | 'correction'
+  readonly stableSnapshot: MessageViewportSnapshot<TMessage, TOptimistic>
+  readonly measuredRowsHeight?: number
 }
 
 export type RuntimeTransactionFlowContext<TMessage, TOptimistic> = {
@@ -44,4 +48,5 @@ export type RuntimeTransactionFlowContext<TMessage, TOptimistic> = {
   readonly finish: (transactionId: string) => void
   readonly abort: (reason: TransactionAbortReason) => void
   readonly recoverRelayoutBounds: (target: AnchorState) => void
+  readonly deferPendingDataIntent: (intent: PendingDataIntent) => void
 }

@@ -1,7 +1,10 @@
 import type { ProjectionCommitToken } from '../projection/types'
 import { isProjectionCommitTokenEqual } from '../projection/commitToken'
 import { buildGeometryPlan } from '../transactions/geometryBuilder'
-import { GeometryRelayoutBoundsError } from '../transactions/geometryBuilderRelayout'
+import {
+  GeometryRelayoutBoundsError,
+  GeometrySegmentShiftBoundsError,
+} from '../transactions/geometryBuilderRelayout'
 import type { GeometryBuildKind, GeometryBuildPlan } from '../transactions/geometryBuilder.types'
 import type { RuntimeTransaction } from '../transactions/types'
 import {
@@ -9,9 +12,11 @@ import {
 } from './controllerHelpers'
 import {
   completeProjectionRefresh,
+  evaluateGeometryCommit,
   planFromPublication,
   promoteGeometry,
   publishPending,
+  restoreStableProjection,
 } from './transactionFlowPromotion'
 import type {
   PendingPublication,
@@ -53,16 +58,43 @@ export class RuntimeTransactionFlow<TMessage = unknown, TOptimistic = unknown> {
       completeProjectionRefresh(this.#ctx, pending)
       return
     }
+
+    let pendingForPromotion = pending
+    if (pending.phase === 'initial') {
+      const decision = evaluateGeometryCommit(this.#ctx, pendingForPromotion)
+      if (decision.kind === 'await-correction') {
+        this.#pending = decision.pending
+        return
+      }
+      if (decision.kind === 'segment-relayout') {
+        this.#ctx.abort('error')
+        this.#ctx.enqueue({
+          kind: 'segmentRelayout',
+          reason: decision.reason,
+        })
+        return
+      }
+      pendingForPromotion = decision.pending
+      this.#pending = pendingForPromotion
+    }
+
     const result = this.#ctx.revision.acknowledgeCommit(commit)
     if (!result.committed) {
       this.#ctx.abort('commit-token-mismatch')
       return
     }
-    promoteGeometry(this.#ctx, pending, result.segment)
+    promoteGeometry(this.#ctx, pendingForPromotion, result.segment)
   }
 
   clearPending(): void {
     this.#pending = null
+  }
+
+  abortPending(): void {
+    if (this.#pending !== null) {
+      restoreStableProjection(this.#ctx, this.#pending)
+      this.#pending = null
+    }
   }
 
   #beginProjectionRefresh(
@@ -96,6 +128,8 @@ export class RuntimeTransactionFlow<TMessage = unknown, TOptimistic = unknown> {
       plan: planFromPublication(publication),
       publication,
       promotesBottomLock: false,
+      phase: 'initial',
+      stableSnapshot: snapshot,
     }
     publishPending(this.#ctx, publication, transaction, data)
   }
@@ -135,6 +169,27 @@ export class RuntimeTransactionFlow<TMessage = unknown, TOptimistic = unknown> {
         })
         return
       }
+      if (error instanceof GeometrySegmentShiftBoundsError) {
+        this.#ctx.diagnostics.record({
+          kind: 'transaction-error',
+          severity: 'warn',
+          owner: 'geometry',
+          message: 'segmentShift could not build adjacent target',
+          details: {
+            reason: error.reason,
+            direction: error.direction,
+            transactionId: transaction.id,
+          },
+        })
+        if (error.reason === 'missing-target-data') {
+          this.#ctx.deferPendingDataIntent({
+            kind: 'segmentShift',
+            direction: error.direction,
+          })
+        }
+        this.#ctx.abort('missing-data')
+        return
+      }
 
       throw error
     }
@@ -163,6 +218,8 @@ export class RuntimeTransactionFlow<TMessage = unknown, TOptimistic = unknown> {
       plan,
       publication,
       promotesBottomLock: kind === 'followBottom' && !data.hasMoreAfter,
+      phase: 'initial',
+      stableSnapshot: this.#ctx.projection.getSnapshot(),
     }
     publishPending(this.#ctx, publication, transaction, data)
   }

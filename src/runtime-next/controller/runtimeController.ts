@@ -144,6 +144,10 @@ export class MessageViewportRuntimeController<
       finish: (transactionId) => this.#finish(transactionId),
       abort: (reason) => this.#abortActive(reason),
       recoverRelayoutBounds: (target) => this.#recoverRelayoutBounds(target),
+      deferPendingDataIntent: (intent) => {
+        this.#pendingDataIntent = intent
+        this.#emitNeedForPendingIntent(intent)
+      },
     })
   }
 
@@ -159,8 +163,14 @@ export class MessageViewportRuntimeController<
 
   detach(): void {
     this.#cancelActive('detach')
+    this.#emitEvent({
+      type: 'viewportAnchorChanged',
+      feedId: this.#feedId,
+      generation: this.#generation,
+      reason: 'detach',
+      anchor: this.getViewportAnchorState(),
+    })
     this.#dom.detach()
-    this.#bottomLockState = 'UNLOCKED'
   }
 
   destroy(): void {
@@ -208,6 +218,16 @@ export class MessageViewportRuntimeController<
       activeProjection: active,
       pendingIntent: this.#pendingDataIntent,
     })
+    if (
+      snapshot.change.viewportModifier === 'auto-scroll-to-bottom' &&
+      intent.kind === 'no-op' &&
+      intent.reason === 'latest-data-still-missing'
+    ) {
+      this.#pendingDataIntent = { kind: 'followBottom' }
+      this.#emitNeedForPendingIntent(this.#pendingDataIntent)
+      recordDataIntent(this.#diagnostics, intent)
+      return
+    }
     this.#pendingDataIntent = shouldRetainPendingDataIntent(
       this.#pendingDataIntent,
       intent,
@@ -255,66 +275,52 @@ export class MessageViewportRuntimeController<
   }
 
   subscribe(listener: RuntimeListener): RuntimeUnsubscribe {
-    this.#listeners.add(listener)
-    return () => this.#listeners.delete(listener)
+    this.#listeners.add(listener); return () => this.#listeners.delete(listener)
   }
 
   subscribeEvent(listener: RuntimeEventListener): RuntimeUnsubscribe {
-    this.#eventListeners.add(listener)
-    return () => this.#eventListeners.delete(listener)
+    this.#eventListeners.add(listener); return () => this.#eventListeners.delete(listener)
   }
 
   subscribePhysicalScroll(listener: RuntimeListener): RuntimeUnsubscribe {
-    this.#physicalListeners.add(listener)
-    return () => this.#physicalListeners.delete(listener)
+    this.#physicalListeners.add(listener); return () => this.#physicalListeners.delete(listener)
   }
 
   getSnapshot(): MessageViewportSnapshot<TMessage, TOptimistic> {
     return this.#projection.getSnapshot()
   }
 
-  getPhysicalScrollMetrics(): PhysicalScrollMetrics {
-    return this.#metrics.getMetrics()
-  }
+  getPhysicalScrollMetrics(): PhysicalScrollMetrics { return this.#metrics.getMetrics() }
 
   getViewportAnchorState(): AnchorState | null {
-    const key = this.#projection.getSnapshot().renderWindow.itemKeys[0]
-    return key === undefined ? null : { key, offsetWithinMessage: 0 }
+    return this.#dom.resolveViewportAnchor(
+      this.#projection.getSnapshot().renderWindow.itemKeys,
+    )
   }
 
-  getDiagnosticRecords(): RuntimeNextDiagnosticRecord[] {
-    return this.#diagnostics.getRecords()
-  }
+  getDiagnosticRecords(): RuntimeNextDiagnosticRecord[] { return this.#diagnostics.getRecords() }
 
   registerRow(key: MessageRuntimeItemKey, element: HTMLElement | null): void {
     this.#dom.registerRow(key, element)
   }
 
-  registerTopSpacer(element: HTMLElement | null): void {
-    this.#dom.registerTopSpacer(element)
-  }
+  registerTopSpacer(element: HTMLElement | null): void { this.#dom.registerTopSpacer(element) }
 
-  registerBottomSpacer(element: HTMLElement | null): void {
-    this.#dom.registerBottomSpacer(element)
-  }
+  registerBottomSpacer(element: HTMLElement | null): void { this.#dom.registerBottomSpacer(element) }
 
-  registerTopSentinel(element: HTMLElement | null): void {
-    this.#dom.registerTopSentinel(element)
-  }
+  registerTopSentinel(element: HTMLElement | null): void { this.#dom.registerTopSentinel(element) }
 
-  registerBottomSentinel(element: HTMLElement | null): void {
-    this.#dom.registerBottomSentinel(element)
-  }
+  registerBottomSentinel(element: HTMLElement | null): void { this.#dom.registerBottomSentinel(element) }
 
-  notifyProjectionCommitted(commit: ProjectionCommitToken): void {
-    this.#flow.handleProjectionCommitted(commit)
-  }
+  notifyProjectionCommitted(commit: ProjectionCommitToken): void { this.#flow.handleProjectionCommitted(commit) }
 
   beginDirectScroll(input: DirectScrollInput): void {
+    if (this.#destroyed) return
     beginDirectScrollTransaction(input, this.#directScrollContext())
   }
 
   writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): boolean {
+    if (this.#destroyed) return false
     const wrote = writeDirectScrollTopWithWriter(
       scrollTop,
       input,
@@ -325,6 +331,7 @@ export class MessageViewportRuntimeController<
   }
 
   endDirectScroll(input: DirectScrollInput): void {
+    if (this.#destroyed) return
     endDirectScrollTransaction(input, this.#directScrollContext())
   }
 
@@ -405,6 +412,7 @@ export class MessageViewportRuntimeController<
   #abortActive(reason: TransactionAbortReason): void {
     const active = this.#runner.getActive()
     if (active !== null) {
+      this.#flow.abortPending()
       this.#revision.abortPendingPublication()
       this.#writer.releaseTransaction(active.id)
     }
@@ -485,6 +493,5 @@ export class MessageViewportRuntimeController<
 
   #emitPhysicalChange(): void {
     for (const listener of this.#physicalListeners) listener()
-    for (const listener of this.#listeners) listener()
   }
 }

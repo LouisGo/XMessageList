@@ -60,6 +60,11 @@ export class ProjectionStore<TMessage = unknown, TOptimistic = unknown> {
     this.#onChange()
   }
 
+  restore(snapshot: MessageViewportSnapshot<TMessage, TOptimistic>): void {
+    this.#snapshot = snapshot
+    this.#onChange()
+  }
+
   patchState(input: {
     readonly bottomLockState?: BottomLockState
     readonly bootstrapState?: BootstrapState

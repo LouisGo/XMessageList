@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createContainer } from '../../test/fakes'
+import { createContainer, setElementMetrics } from '../../test/fakes'
 import { MessageViewportRuntime } from '../MessageViewportRuntime'
 import { MessageViewportRuntimeController } from './runtimeController'
 import type {
   MessageDataItem,
+  MessageViewportSnapshot,
   ProjectionCommitToken,
 } from '../types'
 
@@ -27,15 +28,16 @@ function snapshot(input: {
   readonly feedId?: string
   readonly generation?: number
   readonly revision?: number
+  readonly hasMoreBefore?: boolean
   readonly hasMoreAfter?: boolean
-  readonly modifier?: 'none' | 'items-change' | 'append'
+  readonly modifier?: 'none' | 'items-change' | 'append' | 'auto-scroll-to-bottom'
 }) {
   return {
     feedId: input.feedId ?? 'feed',
     generation: input.generation ?? 1,
     revision: input.revision ?? 1,
     items: input.items,
-    hasMoreBefore: false,
+    hasMoreBefore: input.hasMoreBefore ?? false,
     hasMoreAfter: input.hasMoreAfter ?? false,
     change: {
       kind: input.modifier === 'append' ? 'append' as const : 'patch' as const,
@@ -49,6 +51,23 @@ function commit(runtime: MessageViewportRuntime<{ text: string }>): ProjectionCo
   runtime.notifyProjectionCommitted(token)
 
   return token
+}
+
+function row(height: number, top = 0): HTMLElement {
+  const element = document.createElement('div')
+  setElementMetrics(element, { top, height })
+
+  return element
+}
+
+function committedIds(input: {
+  getSnapshot: () => MessageViewportSnapshot<{ text: string }>
+}): string[] {
+  return input.getSnapshot().items
+    .map((snapshotItem) =>
+      snapshotItem.key.kind === 'committed'
+        ? snapshotItem.key.messageId
+        : snapshotItem.key.clientMessageId)
 }
 
 describe('runtime-next P4 transaction integration', () => {
@@ -129,6 +148,97 @@ describe('runtime-next P4 transaction integration', () => {
     expect(runtime.getPhysicalScrollMetrics()).toEqual(committedMetrics)
     runtime.notifyProjectionCommitted(refreshToken)
     expect(runtime.getPhysicalScrollMetrics()).toEqual(committedMetrics)
+    expect(
+      runtime.getDiagnosticRecords().some((record) =>
+        record.message === 'transaction projectionRefresh -> metrics-promoted',
+      ),
+    ).toBe(false)
+  })
+
+  it('waits for correction projection ack before promoting measured metrics', () => {
+    const controller = new MessageViewportRuntimeController<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    controller.attach(createContainer({ height: 200 }))
+    controller.setDataSnapshot(snapshot({
+      items: [item('m-1', 250)],
+      hasMoreAfter: true,
+    }))
+
+    controller.enqueueInternalTransaction({ kind: 'reset', reason: 'test' })
+    const initialToken = controller.getSnapshot().commitToken
+    const key = controller.getSnapshot().renderWindow.itemKeys[0]
+    expect(key).toBeDefined()
+    controller.registerRow(key!, row(300))
+    controller.notifyProjectionCommitted(initialToken)
+
+    const correctionToken = controller.getSnapshot().commitToken
+    expect(correctionToken.segmentRevision).toBe(initialToken.segmentRevision)
+    expect(correctionToken.projectionRevision).toBe(
+      initialToken.projectionRevision + 1,
+    )
+    expect(controller.getPhysicalScrollMetrics().physicalSegmentRevision).toBe(0)
+
+    controller.notifyProjectionCommitted(correctionToken)
+    expect(controller.getPhysicalScrollMetrics()).toEqual(
+      expect.objectContaining({
+        physicalSegmentRevision: correctionToken.segmentRevision,
+        physicalWindowSize: 1000,
+      }),
+    )
+    expect(controller.getSnapshot().bottomSpacer).toBe(700)
+  })
+
+  it('promotes geometry on the first ack when measurement needs no correction', () => {
+    const controller = new MessageViewportRuntimeController<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    controller.attach(createContainer({ height: 200 }))
+    controller.setDataSnapshot(snapshot({
+      items: [item('m-1', 250)],
+      hasMoreAfter: true,
+    }))
+
+    controller.enqueueInternalTransaction({ kind: 'reset', reason: 'test' })
+    const token = controller.getSnapshot().commitToken
+    const key = controller.getSnapshot().renderWindow.itemKeys[0]
+    expect(key).toBeDefined()
+    controller.registerRow(key!, row(250))
+    controller.notifyProjectionCommitted(token)
+
+    expect(controller.getSnapshot().commitToken).toEqual(token)
+    expect(controller.getPhysicalScrollMetrics()).toEqual(
+      expect.objectContaining({
+        physicalSegmentRevision: token.segmentRevision,
+        physicalWindowSize: 1000,
+      }),
+    )
+  })
+
+  it('restores the stable projection when a pending transaction times out', () => {
+    vi.useFakeTimers()
+    const runtime = new MessageViewportRuntime<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    runtime.attach(createContainer({ height: 320 }))
+    runtime.setDataSnapshot(snapshot({ items: [item('m-1')] }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    commit(runtime)
+    const stableSnapshot = runtime.getSnapshot()
+
+    runtime.setDataSnapshot(snapshot({
+      items: [item('m-1'), item('m-2')],
+      revision: 2,
+      modifier: 'append',
+    }))
+    expect(runtime.getSnapshot()).not.toEqual(stableSnapshot)
+    vi.advanceTimersByTime(300)
+
+    expect(runtime.getSnapshot()).toEqual(stableSnapshot)
+    vi.useRealTimers()
   })
 
   it('resolves pending followBottom only after latest data arrives', () => {
@@ -172,6 +282,39 @@ describe('runtime-next P4 transaction integration', () => {
     expect(runtime.getPhysicalScrollMetrics().physicalSegmentId).toBe(
       token.segmentId,
     )
+  })
+
+  it('treats auto-scroll-to-bottom data as followBottom intent', () => {
+    const runtime = new MessageViewportRuntime<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    const events: string[] = []
+    runtime.subscribeEvent((event) => events.push(event.type))
+    runtime.attach(createContainer({ height: 320 }))
+    runtime.setDataSnapshot(snapshot({
+      items: [item('m-1')],
+      hasMoreAfter: true,
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    commit(runtime)
+
+    runtime.setDataSnapshot(snapshot({
+      items: [item('m-1'), item('m-2')],
+      revision: 2,
+      hasMoreAfter: true,
+      modifier: 'auto-scroll-to-bottom',
+    }))
+    expect(events).toContain('needLatestMessages')
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+
+    runtime.setDataSnapshot(snapshot({
+      items: [item('m-1'), item('m-2'), item('m-3')],
+      revision: 3,
+      modifier: 'auto-scroll-to-bottom',
+    }))
+    commit(runtime)
+    expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
   })
 
   it('keeps pending jump across partial data arrivals until target exists', () => {
@@ -274,29 +417,146 @@ describe('runtime-next P4 transaction integration', () => {
     ).toBe(true)
   })
 
-  it('supports segmentShift as an explicit transaction path', () => {
+  it('supports segmentShift as an explicit adjacent transaction path', () => {
     const controller = new MessageViewportRuntimeController<{ text: string }>({
       feedId: 'feed',
       generation: 1,
     })
     controller.attach(createContainer({ height: 320 }))
     controller.setDataSnapshot(snapshot({
-      items: [item('m-1'), item('m-2'), item('m-3')],
+      items: Array.from({ length: 8 }, (_, index) =>
+        item(`m-${index + 1}`, 400)),
+      hasMoreBefore: true,
     }))
     controller.dispatch({ type: 'bootstrap', mode: 'latest' })
     controller.notifyProjectionCommitted(controller.getSnapshot().commitToken)
-    const firstSegmentId = controller.getPhysicalScrollMetrics().physicalSegmentId
+    const beforeShiftIds = committedIds(controller)
 
     controller.enqueueInternalTransaction({
       kind: 'segmentShift',
-      direction: 'after',
+      direction: 'before',
     })
     const token = controller.getSnapshot().commitToken
-    expect(controller.getPhysicalScrollMetrics().physicalSegmentId).toBe(firstSegmentId)
+    expect(controller.getPhysicalScrollMetrics().physicalSegmentId).not.toBe(
+      token.segmentId,
+    )
     controller.notifyProjectionCommitted(token)
     expect(controller.getPhysicalScrollMetrics().physicalSegmentId).toBe(
       token.segmentId,
     )
+    expect(committedIds(controller)).not.toEqual(beforeShiftIds)
+    expect(committedIds(controller)).toEqual(['m-3', 'm-4', 'm-5'])
+  })
+
+  it('builds segmentShift before from adjacent data only', () => {
+    const controller = new MessageViewportRuntimeController<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    controller.attach(createContainer({ height: 320 }))
+    controller.setDataSnapshot(snapshot({
+      items: Array.from({ length: 8 }, (_, index) =>
+        item(`m-${index + 1}`, 400)),
+      hasMoreBefore: true,
+    }))
+    controller.dispatch({ type: 'bootstrap', mode: 'latest' })
+    controller.notifyProjectionCommitted(controller.getSnapshot().commitToken)
+
+    controller.enqueueInternalTransaction({
+      kind: 'segmentShift',
+      direction: 'before',
+    })
+
+    expect(committedIds(controller)).toEqual(['m-3', 'm-4', 'm-5'])
+  })
+
+  it('keeps direct physical scroll inside the committed safe range', () => {
+    const runtime = new MessageViewportRuntime<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    const container = createContainer({ height: 200 })
+    runtime.attach(container)
+    runtime.setDataSnapshot(snapshot({
+      items: [item('m-1', 250)],
+      hasMoreAfter: true,
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    commit(runtime)
+
+    let projectionChanges = 0
+    let physicalChanges = 0
+    runtime.subscribe(() => {
+      projectionChanges += 1
+    })
+    runtime.subscribePhysicalScroll(() => {
+      physicalChanges += 1
+    })
+
+    runtime.beginDirectScroll({ source: 'custom-scrollbar-drag' })
+    expect(runtime.writeDirectScrollTop(9999, {
+      source: 'custom-scrollbar-drag',
+    })).toBe(true)
+    expect(container.scrollTop).toBe(
+      runtime.getPhysicalScrollMetrics().safeScrollRangeEnd,
+    )
+    expect(runtime.writeDirectScrollTop(-9999, {
+      source: 'custom-scrollbar-drag',
+    })).toBe(true)
+    runtime.endDirectScroll({ source: 'custom-scrollbar-drag' })
+
+    expect(container.scrollTop).toBe(
+      runtime.getPhysicalScrollMetrics().safeScrollRangeStart,
+    )
+    expect(projectionChanges).toBe(0)
+    expect(physicalChanges).toBeGreaterThan(0)
+  })
+
+  it('emits a real viewport anchor on detach', () => {
+    const runtime = new MessageViewportRuntime<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    const anchors: Array<unknown> = []
+    runtime.subscribeEvent((event) => {
+      if (event.type === 'viewportAnchorChanged') anchors.push(event.anchor)
+    })
+    runtime.attach(createContainer({ height: 200 }))
+    runtime.setDataSnapshot(snapshot({
+      items: [item('m-1', 250)],
+      hasMoreAfter: true,
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    commit(runtime)
+    const key = runtime.getSnapshot().renderWindow.itemKeys[0]
+    runtime.registerRow(key!, row(250, -20))
+
+    runtime.detach()
+
+    expect(anchors).toEqual([
+      {
+        key,
+        offsetWithinMessage: 20,
+      },
+    ])
+  })
+
+  it('records physical geometry diagnostics when metrics are promoted', () => {
+    const runtime = new MessageViewportRuntime<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    runtime.attach(createContainer({ height: 320 }))
+    runtime.setDataSnapshot(snapshot({ items: [item('m-1')] }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    commit(runtime)
+
+    expect(
+      runtime.getDiagnosticRecords().some((record) =>
+        record.kind === 'physical.windowSelected' &&
+        record.owner === 'geometry',
+      ),
+    ).toBe(true)
   })
 
   it('aborts timeout transactions and ignores stale commit acks', () => {

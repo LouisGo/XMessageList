@@ -24,6 +24,17 @@ export function beginDirectScrollTransaction(
     transactionId: DIRECT_SCROLL_TRANSACTION_ID,
     kind: directScrollInputToWriterKind(input),
   }
+  if (
+    ctx.dom.getContainer() === null ||
+    ctx.metrics.getMetrics().physicalSegmentId === null
+  ) {
+    recordWriterIssue(
+      ctx.diagnostics,
+      'writer-arbitration',
+      'direct scroll requires an attached committed segment',
+    )
+    return
+  }
   if (!ctx.writer.acquire(token).acquired) {
     recordWriterIssue(
       ctx.diagnostics,
@@ -44,9 +55,27 @@ export function writeDirectScrollTopWithWriter(
     transactionId: DIRECT_SCROLL_TRANSACTION_ID,
     kind: directScrollInputToWriterKind(input),
   }
-  const wrote = ctx.writer.writeScrollTop(ctx.dom.getContainer(), scrollTop, token)
+  const metrics = ctx.metrics.getMetrics()
+  if (metrics.physicalSegmentId === null) {
+    recordWriterIssue(
+      ctx.diagnostics,
+      'writer-arbitration',
+      'direct scroll write requires committed metrics',
+    )
+    return false
+  }
+  const boundedScrollTop = clampDirectScrollTop(scrollTop, {
+    safeScrollRangeStart: metrics.safeScrollRangeStart,
+    safeScrollRangeEnd: metrics.safeScrollRangeEnd,
+    maxScrollPosition: metrics.maxScrollPosition,
+  })
+  const wrote = ctx.writer.writeScrollTop(
+    ctx.dom.getContainer(),
+    boundedScrollTop,
+    token,
+  )
   if (wrote) {
-    ctx.setCurrentScrollTop(Math.max(0, scrollTop))
+    ctx.setCurrentScrollTop(boundedScrollTop)
   } else {
     recordWriterIssue(
       ctx.diagnostics,
@@ -65,6 +94,33 @@ export function endDirectScrollTransaction(
     transactionId: DIRECT_SCROLL_TRANSACTION_ID,
     kind: directScrollInputToWriterKind(input),
   }
-  ctx.writer.release(token)
-  ctx.metrics.promote({ ...ctx.metrics.getMetrics(), isDragLocked: false })
+  if (ctx.writer.release(token)) {
+    ctx.metrics.promote({ ...ctx.metrics.getMetrics(), isDragLocked: false })
+  }
+}
+
+function clampDirectScrollTop(
+  scrollTop: number,
+  metrics: {
+    readonly safeScrollRangeStart: number
+    readonly safeScrollRangeEnd: number
+    readonly maxScrollPosition: number
+  },
+): number {
+  const maxScrollPosition = toFiniteNonNegativePx(metrics.maxScrollPosition)
+  const rangeStart = Math.min(
+    maxScrollPosition,
+    toFiniteNonNegativePx(metrics.safeScrollRangeStart),
+  )
+  const rangeEnd = Math.min(
+    maxScrollPosition,
+    Math.max(rangeStart, toFiniteNonNegativePx(metrics.safeScrollRangeEnd)),
+  )
+  const desired = Number.isFinite(scrollTop) ? scrollTop : rangeStart
+
+  return Math.min(rangeEnd, Math.max(rangeStart, desired))
+}
+
+function toFiniteNonNegativePx(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, value) : 0
 }

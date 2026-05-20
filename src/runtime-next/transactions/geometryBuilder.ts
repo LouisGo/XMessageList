@@ -25,6 +25,7 @@ import {
 } from './geometryBuilderRelayout'
 import type { PhysicalSegmentDraft, PhysicalSegmentRole } from '../geometry/segment/physicalSegment.types'
 import type { PhysicalScrollMetrics } from '../geometry/types'
+import type { MessageDataItem } from '../projection/types'
 
 const EMPTY_SEGMENT_KEY: MessageRuntimeItemKey = {
   kind: 'committed',
@@ -43,7 +44,7 @@ export function buildGeometryPlan<
     mountedRowsHeight: 0,
   })
   const candidateItems = resolveGeometryCandidateItems(input)
-  const anchor = resolveAnchor(input)
+  const anchor = resolveAnchor(input, candidateItems)
   const directionHint = resolveDirectionHint(input.kind, input.direction)
   const selection = selectPhysicalRows({
     items: candidateItems,
@@ -197,6 +198,7 @@ function createSegmentDraft<TMessage, TOptimistic>(input: {
 
 function resolveAnchor<TMessage, TOptimistic>(
   input: GeometryBuildInput<TMessage, TOptimistic>,
+  candidateItems: readonly MessageDataItem<TMessage, TOptimistic>[],
 ): AnchorState | null {
   const relayoutAnchor = resolveRelayoutAnchor(input)
   if (relayoutAnchor !== null) {
@@ -225,6 +227,19 @@ function resolveAnchor<TMessage, TOptimistic>(
         }
   }
 
+  if (input.kind === 'segmentShift') {
+    const item = input.direction === 'before'
+      ? candidateItems[candidateItems.length - 1]
+      : candidateItems[0]
+
+    return item === undefined
+      ? null
+      : {
+          key: item.key,
+          offsetWithinMessage: 0,
+        }
+  }
+
   return null
 }
 
@@ -234,6 +249,9 @@ function resolveDirectionHint(
 ): PhysicalRowSelectionDirectionHint {
   if (kind === 'followBottom') {
     return 'latest'
+  }
+  if (kind === 'segmentShift') {
+    return direction === 'before' ? 'after' : 'before'
   }
   if (kind === 'jump' || kind === 'restore') {
     return 'target'

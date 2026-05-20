@@ -138,6 +138,36 @@ export class PhysicalSegmentRevisionController {
     }
   }
 
+  replacePendingCommitToken(input: {
+    readonly expected: ProjectionCommitToken
+    readonly next: ProjectionCommitToken
+  }): boolean {
+    if (this.#pending === null) {
+      return false
+    }
+    if (!isProjectionCommitTokenEqual(this.#pending.commitToken, input.expected)) {
+      return false
+    }
+    if (
+      input.next.feedId !== this.#feedId ||
+      input.next.generation !== this.#generation ||
+      input.next.segmentId !== this.#pending.segment.segmentId ||
+      input.next.segmentRevision !== this.#pending.segment.segmentRevision ||
+      input.next.transactionId !== this.#pending.transactionId
+    ) {
+      return false
+    }
+
+    // 同一个 segmentRevision 的 correction projection 只能替换 commit token；
+    // 不能重新分配 revision，否则 scrollbar 会在一次几何 mutation 里看到两个版本。
+    this.#pending = {
+      ...this.#pending,
+      commitToken: input.next,
+    }
+
+    return true
+  }
+
   abortPendingPublication(): PendingPhysicalSegmentRevision | null {
     const aborted = this.#pending
     this.#pending = null

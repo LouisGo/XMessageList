@@ -100,6 +100,92 @@ describe('runtime-next data arrival classifier', () => {
     })
   })
 
+  it('turns auto-scroll-to-bottom data into follow-bottom semantics', () => {
+    const m1 = item('m-1')
+
+    expect(
+      classifyDataArrival({
+        snapshot: {
+          ...snapshot([m1]),
+          change: {
+            kind: 'append',
+            viewportModifier: 'auto-scroll-to-bottom',
+          },
+        },
+        activeProjection: null,
+        pendingIntent: null,
+      }).intent,
+    ).toEqual({
+      kind: 'followBottom',
+    })
+    expect(
+      classifyDataArrival({
+        snapshot: {
+          ...snapshot([m1]),
+          hasMoreAfter: true,
+          change: {
+            kind: 'append',
+            viewportModifier: 'auto-scroll-to-bottom',
+          },
+        },
+        activeProjection: null,
+        pendingIntent: null,
+      }).intent,
+    ).toEqual({
+      kind: 'no-op',
+      reason: 'latest-data-still-missing',
+    })
+  })
+
+  it('resolves pending segmentShift only when adjacent data exists', () => {
+    const m1 = item('m-1')
+    const m2 = item('m-2')
+    const m3 = item('m-3')
+
+    expect(
+      classifyDataArrival({
+        snapshot: snapshot([m1, m2]),
+        activeProjection: {
+          renderWindow: {
+            startIndex: 0,
+            endIndex: 0,
+            itemKeys: [m1.key],
+          },
+          logicalStartItemKey: m1.key,
+          logicalEndItemKey: m1.key,
+        },
+        pendingIntent: {
+          kind: 'segmentShift',
+          direction: 'before',
+        },
+      }).intent,
+    ).toEqual({
+      kind: 'no-op',
+      reason: 'pending-shift-missing-data',
+    })
+    expect(
+      classifyDataArrival({
+        snapshot: snapshot([m1, m2, m3]),
+        activeProjection: {
+          renderWindow: {
+            startIndex: 1,
+            endIndex: 1,
+            itemKeys: [m2.key],
+          },
+          logicalStartItemKey: m2.key,
+          logicalEndItemKey: m2.key,
+        },
+        pendingIntent: {
+          kind: 'segmentShift',
+          direction: 'before',
+        },
+      }).intent,
+    ).toEqual({
+      kind: 'segmentShift',
+      direction: 'before',
+    })
+  })
+
   it('does not map prepend or append directly without pending intent', () => {
     const m1 = item('m-1')
     const data = {

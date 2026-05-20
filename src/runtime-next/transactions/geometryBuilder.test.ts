@@ -4,7 +4,7 @@ import type { PhysicalSegment } from '../geometry/segment/physicalSegment.types'
 import { buildGeometryPlan } from './geometryBuilder'
 import { GeometryRelayoutBoundsError } from './geometryBuilderRelayout'
 
-function item(messageId: string): MessageDataItem<{ text: string }> {
+function item(messageId: string, estimatedHeight = 64): MessageDataItem<{ text: string }> {
   return {
     kind: 'committed',
     key: {
@@ -15,8 +15,17 @@ function item(messageId: string): MessageDataItem<{ text: string }> {
       text: messageId,
     },
     version: 1,
-    estimatedHeight: 64,
+    estimatedHeight,
   }
+}
+
+function committedIds(input: {
+  readonly renderWindow: {
+    readonly itemKeys: readonly MessageDataItem<{ text: string }>['key'][]
+  }
+}): string[] {
+  return input.renderWindow.itemKeys.map((key) =>
+    key.kind === 'committed' ? key.messageId : key.clientMessageId)
 }
 
 describe('runtime-next geometry builder', () => {
@@ -112,5 +121,99 @@ describe('runtime-next geometry builder', () => {
         currentSegment,
       }),
     ).toThrow(GeometryRelayoutBoundsError)
+  })
+
+  it('builds a full adjacent segment before current logical bounds', () => {
+    const items = Array.from({ length: 8 }, (_, index) =>
+      item(`m-${index + 1}`, 400))
+    const currentSegment: PhysicalSegment = {
+      segmentId: 'segment-latest',
+      segmentRevision: 1,
+      logicalSegmentId: 'logical-latest',
+      logicalAnchorKey: items[7].key,
+      logicalStartItemKey: items[5].key,
+      logicalEndItemKey: items[7].key,
+      renderWindowStartKey: items[5].key,
+      renderWindowEndKey: items[7].key,
+      logicalRole: 'latest',
+      estimatedRowsHeight: 1200,
+      physicalWindowHeight: 1600,
+      scrollHeightCap: 1600,
+      capMode: 'normal',
+    }
+
+    const plan = buildGeometryPlan({
+      kind: 'segmentShift',
+      direction: 'before',
+      data: {
+        feedId: 'feed',
+        generation: 1,
+        revision: 2,
+        items,
+        hasMoreBefore: true,
+        hasMoreAfter: false,
+        change: {
+          kind: 'patch',
+          viewportModifier: 'items-change',
+        },
+      },
+      viewportSize: {
+        clientHeight: 320,
+        clientWidth: 320,
+      },
+      currentScrollTop: 0,
+      currentSegment,
+    })
+
+    expect(committedIds(plan)).toEqual(['m-3', 'm-4', 'm-5'])
+    expect(plan.topSpacer).toBe(400)
+    expect(plan.bottomSpacer).toBe(0)
+  })
+
+  it('builds a full adjacent segment after current logical bounds', () => {
+    const items = Array.from({ length: 8 }, (_, index) =>
+      item(`m-${index + 1}`, 400))
+    const currentSegment: PhysicalSegment = {
+      segmentId: 'segment-history',
+      segmentRevision: 1,
+      logicalSegmentId: 'logical-history',
+      logicalAnchorKey: items[0].key,
+      logicalStartItemKey: items[0].key,
+      logicalEndItemKey: items[2].key,
+      renderWindowStartKey: items[0].key,
+      renderWindowEndKey: items[2].key,
+      logicalRole: 'history',
+      estimatedRowsHeight: 1200,
+      physicalWindowHeight: 1600,
+      scrollHeightCap: 1600,
+      capMode: 'normal',
+    }
+
+    const plan = buildGeometryPlan({
+      kind: 'segmentShift',
+      direction: 'after',
+      data: {
+        feedId: 'feed',
+        generation: 1,
+        revision: 2,
+        items,
+        hasMoreBefore: false,
+        hasMoreAfter: true,
+        change: {
+          kind: 'patch',
+          viewportModifier: 'items-change',
+        },
+      },
+      viewportSize: {
+        clientHeight: 320,
+        clientWidth: 320,
+      },
+      currentScrollTop: 0,
+      currentSegment,
+    })
+
+    expect(committedIds(plan)).toEqual(['m-4', 'm-5', 'm-6'])
+    expect(plan.topSpacer).toBe(0)
+    expect(plan.bottomSpacer).toBe(400)
   })
 })

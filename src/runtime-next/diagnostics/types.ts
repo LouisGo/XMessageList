@@ -1,8 +1,10 @@
 import type { ViewportDiagnostics } from '../geometry/types'
+import type { GeometryDiagnosticKind } from '../geometry/diagnostics/geometryDiagnostics.types'
 
 export type RuntimeNextDiagnosticSeverity = 'info' | 'warn' | 'error'
 
 export type RuntimeNextArchitectureViolationKind =
+  | GeometryDiagnosticKind
   | 'transaction-lifecycle'
   | 'transaction-error'
   | 'writer-arbitration'

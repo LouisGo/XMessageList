@@ -4,7 +4,7 @@ import { deriveCommittedMetrics } from '../transactions/geometryBuilder'
 import type { GeometryBuildPlan } from '../transactions/geometryBuilder.types'
 import type { RuntimeTransaction } from '../transactions/types'
 import type { PendingGeometryProjection } from '../geometry/publication/publication.types'
-import type { ScrollWriterKind } from '../scroll/writerArbitration'
+import type { SegmentRelayoutReason } from '../geometry/types'
 import {
   bootstrapStateAfterCommit,
   bootstrapStateForPublish,
@@ -12,6 +12,14 @@ import {
   phaseForTransaction,
 } from './controllerHelpers'
 import { decidePromotionCorrection } from './transactionPromoter'
+import {
+  recordPhysicalRelayoutDiagnostic,
+  recordPhysicalWindowDiagnostic,
+} from './transactionFlowDiagnostics'
+import {
+  resolveTransactionScrollTop,
+  writeTransactionScrollTop,
+} from './transactionFlowScroll'
 import type {
   PendingPublication,
   RuntimeTransactionFlowContext,
@@ -60,14 +68,89 @@ export function completeProjectionRefresh<TMessage, TOptimistic>(
     previousCorrections: [],
   })
   ctx.runner.markMeasurementCorrection(pending.transaction.id)
-  ctx.runner.markMetricsPromoted(pending.transaction.id)
-  if (decision.correction.kind === 'segment-relayout') {
+  if (
+    decision.correction.kind === 'segment-relayout' ||
+    decision.correction.topDelta !== 0 ||
+    decision.correction.bottomDelta !== 0
+  ) {
     ctx.enqueue({
       kind: 'segmentRelayout',
-      reason: decision.correction.reason,
+      reason: decision.correction.kind === 'segment-relayout'
+        ? decision.correction.reason
+        : 'measurement',
     })
   }
   ctx.finish(pending.transaction.id)
+}
+
+export type GeometryCommitEvaluation<TMessage, TOptimistic> =
+  | {
+      readonly kind: 'ready'
+      readonly pending: PendingPublication<TMessage, TOptimistic>
+    }
+  | {
+      readonly kind: 'await-correction'
+      readonly pending: PendingPublication<TMessage, TOptimistic>
+    }
+  | {
+      readonly kind: 'segment-relayout'
+      readonly reason: SegmentRelayoutReason
+    }
+
+export function evaluateGeometryCommit<TMessage, TOptimistic>(
+  ctx: RuntimeTransactionFlowContext<TMessage, TOptimistic>,
+  pending: PendingPublication<TMessage, TOptimistic>,
+): GeometryCommitEvaluation<TMessage, TOptimistic> {
+  const measurement = ctx.dom.measureRows(
+    pending.publication.renderWindow.itemKeys,
+  )
+  const promotion = decidePromotionCorrection({
+    publication: pending.publication,
+    dataRevision: ctx.data.requireSnapshot().revision,
+    scrollTop: resolveTransactionScrollTop(
+      ctx,
+      pending,
+      measurement.mountedRowsHeight > 0
+        ? measurement.mountedRowsHeight
+        : pending.publication.mountedRowsHeightEstimate,
+    ),
+    clientHeight: ctx.dom.getViewportSize().clientHeight,
+    measuredRowsHeight: measurement.mountedRowsHeight,
+    previousMetrics: ctx.metrics.getMetrics(),
+    previousCorrections: [],
+  })
+  if (promotion.correction.kind === 'segment-relayout') {
+    recordPhysicalRelayoutDiagnostic(ctx, pending, promotion.correction.reason)
+    return {
+      kind: 'segment-relayout',
+      reason: promotion.correction.reason,
+    }
+  }
+
+  const topSpacer = pending.publication.topSpacer + promotion.correction.topDelta
+  const bottomSpacer =
+    pending.publication.bottomSpacer + promotion.correction.bottomDelta
+  const correctedPending: PendingPublication<TMessage, TOptimistic> = {
+    ...pending,
+    measuredRowsHeight: promotion.mountedRowsHeight,
+    publication: {
+      ...pending.publication,
+      topSpacer,
+      bottomSpacer,
+    },
+  }
+
+  if (
+    promotion.correction.topDelta === 0 &&
+    promotion.correction.bottomDelta === 0
+  ) {
+    return {
+      kind: 'ready',
+      pending: correctedPending,
+    }
+  }
+
+  return publishCorrectionProjection(ctx, correctedPending)
 }
 
 export function promoteGeometry<TMessage, TOptimistic>(
@@ -75,39 +158,16 @@ export function promoteGeometry<TMessage, TOptimistic>(
   pending: PendingPublication<TMessage, TOptimistic>,
   segment: PhysicalSegment,
 ): void {
-  const measurement = ctx.dom.measureRows(
-    pending.publication.renderWindow.itemKeys,
-  )
-  const promotion = decidePromotionCorrection({
-    publication: pending.publication,
-    dataRevision: ctx.data.requireSnapshot().revision,
-    scrollTop: ctx.getCurrentScrollTop(),
-    clientHeight: ctx.dom.getViewportSize().clientHeight,
-    measuredRowsHeight: measurement.mountedRowsHeight,
-    previousMetrics: ctx.metrics.getMetrics(),
-    previousCorrections: [],
-  })
-  if (promotion.correction.kind === 'segment-relayout') {
-    ctx.abort('error')
-    ctx.enqueue({
-      kind: 'segmentRelayout',
-      reason: promotion.correction.reason,
-    })
-    return
-  }
-
-  const topSpacer = pending.publication.topSpacer + promotion.correction.topDelta
-  const bottomSpacer =
-    pending.publication.bottomSpacer + promotion.correction.bottomDelta
   const scrollTop = writeTransactionScrollTop(ctx, pending)
   const metrics = deriveCommittedMetrics({
     segmentId: segment.segmentId,
     segmentRevision: segment.segmentRevision,
     renderWindowStart: pending.publication.renderWindow.itemKeys[0] ?? null,
     renderWindowEnd: pending.publication.renderWindow.itemKeys.at(-1) ?? null,
-    topSpacer,
-    bottomSpacer,
-    mountedRowsHeight: promotion.mountedRowsHeight,
+    topSpacer: pending.publication.topSpacer,
+    bottomSpacer: pending.publication.bottomSpacer,
+    mountedRowsHeight:
+      pending.measuredRowsHeight ?? pending.publication.mountedRowsHeightEstimate,
     naturalBlankHeight: pending.publication.naturalBlankHeight,
     physicalWindowHeight: pending.publication.physicalWindowHeight,
     scrollHeightCap: segment.scrollHeightCap,
@@ -123,8 +183,8 @@ export function promoteGeometry<TMessage, TOptimistic>(
     commitToken: pending.publication.commitToken,
     items: pending.publication.items,
     renderWindow: pending.publication.renderWindow,
-    topSpacer,
-    bottomSpacer,
+    topSpacer: pending.publication.topSpacer,
+    bottomSpacer: pending.publication.bottomSpacer,
     naturalBlankHeight: pending.publication.naturalBlankHeight,
     bottomLockState: ctx.getBottomLockState(),
     bootstrapState: bootstrapStateAfterCommit(
@@ -135,6 +195,7 @@ export function promoteGeometry<TMessage, TOptimistic>(
     viewportPhase: 'IDLE',
     edgeState: ctx.projection.getSnapshot().edgeState,
   })
+  recordPhysicalWindowDiagnostic(ctx, pending, metrics)
   ctx.runner.markMetricsPromoted(pending.transaction.id)
   ctx.finish(pending.transaction.id)
 }
@@ -156,41 +217,52 @@ export function planFromPublication<TMessage, TOptimistic>(
   }
 }
 
-function writeTransactionScrollTop<TMessage, TOptimistic>(
+export function restoreStableProjection<TMessage, TOptimistic>(
   ctx: RuntimeTransactionFlowContext<TMessage, TOptimistic>,
   pending: PendingPublication<TMessage, TOptimistic>,
-): number {
-  const kind = pending.transaction.kind
-  const maxTop = Math.max(
-    0,
-    pending.publication.physicalWindowHeight -
-      ctx.dom.getViewportSize().clientHeight,
-  )
-  const desired = kind === 'followBottom'
-    ? maxTop
-    : kind === 'segmentShift'
-      ? Math.min(maxTop, ctx.dom.getViewportSize().clientHeight)
-      : ctx.getCurrentScrollTop()
-  if (desired === ctx.getCurrentScrollTop()) return desired
+): void {
+  ctx.projection.restore(pending.stableSnapshot)
+}
 
-  const writerKind: ScrollWriterKind = kind === 'followBottom'
-    ? 'follow-bottom'
-    : kind === 'segmentShift'
-      ? 'segment-shift-rebase'
-      : 'anchor-correction'
-  const token = { transactionId: pending.transaction.id, kind: writerKind }
-  if (!ctx.writer.acquire(token).acquired) {
-    ctx.diagnostics.record({
-      kind: 'writer-arbitration',
-      severity: 'warn',
-      owner: 'scroll',
-      message: 'transaction writer denied',
-    })
-    return ctx.getCurrentScrollTop()
+function publishCorrectionProjection<TMessage, TOptimistic>(
+  ctx: RuntimeTransactionFlowContext<TMessage, TOptimistic>,
+  pending: PendingPublication<TMessage, TOptimistic>,
+): GeometryCommitEvaluation<TMessage, TOptimistic> {
+  const commitToken = {
+    ...pending.publication.commitToken,
+    projectionRevision: ctx.projection.getSnapshot().revision + 1,
   }
-  if (ctx.writer.writeScrollTop(ctx.dom.getContainer(), desired, token)) {
-    ctx.setCurrentScrollTop(desired)
+  if (!ctx.revision.replacePendingCommitToken({
+    expected: pending.publication.commitToken,
+    next: commitToken,
+  })) {
+    return {
+      kind: 'segment-relayout',
+      reason: 'measurement',
+    }
   }
-  ctx.writer.release(token)
-  return ctx.getCurrentScrollTop()
+  const publication = {
+    ...pending.publication,
+    commitToken,
+  }
+  const correctionPending: PendingPublication<TMessage, TOptimistic> = {
+    ...pending,
+    phase: 'correction',
+    measuredRowsHeight: pending.measuredRowsHeight ?? pending.publication.mountedRowsHeightEstimate,
+    publication,
+  }
+
+  // Measurement correction changes DOM spacers, so it needs its own projection ack
+  // before the corrected physical metrics can become committed.
+  publishPending(
+    ctx,
+    publication,
+    pending.transaction,
+    ctx.data.requireSnapshot(),
+  )
+
+  return {
+    kind: 'await-correction',
+    pending: correctionPending,
+  }
 }

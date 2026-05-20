@@ -24,6 +24,21 @@ export function classifyDataArrival<
     }
   }
 
+  if (input.snapshot.change.viewportModifier === 'auto-scroll-to-bottom') {
+    return input.snapshot.hasMoreAfter
+      ? {
+          intent: {
+            kind: 'no-op',
+            reason: 'latest-data-still-missing',
+          },
+        }
+      : {
+          intent: {
+            kind: 'followBottom',
+          },
+        }
+  }
+
   if (pending !== null) {
     return classifyPendingIntent(input, pending)
   }
@@ -59,7 +74,7 @@ function classifyPendingIntent<TMessage, TOptimistic>(
 ): DataArrivalClassification {
   switch (pending.kind) {
     case 'segmentShift':
-      return hasItems(input.snapshot.items)
+      return hasAdjacentShiftData(input, pending.direction)
         ? {
             intent: {
               kind: 'segmentShift',
@@ -147,10 +162,30 @@ function isRestoreTargetAvailable<TMessage, TOptimistic>(
   )
 }
 
-function hasItems(
-  items: readonly MessageDataItem<unknown, unknown>[],
+function hasAdjacentShiftData<TMessage, TOptimistic>(
+  input: DataArrivalClassifierInput<TMessage, TOptimistic>,
+  direction: 'before' | 'after',
 ): boolean {
-  return items.length > 0
+  const active = input.activeProjection
+  if (active === null) {
+    return false
+  }
+  const boundaryKey = direction === 'before'
+    ? active.logicalStartItemKey
+    : active.logicalEndItemKey
+  if (boundaryKey === null) {
+    return false
+  }
+  const boundaryIndex = input.snapshot.items.findIndex((item) =>
+    isMessageRuntimeItemKeyEqual(item.key, boundaryKey),
+  )
+  if (boundaryIndex < 0) {
+    return false
+  }
+
+  return direction === 'before'
+    ? boundaryIndex > 0
+    : boundaryIndex < input.snapshot.items.length - 1
 }
 
 function hasCommittedTarget(
