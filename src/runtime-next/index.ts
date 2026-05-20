@@ -1,14 +1,12 @@
 import type { RuntimeNextModuleStatus } from './types'
+export { MessageViewportRuntime } from './MessageViewportRuntime'
+export { isProjectionCommitTokenEqual } from './projection/commitToken'
 
-// P1 只发布结构占位：这里不能实例化 runtime，也不能转发 deprecated 实现。
+// P2 仍是合同骨架：runtime-next 不实例化 deprecated runtime，也不发布真实 geometry。
 export const RUNTIME_NEXT_STATUS: RuntimeNextModuleStatus = {
-  phase: 'P1_STRUCTURE_ONLY',
+  phase: 'P2_CONTRACT_SKELETON',
   geometryImplemented: false,
   importsDeprecatedRuntime: false,
 }
 
-export type {
-  RuntimeNextModuleStatus,
-  RuntimeNextPhase,
-} from './types'
-
+export type * from './types'

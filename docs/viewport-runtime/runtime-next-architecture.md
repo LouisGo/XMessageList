@@ -82,7 +82,7 @@ src/runtime-next/
   __tests__/
 ```
 
-P1 阶段只落地 `README.md`、`index.ts`、`types.ts` 和 `components/README.md`。下表是 P2 之后逐步扩展的目标形态，不是把旧 runtime 或 `src/react` 文件搬进来的清单。
+P1 阶段只落地 `README.md`、`index.ts`、`types.ts` 和 `components/README.md`。P2 已开始落地 public facade、co-located contract types、commit token helper 和 ownership guard tests。下表是后续继续扩展的目标形态，不是把旧 runtime 或 `src/react` 文件搬进来的清单。
 
 职责：
 

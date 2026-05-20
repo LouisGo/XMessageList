@@ -7,7 +7,7 @@
 - 当前工作树基线：`a911061`。
 - 旧 runtime：已隔离到 `src/runtime.deprecated`，只作为行为备份和必要参考。
 - 新 runtime：`src/runtime-next` 已建立 P1 结构占位，只保留 README、components README、导出占位和类型骨架。
-- 当前阶段：`P1` 仓库结构隔离已完成；下一阶段是 `P2 runtime-next 合同骨架`。
+- 当前阶段：`P2 runtime-next 合同骨架` 已完成；下一阶段是 `P3 physical geometry kernel`。
 
 ## 总原则
 
@@ -161,14 +161,23 @@ Review 检查点：
 
 任务：
 
-- [ ] 定义 runtime-next public facade。
-- [ ] 定义 projection snapshot，只包含 React 需要渲染的字段。
-- [ ] 定义 `ProjectionCommitToken`，并要求 React ack 原样回传。
-- [ ] 定义 `PhysicalScrollMetrics`，与 projection snapshot 分离。
-- [ ] 定义 diagnostics record 和 architecture violation 分类。
-- [ ] 定义 command intake，command 只表达 semantic intent。
-- [ ] 写 ownership guard tests，证明非 geometry 层不能发布 geometry。
-- [ ] 类型按领域拆分，避免 `types.ts` 变成无边界类型垃圾桶。
+- [x] 定义 runtime-next public facade。
+- [x] 定义 projection snapshot，只包含 React 需要渲染的字段。
+- [x] 定义 `ProjectionCommitToken`，并要求 React ack 原样回传。
+- [x] 定义 `PhysicalScrollMetrics`，与 projection snapshot 分离。
+- [x] 定义 diagnostics record 和 architecture violation 分类。
+- [x] 定义 command intake，command 只表达 semantic intent。
+- [x] 写 ownership guard tests，证明非 geometry 层不能发布 geometry。
+- [x] 类型按领域拆分，避免 `types.ts` 变成无边界类型垃圾桶。
+
+P2 实施记录：
+
+- `src/runtime-next/MessageViewportRuntime.ts` 已提供 public facade 空合同；不实例化、不 import、不转发 deprecated runtime。
+- projection snapshot、commit token、physical metrics、diagnostics、command/data 合同已按领域 co-located。
+- `ProjectionCommitToken` 覆盖 `feedId + generation + projectionRevision + segmentId + segmentRevision + transactionId`，并有精确匹配 helper。
+- `geometry/publication.types.ts` 是 geometry 后续内部发布面，没有从 package 入口导出。
+- ownership guard tests 已覆盖 projection / metrics 分离、command/data semantic-only、非 geometry 领域不能发布 geometry mutation fields。
+- 验证：`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build` 已通过；`x-message-list/runtime-next` 只导出 `MessageViewportRuntime`、`RUNTIME_NEXT_STATUS`、`isProjectionCommitTokenEqual`。
 
 本阶段禁止：
 

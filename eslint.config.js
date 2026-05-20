@@ -50,7 +50,7 @@ export default defineConfig([
     },
   },
   {
-    files: ['vite.config.ts', 'vitest.config.ts', 'tools/**/*.ts'],
+    files: ['vite*.config.ts', 'vitest.config.ts', 'tools/**/*.ts'],
     extends: appTypeScriptRules,
     languageOptions: {
       globals: globals.node,
