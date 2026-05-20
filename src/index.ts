@@ -1,3 +1,2 @@
-export * from './runtime.deprecated'
-export * from './runtime-next'
-export * from './react'
+export * from './runtime.deprecated/index'
+export * from './react/index'

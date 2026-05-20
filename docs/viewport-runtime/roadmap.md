@@ -122,10 +122,10 @@ P1 实施记录：
 
 - 旧 runtime 已迁移到 `src/runtime.deprecated`。
 - `src/runtime-next` 已建立结构占位，仅含 `README.md`、`components/README.md`、`index.ts`、`types.ts`。
-- 根导出已保留 deprecated runtime，并新增 `./runtime-next` package 实验入口。
+- 根导出已保留 deprecated runtime；`./runtime-next` package 实验入口指向独立的 runtime-next JS / d.ts 产物。
 - 旧 runtime tests 已标记为 deprecated contract tests。
 - `runtime-next` import guard 已加入 ESLint 与源码扫描测试，覆盖 deprecated runtime 与旧 React adapter。
-- 验证：`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build` 已通过；`x-message-list/runtime-next` package 子路径可导入 `RUNTIME_NEXT_STATUS.phase === 'P1_STRUCTURE_ONLY'`。
+- 验证：`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build` 已通过；根 package 只导出 deprecated runtime / React，`x-message-list/runtime-next` package 子路径只导出 `RUNTIME_NEXT_STATUS`。
 
 本阶段禁止：
 
