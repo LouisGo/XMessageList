@@ -1,4 +1,4 @@
-import type { PhysicalScrollMetrics } from './types'
+import type { PhysicalScrollMetrics } from '../types'
 
 export function createInitialPhysicalScrollMetrics(input: {
   readonly feedId: string

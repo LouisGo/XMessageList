@@ -7,7 +7,7 @@
 - 当前代码基线：以 Git HEAD 为准；路线图不再硬编码短 hash，避免进度记录漂移。
 - 旧 runtime：已隔离到 `src/runtime.deprecated`，只作为行为备份和必要参考。
 - 新 runtime：`src/runtime-next` 已补齐 P2 合同骨架，包含 public facade、projection / metrics / diagnostics / command / data 合同和 guard tests。
-- 当前阶段：`P2 runtime-next 合同骨架` 已重新验证；`P3 physical geometry kernel` 尚未开始，进入前需要独立 review 确认。
+- 当前阶段：`P3 physical geometry kernel` 纯逻辑模块已落地；facade / transaction / data arrival 接线仍等待 P4。
 
 ## 总原则
 
@@ -178,7 +178,7 @@ P2 实施记录：
 - `MessageDataSnapshot.change.viewportModifier` 是必填 data hint；reserved modifier 在对应事务落地前会直接报错，不能被 P2 skeleton 静默吞掉。
 - `ViewportPhase` 已对齐 physical segment / container 主规范：`IDLE | RECOVERING | SEGMENT_SHIFTING | DESTINATION_PENDING | MOTION_ACTIVE`，不再沿用旧 projection/measurement/correction phase。
 - `ProjectionCommitToken` 覆盖 `feedId + generation + projectionRevision + segmentId + segmentRevision + transactionId`，并有精确匹配 helper。
-- `geometry/publication.types.ts` 是 geometry 后续内部发布面，没有从 package 入口导出。
+- `geometry/publication/publication.types.ts` 是 geometry 后续内部发布面，没有从 package 入口导出。
 - ownership / contract guard tests 已覆盖主合同 public facade、projection / metrics 字段、command/data semantic-only、非 geometry 领域不能发布 geometry mutation fields。
 - import guard 已覆盖 deprecated runtime、旧 React adapter、root entry、package self-reference 和生产代码动态 import。
 - 验证：`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build` 已通过；`x-message-list/runtime-next` 只导出 `MessageViewportRuntime`、`RUNTIME_NEXT_STATUS`、`isProjectionCommitTokenEqual`；生产 runtime-next 源码无动态 import。
@@ -218,14 +218,28 @@ Review 检查点：
 
 任务：
 
-- [ ] 实现 `PhysicalSegment` 状态和 revision lifecycle。
-- [ ] 实现固定 `physicalWindowHeight` 的 segment budget。
-- [ ] 实现按高度预算选择 render rows。
-- [ ] 实现 local spacer solver，保证 `topSpacer + mountedRowsHeight + bottomSpacer === physicalWindowHeight`。
-- [ ] 实现 measurement fact ingestion，只产出 local correction 或 relayout intent。
-- [ ] 实现 safe scroll range 和 real row coverage。
-- [ ] 实现 short-feed 与 exceptional-row cap mode。
-- [ ] 输出 geometry diagnostics。
+- [x] 实现 `PhysicalSegment` 状态和 revision lifecycle。
+- [x] 实现固定 `physicalWindowHeight` 的 segment budget。
+- [x] 实现按高度预算选择 render rows。
+- [x] 实现 local spacer solver，保证 `topSpacer + mountedRowsHeight + bottomSpacer === physicalWindowHeight`。
+- [x] 实现 measurement fact ingestion，只产出 local correction 或 relayout intent。
+- [x] 实现 safe scroll range 和 real row coverage。
+- [x] 实现 short-feed 与 exceptional-row cap mode。
+- [x] 输出 geometry diagnostics。
+
+P3 实施记录：
+
+- P3.0 已在 `src/runtime-next/geometry/config/config.ts` 收口默认 geometry 配置、diagnostics ring buffer 保留策略、payload 压缩方式、`minimumSafeBufferPx` 和稳定 `segmentId` 生成方式；这些值不再作为临时 guard 散落到后续 solver。
+- P3.1 已在 `src/runtime-next/geometry/segment/` 新增 `PhysicalSegment` / `PhysicalSegmentDraft` / pending revision 状态类型，并用 `PhysicalSegmentRevisionController` 固定 revision lifecycle：projection 发布前分配 `segmentRevision`，ack 必须精确匹配 `ProjectionCommitToken`，abort 不复用已分配 revision。
+- `budget/heightBudget.ts` 已实现 normal cap、short-feed budget 和 exceptional-row cap fallback；预算计算只用于 build / relayout，不作为 measurement delta 的 in-place mutation。
+- `window/rowSelection.ts` 已按 estimated height budget 选择 render rows，`maxMountedItems` 只作为安全阀；`items.length` 只用于候选数据和 anchor fallback，不推导 physical height。
+- `window/spacerSolver.ts` 已实现 local top/bottom spacer solver；normal / exceptional 模式保持高度守恒，short-feed 自然空白以 `naturalBlankHeight` 暴露，不伪装成 spacer。
+- `measurement/coverage.ts` 已实现 safe scroll range、real row coverage、spacer-only viewport 和 short-feed coverage exception。
+- `measurement/measurementCorrection.ts` 已实现 measurement fact / delta ingestion，只返回 local spacer correction 或 `segment-relayout` intent；short-feed measurement 变化不会把自然空白转成 spacer correction。
+- `diagnostics/geometryDiagnostics.ts` 已输出 geometry-local `physical.*` diagnostics，并携带 dataRevision、segment revision、render window、spacer、height、cap 和 coverage 字段。
+- `geometry/README.md` 已固定领域目录组织，P3 后续不再把实现、types 和 tests 平铺到 geometry 根目录。
+- runtime-next public facade 仍不接真实 geometry；`RUNTIME_NEXT_STATUS.phase` 只标记 P3 内部 kernel in progress，`geometryImplemented` 仍为 `false`。
+- 验证：`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build` 已通过。
 
 本阶段禁止：
 

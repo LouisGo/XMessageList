@@ -15,7 +15,7 @@ import type {
   ViewportDiagnosticRecord,
 } from './types'
 import { assertSupportedViewportModifier } from './data/modifiers'
-import { createInitialPhysicalScrollMetrics } from './geometry/initialMetrics'
+import { createInitialPhysicalScrollMetrics } from './geometry/metrics/initialMetrics'
 import { isProjectionCommitTokenEqual } from './projection/commitToken'
 import { createInitialProjectionSnapshot } from './projection/initialSnapshot'
 

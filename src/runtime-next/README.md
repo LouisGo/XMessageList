@@ -1,9 +1,11 @@
 # runtime-next
 
 `src/runtime-next` 是新的 Physical Segment Windowing runtime 承载体。
-当前处于 P2 合同骨架阶段，只建立 public facade、projection snapshot、
+当前处于 P3 geometry kernel 内部实现阶段。public facade、projection snapshot、
 commit token、physical metrics、diagnostics、command/data 类型和 ownership guard
-tests，不实现真实 geometry、paging、measurement、motion 或 scrollbar。
+tests 仍沿用 P2 合同；`geometry/` 开始承载 physical segment 状态、默认配置和
+`segmentRevision` lifecycle。facade 还不发布完整 geometry、paging、measurement、
+motion 或 scrollbar 行为。
 
 ## 当前允许内容
 
@@ -12,7 +14,8 @@ tests，不实现真实 geometry、paging、measurement、motion 或 scrollbar�
 - `index.ts`：实验入口，只导出 runtime-next 自身的 facade、helper 和类型。
 - `MessageViewportRuntime.ts`：public facade 合同骨架，不包含真实几何逻辑。
 - `types.ts`：公共类型聚合入口，具体类型必须按领域 co-located。
-- `commands/`、`data/`、`diagnostics/`、`geometry/`、`projection/`：P2 类型和最小合同 helper。
+- `commands/`、`data/`、`diagnostics/`、`projection/`：P2 类型和最小合同 helper。
+- `geometry/`：P3 physical geometry kernel，按 `config/`、`segment/`、`budget/`、`window/`、`measurement/`、`diagnostics/` 等领域 co-located。
 - `__tests__/`：ownership / contract guard tests。
 
 禁止从 `src/runtime.deprecated` 或旧 `src/react` import，也禁止把 runtime-next API
@@ -31,7 +34,7 @@ runtime-next 后续只能由 physical geometry layer 发布几何事实：
 
 command、data、React adapter、demo 和 deprecated runtime 都不能成为 geometry owner。
 
-P2 中 `geometry/publication.types.ts` 只描述 geometry layer 后续内部发布面。
+P2 中 `geometry/publication/publication.types.ts` 只描述 geometry layer 后续内部发布面。
 它不能从 package 入口导出，也不能被 command/data/components 领域 import。
 
 ## 文件组织规则

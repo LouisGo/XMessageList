@@ -8,8 +8,8 @@ import runtimeNextDataModifiersSource from '../runtime-next/data/modifiers.ts?ra
 import runtimeNextDataTypesSource from '../runtime-next/data/types.ts?raw'
 import runtimeNextDiagnosticTypesSource from '../runtime-next/diagnostics/types.ts?raw'
 import runtimeNextEventTypesSource from '../runtime-next/events/types.ts?raw'
-import runtimeNextGeometryInitialMetricsSource from '../runtime-next/geometry/initialMetrics.ts?raw'
-import runtimeNextGeometryPublicationTypesSource from '../runtime-next/geometry/publication.types.ts?raw'
+import runtimeNextGeometryInitialMetricsSource from '../runtime-next/geometry/metrics/initialMetrics.ts?raw'
+import runtimeNextGeometryPublicationTypesSource from '../runtime-next/geometry/publication/publication.types.ts?raw'
 import runtimeNextGeometryTypesSource from '../runtime-next/geometry/types.ts?raw'
 import runtimeNextIdentityTypesSource from '../runtime-next/identity/types.ts?raw'
 import runtimeNextIndexSource from '../runtime-next/index.ts?raw'
@@ -29,8 +29,8 @@ const runtimeNextSources: ReadonlyArray<readonly [string, string]> = [
   ['src/runtime-next/data/types.ts', runtimeNextDataTypesSource],
   ['src/runtime-next/diagnostics/types.ts', runtimeNextDiagnosticTypesSource],
   ['src/runtime-next/events/types.ts', runtimeNextEventTypesSource],
-  ['src/runtime-next/geometry/initialMetrics.ts', runtimeNextGeometryInitialMetricsSource],
-  ['src/runtime-next/geometry/publication.types.ts', runtimeNextGeometryPublicationTypesSource],
+  ['src/runtime-next/geometry/metrics/initialMetrics.ts', runtimeNextGeometryInitialMetricsSource],
+  ['src/runtime-next/geometry/publication/publication.types.ts', runtimeNextGeometryPublicationTypesSource],
   ['src/runtime-next/geometry/types.ts', runtimeNextGeometryTypesSource],
   ['src/runtime-next/identity/types.ts', runtimeNextIdentityTypesSource],
   ['src/runtime-next/index.ts', runtimeNextIndexSource],

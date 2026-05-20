@@ -1,9 +1,9 @@
-import type { PhysicalScrollMetrics } from './types'
+import type { PhysicalScrollMetrics } from '../types'
 import type {
   MessageDataItem,
   ProjectionCommitToken,
   RenderWindow,
-} from '../projection/types'
+} from '../../projection/types'
 
 export type GeometryPublication<TMessage = unknown, TOptimistic = unknown> = {
   readonly commitToken: ProjectionCommitToken

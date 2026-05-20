@@ -2,9 +2,9 @@ import type { RuntimeNextModuleStatus } from './moduleStatus.types'
 export { MessageViewportRuntime } from './MessageViewportRuntime'
 export { isProjectionCommitTokenEqual } from './projection/commitToken'
 
-// P2 仍是合同骨架：runtime-next 不实例化 deprecated runtime，也不发布真实 geometry。
+// P3 内部几何内核开始落地；facade 仍不发布完整 runtime geometry。
 export const RUNTIME_NEXT_STATUS: RuntimeNextModuleStatus = {
-  phase: 'P2_CONTRACT_SKELETON',
+  phase: 'P3_GEOMETRY_KERNEL_IN_PROGRESS',
   geometryImplemented: false,
   importsDeprecatedRuntime: false,
 }
