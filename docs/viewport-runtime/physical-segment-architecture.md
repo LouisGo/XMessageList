@@ -1,6 +1,10 @@
 # Physical Segment Viewport Architecture
 
-本文是 Message Viewport Runtime 的新主规范。后续重构以本文为准，不再沿用“已加载 DataWindow 连续暴露成单一 scrollHeight”的设计。
+本文是 runtime-next 的几何主规范。它只定义 Physical Segment Windowing 的几何真相，不描述如何在旧 `src/runtime` 上增量修补。
+
+后续重构以 [runtime-next-architecture.md](./runtime-next-architecture.md) 的 ownership 边界和本文的几何不变量为准。旧 runtime 必须作为 `runtime.deprecated` 参考隔离，不再作为新架构承载体。
+
+不再沿用“已加载 DataWindow 连续暴露成单一 scrollHeight”的设计。
 
 ## 1. Core Decision
 

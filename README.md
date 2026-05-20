@@ -2,6 +2,8 @@
 
 独立的 IM message viewport runtime 原型。它不是通用 virtual list，而是面向聊天消息流的 deterministic viewport runtime：消息 row 保持正常文档流，runtime 拥有滚动语义、锚点稳定、DOM measurement 和 transaction，React 只做 projection。
 
+当前仓库已切换到 runtime-next 重写路线。现有 `src/runtime` 是旧 runtime 基线，后续需要改名为 `src/runtime.deprecated` 并只作为行为参考；新的 Physical Segment Windowing runtime 将进入 `src/runtime-next`。
+
 ## Commands
 
 ```bash
@@ -14,7 +16,9 @@ npm run build
 
 ## Runtime Boundary
 
-- `src/runtime`: framework-independent imperative viewport engine。负责 RenderWindow、spacer、DOM registry、height cache、bottom lock、transaction correction 和 runtime event。
+- `src/runtime`: deprecated runtime baseline。当前 demo 仍可依赖它运行，但新架构不再在这里实现。
+- `src/runtime.deprecated`: 后续目标名称。只保留备份和必要行为参考。
+- `src/runtime-next`: 后续新建的 runtime-next 承载体。Physical geometry layer 唯一拥有 render rows、local spacers、`physicalWindowHeight`、`segmentRevision` 和 physical metrics。
 - `src/react`: React 18 projection adapter。使用 `useSyncExternalStore` 订阅 runtime snapshot，通过 ref callback 注册 row/spacer/sentinel DOM，并在 layout effect 中 attach scroll container 与发送 commit ack；订阅必须先于 attach。
 - `src/demo`: 本地 mock 数据和交互场景，覆盖 latest bootstrap、prepend、append、dynamic height。
 - `src/test`: fake scheduler、fake observers、DOM metric helpers。
@@ -60,7 +64,7 @@ export function Chat() {
 
 ## Current Scope
 
-Implemented vertical slice:
+Current deprecated runtime vertical slice:
 
 - latest bootstrap to bottom locked
 - append follow-bottom when locked
@@ -72,6 +76,8 @@ Implemented vertical slice:
 
 Not implemented yet:
 
+- runtime-next code
+- `src/runtime` -> `src/runtime.deprecated` structure isolation
 - real SDK / Bridge / data runtime
 - full unread/restored/jump state machines
 - identity rebind and delete fallback

@@ -1,6 +1,12 @@
-# Runtime
+# Deprecated Runtime Reference
 
-`src/runtime` 是 framework-independent 的 IM message viewport runtime。它负责滚动容器的命令、事务、测量、anchor、window、spacer、scroll motion 和 projection snapshot，不负责渲染具体消息 UI。
+`src/runtime` 是当前基线里的旧 runtime。新的重构路线要求后续把它改名为 `src/runtime.deprecated`，只作为备份和必要行为参考。
+
+不要在本目录继续 graft Physical Segment Windowing。runtime-next 必须在新的 `src/runtime-next` 中从零增量实现，几何 ownership 以 `docs/viewport-runtime/runtime-next-architecture.md` 和 `docs/viewport-runtime/physical-segment-architecture.md` 为准。
+
+本 README 以下内容记录旧 runtime 的现状结构，便于查行为和定位参考点；它不再是新架构施工说明。
+
+旧 runtime 是 framework-independent 的 IM message viewport runtime。它负责滚动容器的命令、事务、测量、anchor、window、spacer、scroll motion 和 projection snapshot，不负责渲染具体消息 UI。
 
 ## 目录原则
 
@@ -150,9 +156,10 @@ Runtime event 的边界触发。
 
 ## 维护规则
 
-新增行为前先判断归属：
+维护旧 runtime 时先判断归属：
 
-- 改滚动语义、测量、window、anchor、事务：放在 `src/runtime`。
+- 修复旧 demo 必需回归：可以小范围改 `src/runtime`，但不得引入 runtime-next 设计。
+- 新 runtime 滚动语义、测量、window、anchor、事务：进入后续 `src/runtime-next`。
 - 改 projection DOM 结构、slot、loading/follow-bottom UI：放在 `src/react`。
 - 改数据请求、分页策略、feed 切换策略：放在 data/demo/adapter 层，不要塞进 runtime。
 
@@ -160,7 +167,7 @@ Runtime event 的边界触发。
 
 ## 验证
 
-Runtime 相关改动至少运行：
+旧 runtime 相关改动至少运行：
 
 ```bash
 npm run typecheck
@@ -169,4 +176,4 @@ npm run test
 npm run build
 ```
 
-针对 scroll motion 或 transaction 时序的改动，还应优先补充 `src/runtime/__tests__/` 下的回归测试。
+针对旧 scroll motion 或 transaction 时序的改动，还应优先补充 `src/runtime/__tests__/` 下的回归测试。runtime-next 的测试应进入后续 `src/runtime-next/__tests__/`，并以 physical geometry invariant 为门禁。

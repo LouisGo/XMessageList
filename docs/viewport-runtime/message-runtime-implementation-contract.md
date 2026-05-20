@@ -1,6 +1,8 @@
-# Message Runtime 实现合同
+# runtime-next 实现合同
 
-本文定义从零实现 physical segment viewport runtime 时必须固定的外部合同。
+本文定义从零实现 runtime-next 时必须固定的外部合同。它不兼容旧 `src/runtime` 的实现路径，也不要求 deprecated runtime 适配这些合同。
+
+旧 runtime 后续应改名为 `src/runtime.deprecated`。runtime-next 只能从本文合同和 [runtime-next-architecture.md](./runtime-next-architecture.md) 的 ownership 边界开始实现。
 
 ## 1. Public API
 

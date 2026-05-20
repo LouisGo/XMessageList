@@ -1,247 +1,360 @@
-# 消息视口 Runtime 实施路线图
+# runtime-next 重构路线图
 
-本文是执行追踪文档，不是架构规范。架构口径以 `physical-segment-architecture.md` 和各合同文档为准。
+本文是新的执行路线。它覆盖旧的 Phase 1 / Phase 2 口径，不再把 Physical Segment Windowing graft 到现有 `src/runtime` 上。
 
-## 使用方式
+## 当前结论
 
-- 每次开始实现前，先确认当前阶段、依赖关系和退出标准。
-- 每次结束实现后，更新本文中的勾选项、状态和阻塞项。
-- 新发现如果改变架构口径，先改主规范，再继续实现。
-- 性能优化指南只作为实现后的优化建议，不作为阶段门禁。
+- 当前代码基线：`a43999d4f13f382fd2a6c65ac2cf15c22a7b38b3`。
+- 旧 runtime：当前仍位于 `src/runtime`，后续第一轮实现必须明确改名为 `src/runtime.deprecated`，只作为行为备份和必要参考。
+- 新 runtime：后续新建 `src/runtime-next`，从零增量实现核心 runtime。
+- 当前阶段：`P0` 文档和边界重建。本文完成前，不进入 runtime-next 代码实现。
 
-状态标记：
+## 总原则
 
-- `[ ]` 待处理
-- `[~]` 进行中
-- `[x]` 已完成
-- `[!]` 已阻塞
+runtime-next 从第一天起锁死几何所有权：
 
-## 当前状态
+```text
+Data runtime owns message availability.
+Command layer owns semantic intent.
+React adapter owns projection rendering.
+Physical geometry layer owns every geometry fact.
+```
 
-- 当前阶段：阶段 0（`Phase 0`）
-- 整体状态：架构文档已具备实现条件，代码实现尚未开始。
-- 下一步：进入阶段 0，完成代码现状盘点和实现切分计划。
+只有 physical geometry layer 可以决定或发布：
 
-## 不可违背的硬边界
+- render rows
+- local top/bottom spacers
+- `physicalWindowHeight`
+- `segmentRevision`
+- `PhysicalScrollMetrics`
+- safe scroll range / row coverage / cap mode
+- segment shift / segment relayout 的几何结果
 
-这些规则跨越所有阶段。任何实现违反其中一条，都必须停下来回到架构文档。
+其他层只能提交 intent、data snapshot、DOM commit ack 或 measurement fact。它们不能直接改 geometry。
 
-- `DataWindow` 只拥有数据可用性。
-- `PhysicalSegment` 拥有滚动几何。
-- `scrollHeight` 不能随已加载 DataWindow 数量增长。
-- 同一 `segmentRevision` 内 `physicalWindowHeight` 必须冻结。
-- `projectionRefresh` 只能刷新行内容负载，不能改变几何。
-- 相邻段预取只表达数据准备状态，不能发布已提交几何。
-- `prepend` / `append` 只作为 DataWindow 数据变更语义存在，不能作为 viewport 事务类型。
-- safe scroll range 覆盖率必须用 `realRowCoveragePx >= minRealRowCoveragePx` 验证；short-feed 是显式特例。
-- React、demo、业务层不能从原始 DOM 滚动状态推导分页、bottom lock、anchor recovery 或 thumb geometry。
+## 禁止项
+
+以下规则跨所有阶段生效。任何实现违反其中一条，必须停止并回到架构文档。
+
+- 禁止继续在旧 `src/runtime` 上 graft 新架构。
+- 禁止为了兼容旧 runtime 保留 DataWindow -> global spacer -> native `scrollHeight` 的几何链路。
+- 禁止让业务 command、data arrival、React adapter、demo 或 custom scrollbar 直接决定 render window、spacer、`physicalWindowHeight`、`segmentRevision` 或 physical metrics。
+- 禁止把 `prepend` / `append` 当成 viewport transaction kind。
+- 禁止用 DataWindow item count、loaded range 长度或 raw DOM `scrollHeight` 推导 thumb geometry、bottom lock、paging trigger 或 anchor recovery。
+- 禁止在 React state 中维护高频 physical metrics。
+- 禁止把旧 runtime 的 projection inheritance、window slide、anchor correction 逻辑迁入 runtime-next，除非先重新归类为 geometry layer 内部规则并通过 review。
+- 禁止在没有 diagnostics 的情况下放行 geometry invariant 违约。
+- 禁止 god file：纯逻辑文件超过 300 行、核心 class / React / adapter 文件超过 500 行时，必须拆分。
+- 禁止把大块 TypeScript 类型堆在核心实现文件里；类型内容明显膨胀时必须拆到 co-located type 文件。
+- 禁止把同一领域行为散落到互不相干的目录；优先 co-located，保持 high cohesion / low coupling。
+- 禁止用低价值注释填充代码；关键 ownership、时序和 invariant 必须有精准中文注释。
 
 ## 依赖顺序
 
 ```text
-阶段 0（Phase 0）：现状盘点与切分计划
-  -> 阶段 1（Phase 1）：合同管线与观测面
-    -> 阶段 2（Phase 2）：物理几何核心
-      -> 阶段 3（Phase 3）：DataWindow 到几何事务
-        -> 阶段 4（Phase 4）：输入、滚动条与运动
-          -> 阶段 5（Phase 5）：验证与加固
+P0 文档和边界重建
+  -> P1 仓库结构隔离
+    -> P2 runtime-next 合同骨架
+      -> P3 physical geometry kernel
+        -> P4 transaction and data arrival
+          -> P5 input, scrollbar, and motion
+            -> P6 demo cutover and hardening
 ```
 
-不要调整阶段顺序。后续阶段依赖前置阶段已经建立的状态、diagnostics 和 transaction 保证。
+不要跳阶段。后续阶段依赖前一阶段已经建立的 ownership、diagnostics 和 review 结论。
 
-## 阶段 0（Phase 0）：现状盘点与切分计划
-
-目标：
-
-- 在修改 runtime 行为前，把现有实现映射到新架构。
-- 明确文件归属、重写边界和删除边界。
-- 防止为了兼容旧路径而保留连续 `scrollHeight` 模型。
-
-任务：
-
-- [ ] 找出现有 runtime、adapter、custom scrollbar、measurement、edge paging、diagnostics 相关文件。
-- [ ] 标记需要重写、保留、删除的文件。
-- [ ] 找出所有从 DataWindow 长度或原始 DOM `scrollHeight` 推导 spacer、thumb size、bottom lock、pagination、anchor recovery 的路径。
-- [ ] 确定第一段实现切片和对应验证命令。
-- [ ] 若发现新的架构矛盾，先记录到对应规范文档，再开始实现。
-
-产物：
-
-- 更新后的路线图勾选项。
-- 下一轮开发可直接执行的实现切分计划。
-
-退出标准：
-
-- geometry、data、adapter、transaction、diagnostics 都有明确归属。
-- 第一段代码实现不需要再补架构解释。
-
-停顿条件：
-
-- 现有代码必须依赖 DataWindow 派生的 `scrollHeight` 才能推进。
-- React 或业务层必须保留原始滚动所有权才能推进。
-- 当前切片需要引入会恢复旧全局 spacer 语义的兼容层。
-
-## 阶段 1（Phase 1）：合同管线与观测面
-
-依赖：
-
-- 阶段 0 已完成。
+## P0 文档和边界重建
 
 目标：
 
-- 在改变几何行为前，先建立公开合同和 diagnostics 面。
-- 让错误几何尽早可见。
+- 把旧 runtime 明确降级为 `runtime.deprecated` 参考。
+- 定义 runtime-next 的 ownership、模块边界、禁止项和阶段门禁。
+- 移除旧 Phase 1 / Phase 2 增量改造路线对后续实现的误导。
 
 任务：
 
-- [ ] 在 projection snapshot 和 commit ack 中加入或更新 `ProjectionCommitToken`。
-- [ ] 分离低频 projection snapshot 和高频 physical metrics。
-- [ ] 补齐规范要求的 `PhysicalScrollMetrics` 字段。
-- [ ] 为硬边界违约增加 diagnostics record。
-- [ ] 为 `projectionRefresh` 建立显式 payload-only 路径。
-- [ ] 确保 adapter 原样回传 commit token，而不是重建部分 ack。
+- [x] 审查当前 `docs/viewport-runtime`、`docs/architecture`、`src/runtime` 文档和代码结构。
+- [x] 覆盖更新本路线图。
+- [x] 新增 runtime-next 架构入口，说明 `runtime.deprecated` 与 `runtime-next` 的关系。
+- [x] 更新文档索引和旧 runtime README 的边界说明。
+- [x] 不开始任何 runtime-next 代码实现。
 
 本阶段禁止：
 
-- 实现 segment shift 行为。
-- 实现 custom scrollbar drag 行为。
-- 改动超出合同需要的 DataWindow merge 语义。
+- 移动 `src/runtime` 目录。
+- 新建 runtime-next TypeScript 代码。
+- 修改 React adapter 或 demo 行为。
+- 为了让旧 runtime 看起来兼容新文档而改旧实现。
 
 退出标准：
 
-- token ack 前，pending `segmentRevision` 不能暴露为 committed metrics。
-- Physical metrics 能报告 segment id/revision、cap mode、safe range、coverage、drag/freeze/momentum、prefetch state。
-- Diagnostics 能识别 DataWindow-to-geometry coupling。
+- 文档中能清楚回答：旧 runtime 为什么不能继续承载新架构。
+- 文档中能清楚回答：runtime-next 哪一层唯一拥有几何。
+- 后续实现的第一步是结构隔离，而不是继续修补旧 runtime。
 
-## 阶段 2（Phase 2）：物理几何核心
+Review 检查点：
+
+- `src/runtime` 是否被标记为 deprecated/reference。
+- `runtime-next` 是否被描述为新承载体，而不是旧 runtime 的子模块。
+- 路线图是否不再沿用旧 Phase 1 / Phase 2。
+
+## P1 仓库结构隔离
 
 依赖：
 
-- 阶段 1 的 token、metrics、diagnostics 管线已完成。
+- P0 已完成。
 
 目标：
 
-- 实现不跨段的 physical segment 几何。
-- 在引入 shift 之前，先稳定 measurement、spacer 和 coverage。
+- 在代码层隔离旧实现，避免后续 import 或测试继续默认落回旧 runtime 心智。
+- 保留 demo / React / test 底座，作为后续接 runtime-next 的外围环境。
 
 任务：
 
-- [ ] 实现带 logical bounds 和 committed `physicalWindowHeight` 的 `PhysicalSegment` 状态。
-- [ ] 实现 physical budget 内的 render window 选择。
-- [ ] 实现 top/bottom local spacer 求解，并保持总高度守恒。
-- [ ] 实现 mounted row measurement 和 local spacer correction。
-- [ ] 实现 safe scroll range 和 real-row coverage 判定。
-- [ ] 将 `SegmentRelayout` 实现为独立 transaction。
-- [ ] 实现 short-feed 和 exceptional-row cap mode。
+- [ ] 将当前 `src/runtime` 改名为 `src/runtime.deprecated`。
+- [ ] 新建空的 `src/runtime-next` 目录，只允许 README、导出占位和类型骨架。
+- [ ] 更新 package/export 入口，使默认 demo 仍能在旧 runtime 上运行，runtime-next 以显式实验入口存在。
+- [ ] 标记旧 runtime 测试为 deprecated contract tests，避免作为 runtime-next 设计门禁。
+- [ ] 建立 import guard，禁止 runtime-next import `src/runtime.deprecated`。
+- [ ] 在 runtime-next README 中写入文件大小、类型拆分、co-located 组织和中文注释规则。
+
+本阶段禁止：
+
+- 从旧 runtime 复制 transaction、projection、spacer、scrollFrame、bottom lock 实现。
+- 在 runtime-next 中实现真实 paging、measurement、motion 或 scrollbar。
+- 让 runtime-next API 默默转发到 deprecated runtime。
+- 删除 demo 或旧 runtime 行为参考。
+
+退出标准：
+
+- 新旧 runtime 在路径和 import 层面隔离。
+- demo 仍可运行在旧 runtime 上。
+- runtime-next 可以被单独 typecheck，但没有承载旧实现。
+
+Review 检查点：
+
+- 是否存在 `runtime-next -> runtime.deprecated` import。
+- 是否存在 `runtime-next` API 直接委托 deprecated runtime。
+- 是否保留旧 demo 底座，且未把 demo policy 塞进 runtime-next。
+- 是否已经把 no god file、类型拆分、co-located、中文注释规则写进 runtime-next 本地维护说明。
+
+## P2 runtime-next 合同骨架
+
+依赖：
+
+- P1 已完成。
+
+目标：
+
+- 先建立 public surface、snapshot、commit token、physical metrics、diagnostics、command intake 的空合同。
+- 在没有真实几何算法前，先让 ownership 通过类型和测试固定下来。
+
+任务：
+
+- [ ] 定义 runtime-next public facade。
+- [ ] 定义 projection snapshot，只包含 React 需要渲染的字段。
+- [ ] 定义 `ProjectionCommitToken`，并要求 React ack 原样回传。
+- [ ] 定义 `PhysicalScrollMetrics`，与 projection snapshot 分离。
+- [ ] 定义 diagnostics record 和 architecture violation 分类。
+- [ ] 定义 command intake，command 只表达 semantic intent。
+- [ ] 写 ownership guard tests，证明非 geometry 层不能发布 geometry。
+- [ ] 类型按领域拆分，避免 `types.ts` 变成无边界类型垃圾桶。
+
+本阶段禁止：
+
+- 实现真实 render window 选择。
+- 写 `scrollTop`。
+- 读取 raw DOM `scrollHeight` 作为语义输入。
+- 根据 data arrival 改 spacer 或 segment。
+- 把旧 runtime snapshot shape 原样搬进 runtime-next。
+
+退出标准：
+
+- projection snapshot 与 physical metrics 是两条订阅通道。
+- commit token 能覆盖 `feedId + generation + projectionRevision + segmentId + segmentRevision + transactionId`。
+- diagnostics 能表达 geometry owner violation。
+- geometry publish API 不暴露给 command/data/React adapter。
+
+Review 检查点：
+
+- 是否能从类型层看出 geometry write surface 是私有的。
+- 是否有任何 command/data API 能直接设置 spacer、render rows 或 `physicalWindowHeight`。
+- 是否有任何 React adapter 合同要求读取 DOM `scrollHeight` 推导语义。
+- 是否有核心文件因类型或合同堆积接近 god file，需要先拆分再继续。
+
+## P3 physical geometry kernel
+
+依赖：
+
+- P2 已完成。
+
+目标：
+
+- 实现不跨段的单 active segment 几何内核。
+- 先稳定 physical segment、render rows、local spacers、height budget、coverage 和 measurement correction。
+
+任务：
+
+- [ ] 实现 `PhysicalSegment` 状态和 revision lifecycle。
+- [ ] 实现固定 `physicalWindowHeight` 的 segment budget。
+- [ ] 实现按高度预算选择 render rows。
+- [ ] 实现 local spacer solver，保证 `topSpacer + mountedRowsHeight + bottomSpacer === physicalWindowHeight`。
+- [ ] 实现 measurement fact ingestion，只产出 local correction 或 relayout intent。
+- [ ] 实现 safe scroll range 和 real row coverage。
+- [ ] 实现 short-feed 与 exceptional-row cap mode。
+- [ ] 输出 geometry diagnostics。
 
 本阶段禁止：
 
 - Segment shift。
-- Adjacent segment prefetch。
-- Wheel / drag 边界行为。
+- Adjacent prefetch。
 - Follow-bottom motion。
+- Custom scrollbar drag。
+- Data arrival 触发几何 mutation。
+- React adapter 参与几何决策。
 
 退出标准：
 
-- 同一 `segmentRevision` 内，measurement 不能改变 `physicalWindowHeight`。
-- 稳定帧中满足 `topSpacer + mountedRowsHeight + bottomSpacer === physicalWindowHeight`。
-- Coverage failure 触发 relayout 或 diagnostics，不暴露 spacer-only viewport。
-- Relayout 不能改变 logical segment identity，也不能隐式跨越 segment bounds。
+- 同一 `segmentRevision` 内 `physicalWindowHeight` 冻结。
+- 稳定帧中 physical metrics 与 projection spacers 可互相校验。
+- coverage failure 不会暴露 spacer-only viewport。
+- measurement 不能通过直接改高 `physicalWindowHeight` 来吞掉 delta。
 
-## 阶段 3（Phase 3）：DataWindow 到几何事务
+Review 检查点：
+
+- 所有 render rows 和 spacers 是否只由 geometry kernel 发布。
+- 是否还有 DataWindow length -> spacer/height 的路径。
+- diagnostics 是否能指出 cap、coverage、height conservation 违约。
+- geometry 领域内的 state、solver、types、diagnostics helper 和 tests 是否保持 co-located。
+
+## P4 transaction and data arrival
 
 依赖：
 
-- 阶段 2 的几何核心已稳定。
+- P3 已完成。
 
 目标：
 
-- 将 DataWindow 更新连接到显式 viewport transaction，同时避免几何重新绑定已加载数据量。
+- 将 data snapshot、semantic command 和 geometry kernel 连接成明确事务。
+- 建立 bootstrap、projectionRefresh、segmentRelayout、segmentShift、jump/restore、followBottom 的时序。
 
 任务：
 
-- [ ] 实现 DataWindow arrival classifier。
-- [ ] 实现 pending shift resolution。
-- [ ] 将 adjacent segment prefetch band 实现为纯数据准备状态。
-- [ ] 实现带 token 的 projection commit 和安全区 rebase 的 `SegmentShift` transaction。
-- [ ] 实现 `READY_FOLLOW_BOTTOM_PENDING` 的 data arrival 优先级。
-- [ ] 实现 `jump` / `restore` target segment 构造。
-- [ ] 强制执行 `projectionRefresh` payload-only 边界。
+- [ ] 实现 transaction runner 和 writer arbitration。
+- [ ] 实现 bootstrap transaction。
+- [ ] 实现 payload-only `projectionRefresh`。
+- [ ] 实现 `segmentRelayout`。
+- [ ] 实现 data arrival classifier，只产生 intent 或 no-op。
+- [ ] 实现 pending shift / destination / follow-bottom resolution。
+- [ ] 实现 `segmentShift`，目标 segment 的 rows、spacers、commit token 同一 projection 发布。
+- [ ] 实现 jump / restore target segment 构造。
+- [ ] 实现 follow-bottom latest segment 事务。
 
 本阶段禁止：
 
-- 将 `prepend` / `append` 直接映射为几何事务。
-- 因 DataWindow 增长而扩张 `scrollHeight`。
-- 由 prefetch 改变当前 projection rows 或 spacers。
+- `prepend` / `append` 直接映射为 viewport transaction。
+- data arrival 直接扩张 `scrollHeight`。
+- prefetch 改变当前 projection rows 或 spacers。
+- motion 跨不存在的全局高度。
+- 事务外写 `scrollTop`。
 
 退出标准：
 
-- `prepend` / `append` 只更新 DataWindow，并只满足 pending intent。
-- `SegmentShift` 是当前 segment 到 adjacent/target segment 的唯一桥梁。
-- 预取未命中会保持当前 segment 稳定且可观测。
-- Follow-bottom intent 不会被普通 append refresh 吞掉。
+- 每种 geometry mutation 都有 transaction id、commit token、diagnostics。
+- pending `segmentRevision` 在 ack 前不能出现在 committed physical metrics。
+- `projectionRefresh` 不改变任何 geometry 字段。
+- data arrival 只满足 pending intent 或触发显式 transaction。
 
-## 阶段 4（Phase 4）：输入、滚动条与运动
+Review 检查点：
+
+- 是否还有 scroll handler / ResizeObserver / data arrival 直接替换 rows。
+- 是否存在旧 prepend/append transaction 名称。
+- segment shift commit 后是否 rebase 到 safe zone，避免立即二次 shift。
+
+## P5 input, scrollbar, and motion
 
 依赖：
 
-- 阶段 3 的 segment transactions 已完成。
+- P4 已完成。
 
 目标：
 
-- 将用户输入连接到已提交 physical metrics，避免隐藏的几何写入。
+- 把用户输入、custom scrollbar 和 motion 接到 committed physical metrics，而不是接到 DataWindow 或 DOM `scrollHeight`。
 
 任务：
 
 - [ ] 实现 custom scrollbar metrics 消费。
-- [ ] 实现 thumb drag lock 和 pointer 生命周期。
-- [ ] 实现 pointerup shift 后的 thumb freeze。
-- [ ] 实现 wheel / trackpad momentum latch 和 residual delta 抑制。
-- [ ] 实现 current/target segment 内的 bounded motion。
-- [ ] 实现只允许 latest segment 且 `hasMoreAfter === false` 的 bottom lock。
+- [ ] 实现 direct scroll API 和 drag lock。
+- [ ] 实现 pointerup 后的 pending shift 与 thumb freeze。
+- [ ] 实现 wheel / trackpad momentum latch。
+- [ ] 实现 target segment 内 bounded motion。
+- [ ] 实现 latest-only bottom lock。
+- [ ] 实现 high-frequency physical metrics subscriber，避免 React row tree 每帧 rerender。
 
 本阶段禁止：
 
 - drag 期间执行 segment shift。
-- 默认把 residual wheel delta 写入刚 shift 完的新 segment。
-- 读取 DataWindow 长度或原始 DOM `scrollHeight` 计算 thumb size。
-- 让 React state 拥有高频 physical metrics。
+- residual wheel delta 默认灌入新 segment。
+- custom scrollbar 读取 DataWindow length 或 raw DOM `scrollHeight` 推导 thumb。
+- history segment 的 physical bottom 设置 `LOCKED`。
+- React state 拥有 high-frequency physical metrics。
 
 退出标准：
 
-- Drag 在当前 segment 内保持线性，且只在 pointerup 后 shift。
-- Momentum 不会导致 shift loop。
-- Custom scrollbar thumb geometry 只依赖 committed physical metrics。
-- 历史 segment 的 physical bottom 不能设置 bottom lock。
+- Thumb geometry 只依赖 committed physical metrics。
+- Drag 在当前 segment 内线性、稳定，pointerup 后才 shift。
+- Momentum 不形成 shift loop。
+- Bottom lock 只可能发生在 latest segment 且 `hasMoreAfter === false`。
 
-## 阶段 5（Phase 5）：验证与加固
+Review 检查点：
+
+- 是否有多 writer 同时写 `scrollTop`。
+- custom scrollbar 是否能在 projection rerender 之外更新。
+- drag / motion / shift 的取消与 freeze 边界是否可观测。
+
+## P6 demo cutover and hardening
 
 依赖：
 
-- 阶段 4 的输入和运动行为已完成。
+- P5 已完成。
 
 目标：
 
-- 证明新 runtime 在边界场景和高风险交互下稳定。
+- 在保留 demo/data 底座的前提下，将 demo 显式切到 runtime-next。
+- 移除旧 runtime 对新架构开发的默认路径影响。
 
 任务：
 
-- [ ] 验证 bootstrap、relayout、shift、jump、restore、followBottom。
-- [ ] 验证 short-feed、exceptional-row、cap exceeded、coverage failure。
-- [ ] 验证 drag freeze、momentum latch、prefetch miss、shift loop suppression。
-- [ ] 验证每条不可违背硬边界都有 diagnostics。
-- [ ] 在不削弱正确性的前提下采纳性能优化指南建议。
-- [ ] 移除仍暗示 continuous DataWindow geometry 的旧文档或旧代码路径。
+- [ ] 为 demo 增加 runtime-next 显式入口。
+- [ ] 跑通 latest bootstrap、top/bottom paging、jump/restore、followBottom。
+- [ ] 验证 short-feed、exceptional-row、coverage failure、shift loop suppression。
+- [ ] 验证 custom scrollbar drag、thumb freeze、momentum latch。
+- [ ] 将 deprecated runtime 的测试和文档降级为 reference。
+- [ ] 更新 root README 和 public usage 到 runtime-next。
+
+本阶段禁止：
+
+- 删除旧 runtime 参考，除非 runtime-next 已覆盖对应必要行为。
+- 让 demo 实现第二套 geometry engine。
+- 为了通过 demo 临时放宽 geometry ownership。
+- 用性能优化替代 correctness diagnostics。
 
 退出标准：
 
-- 没有已知路径从已加载 DataWindow 数量推导物理几何。
-- Diagnostics 能暴露所有硬边界违约。
-- 性能优化不会改变 transaction semantics 或 ownership boundaries。
-- 后续实现可以继续按本路线图和规范进行分阶段 review。
+- demo 的默认 runtime 是 runtime-next。
+- 旧 runtime 不再是任何新架构开发的默认 import。
+- 所有禁止项都有测试或 diagnostics 覆盖。
+- 文档、demo、exports、测试入口一致。
+
+Review 检查点：
+
+- demo 是否只做 host / data / projection，不拥有 geometry。
+- 是否仍有 `runtime.deprecated` 被新路径 import。
+- 实际 runtime 行为是否能对应本文每个阶段的退出标准。
 
 ## 追踪规则
 
-- 不满足退出标准时，不能把阶段标记为完成。
-- 有风险时宁可增加一条阻塞记录，也不要把风险静默推到下一阶段。
-- 不要把大范围重构塞进某个阶段，除非它是该阶段退出标准的必要条件。
+- 阶段未满足退出标准，不得标记完成。
+- 每个阶段 review 必须先检查禁止项，再检查功能完整性。
+- 新发现如果改变 ownership 或 geometry truth，先改架构文档，再继续实现。
+- 旧 runtime 可以用于行为观察，但观察结论必须重新映射到 runtime-next ownership 后才能进入实现。

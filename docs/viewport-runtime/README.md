@@ -1,13 +1,15 @@
 # Message Viewport Runtime 文档
 
-本目录描述新的 IM viewport runtime。新架构以 **Physical Segment Windowing** 为核心，不再把已加载数据连续暴露为单一 `scrollHeight`。
+本目录描述新的 IM viewport runtime。当前重构口径已经切换为 **runtime-next from scratch**：旧 `src/runtime` 不再承载新架构，后续必须先隔离为 `src/runtime.deprecated`，再新建 `src/runtime-next`。
+
+`runtime-next` 仍以 **Physical Segment Windowing** 为核心，不再把已加载数据连续暴露为单一 `scrollHeight`。
 
 核心规则：
 
 ```text
 DataWindow owns data.
 PhysicalSegment owns geometry.
-CustomScrollbar owns visible scrollbar geometry.
+CustomScrollbar consumes committed physical metrics.
 Transaction owns mutation timing.
 Diagnostics owns invariant enforcement.
 ```
@@ -16,21 +18,22 @@ Diagnostics owns invariant enforcement.
 
 | 文档 | 用途 |
 | --- | --- |
-| [physical-segment-architecture.md](./physical-segment-architecture.md) | 主规范。先读。定义 physical segment、不变量、shift、relayout、状态轴和 diagnostics。 |
+| [runtime-next-architecture.md](./runtime-next-architecture.md) | 新主入口。定义 `runtime.deprecated` / `runtime-next` 边界、ownership 和 review checklist。 |
+| [roadmap.md](./roadmap.md) | 新实施路线。覆盖旧 Phase 1 / Phase 2 增量 graft 口径。 |
+| [physical-segment-architecture.md](./physical-segment-architecture.md) | 几何主规范。定义 physical segment、不变量、shift、relayout、状态轴和 diagnostics。 |
 | [runtime-container-architecture.md](./runtime-container-architecture.md) | runtime 内核模块、状态所有权、snapshot 边界。 |
 | [window-and-spacer-algorithms.md](./window-and-spacer-algorithms.md) | physical window、spacer、mounted height budget、measurement correction。 |
 | [transaction-and-scroll-timing.md](./transaction-and-scroll-timing.md) | segment shift、relayout、bootstrap、jump、follow-bottom 的 commit 时序。 |
 | [scroll-motion-and-animation.md](./scroll-motion-and-animation.md) | 自定义滚动条拖拽、motion、thumb freeze、scrollTop 写入权。 |
 | [react-projection-adapter-contract.md](./react-projection-adapter-contract.md) | React projection 的 DOM、ref、commit ack 和 custom scrollbar 边界。 |
-| [message-runtime-implementation-contract.md](./message-runtime-implementation-contract.md) | 从零实现 runtime 时的外部合同。 |
-| [roadmap.md](./roadmap.md) | 实施路线和 phase 追踪。 |
+| [message-runtime-implementation-contract.md](./message-runtime-implementation-contract.md) | 从零实现 runtime-next 时的外部合同。 |
 | [performance-optimization-guide.md](./performance-optimization-guide.md) | MessageViewport 专用性能策略、新特性使用边界和禁止事项。 |
 | [lifecycle-and-testing.md](./lifecycle-and-testing.md) | 生命周期、generation safety、未来验证矩阵。 |
 | [research-notes.md](./research-notes.md) | 外部参考如何转译到本架构。 |
 
-## Runtime 目标
+## runtime-next 目标
 
-Runtime 是 renderer 内部的 imperative viewport engine。它拥有：
+Runtime-next 是 renderer 内部的 imperative viewport engine。它拥有：
 
 - physical segment 选择、shift 和 relayout
 - local render window 和 spacer 预算
@@ -50,6 +53,18 @@ React 只拥有：
 - runtime snapshot 订阅和 commit ack
 
 React、demo、业务层都不能根据 raw `scrollTop` / `scrollHeight` 自行重建分页、thumb 几何、bottom lock 或 anchor recovery。
+
+## 当前仓库边界
+
+| Path | Status | Rule |
+| --- | --- | --- |
+| `src/runtime` | 旧 runtime，当前代码仍在此目录 | 只读参考；后续第一步改名为 `src/runtime.deprecated`。 |
+| `src/runtime.deprecated` | 目标旧 runtime 名称 | 保留备份和必要行为参考，不接受新架构实现。 |
+| `src/runtime-next` | 目标新 runtime 目录 | 从零增量实现 Physical Segment Windowing。 |
+| `src/react` | React projection adapter | 可复用外围底座，但不能拥有几何。 |
+| `src/demo` | demo / data host | 可复用 mock 与场景，不得实现第二套 geometry engine。 |
+
+旧 runtime 的行为可以作为场景参考，但实现结构不能迁入 runtime-next。尤其不能继承 DataWindow sized spacer、native `scrollHeight` 语义、旧 projection window slide 或旧 bottom lock 判断。
 
 ## 架构断点
 

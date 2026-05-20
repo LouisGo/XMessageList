@@ -15,6 +15,8 @@
 - viewport stabilization pipeline
 - 迁移步骤
 
+当前 viewport runtime 的实现路线是 runtime-next from scratch。旧 `src/runtime` 后续应隔离为 `src/runtime.deprecated`，只作参考；新几何实现进入 `src/runtime-next`。本文中的 Renderer Viewport Runtime 指 runtime-next 的目标职责，不指旧 runtime 代码结构。
+
 ---
 
 # 2. Layer Model
@@ -54,10 +56,12 @@ Shared Bridge Contracts
 | message cache / merge        | Renderer Message Data Runtime |
 | data subscription            | Renderer Message Data Runtime |
 | DataWindow                   | Renderer Message Data Runtime |
-| RenderWindow                 | Renderer Viewport Runtime     |
+| RenderWindow                 | Renderer Viewport Runtime / runtime-next geometry |
 | ViewportAnchor / AnchorState | Renderer Viewport Runtime     |
 | BottomLockState              | Renderer Viewport Runtime     |
-| spacer                       | Renderer Viewport Runtime     |
+| spacer                       | Renderer Viewport Runtime / runtime-next geometry |
+| physical segment / revision  | Renderer Viewport Runtime / runtime-next geometry |
+| physical metrics             | Renderer Viewport Runtime / runtime-next geometry |
 | measurement                  | Renderer Viewport Runtime     |
 | scrollTop writes             | Renderer Viewport Runtime     |
 | active feed selection        | Conversation / Session Host   |
@@ -190,6 +194,8 @@ viewport runtime 负责：
 ```text
 维持用户正在观察的消息视口
 ```
+
+runtime-next 内部的 physical geometry layer 是唯一几何 owner。command、data arrival、React adapter 和 demo 只能提交 intent/fact，不能直接决定 render rows、spacer、`physicalWindowHeight`、`segmentRevision` 或 physical metrics。
 
 允许：
 
