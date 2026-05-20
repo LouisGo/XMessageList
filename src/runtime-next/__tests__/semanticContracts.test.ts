@@ -32,7 +32,7 @@ const nonGeometryOwnerSources: ReadonlyArray<readonly [string, string]> = [
 const geometryMutationFieldPattern =
   /\b(topSpacer|bottomSpacer|naturalBlankHeight|physicalWindowHeight|segmentRevision|renderRows|PhysicalScrollMetrics)\b/
 
-describe('runtime-next P2 semantic contracts', () => {
+describe('runtime-next semantic contracts', () => {
   it('keeps command and data contracts semantic-only', () => {
     const command: MessageRuntimeCommand = {
       type: 'jump',

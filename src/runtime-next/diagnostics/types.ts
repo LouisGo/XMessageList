@@ -3,6 +3,10 @@ import type { ViewportDiagnostics } from '../geometry/types'
 export type RuntimeNextDiagnosticSeverity = 'info' | 'warn' | 'error'
 
 export type RuntimeNextArchitectureViolationKind =
+  | 'transaction-lifecycle'
+  | 'transaction-error'
+  | 'writer-arbitration'
+  | 'data-classifier-intent'
   | 'geometry-owner-violation'
   | 'deprecated-runtime-import'
   | 'deprecated-react-import'
@@ -26,7 +30,14 @@ export type RuntimeNextDiagnosticRecord = {
   readonly severity: RuntimeNextDiagnosticSeverity
   readonly kind: RuntimeNextArchitectureViolationKind
   readonly message: string
-  readonly owner?: 'commands' | 'data' | 'geometry' | 'projection' | 'react'
+  readonly owner?:
+    | 'commands'
+    | 'data'
+    | 'geometry'
+    | 'projection'
+    | 'react'
+    | 'scroll'
+    | 'transactions'
   readonly viewport?: ViewportDiagnostics
   readonly details?: Readonly<Record<string, unknown>>
 }

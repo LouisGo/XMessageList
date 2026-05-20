@@ -16,7 +16,7 @@ export function assertSupportedViewportModifier(
     return
   }
 
-  // 未进入合同表的 modifier 视为 reserved，P2 不能静默吞掉未定义几何语义。
+  // 未进入合同表的 modifier 视为 reserved，runtime-next 不能静默吞掉未定义几何语义。
   throw new Error(
     `runtime-next viewport modifier is not implemented: ${modifier}`,
   )

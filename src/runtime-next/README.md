@@ -1,21 +1,23 @@
 # runtime-next
 
 `src/runtime-next` 是新的 Physical Segment Windowing runtime 承载体。
-当前处于 P3 geometry kernel 内部实现阶段。public facade、projection snapshot、
-commit token、physical metrics、diagnostics、command/data 类型和 ownership guard
-tests 仍沿用 P2 合同；`geometry/` 开始承载 physical segment 状态、默认配置和
-`segmentRevision` lifecycle。facade 还不发布完整 geometry、paging、measurement、
-motion 或 scrollbar 行为。
+当前处于 P4 transaction and data arrival 阶段。public facade 已委托 runtime-next
+controller，把 data snapshot、semantic command 和 P3 geometry kernel 接成 commit-token
+驱动的事务；React adapter、custom scrollbar、wheel/momentum/motion 和 demo cutover 仍
+留给后续阶段。
 
 ## 当前允许内容
 
 - `README.md`：本地维护规则。
 - `components/README.md`：runtime-next React adapter 重写边界。
 - `index.ts`：实验入口，只导出 runtime-next 自身的 facade、helper 和类型。
-- `MessageViewportRuntime.ts`：public facade 合同骨架，不包含真实几何逻辑。
+- `MessageViewportRuntime.ts`：public facade 薄委托，不拥有几何逻辑。
 - `types.ts`：公共类型聚合入口，具体类型必须按领域 co-located。
 - `commands/`、`data/`、`diagnostics/`、`projection/`：P2 类型和最小合同 helper。
 - `geometry/`：P3 physical geometry kernel，按 `config/`、`segment/`、`budget/`、`window/`、`measurement/`、`diagnostics/` 等领域 co-located。
+- `controller/`、`transactions/`、`dom/`：P4 controller、transaction runner、
+  pending geometry publication、data arrival classifier、minimal DOM fact registry
+  和 scroll writer arbitration。
 - `__tests__/`：ownership / contract guard tests。
 
 禁止从 `src/runtime.deprecated` 或旧 `src/react` import，也禁止把 runtime-next API
@@ -34,8 +36,10 @@ runtime-next 后续只能由 physical geometry layer 发布几何事实：
 
 command、data、React adapter、demo 和 deprecated runtime 都不能成为 geometry owner。
 
-P2 中 `geometry/publication/publication.types.ts` 只描述 geometry layer 后续内部发布面。
-它不能从 package 入口导出，也不能被 command/data/components 领域 import。
+`geometry/publication/publication.types.ts` 区分 pending projection 与 committed
+metrics。Projection 可以发布 pending rows/spacers/commitToken；`PhysicalScrollMetrics`
+只能在 ack + promote 后更新。它不能从 package 入口导出，也不能被 command/data/components
+领域 import。
 
 ## 文件组织规则
 

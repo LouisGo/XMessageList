@@ -39,7 +39,12 @@ export type PhysicalSegmentDraft =
 
 export type PhysicalSegmentRevisionReason =
   | 'bootstrap'
+  | 'segmentShift'
   | 'segmentRelayout'
+  | 'jump'
+  | 'restore'
+  | 'followBottom'
+  | 'reset'
   | 'capFallback'
   | 'shortFeedModeChange'
   | 'exceptionalRowCap'

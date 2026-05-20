@@ -277,15 +277,42 @@ Review 检查点：
 
 任务：
 
-- [ ] 实现 transaction runner 和 writer arbitration。
-- [ ] 实现 bootstrap transaction。
-- [ ] 实现 payload-only `projectionRefresh`。
-- [ ] 实现 `segmentRelayout`。
-- [ ] 实现 data arrival classifier，只产生 intent 或 no-op。
-- [ ] 实现 pending shift / destination / follow-bottom resolution。
-- [ ] 实现 `segmentShift`，目标 segment 的 rows、spacers、commit token 同一 projection 发布。
-- [ ] 实现 jump / restore target segment 构造。
-- [ ] 实现 follow-bottom latest segment 事务。
+- [x] 实现 transaction runner 和 writer arbitration。
+- [x] 实现 bootstrap transaction。
+- [x] 实现 payload-only `projectionRefresh`。
+- [x] 实现 `segmentRelayout`。
+- [x] 实现 data arrival classifier，只产生 intent 或 no-op。
+- [x] 实现 pending shift / destination / follow-bottom resolution。
+- [x] 实现 `segmentShift`，目标 segment 的 rows、spacers、commit token 同一 projection 发布。
+- [x] 实现 jump / restore target segment 构造。
+- [x] 实现 follow-bottom latest segment 事务。
+
+P4 实施记录：
+
+- `src/runtime-next/MessageViewportRuntime.ts` 已改为薄 facade，委托
+  `controller/runtimeController.ts`；旧 runtime 和旧 React adapter 仍未进入 runtime-next。
+- `transactions/transactionRunner.ts` 固定事务生命周期：
+  queued -> running -> projection-published -> commit-ack ->
+  measurement-correction -> metrics-promoted / aborted，并通过 diagnostics 暴露。
+- `geometry/publication/publication.types.ts` 已区分 pending projection 与 committed
+  metrics；projection 可先发布 pending rows/spacers/commitToken，但
+  `PhysicalScrollMetrics` 只在 ack + promote 后更新。
+- `data/classifier.ts` 只输出 intent，不 import row selection、spacer solver、height
+  budget 或 transaction geometry builder。
+- P4 DOM registry 只保存 container / row measurement / registration facts；未加入
+  ResizeObserver 高频治理、scroll listener、custom scrollbar 或 motion。
+- `projectionRefresh` 只刷新 active render window payload；若测量变化需要几何修正，
+  只由 commit 后 measurement pass 排入 local correction / `segmentRelayout`。
+- `scroll/writerArbitration.ts` 为 direct scroll、anchor correction、segment shift
+  rebase 和 follow-bottom write 提供单 writer lock；detach/destroy/timeout 会释放锁并
+  使 stale ack 无法 promote metrics。
+- `unread` bootstrap 在没有 unread data API 前仅使用保守临时策略：优先 command target，
+  其次 snapshot anchor，最后 latest fallback；不声明真正 unread 业务语义。
+- P4.6 已按重交易路径拆分并分别测试：segmentShift、jump/restore pending target、
+  followBottom latest segment。
+- 验证新增：`controller/runtimeController.p4.test.ts`、`data/classifier.test.ts` 覆盖
+  transaction lifecycle、pending/committed metrics 分离、payload-only refresh、
+  pending follow-bottom resolution、segmentShift、timeout stale ack、classifier ownership。
 
 本阶段禁止：
 

@@ -14,10 +14,7 @@ import type {
   RuntimeUnsubscribe,
   ViewportDiagnosticRecord,
 } from './types'
-import { assertSupportedViewportModifier } from './data/modifiers'
-import { createInitialPhysicalScrollMetrics } from './geometry/metrics/initialMetrics'
-import { isProjectionCommitTokenEqual } from './projection/commitToken'
-import { createInitialProjectionSnapshot } from './projection/initialSnapshot'
+import { MessageViewportRuntimeController } from './controller/runtimeController'
 
 export type MessageViewportRuntimeOptions = {
   readonly feedId: RuntimeNextFeedId
@@ -28,115 +25,102 @@ export class MessageViewportRuntime<
   TMessage = unknown,
   TOptimistic = unknown,
 > {
-  readonly #snapshot: MessageViewportSnapshot<TMessage, TOptimistic>
-  readonly #metrics: PhysicalScrollMetrics
+  readonly #controller: MessageViewportRuntimeController<TMessage, TOptimistic>
 
   constructor(options: MessageViewportRuntimeOptions) {
-    this.#snapshot = createInitialProjectionSnapshot<TMessage, TOptimistic>(
-      options,
-    )
-    this.#metrics = createInitialPhysicalScrollMetrics(options)
+    this.#controller =
+      new MessageViewportRuntimeController<TMessage, TOptimistic>(options)
   }
 
   attach(container: HTMLElement): void {
-    void container
+    this.#controller.attach(container)
   }
 
-  detach(): void {}
+  detach(): void {
+    this.#controller.detach()
+  }
 
-  destroy(): void {}
+  destroy(): void {
+    this.#controller.destroy()
+  }
 
   setDataSnapshot(snapshot: MessageDataSnapshot<TMessage, TOptimistic>): void {
-    assertSupportedViewportModifier(snapshot.change.viewportModifier)
-    void snapshot
+    this.#controller.setDataSnapshot(snapshot)
   }
 
   dispatch(command: MessageRuntimeCommand): void {
-    void command
+    this.#controller.dispatch(command)
   }
 
   subscribe(listener: RuntimeListener): RuntimeUnsubscribe {
-    void listener
-    return noop
+    return this.#controller.subscribe(listener)
   }
 
   subscribeEvent(listener: RuntimeEventListener): RuntimeUnsubscribe {
-    void listener
-    return noop
+    return this.#controller.subscribeEvent(listener)
   }
 
   getViewportAnchorState(): AnchorState | null {
-    return null
+    return this.#controller.getViewportAnchorState()
   }
 
   registerRow(
     key: MessageRuntimeItemKey,
     element: HTMLElement | null,
   ): void {
-    void key
-    void element
+    this.#controller.registerRow(key, element)
   }
 
   registerTopSpacer(element: HTMLElement | null): void {
-    void element
+    this.#controller.registerTopSpacer(element)
   }
 
   registerBottomSpacer(element: HTMLElement | null): void {
-    void element
+    this.#controller.registerBottomSpacer(element)
   }
 
   registerTopSentinel(element: HTMLElement | null): void {
-    void element
+    this.#controller.registerTopSentinel(element)
   }
 
   registerBottomSentinel(element: HTMLElement | null): void {
-    void element
+    this.#controller.registerBottomSentinel(element)
   }
 
   subscribePhysicalScroll(
     listener: RuntimeListener,
   ): RuntimeUnsubscribe {
-    void listener
-    return noop
+    return this.#controller.subscribePhysicalScroll(listener)
   }
 
   getSnapshot(): MessageViewportSnapshot<TMessage, TOptimistic> {
-    return this.#snapshot
+    return this.#controller.getSnapshot()
   }
 
   getPhysicalScrollMetrics(): PhysicalScrollMetrics {
-    return this.#metrics
+    return this.#controller.getPhysicalScrollMetrics()
   }
 
   notifyProjectionCommitted(commit: ProjectionCommitToken): void {
-    // commit ack 必须携带完整 projection token；P2 固定匹配规则但不提升真实 metrics。
-    void isProjectionCommitTokenEqual(
-      this.#snapshot.commitToken,
-      commit,
-    )
+    this.#controller.notifyProjectionCommitted(commit)
   }
 
   beginDirectScroll(input: DirectScrollInput): void {
-    void input
+    this.#controller.beginDirectScroll(input)
   }
 
   writeDirectScrollTop(
     scrollTop: number,
     input: DirectScrollInput,
   ): boolean {
-    void scrollTop
-    void input
-
-    return false
+    return this.#controller.writeDirectScrollTop(scrollTop, input)
   }
 
   endDirectScroll(input: DirectScrollInput): void {
-    void input
+    this.#controller.endDirectScroll(input)
   }
 
   getDiagnosticRecords(): ViewportDiagnosticRecord[] {
-    return []
+    return this.#controller.getDiagnosticRecords()
   }
 }
-
-function noop(): void {}

@@ -7,6 +7,7 @@ import { isProjectionCommitTokenEqual } from '../projection/commitToken'
 import {
   type ProjectionCommitToken,
 } from '../types'
+import { createContainer } from '../../test/fakes'
 import geometryPublicationTypesSource from '../geometry/publication/publication.types.ts?raw'
 import projectionTypesSource from '../projection/types.ts?raw'
 
@@ -105,7 +106,7 @@ function extractTypeBlock(source: string, typeName: string): string {
   return source.slice(start, end)
 }
 
-describe('runtime-next P2 contract boundaries', () => {
+describe('runtime-next contract boundaries', () => {
   it('keeps public facade aligned with the implementation contract', () => {
     const runtime = new MessageViewportRuntime({
       feedId: 'feed',
@@ -223,36 +224,66 @@ describe('runtime-next P2 contract boundaries', () => {
     ).toBe(false)
   })
 
-  it('keeps the P2 facade as a no-geometry contract skeleton', () => {
+  it('keeps the P4 facade behind commit-token-gated geometry promotion', () => {
     const runtime = new MessageViewportRuntime<{ text: string }>({
       feedId: 'feed',
       generation: 1,
     })
-    const token = runtime.getSnapshot().commitToken
+    runtime.attach(createContainer({ height: 320 }))
 
-    expect(runtime.notifyProjectionCommitted(token)).toBeUndefined()
+    runtime.setDataSnapshot({
+      feedId: 'feed',
+      generation: 1,
+      revision: 1,
+      items: [
+        {
+          kind: 'committed',
+          key: {
+            kind: 'committed',
+            messageId: 'm-1',
+          },
+          message: { text: 'hello' },
+          version: 1,
+          estimatedHeight: 64,
+        },
+      ],
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+      change: {
+        kind: 'initial',
+        viewportModifier: 'none',
+      },
+    })
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    const pendingToken = runtime.getSnapshot().commitToken
+
+    expect(runtime.getSnapshot()).toEqual(
+      expect.objectContaining({
+        revision: 1,
+        commitToken: pendingToken,
+      })
+    )
+    expect(runtime.getPhysicalScrollMetrics()).toEqual(
+      expect.objectContaining({
+        physicalSegmentId: null,
+        physicalSegmentRevision: 0,
+      }),
+    )
     expect(() => {
       runtime.notifyProjectionCommitted({
-        ...token,
-        projectionRevision: token.projectionRevision + 1,
+        ...pendingToken,
+        projectionRevision: pendingToken.projectionRevision + 1,
       })
     }).not.toThrow()
+    expect(runtime.getPhysicalScrollMetrics().physicalSegmentRevision).toBe(0)
+    runtime.notifyProjectionCommitted(pendingToken)
+    expect(runtime.getPhysicalScrollMetrics()).toEqual(
+      expect.objectContaining({
+        physicalSegmentId: pendingToken.segmentId,
+        physicalSegmentRevision: pendingToken.segmentRevision,
+      }),
+    )
 
-    runtime.dispatch({ type: 'followBottom' })
-    expect(() => {
-      runtime.setDataSnapshot({
-        feedId: 'feed',
-        generation: 1,
-        revision: 1,
-        items: [],
-        hasMoreBefore: false,
-        hasMoreAfter: false,
-        change: {
-          kind: 'initial',
-          viewportModifier: 'none',
-        },
-      })
-    }).not.toThrow()
     expect(() => {
       runtime.setDataSnapshot({
         feedId: 'feed',
@@ -270,22 +301,9 @@ describe('runtime-next P2 contract boundaries', () => {
     runtime.beginDirectScroll({ source: 'custom-scrollbar-drag' })
     expect(
       runtime.writeDirectScrollTop(100, { source: 'custom-scrollbar-drag' }),
-    ).toBe(false)
+    ).toBe(true)
     runtime.endDirectScroll({ source: 'custom-scrollbar-drag' })
-
-    expect(runtime.getSnapshot()).toEqual(
-      expect.objectContaining({
-        revision: 0,
-        commitToken: token,
-      }),
-    )
-    expect(runtime.getPhysicalScrollMetrics()).toEqual(
-      expect.objectContaining({
-        physicalSegmentId: null,
-        physicalSegmentRevision: 0,
-      }),
-    )
-    expect(runtime.getDiagnosticRecords()).toEqual([])
+    expect(runtime.getDiagnosticRecords().length).toBeGreaterThan(0)
   })
 
   it('does not expose test-only debug methods on the public facade', () => {
