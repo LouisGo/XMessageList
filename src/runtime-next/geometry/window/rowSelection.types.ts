@@ -25,7 +25,15 @@ export type PhysicalRowSelectionInput<
   readonly config?: PhysicalSegmentConfig
 }
 
+export type PhysicalRowCapFallbackIntent = {
+  readonly kind: 'exceptional-row'
+  readonly reason: 'anchor-row-exceeds-mounted-budget'
+  readonly rowIndex: number
+  readonly rowHeightEstimate: number
+}
+
 export type PhysicalRowSelection = RenderWindow & {
   readonly mountedRowsHeightEstimate: number
   readonly anchorIndex: number | null
+  readonly capFallbackIntent: PhysicalRowCapFallbackIntent | null
 }

@@ -3,6 +3,11 @@ import type { MessageDataItem } from '../../projection/types'
 import { resolvePhysicalSegmentConfig } from '../config/config'
 import type { ResolvedPhysicalSegmentConfig } from '../config/config'
 import { isMessageRuntimeItemKeyEqual } from './itemKey'
+import {
+  createExceptionalRowRange,
+  createSingleRowRange,
+} from './rowSelectionRange'
+import type { MutableRowSelectionRange } from './rowSelectionRange'
 import type {
   PhysicalRowSelection,
   PhysicalRowSelectionDirectionHint,
@@ -10,15 +15,6 @@ import type {
 } from './rowSelection.types'
 
 type SelectionPlacement = 'start' | 'center' | 'end'
-
-type MutableRange = {
-  startIndex: number
-  endIndex: number
-  mountedRowsHeightEstimate: number
-  itemCount: number
-  beforeHeight: number
-  afterHeight: number
-}
 
 export function selectPhysicalRows<TMessage = unknown, TOptimistic = unknown>(
   input: PhysicalRowSelectionInput<TMessage, TOptimistic>,
@@ -70,6 +66,7 @@ export function selectPhysicalRows<TMessage = unknown, TOptimistic = unknown>(
     itemKeys,
     mountedRowsHeightEstimate: range.mountedRowsHeightEstimate,
     anchorIndex,
+    capFallbackIntent: range.capFallbackIntent,
   }
 }
 
@@ -79,21 +76,17 @@ function selectDirectionalRange(input: {
   readonly maxMountedHeight: number
   readonly maxMountedItems: number
   readonly placement: SelectionPlacement
-}): MutableRange | null {
+}): MutableRowSelectionRange | null {
   const anchorHeight = input.rowHeights[input.anchorIndex]
 
-  if (anchorHeight === undefined || anchorHeight > input.maxMountedHeight) {
+  if (anchorHeight === undefined) {
     return null
   }
-
-  const range: MutableRange = {
-    startIndex: input.anchorIndex,
-    endIndex: input.anchorIndex,
-    mountedRowsHeightEstimate: anchorHeight,
-    itemCount: 1,
-    beforeHeight: 0,
-    afterHeight: 0,
+  if (anchorHeight > input.maxMountedHeight) {
+    return createExceptionalRowRange(input.anchorIndex, anchorHeight)
   }
+
+  const range = createSingleRowRange(input.anchorIndex, anchorHeight)
   const step = input.placement === 'start' ? 1 : -1
 
   while (range.itemCount < input.maxMountedItems) {
@@ -126,21 +119,17 @@ function selectCenteredRange(input: {
   readonly rowHeights: readonly number[]
   readonly maxMountedHeight: number
   readonly maxMountedItems: number
-}): MutableRange | null {
+}): MutableRowSelectionRange | null {
   const anchorHeight = input.rowHeights[input.anchorIndex]
 
-  if (anchorHeight === undefined || anchorHeight > input.maxMountedHeight) {
+  if (anchorHeight === undefined) {
     return null
   }
-
-  const range: MutableRange = {
-    startIndex: input.anchorIndex,
-    endIndex: input.anchorIndex,
-    mountedRowsHeightEstimate: anchorHeight,
-    itemCount: 1,
-    beforeHeight: 0,
-    afterHeight: 0,
+  if (anchorHeight > input.maxMountedHeight) {
+    return createExceptionalRowRange(input.anchorIndex, anchorHeight)
   }
+
+  const range = createSingleRowRange(input.anchorIndex, anchorHeight)
 
   while (range.itemCount < input.maxMountedItems) {
     const nextBefore = range.startIndex - 1
@@ -295,5 +284,6 @@ function createEmptySelection(anchorIndex: number | null = null): PhysicalRowSel
     itemKeys: [],
     mountedRowsHeightEstimate: 0,
     anchorIndex,
+    capFallbackIntent: null,
   }
 }

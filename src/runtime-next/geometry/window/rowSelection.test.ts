@@ -3,6 +3,7 @@ import type {
   MessageRuntimeItemKey,
 } from '../../identity/types'
 import type { MessageDataItem } from '../../projection/types'
+import { computePhysicalHeightBudget } from '../budget/heightBudget'
 import { selectPhysicalRows } from './rowSelection'
 
 function committedKey(
@@ -63,6 +64,7 @@ describe('physical row selection', () => {
       itemKeys: ['m-3', 'm-4', 'm-5', 'm-6', 'm-7'].map(committedKey),
       mountedRowsHeightEstimate: 250,
       anchorIndex: 5,
+      capFallbackIntent: null,
     })
   })
 
@@ -123,6 +125,59 @@ describe('physical row selection', () => {
     expect(selection.endIndex).toBe(9)
     expect(selection.itemKeys).toHaveLength(3)
     expect(selection.mountedRowsHeightEstimate).toBe(30)
+    expect(selection.capFallbackIntent).toBeNull()
+  })
+
+  it('keeps an oversized anchor row selectable for exceptional cap fallback', () => {
+    const items = [
+      createItem('m-0', 80),
+      createItem('m-1', 900),
+      createItem('m-2', 80),
+    ]
+    const selection = selectPhysicalRows({
+      items,
+      anchor: {
+        key: committedKey('m-1'),
+        offsetWithinMessage: 0,
+      },
+      directionHint: 'target',
+      maxMountedHeight: 400,
+    })
+
+    expect(selection.startIndex).toBe(1)
+    expect(selection.endIndex).toBe(1)
+    expect(selection.itemKeys).toEqual([committedKey('m-1')])
+    expect(selection.mountedRowsHeightEstimate).toBe(900)
+    expect(selection.capFallbackIntent).toEqual({
+      kind: 'exceptional-row',
+      reason: 'anchor-row-exceeds-mounted-budget',
+      rowIndex: 1,
+      rowHeightEstimate: 900,
+    })
+  })
+
+  it('lets oversized anchor selection drive exceptional-row height budget', () => {
+    const selection = selectPhysicalRows({
+      items: [createItem('huge', 1500)],
+      directionHint: 'target',
+      maxMountedHeight: 500,
+    })
+    const budget = computePhysicalHeightBudget({
+      clientHeight: 400,
+      mountedRowsHeight: selection.mountedRowsHeightEstimate,
+      config: {
+        maxPhysicalScrollHeightPx: 1200,
+        maxPhysicalViewportMultiplier: 3,
+        minimumSafeBufferPx: 160,
+      },
+    })
+
+    expect(selection.capFallbackIntent?.kind).toBe('exceptional-row')
+    expect(budget).toEqual({
+      physicalWindowHeight: 1660,
+      scrollHeightCap: 1200,
+      capMode: 'exceptional-row',
+    })
   })
 
   it('derives mounted height budget from physicalWindowHeight when needed', () => {

@@ -26,6 +26,7 @@ export type GeometryDiagnosticPayload = {
   readonly bottomSpacer: number
   readonly mountedRowsHeight: number
   readonly scrollTop: number
+  readonly scrollHeight: number
   readonly domScrollHeight: number
   readonly clientHeight: number
   readonly physicalWindowHeight: number
@@ -48,6 +49,7 @@ export type GeometryDiagnosticPayloadInput = {
   readonly bottomSpacer: number
   readonly mountedRowsHeight: number
   readonly scrollTop: number
+  readonly scrollHeight: number
   readonly domScrollHeight: number
   readonly clientHeight: number
   readonly physicalWindowHeight: number

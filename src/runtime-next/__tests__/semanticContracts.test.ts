@@ -15,6 +15,7 @@ import dataTypesSource from '../data/types.ts?raw'
 const forbiddenCommandKeys = [
   'topSpacer',
   'bottomSpacer',
+  'naturalBlankHeight',
   'physicalWindowHeight',
   'segmentRevision',
   'renderRows',
@@ -29,7 +30,7 @@ const nonGeometryOwnerSources: ReadonlyArray<readonly [string, string]> = [
 ]
 
 const geometryMutationFieldPattern =
-  /\b(topSpacer|bottomSpacer|physicalWindowHeight|segmentRevision|renderRows|PhysicalScrollMetrics)\b/
+  /\b(topSpacer|bottomSpacer|naturalBlankHeight|physicalWindowHeight|segmentRevision|renderRows|PhysicalScrollMetrics)\b/
 
 describe('runtime-next P2 semantic contracts', () => {
   it('keeps command and data contracts semantic-only', () => {

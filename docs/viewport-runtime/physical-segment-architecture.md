@@ -126,7 +126,7 @@ Prefetch 是 data readiness，不是 geometry mutation。它禁止：
 1. `scrollHeight` 不随已加载数据总量增长。
 2. 同一 `segmentRevision` 内 `physicalWindowHeight` 冻结。measurement / ResizeObserver delta 不能直接改变 thumb 基线。
 3. 稳定帧中必须满足 `physicalWindowHeight === domScrollHeight`。
-4. 稳定帧中必须满足 `topSpacer + mountedRowsHeight + bottomSpacer === physicalWindowHeight`。如果 measurement delta 改变 mounted rows height，local spacer correction 必须反向吸收 delta 以守恒总高度。
+4. 稳定帧中 normal / exceptional-row 模式必须满足 `topSpacer + mountedRowsHeight + bottomSpacer === physicalWindowHeight`。short-feed 模式必须满足 `topSpacer + mountedRowsHeight + bottomSpacer + naturalBlankHeight === physicalWindowHeight`，且 `naturalBlankHeight` 不能被当成 top/bottom spacer。如果 measurement delta 改变 mounted rows height，local spacer correction 必须反向吸收 delta 以守恒总高度；short-feed 内容高度变化默认进入 relayout。
 5. 稳定帧中必须满足 `maxScrollPosition === max(0, physicalWindowHeight - clientHeight)`。
 6. `scrollHeightCap` 是 normal cap。`capMode === 'exceptional-row'` 时 `physicalWindowHeight` 可以超过它，但必须带 diagnostic 和 recovery plan。
 7. `topSpacer` 和 `bottomSpacer` 只表达当前 physical segment 内的 local blank budget，不表达 DataWindow 中未挂载历史的累计高度。
@@ -182,7 +182,7 @@ const physicalWindowHeight = isShortFeed
 
 ```ts
 const segmentContentHeight =
-  topSpacer + mountedRowsHeight + bottomSpacer;
+  topSpacer + mountedRowsHeight + bottomSpacer + naturalBlankHeight;
 
 assert(segmentContentHeight === physicalWindowHeight);
 
@@ -192,7 +192,7 @@ const maxScrollPosition = Math.max(0, physicalWindowHeight - clientHeight);
 
 因此 `physicalWindowHeight` 不是一个和 DOM 脱节的预算数，也不是 measurement 后的 fitted content height。它必须在稳定帧中和 DOM `scrollHeight` 对齐；custom scrollbar 使用的 `physicalWindowSize` 就是这个 committed 值。
 
-Measurement correction 必须先守恒总高度：
+Measurement correction 必须先守恒总高度。normal / exceptional-row 通过 spacer 反向吸收 delta；short-feed 的 `naturalBlankHeight` 是自然空白，不参与 spacer correction，内容高度变化必须重新 relayout：
 
 ```ts
 const mountedRowsDelta =

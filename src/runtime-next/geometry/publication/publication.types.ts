@@ -11,6 +11,7 @@ export type GeometryPublication<TMessage = unknown, TOptimistic = unknown> = {
   readonly renderWindow: RenderWindow
   readonly topSpacer: number
   readonly bottomSpacer: number
+  readonly naturalBlankHeight: number
   readonly physicalWindowHeight: number
   readonly metrics: PhysicalScrollMetrics
 }

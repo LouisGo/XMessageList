@@ -5,16 +5,16 @@
 ## 1. Core Rule
 
 ```text
-segmentContentHeight = topSpacer + mountedRowsHeight + bottomSpacer
+projectionLayoutHeight =
+  topSpacer + mountedRowsHeight + bottomSpacer + naturalBlankHeight
 ```
 
-该值只属于 active physical segment。稳定帧中 DOM `scrollHeight` 必须和 runtime 暴露的 `physicalWindowHeight`、custom scrollbar 使用的 `physicalWindowSize` 对齐：
+该值只属于 active physical segment。`naturalBlankHeight` 只允许 short-feed 使用；normal / exceptional-row 中必须为 0。稳定帧中 DOM `scrollHeight` 必须和 runtime 暴露的 `physicalWindowHeight`、custom scrollbar 使用的 `physicalWindowSize` 对齐：
 
 ```ts
-segmentContentHeight =
-  topSpacer + mountedRowsHeight + bottomSpacer;
-physicalWindowHeight =
-  max(clientHeight, segmentContentHeight);
+projectionLayoutHeight =
+  topSpacer + mountedRowsHeight + bottomSpacer + naturalBlankHeight;
+assert(projectionLayoutHeight === physicalWindowHeight);
 domScrollHeight = physicalWindowHeight;
 maxScrollPosition = max(0, physicalWindowHeight - clientHeight);
 ```
@@ -82,6 +82,7 @@ function computePhysicalSegmentWindow(input: PhysicalWindowInput): RenderWindow 
 type LocalSpacerPlan = {
   topSpacer: number;
   bottomSpacer: number;
+  naturalBlankHeight: number;
   mountedRowsHeightEstimate: number;
   physicalWindowHeight: number;
 };
@@ -91,17 +92,24 @@ type LocalSpacerPlan = {
 
 - `topSpacer` 是 active segment 内真实 row 之前的 local blank budget。
 - `bottomSpacer` 是 active segment 内真实 row 之后的 local blank budget。
+- `naturalBlankHeight` 只表达 short-feed 内容不足一个 viewport 时的自然剩余空间。它必须作为真实布局高度进入 projection，不能伪装成 top/bottom spacer。
 - 两者不能包含 DataWindow 中远离 active segment 的累计历史高度。
 - spacer 计算必须和 selected rows 同一个 revision / segmentRevision。
 - spacer 变更必须通过 projection commit，不允许直接改 DOM style。
 
-预算校验：
+预算校验。normal / exceptional-row 中 `naturalBlankHeight` 必须为 0：
 
 ```ts
 topSpacer + mountedRowsHeightEstimate + bottomSpacer === physicalWindowHeight
 ```
 
-同一 `segmentRevision` 内该等式必须守恒。测量后真实 mounted rows 发生 delta 时，优先对 top/bottom spacer 做反向 correction：
+short-feed 中自然空白以真实布局高度发布：
+
+```ts
+topSpacer + mountedRowsHeightEstimate + bottomSpacer + naturalBlankHeight === physicalWindowHeight
+```
+
+同一 `segmentRevision` 内 normal / exceptional-row 必须守恒。测量后真实 mounted rows 发生 delta 时，优先对 top/bottom spacer 做反向 correction：
 
 ```ts
 mountedRowsDelta + topSpacerDelta + bottomSpacerDelta === 0
@@ -187,11 +195,12 @@ const needShiftAfter =
 ```text
 shortFeedContentHeight = topSpacer + mountedRowsHeight + bottomSpacer
 physicalWindowHeight = max(clientHeight, shortFeedContentHeight)
+naturalBlankHeight = physicalWindowHeight - shortFeedContentHeight
 domScrollHeight = physicalWindowHeight
 maxScrollPosition = max(0, physicalWindowHeight - clientHeight)
 ```
 
-如果 `shortFeedContentHeight < clientHeight`，committed `physicalWindowHeight` 仍然等于 `clientHeight`，`maxScrollPosition = 0`，custom scrollbar 不显示可拖动 thumb。短 feed 可以没有 shift。latest short feed 在 `hasMoreAfter === false` 且接近物理底时可以 `LOCKED`。
+如果 `shortFeedContentHeight < clientHeight`，committed `physicalWindowHeight` 仍然等于 `clientHeight`，`naturalBlankHeight` 必须进入 projection 形成真实 DOM 布局高度，`maxScrollPosition = 0`，custom scrollbar 不显示可拖动 thumb。短 feed 可以没有 shift。latest short feed 在 `hasMoreAfter === false` 且接近物理底时可以 `LOCKED`。
 
 ## 9. Latest Segment
 
@@ -226,7 +235,7 @@ Window/spacer 层必须输出：
 dataRevision, physicalSegmentId, physicalSegmentRevision,
 renderWindowStart, renderWindowEnd,
 topSpacer, bottomSpacer, mountedRowsHeight,
-domScrollHeight, physicalWindowHeight, maxScrollPosition, scrollHeightCap,
+scrollHeight, domScrollHeight, physicalWindowHeight, maxScrollPosition, scrollHeightCap,
 capMode, safeScrollRangeStart, safeScrollRangeEnd,
 realRowCoveragePx, minRealRowCoveragePx
 ```

@@ -148,6 +148,7 @@ Projection snapshot may contain:
 - items to render
 - render window identity
 - local top/bottom spacer values
+- short-feed natural blank height
 - low-frequency UI slots such as edge/follow affordance state
 
 Projection snapshot must not contain:

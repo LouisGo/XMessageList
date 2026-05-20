@@ -92,6 +92,7 @@ export type MessageViewportSnapshot<
   readonly renderWindow: RenderWindow
   readonly topSpacer: number
   readonly bottomSpacer: number
+  readonly naturalBlankHeight: number
   readonly bottomLockState: BottomLockState
   readonly bootstrapState: BootstrapState
   readonly viewportPhase: ViewportPhase

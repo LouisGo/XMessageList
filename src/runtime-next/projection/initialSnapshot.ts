@@ -33,6 +33,7 @@ export function createInitialProjectionSnapshot<
     },
     topSpacer: 0,
     bottomSpacer: 0,
+    naturalBlankHeight: 0,
     bottomLockState: 'UNLOCKED',
     bootstrapState: 'INITIAL',
     viewportPhase: 'IDLE',

@@ -232,11 +232,11 @@ P3 实施记录：
 - P3.0 已在 `src/runtime-next/geometry/config/config.ts` 收口默认 geometry 配置、diagnostics ring buffer 保留策略、payload 压缩方式、`minimumSafeBufferPx` 和稳定 `segmentId` 生成方式；这些值不再作为临时 guard 散落到后续 solver。
 - P3.1 已在 `src/runtime-next/geometry/segment/` 新增 `PhysicalSegment` / `PhysicalSegmentDraft` / pending revision 状态类型，并用 `PhysicalSegmentRevisionController` 固定 revision lifecycle：projection 发布前分配 `segmentRevision`，ack 必须精确匹配 `ProjectionCommitToken`，abort 不复用已分配 revision。
 - `budget/heightBudget.ts` 已实现 normal cap、short-feed budget 和 exceptional-row cap fallback；预算计算只用于 build / relayout，不作为 measurement delta 的 in-place mutation。
-- `window/rowSelection.ts` 已按 estimated height budget 选择 render rows，`maxMountedItems` 只作为安全阀；`items.length` 只用于候选数据和 anchor fallback，不推导 physical height。
-- `window/spacerSolver.ts` 已实现 local top/bottom spacer solver；normal / exceptional 模式保持高度守恒，short-feed 自然空白以 `naturalBlankHeight` 暴露，不伪装成 spacer。
+- `window/rowSelection.ts` 已按 estimated height budget 选择 render rows，`maxMountedItems` 只作为安全阀；`items.length` 只用于候选数据和 anchor fallback，不推导 physical height；超大 anchor row 会保留为单行 selection 并返回 `exceptional-row` fallback intent，供 P4 进入 exceptional cap path。
+- `window/spacerSolver.ts` 已实现 local top/bottom spacer solver；normal / exceptional 模式保持高度守恒，short-feed 自然空白以 `naturalBlankHeight` 暴露，并已进入 geometry publication / projection snapshot 合同，不伪装成 spacer。
 - `measurement/coverage.ts` 已实现 safe scroll range、real row coverage、spacer-only viewport 和 short-feed coverage exception。
 - `measurement/measurementCorrection.ts` 已实现 measurement fact / delta ingestion，只返回 local spacer correction 或 `segment-relayout` intent；short-feed measurement 变化不会把自然空白转成 spacer correction。
-- `diagnostics/geometryDiagnostics.ts` 已输出 geometry-local `physical.*` diagnostics，并携带 dataRevision、segment revision、render window、spacer、height、cap 和 coverage 字段。
+- `diagnostics/geometryDiagnostics.ts` 已输出 geometry-local `physical.*` diagnostics，并携带 dataRevision、segment revision、render window、spacer、`scrollHeight` / `domScrollHeight`、height、cap 和 coverage 字段。
 - `geometry/README.md` 已固定领域目录组织，P3 后续不再把实现、types 和 tests 平铺到 geometry 根目录。
 - runtime-next public facade 仍不接真实 geometry；`RUNTIME_NEXT_STATUS.phase` 只标记 P3 内部 kernel in progress，`geometryImplemented` 仍为 `false`。
 - 验证：`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build` 已通过。

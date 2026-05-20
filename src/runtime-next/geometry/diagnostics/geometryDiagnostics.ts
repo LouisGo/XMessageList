@@ -52,6 +52,7 @@ export function createGeometryDiagnosticPayload(
     bottomSpacer: toNonNegativeFinitePx(input.bottomSpacer),
     mountedRowsHeight: toNonNegativeFinitePx(input.mountedRowsHeight),
     scrollTop: toNonNegativeFinitePx(input.scrollTop),
+    scrollHeight: toNonNegativeFinitePx(input.scrollHeight),
     domScrollHeight: toNonNegativeFinitePx(input.domScrollHeight),
     clientHeight,
     physicalWindowHeight,

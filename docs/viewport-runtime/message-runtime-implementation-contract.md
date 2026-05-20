@@ -55,12 +55,15 @@ type MessageViewportSnapshot = {
   renderWindow: RenderWindow;
   topSpacer: number;
   bottomSpacer: number;
+  naturalBlankHeight: number;
   bottomLockState: BottomLockState;
   bootstrapState: BootstrapState;
   viewportPhase: ViewportPhase;
   edgeState: ViewportEdgeState;
 };
 ```
+
+`naturalBlankHeight` 只表达 short-feed 自然剩余空间。它不是 top/bottom spacer，不能被 data window 历史累计高度复用。React projection adapter 必须把它渲染成真实布局高度，使 short-feed 的 DOM content height 能和 committed `physicalWindowHeight` 对齐。
 
 `physicalSegmentId` 不作为 React 渲染状态使用，但必须通过 `commitToken` 进入 projection snapshot metadata，供 commit ack 原样回传。`scrollTop` 和 thumb geometry 不进 projection snapshot，它们进入 physical metrics / diagnostics。
 

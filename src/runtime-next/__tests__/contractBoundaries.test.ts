@@ -7,6 +7,7 @@ import { isProjectionCommitTokenEqual } from '../projection/commitToken'
 import {
   type ProjectionCommitToken,
 } from '../types'
+import geometryPublicationTypesSource from '../geometry/publication/publication.types.ts?raw'
 import projectionTypesSource from '../projection/types.ts?raw'
 
 const forbiddenProjectionKeys = [
@@ -50,6 +51,7 @@ const projectionSnapshotFieldsFromContract = [
   'renderWindow',
   'topSpacer',
   'bottomSpacer',
+  'naturalBlankHeight',
   'bottomLockState',
   'bootstrapState',
   'viewportPhase',
@@ -143,12 +145,14 @@ describe('runtime-next P2 contract boundaries', () => {
         },
         topSpacer: 0,
         bottomSpacer: 0,
+        naturalBlankHeight: 0,
         bottomLockState: 'UNLOCKED',
         bootstrapState: 'INITIAL',
         viewportPhase: 'IDLE',
       }),
     )
     expect(snapshot.revision).toBe(snapshot.commitToken.projectionRevision)
+    expect(geometryPublicationTypesSource).toContain('naturalBlankHeight')
   })
 
   it('keeps viewport phase aligned with runtime-next main specs', () => {
