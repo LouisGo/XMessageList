@@ -7,6 +7,7 @@ export type RuntimeNextArchitectureViolationKind =
   | 'transaction-error'
   | 'writer-arbitration'
   | 'data-classifier-intent'
+  | 'data-generation-mismatch'
   | 'geometry-owner-violation'
   | 'deprecated-runtime-import'
   | 'deprecated-react-import'

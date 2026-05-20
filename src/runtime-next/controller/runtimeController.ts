@@ -25,7 +25,7 @@ import type {
   MessageViewportSnapshot,
   ProjectionCommitToken,
 } from '../projection/types'
-import { ScrollWriterArbitration, directScrollInputToWriterKind } from '../scroll/writerArbitration'
+import { ScrollWriterArbitration } from '../scroll/writerArbitration'
 import type { DirectScrollInput } from '../scroll/types'
 import { TransactionRunner } from '../transactions/transactionRunner'
 import type {
@@ -39,9 +39,19 @@ import {
   isTargetAvailable,
 } from './controllerHelpers'
 import { RuntimeTransactionFlow } from './transactionFlow'
+import {
+  beginDirectScrollTransaction,
+  endDirectScrollTransaction,
+  writeDirectScrollTopWithWriter,
+} from './runtimeControllerDirectScroll'
+import {
+  emitNeedForPendingIntent,
+  recordDataIntent,
+  recordTransactionStage,
+  shouldRetainPendingDataIntent,
+} from './runtimeControllerSupport'
 
 const ACK_TIMEOUT_MS = 250
-const DIRECT_SCROLL_TRANSACTION_ID = 'direct-scroll'
 
 export type RuntimeViewportControllerOptions = {
   readonly feedId: string
@@ -57,7 +67,7 @@ export class MessageViewportRuntimeController<
   readonly #feedId: string
   readonly #generation: number
   readonly #ackTimeoutMs: number
-  readonly #data = new RuntimeDataStore<TMessage, TOptimistic>()
+  readonly #data: RuntimeDataStore<TMessage, TOptimistic>
   readonly #dom = new RuntimeDomRegistry()
   readonly #writer = new ScrollWriterArbitration()
   readonly #projection: ProjectionStore<TMessage, TOptimistic>
@@ -81,6 +91,10 @@ export class MessageViewportRuntimeController<
     this.#feedId = options.feedId
     this.#generation = options.generation
     this.#ackTimeoutMs = options.ackTimeoutMs ?? ACK_TIMEOUT_MS
+    this.#data = new RuntimeDataStore({
+      feedId: options.feedId,
+      generation: options.generation,
+    })
     this.#projection = new ProjectionStore({
       feedId: options.feedId,
       generation: options.generation,
@@ -129,6 +143,7 @@ export class MessageViewportRuntimeController<
       enqueue: (intent) => this.#enqueue(intent),
       finish: (transactionId) => this.#finish(transactionId),
       abort: (reason) => this.#abortActive(reason),
+      recoverRelayoutBounds: (target) => this.#recoverRelayoutBounds(target),
     })
   }
 
@@ -156,6 +171,27 @@ export class MessageViewportRuntimeController<
 
   setDataSnapshot(snapshot: MessageDataSnapshot<TMessage, TOptimistic>): void {
     if (this.#destroyed) return
+    if (!this.#data.isCurrentSnapshot(snapshot)) {
+      this.#diagnostics.record({
+        kind: 'data-generation-mismatch',
+        severity: 'error',
+        owner: 'data',
+        message: 'ignored data snapshot for another feed or generation',
+        details: {
+          expectedFeedId: this.#feedId,
+          expectedGeneration: this.#generation,
+          receivedFeedId: snapshot.feedId,
+          receivedGeneration: snapshot.generation,
+        },
+      })
+      this.#emitEvent({
+        type: 'viewportError',
+        feedId: this.#feedId,
+        generation: this.#generation,
+        code: 'data-generation-mismatch',
+      })
+      return
+    }
     assertSupportedViewportModifier(snapshot.change.viewportModifier)
     this.#data.setSnapshot(snapshot)
 
@@ -172,8 +208,16 @@ export class MessageViewportRuntimeController<
       activeProjection: active,
       pendingIntent: this.#pendingDataIntent,
     })
-    this.#pendingDataIntent = null
-    this.#recordDataIntent(intent)
+    this.#pendingDataIntent = shouldRetainPendingDataIntent(
+      this.#pendingDataIntent,
+      intent,
+    )
+      ? this.#pendingDataIntent
+      : null
+    if (this.#pendingDataIntent !== null && intent.kind === 'no-op') {
+      this.#emitNeedForPendingIntent(this.#pendingDataIntent)
+    }
+    recordDataIntent(this.#diagnostics, intent)
     this.#enqueueDataIntent(intent)
   }
 
@@ -267,39 +311,21 @@ export class MessageViewportRuntimeController<
   }
 
   beginDirectScroll(input: DirectScrollInput): void {
-    const token = {
-      transactionId: DIRECT_SCROLL_TRANSACTION_ID,
-      kind: directScrollInputToWriterKind(input),
-    }
-    if (!this.#writer.acquire(token).acquired) {
-      this.#recordWriterIssue('drag-lock-stolen', 'direct scroll writer denied')
-      return
-    }
-    this.#metrics.promote({ ...this.#metrics.getMetrics(), isDragLocked: true })
+    beginDirectScrollTransaction(input, this.#directScrollContext())
   }
 
   writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): boolean {
-    const token = {
-      transactionId: DIRECT_SCROLL_TRANSACTION_ID,
-      kind: directScrollInputToWriterKind(input),
-    }
-    const wrote = this.#writer.writeScrollTop(this.#dom.getContainer(), scrollTop, token)
-    if (wrote) {
-      this.#currentScrollTop = Math.max(0, scrollTop)
-      this.#metrics.patchScrollPosition(this.#currentScrollTop)
-    } else {
-      this.#recordWriterIssue('writer-arbitration', 'direct scroll write denied')
-    }
+    const wrote = writeDirectScrollTopWithWriter(
+      scrollTop,
+      input,
+      this.#directScrollContext(),
+    )
+    if (wrote) this.#metrics.patchScrollPosition(this.#currentScrollTop)
     return wrote
   }
 
   endDirectScroll(input: DirectScrollInput): void {
-    const token = {
-      transactionId: DIRECT_SCROLL_TRANSACTION_ID,
-      kind: directScrollInputToWriterKind(input),
-    }
-    this.#writer.release(token)
-    this.#metrics.promote({ ...this.#metrics.getMetrics(), isDragLocked: false })
+    endDirectScrollTransaction(input, this.#directScrollContext())
   }
 
   enqueueInternalTransaction(
@@ -344,6 +370,14 @@ export class MessageViewportRuntimeController<
     if (intent.kind === 'jump') this.#enqueue({ kind: 'jump', target: intent.target })
     if (intent.kind === 'restore') this.#enqueue({ kind: 'restore', target: intent.target })
     if (intent.kind === 'reset') this.#enqueue({ kind: 'reset', reason: intent.reason })
+  }
+
+  #recoverRelayoutBounds(target: AnchorState): void {
+    this.#pendingDataIntent = {
+      kind: 'restore',
+      target,
+    }
+    this.#emitNeedForPendingIntent(this.#pendingDataIntent)
   }
 
   #enqueue(intent: RuntimeTransactionIntent<TMessage, TOptimistic>): void {
@@ -403,32 +437,16 @@ export class MessageViewportRuntimeController<
   #recordTransactionStage(
     record: TransactionStageRecord<TMessage, TOptimistic>,
   ): void {
-    this.#diagnostics.record({
-      kind: record.transaction.stage === 'aborted'
-        ? 'transaction-error'
-        : 'transaction-lifecycle',
-      severity: record.transaction.stage === 'aborted' ? 'warn' : 'info',
-      owner: 'transactions',
-      message: `transaction ${record.transaction.kind} -> ${record.transaction.stage}`,
-      details: {
-        transactionId: record.transaction.id,
-        stage: record.transaction.stage,
-        previousStage: record.previousStage,
-      },
-    })
+    recordTransactionStage(this.#diagnostics, record)
   }
 
-  #recordDataIntent(intent: DataArrivalIntent): void {
-    this.#diagnostics.record({
-      kind: 'data-classifier-intent',
-      owner: 'data',
-      message: `data classifier produced ${intent.kind}`,
-      details: { intent },
-    })
-  }
-
-  #recordWriterIssue(kind: RuntimeNextDiagnosticRecord['kind'], message: string): void {
-    this.#diagnostics.record({ kind, severity: 'warn', owner: 'scroll', message })
+  #emitNeedForPendingIntent(intent: PendingDataIntent): void {
+    emitNeedForPendingIntent(
+      this.#feedId,
+      this.#generation,
+      (event) => this.#emitEvent(event),
+      intent,
+    )
   }
 
   #activeDataProjection() {
@@ -443,6 +461,18 @@ export class MessageViewportRuntimeController<
 
   #ids(): { readonly feedId: string; readonly generation: number } {
     return { feedId: this.#feedId, generation: this.#generation }
+  }
+
+  #directScrollContext() {
+    return {
+      writer: this.#writer,
+      metrics: this.#metrics,
+      dom: this.#dom,
+      diagnostics: this.#diagnostics,
+      setCurrentScrollTop: (scrollTop: number) => {
+        this.#currentScrollTop = scrollTop
+      },
+    }
   }
 
   #emitEvent(event: Parameters<RuntimeEventListener>[0]): void {

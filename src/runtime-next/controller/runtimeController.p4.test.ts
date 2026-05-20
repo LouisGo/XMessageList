@@ -24,13 +24,15 @@ function item(messageId: string, estimatedHeight = 64): MessageDataItem<{ text: 
 
 function snapshot(input: {
   readonly items: readonly MessageDataItem<{ text: string }>[]
+  readonly feedId?: string
+  readonly generation?: number
   readonly revision?: number
   readonly hasMoreAfter?: boolean
   readonly modifier?: 'none' | 'items-change' | 'append'
 }) {
   return {
-    feedId: 'feed',
-    generation: 1,
+    feedId: input.feedId ?? 'feed',
+    generation: input.generation ?? 1,
     revision: input.revision ?? 1,
     items: input.items,
     hasMoreBefore: false,
@@ -149,6 +151,14 @@ describe('runtime-next P4 transaction integration', () => {
     runtime.setDataSnapshot(snapshot({
       items: [item('m-1'), item('m-2')],
       revision: 2,
+      hasMoreAfter: true,
+      modifier: 'append',
+    }))
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+    expect(events.filter((event) => event === 'needLatestMessages')).toHaveLength(2)
+    runtime.setDataSnapshot(snapshot({
+      items: [item('m-1'), item('m-2'), item('m-3')],
+      revision: 3,
       modifier: 'append',
     }))
     const token = commit(runtime)
@@ -162,6 +172,106 @@ describe('runtime-next P4 transaction integration', () => {
     expect(runtime.getPhysicalScrollMetrics().physicalSegmentId).toBe(
       token.segmentId,
     )
+  })
+
+  it('keeps pending jump across partial data arrivals until target exists', () => {
+    const runtime = new MessageViewportRuntime<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    const events: string[] = []
+    runtime.subscribeEvent((event) => events.push(event.type))
+    runtime.attach(createContainer({ height: 320 }))
+    runtime.setDataSnapshot(snapshot({ items: [item('m-1')] }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    commit(runtime)
+    runtime.dispatch({
+      type: 'jump',
+      target: { messageId: 'm-target' },
+    })
+
+    const beforePartialToken = runtime.getSnapshot().commitToken
+    runtime.setDataSnapshot(snapshot({
+      items: [item('m-1'), item('m-2')],
+      revision: 2,
+      modifier: 'append',
+    }))
+    expect(runtime.getSnapshot().commitToken).toEqual(beforePartialToken)
+    expect(events.filter((event) => event === 'needMessagesAround')).toHaveLength(2)
+
+    runtime.setDataSnapshot(snapshot({
+      items: [item('m-1'), item('m-2'), item('m-target')],
+      revision: 3,
+      modifier: 'append',
+    }))
+    const token = commit(runtime)
+    expect(runtime.getSnapshot().commitToken).toEqual(token)
+    expect(
+      runtime.getSnapshot().items.some((snapshotItem) =>
+        snapshotItem.key.kind === 'committed' &&
+        snapshotItem.key.messageId === 'm-target',
+      ),
+    ).toBe(true)
+  })
+
+  it('does not publish a blank relayout when logical bounds disappeared', () => {
+    const runtime = new MessageViewportRuntime<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    const events: string[] = []
+    runtime.subscribeEvent((event) => events.push(event.type))
+    runtime.attach(createContainer({ height: 320 }))
+    runtime.setDataSnapshot(snapshot({
+      items: [item('m-1'), item('m-2'), item('m-3')],
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    commit(runtime)
+    const stableSnapshot = runtime.getSnapshot()
+
+    runtime.setDataSnapshot(snapshot({
+      items: [item('foreign-1'), item('foreign-2')],
+      revision: 2,
+      modifier: 'items-change',
+    }))
+
+    expect(runtime.getSnapshot()).toEqual(stableSnapshot)
+    expect(events).toContain('needMessagesAround')
+    expect(
+      runtime.getDiagnosticRecords().some((record) =>
+        record.kind === 'transaction-error' &&
+        record.message.includes('logical bounds'),
+      ),
+    ).toBe(true)
+  })
+
+  it('rejects data snapshots from another feed or generation', () => {
+    const runtime = new MessageViewportRuntime<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    const events: string[] = []
+    runtime.subscribeEvent((event) => events.push(event.type))
+    runtime.attach(createContainer({ height: 320 }))
+    runtime.setDataSnapshot(snapshot({ items: [item('m-1')] }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    commit(runtime)
+    const currentSnapshot = runtime.getSnapshot()
+
+    runtime.setDataSnapshot(snapshot({
+      feedId: 'other-feed',
+      items: [item('foreign')],
+      revision: 2,
+      modifier: 'items-change',
+    }))
+
+    expect(runtime.getSnapshot()).toEqual(currentSnapshot)
+    expect(events).toContain('viewportError')
+    expect(
+      runtime.getDiagnosticRecords().some((record) =>
+        record.kind === 'data-generation-mismatch',
+      ),
+    ).toBe(true)
   })
 
   it('supports segmentShift as an explicit transaction path', () => {

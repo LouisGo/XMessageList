@@ -30,16 +30,23 @@ export function decidePromotionCorrection<
 >(
   input: MeasurementPromotionInput<TMessage, TOptimistic>,
 ): MeasurementPromotionDecision {
+  const baselineMountedRowsHeight = input.publication.mountedRowsHeightEstimate
   const mountedRowsHeight =
     input.measuredRowsHeight > 0
       ? input.measuredRowsHeight
-      : input.publication.mountedRowsHeightEstimate
+      : baselineMountedRowsHeight
+  const facts = input.measuredRowsHeight > 0
+    ? [{
+        previousHeightPx: baselineMountedRowsHeight,
+        measuredHeightPx: input.measuredRowsHeight,
+      }]
+    : []
   const current: MeasurementGeometrySnapshot = {
     physicalSegmentRevision: input.publication.commitToken.segmentRevision,
     dataRevision: input.dataRevision,
     topSpacer: input.publication.topSpacer,
     bottomSpacer: input.publication.bottomSpacer,
-    mountedRowsHeight,
+    mountedRowsHeight: baselineMountedRowsHeight,
     physicalWindowHeight: input.publication.physicalWindowHeight,
     scrollHeightCap: input.publication.segment.scrollHeightCap,
     capMode: input.publication.segment.capMode,
@@ -52,7 +59,7 @@ export function decidePromotionCorrection<
     correction: decideMeasurementCorrection({
       current,
       deltas: [],
-      facts: [],
+      facts,
       previousCorrections: input.previousCorrections,
     }),
     mountedRowsHeight,

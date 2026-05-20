@@ -6,8 +6,8 @@
 
 - 当前代码基线：以 Git HEAD 为准；路线图不再硬编码短 hash，避免进度记录漂移。
 - 旧 runtime：已隔离到 `src/runtime.deprecated`，只作为行为备份和必要参考。
-- 新 runtime：`src/runtime-next` 已补齐 P2 合同骨架，包含 public facade、projection / metrics / diagnostics / command / data 合同和 guard tests。
-- 当前阶段：`P3 physical geometry kernel` 纯逻辑模块已落地；facade / transaction / data arrival 接线仍等待 P4。
+- 新 runtime：`src/runtime-next` 已补齐 P4 transaction / data arrival 接线；public facade 仍保持薄委托，React/demo 不拥有几何。
+- 当前阶段：P4 已完成并进入 review hardening；下一阶段才进入 P5 DOM observer / scroll listener / motion / custom scrollbar。
 
 ## 总原则
 
@@ -299,6 +299,12 @@ P4 实施记录：
   `PhysicalScrollMetrics` 只在 ack + promote 后更新。
 - `data/classifier.ts` 只输出 intent，不 import row selection、spacer solver、height
   budget 或 transaction geometry builder。
+- pending follow-bottom / jump / restore / segmentShift 在数据仍缺失时会保留 pending
+  intent 并再次发出 need event；classifier 仍只产生 no-op intent，真实恢复由
+  transaction/controller 边界排队。
+- `segmentRelayout` 只能在 current logical bounds 内重选 render window；若 logical
+  start/end 已不可恢复，事务会 abort 并退化为 restore pending + needMessagesAround，
+  禁止发布空 render window。
 - P4 DOM registry 只保存 container / row measurement / registration facts；未加入
   ResizeObserver 高频治理、scroll listener、custom scrollbar 或 motion。
 - `projectionRefresh` 只刷新 active render window payload；若测量变化需要几何修正，
@@ -313,6 +319,9 @@ P4 实施记录：
 - 验证新增：`controller/runtimeController.p4.test.ts`、`data/classifier.test.ts` 覆盖
   transaction lifecycle、pending/committed metrics 分离、payload-only refresh、
   pending follow-bottom resolution、segmentShift、timeout stale ack、classifier ownership。
+- Review hardening 新增覆盖：pending target 多页到达、pending need 重发、relayout
+  bounds 缺失 recovery、feed/generation mismatch 拒绝，以及 measurement estimate
+  baseline + measured fact 的 local spacer correction。
 
 本阶段禁止：
 

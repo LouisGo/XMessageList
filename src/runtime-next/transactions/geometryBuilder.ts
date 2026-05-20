@@ -19,6 +19,10 @@ import type {
   GeometryBuildPlan,
   MetricsDerivationInput,
 } from './geometryBuilder.types'
+import {
+  resolveGeometryCandidateItems,
+  resolveRelayoutAnchor,
+} from './geometryBuilderRelayout'
 import type { PhysicalSegmentDraft, PhysicalSegmentRole } from '../geometry/segment/physicalSegment.types'
 import type { PhysicalScrollMetrics } from '../geometry/types'
 
@@ -38,16 +42,17 @@ export function buildGeometryPlan<
     clientHeight,
     mountedRowsHeight: 0,
   })
+  const candidateItems = resolveGeometryCandidateItems(input)
   const anchor = resolveAnchor(input)
   const directionHint = resolveDirectionHint(input.kind, input.direction)
   const selection = selectPhysicalRows({
-    items: input.data.items,
+    items: candidateItems,
     anchor,
     directionHint,
     physicalWindowHeight: normalBudget.physicalWindowHeight,
   })
   const allItemsMounted =
-    selection.itemKeys.length === input.data.items.length &&
+    selection.itemKeys.length === candidateItems.length &&
     !input.data.hasMoreBefore &&
     !input.data.hasMoreAfter
   const isShortFeed =
@@ -70,7 +75,7 @@ export function buildGeometryPlan<
     capMode: budget.capMode,
     placement: resolveSpacerPlacement(input.kind, input.direction),
   })
-  const items = input.data.items.slice(
+  const items = candidateItems.slice(
     selection.startIndex,
     selection.endIndex + 1,
   )
@@ -193,6 +198,14 @@ function createSegmentDraft<TMessage, TOptimistic>(input: {
 function resolveAnchor<TMessage, TOptimistic>(
   input: GeometryBuildInput<TMessage, TOptimistic>,
 ): AnchorState | null {
+  const relayoutAnchor = resolveRelayoutAnchor(input)
+  if (relayoutAnchor !== null) {
+    return {
+      key: relayoutAnchor,
+      offsetWithinMessage: 0,
+    }
+  }
+
   if (input.target !== undefined) {
     return 'key' in input.target
       ? input.target
@@ -223,6 +236,9 @@ function resolveDirectionHint(
     return 'latest'
   }
   if (kind === 'jump' || kind === 'restore') {
+    return 'target'
+  }
+  if (kind === 'segmentRelayout') {
     return 'target'
   }
 
