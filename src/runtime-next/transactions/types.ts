@@ -56,7 +56,11 @@ export type RuntimeTransactionIntent<TMessage = unknown, TOptimistic = unknown> 
     }
   | { readonly kind: 'projectionRefresh' }
   | { readonly kind: 'segmentRelayout'; readonly reason: SegmentRelayoutReason }
-  | { readonly kind: 'segmentShift'; readonly direction: SegmentShiftDirection }
+  | {
+      readonly kind: 'segmentShift'
+      readonly direction: SegmentShiftDirection
+      readonly source?: 'edge' | 'drag-handoff' | 'wheel' | 'keyboard' | 'data'
+    }
   | { readonly kind: 'jump'; readonly target: MessageIdentityAnchor }
   | { readonly kind: 'restore'; readonly target: MessageIdentityAnchor | AnchorState }
   | { readonly kind: 'followBottom' }

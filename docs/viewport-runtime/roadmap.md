@@ -6,8 +6,8 @@
 
 - 当前代码基线：以 Git HEAD 为准；路线图不再硬编码短 hash，避免进度记录漂移。
 - 旧 runtime：已隔离到 `src/runtime.deprecated`，只作为行为备份和必要参考。
-- 新 runtime：`src/runtime-next` 已补齐 P4 transaction / data arrival 接线；public facade 仍保持薄委托，React/demo 不拥有几何。
-- 当前阶段：P4 已完成并进入 review hardening；下一阶段才进入 P5 DOM observer / scroll listener / motion / custom scrollbar。
+- 新 runtime：`src/runtime-next` 已补齐 P5 input / scrollbar / motion 接线；public facade 仍保持薄委托，React/demo 不拥有几何。
+- 当前阶段：P5 已完成 runtime-next 自有 React adapter 和输入链路；下一阶段进入 P6 demo cutover and hardening。
 
 ## 总原则
 
@@ -364,13 +364,22 @@ Review 检查点：
 
 任务：
 
-- [ ] 实现 custom scrollbar metrics 消费。
-- [ ] 实现 direct scroll API 和 drag lock。
-- [ ] 实现 active drag session 内的 `DragSegmentHandoff`、drag continuation rebase 与 thumb freeze。
-- [ ] 实现 wheel / trackpad momentum latch。
-- [ ] 实现 target segment 内 bounded motion。
-- [ ] 实现 latest-only bottom lock。
-- [ ] 实现 high-frequency physical metrics subscriber，避免 React row tree 每帧 rerender。
+- [x] 实现 custom scrollbar metrics 消费。
+- [x] 实现 direct scroll API 和 drag lock。
+- [x] 实现 active drag session 内的 `DragSegmentHandoff`、drag continuation rebase 与 thumb freeze。
+- [x] 实现 wheel / trackpad momentum latch。
+- [x] 实现 target segment 内 bounded motion。
+- [x] 实现 latest-only bottom lock。
+- [x] 实现 high-frequency physical metrics subscriber，避免 React row tree 每帧 rerender。
+
+P5 实施记录：
+
+- `controller/runtimeControllerInput.ts` 接入 scroll listener、wheel momentum latch、container/row `ResizeObserver` dirty signal、adjacent prefetch latch 和 latest-only bottom lock reconciliation；observer / scroll callback 只排 intent 或更新 physical metrics，不发布 geometry。
+- `scroll/interactionState.ts` 固定 drag lock、thumb freeze、segmentShift pending、momentum latch 和 suppressed delta flags；`runtimeControllerDirectScroll.ts` 在 drag 到 safe range 边界时只在相邻数据 ready 时接受 `DragSegmentHandoff`，否则保持 edge soft-stop 并发 need。
+- `transactionFlowScroll.ts` 支持 drag handoff continuation rebase 到 target segment 中段安全区；`scroll/motionEngine.ts` 为 followBottom / jump / restore 提供 target segment 内 bounded write 和 motion diagnostics。
+- `components/` 已新增 runtime-next 自有 React adapter、hooks、custom scrollbar 和 scrollbar geometry helper；adapter 使用完整 `ProjectionCommitToken` ack，custom scrollbar 只订阅 `PhysicalScrollMetrics`。
+- `x-message-list/runtime-next` 子路径导出 runtime-next facade、adapter、hooks 和 scrollbar helper；root package 仍不导出 runtime-next，demo 默认切换留给 P6。
+- 验证新增：`runtimeController.p5.test.ts` 覆盖 drag handoff / soft-stop / wheel momentum latch；`components.test.tsx` 覆盖完整 commit token ack、physical metrics 高频订阅不 rerender row tree、thumb geometry 不依赖 DOM `scrollHeight`。
 
 本阶段禁止：
 

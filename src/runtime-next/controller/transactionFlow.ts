@@ -22,7 +22,7 @@ import type {
   PendingPublication,
   RuntimeTransactionFlowContext,
 } from './transactionFlow.types'
-import { writeTransactionScrollTop } from './transactionFlowScroll'
+import { prepareTransactionScrollTop } from './transactionFlowScroll'
 
 export class RuntimeTransactionFlow<TMessage = unknown, TOptimistic = unknown> {
   readonly #ctx: RuntimeTransactionFlowContext<TMessage, TOptimistic>
@@ -79,7 +79,7 @@ export class RuntimeTransactionFlow<TMessage = unknown, TOptimistic = unknown> {
       this.#pending = pendingForPromotion
     }
 
-    const scrollWrite = writeTransactionScrollTop(this.#ctx, pendingForPromotion)
+    const scrollWrite = prepareTransactionScrollTop(this.#ctx, pendingForPromotion)
     if (!scrollWrite.ok) {
       this.#ctx.abort('writer-denied')
       return
@@ -87,14 +87,20 @@ export class RuntimeTransactionFlow<TMessage = unknown, TOptimistic = unknown> {
 
     const result = this.#ctx.revision.acknowledgeCommit(commit)
     if (!result.committed) {
+      scrollWrite.cancel()
       this.#ctx.abort('commit-token-mismatch')
+      return
+    }
+    const appliedScroll = scrollWrite.commit()
+    if (!appliedScroll.ok) {
+      this.#ctx.abort('writer-denied')
       return
     }
     promoteGeometry(
       this.#ctx,
       pendingForPromotion,
       result.segment,
-      scrollWrite.scrollTop,
+      appliedScroll.scrollTop,
     )
   }
 

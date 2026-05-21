@@ -4,6 +4,11 @@ import type { PhysicalMetricsStore } from '../geometry/metrics/metricsStore'
 import type { ScrollWriterArbitration } from '../scroll/writerArbitration'
 import { directScrollInputToWriterKind } from '../scroll/writerArbitration'
 import type { DirectScrollInput } from '../scroll/types'
+import type { SegmentShiftDirection } from '../geometry/types'
+import {
+  resolveDirectScrollBoundary,
+  type ScrollInteractionState,
+} from '../scroll/interactionState'
 import { recordWriterIssue } from './runtimeControllerSupport'
 
 const DIRECT_SCROLL_TRANSACTION_ID = 'direct-scroll'
@@ -13,7 +18,14 @@ type DirectScrollContext = {
   readonly metrics: PhysicalMetricsStore
   readonly dom: RuntimeDomRegistry
   readonly diagnostics: DiagnosticRecorder
+  readonly scrollState: ScrollInteractionState
   readonly setCurrentScrollTop: (scrollTop: number) => void
+  readonly canBuildSegmentShift: (direction: SegmentShiftDirection) => boolean
+  readonly enqueueSegmentShift: (
+    direction: SegmentShiftDirection,
+    source: 'drag-handoff' | 'wheel',
+  ) => void
+  readonly deferSegmentShiftNeed: (direction: SegmentShiftDirection) => void
 }
 
 export function beginDirectScrollTransaction(
@@ -45,7 +57,15 @@ export function beginDirectScrollTransaction(
     )
     return
   }
-  ctx.metrics.promote({ ...ctx.metrics.getMetrics(), isDragLocked: true })
+  ctx.scrollState.beginDrag()
+  ctx.metrics.patchFlags(ctx.scrollState.toFlags())
+  ctx.diagnostics.record({
+    kind: 'transaction-lifecycle',
+    severity: 'info',
+    owner: 'scroll',
+    message: 'scroll.direct.begin',
+    details: { source: input.source },
+  })
 }
 
 export function writeDirectScrollTopWithWriter(
@@ -66,11 +86,21 @@ export function writeDirectScrollTopWithWriter(
     )
     return false
   }
-  const boundedScrollTop = clampDirectScrollTop(scrollTop, {
+  if (input.source === 'custom-scrollbar-drag' && ctx.scrollState.isThumbFrozen()) {
+    recordWriterIssue(
+      ctx.diagnostics,
+      'writer-arbitration',
+      'direct scroll write rejected while thumb is frozen',
+    )
+    return false
+  }
+  const boundary = resolveDirectScrollBoundary({
+    desiredScrollTop: scrollTop,
     safeScrollRangeStart: metrics.safeScrollRangeStart,
     safeScrollRangeEnd: metrics.safeScrollRangeEnd,
     maxScrollPosition: metrics.maxScrollPosition,
   })
+  const boundedScrollTop = boundary.scrollTop
   const acquiredForTrack = input.source === 'custom-scrollbar-track'
     ? ctx.writer.acquire(token).acquired
     : true
@@ -90,6 +120,7 @@ export function writeDirectScrollTopWithWriter(
   )
   if (wrote) {
     ctx.setCurrentScrollTop(boundedScrollTop)
+    ctx.metrics.patchScrollPosition(boundedScrollTop)
   } else {
     recordWriterIssue(
       ctx.diagnostics,
@@ -99,7 +130,55 @@ export function writeDirectScrollTopWithWriter(
   }
   if (input.source === 'custom-scrollbar-track') ctx.writer.release(token)
 
-  return wrote
+  if (!wrote) return false
+
+  ctx.diagnostics.record({
+    kind: 'transaction-lifecycle',
+    severity: 'info',
+    owner: 'scroll',
+    message: 'scroll.direct.write',
+    details: {
+      source: input.source,
+      scrollTop: boundedScrollTop,
+      boundary: boundary.kind,
+    },
+  })
+
+  if (input.source !== 'custom-scrollbar-drag') {
+    return true
+  }
+
+  if (boundary.kind === 'inside') {
+    ctx.scrollState.clearEdgePending()
+    ctx.metrics.patchFlags(ctx.scrollState.toFlags())
+    return true
+  }
+
+  if (!ctx.canBuildSegmentShift(boundary.direction)) {
+    ctx.scrollState.markEdgePending(boundary)
+    ctx.metrics.patchFlags(ctx.scrollState.toFlags())
+    ctx.deferSegmentShiftNeed(boundary.direction)
+    return true
+  }
+
+  if (!ctx.scrollState.isSegmentShiftInFlight()) {
+    ctx.scrollState.acceptDragHandoff(boundary)
+    ctx.metrics.patchFlags(ctx.scrollState.toFlags())
+    ctx.writer.release(token)
+    ctx.diagnostics.record({
+      kind: 'transaction-lifecycle',
+      severity: 'info',
+      owner: 'scroll',
+      message: 'scroll.dragSegmentHandoff.start',
+      details: {
+        direction: boundary.direction,
+        pendingEdgeOverflowPx: boundary.overflowPx,
+      },
+    })
+    ctx.enqueueSegmentShift(boundary.direction, 'drag-handoff')
+  }
+
+  return false
 }
 
 export function endDirectScrollTransaction(
@@ -112,33 +191,16 @@ export function endDirectScrollTransaction(
     transactionId: DIRECT_SCROLL_TRANSACTION_ID,
     kind: directScrollInputToWriterKind(input),
   }
-  if (ctx.writer.release(token)) {
-    ctx.metrics.promote({ ...ctx.metrics.getMetrics(), isDragLocked: false })
+  const released = ctx.writer.release(token)
+  if (released || ctx.scrollState.isDragLocked()) {
+    ctx.scrollState.endDrag()
+    ctx.metrics.patchFlags(ctx.scrollState.toFlags())
+    ctx.diagnostics.record({
+      kind: 'transaction-lifecycle',
+      severity: 'info',
+      owner: 'scroll',
+      message: 'scroll.direct.end',
+      details: { source: input.source },
+    })
   }
-}
-
-function clampDirectScrollTop(
-  scrollTop: number,
-  metrics: {
-    readonly safeScrollRangeStart: number
-    readonly safeScrollRangeEnd: number
-    readonly maxScrollPosition: number
-  },
-): number {
-  const maxScrollPosition = toFiniteNonNegativePx(metrics.maxScrollPosition)
-  const rangeStart = Math.min(
-    maxScrollPosition,
-    toFiniteNonNegativePx(metrics.safeScrollRangeStart),
-  )
-  const rangeEnd = Math.min(
-    maxScrollPosition,
-    Math.max(rangeStart, toFiniteNonNegativePx(metrics.safeScrollRangeEnd)),
-  )
-  const desired = Number.isFinite(scrollTop) ? scrollTop : rangeStart
-
-  return Math.min(rangeEnd, Math.max(rangeStart, desired))
-}
-
-function toFiniteNonNegativePx(value: number): number {
-  return Number.isFinite(value) ? Math.max(0, value) : 0
 }

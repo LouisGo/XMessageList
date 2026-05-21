@@ -29,6 +29,30 @@ export class PhysicalMetricsStore {
     this.#onChange()
   }
 
+  patchFlags(
+    flags: Partial<Pick<
+      PhysicalScrollMetrics,
+      | 'isDragLocked'
+      | 'isThumbFrozen'
+      | 'isSegmentShiftPending'
+      | 'pendingShiftDirection'
+      | 'pendingEdgeOverflowPx'
+      | 'isSegmentShifting'
+      | 'isMomentumLatched'
+      | 'suppressedMomentumDeltaPx'
+      | 'segmentRelayoutState'
+      | 'segmentRelayoutReason'
+      | 'adjacentPrefetchBefore'
+      | 'adjacentPrefetchAfter'
+    >>,
+  ): void {
+    this.#metrics = {
+      ...this.#metrics,
+      ...flags,
+    }
+    this.#onChange()
+  }
+
   getMetrics(): PhysicalScrollMetrics {
     return this.#metrics
   }

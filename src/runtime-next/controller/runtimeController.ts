@@ -1,6 +1,6 @@
 import type { MessageRuntimeCommand } from '../commands/types'
 import { classifyDataArrival } from '../data/classifier'
-import type { DataArrivalIntent, PendingDataIntent } from '../data/classifier.types'
+import type { PendingDataIntent } from '../data/classifier.types'
 import { assertSupportedViewportModifier } from '../data/modifiers'
 import type { MessageDataSnapshot } from '../data/types'
 import { RuntimeDataStore } from '../data/store'
@@ -13,7 +13,6 @@ import { PhysicalSegmentRevisionController } from '../geometry/segment/segmentRe
 import type { PhysicalScrollMetrics } from '../geometry/types'
 import type {
   AnchorState,
-  MessageIdentityAnchor,
   MessageRuntimeItemKey,
   RuntimeListener,
   RuntimeNextTransactionId,
@@ -33,12 +32,14 @@ import type {
   TransactionAbortReason,
   TransactionStageRecord,
 } from '../transactions/types'
-import {
-  createNeedLatestEvent,
-  createNeedMessagesAroundEvent,
-  isTargetAvailable,
-} from './controllerHelpers'
+import { createNeedLatestEvent } from './controllerHelpers'
 import { RuntimeTransactionFlow } from './transactionFlow'
+import { RuntimeControllerInputCoordinator } from './runtimeControllerInput'
+import {
+  dispatchDestination,
+  dispatchFollowBottom,
+  enqueueDataIntent,
+} from './runtimeControllerCommands'
 import {
   beginDirectScrollTransaction,
   endDirectScrollTransaction,
@@ -76,6 +77,10 @@ export class MessageViewportRuntimeController<
   readonly #diagnostics: DiagnosticRecorder
   readonly #runner: TransactionRunner<TMessage, TOptimistic>
   readonly #flow: RuntimeTransactionFlow<TMessage, TOptimistic>
+  readonly #inputCoordinator: RuntimeControllerInputCoordinator<
+    TMessage,
+    TOptimistic
+  >
   readonly #listeners = new Set<RuntimeListener>()
   readonly #physicalListeners = new Set<RuntimeListener>()
   readonly #eventListeners = new Set<RuntimeEventListener>()
@@ -121,6 +126,32 @@ export class MessageViewportRuntimeController<
       now: options.now,
       onStage: (record) => this.#recordTransactionStage(record),
     })
+    this.#inputCoordinator = new RuntimeControllerInputCoordinator({
+      feedId: this.#feedId,
+      generation: this.#generation,
+      data: this.#data,
+      dom: this.#dom,
+      metrics: this.#metrics,
+      revision: this.#revision,
+      writer: this.#writer,
+      diagnostics: this.#diagnostics,
+      projection: this.#projection,
+      getDestroyed: () => this.#destroyed,
+      setBottomLockState: (state) => {
+        this.#bottomLockState = state
+      },
+      setCurrentScrollTop: (scrollTop) => {
+        this.#currentScrollTop = scrollTop
+      },
+      getCurrentScrollTop: () => this.#currentScrollTop,
+      enqueue: (intent) => this.#enqueue(intent),
+      setPendingDataIntent: (intent) => {
+        this.#pendingDataIntent = intent
+      },
+      emitNeedForPendingIntent: (intent) =>
+        this.#emitNeedForPendingIntent(intent),
+      emitEvent: (event) => this.#emitEvent(event),
+    })
     this.#flow = new RuntimeTransactionFlow({
       data: this.#data,
       dom: this.#dom,
@@ -128,6 +159,7 @@ export class MessageViewportRuntimeController<
       metrics: this.#metrics,
       revision: this.#revision,
       writer: this.#writer,
+      motion: this.#inputCoordinator.motion(),
       runner: this.#runner,
       diagnostics: this.#diagnostics,
       getBottomLockState: () => this.#bottomLockState,
@@ -138,6 +170,8 @@ export class MessageViewportRuntimeController<
       setCurrentScrollTop: (scrollTop) => {
         this.#currentScrollTop = scrollTop
       },
+      resolveScrollFlagsForPromotion: (transaction) =>
+        this.#inputCoordinator.resolveScrollFlagsForPromotion(transaction),
       armAckTimeout: (transactionId) => this.#armAckTimeout(transactionId),
       clearAckTimeout: () => this.#clearAckTimeout(),
       enqueue: (intent) => this.#enqueue(intent),
@@ -154,6 +188,7 @@ export class MessageViewportRuntimeController<
   attach(container: HTMLElement): void {
     if (this.#destroyed) return
     this.#dom.attach(container)
+    this.#inputCoordinator.attach(container)
     this.#emitEvent({
       type: 'viewportReady',
       feedId: this.#feedId,
@@ -170,6 +205,7 @@ export class MessageViewportRuntimeController<
       reason: 'detach',
       anchor: this.getViewportAnchorState(),
     })
+    this.#inputCoordinator.detach()
     this.#dom.detach()
   }
 
@@ -204,6 +240,7 @@ export class MessageViewportRuntimeController<
     }
     assertSupportedViewportModifier(snapshot.change.viewportModifier)
     this.#data.setSnapshot(snapshot)
+    this.#inputCoordinator.syncAdjacentPrefetchState()
 
     if (this.#pendingBootstrap !== null) {
       const intent = this.#pendingBootstrap
@@ -238,7 +275,7 @@ export class MessageViewportRuntimeController<
       this.#emitNeedForPendingIntent(this.#pendingDataIntent)
     }
     recordDataIntent(this.#diagnostics, intent)
-    this.#enqueueDataIntent(intent)
+    enqueueDataIntent(this.#commandContext(), intent)
   }
 
   dispatch(command: MessageRuntimeCommand): void {
@@ -260,15 +297,15 @@ export class MessageViewportRuntimeController<
       return
     }
     if (command.type === 'followBottom') {
-      this.#dispatchFollowBottom()
+      dispatchFollowBottom(this.#commandContext())
       return
     }
     if (command.type === 'jump') {
-      this.#dispatchDestination('jump', command.target)
+      dispatchDestination(this.#commandContext(), 'jump', command.target)
       return
     }
     if (command.type === 'restore') {
-      this.#dispatchDestination('restore', command.target)
+      dispatchDestination(this.#commandContext(), 'restore', command.target)
       return
     }
     this.#enqueue({ kind: 'reset', reason: command.reason })
@@ -277,11 +314,9 @@ export class MessageViewportRuntimeController<
   subscribe(listener: RuntimeListener): RuntimeUnsubscribe {
     this.#listeners.add(listener); return () => this.#listeners.delete(listener)
   }
-
   subscribeEvent(listener: RuntimeEventListener): RuntimeUnsubscribe {
     this.#eventListeners.add(listener); return () => this.#eventListeners.delete(listener)
   }
-
   subscribePhysicalScroll(listener: RuntimeListener): RuntimeUnsubscribe {
     this.#physicalListeners.add(listener); return () => this.#physicalListeners.delete(listener)
   }
@@ -291,7 +326,6 @@ export class MessageViewportRuntimeController<
   }
 
   getPhysicalScrollMetrics(): PhysicalScrollMetrics { return this.#metrics.getMetrics() }
-
   getViewportAnchorState(): AnchorState | null {
     return this.#dom.resolveViewportAnchor(
       this.#projection.getSnapshot().renderWindow.itemKeys,
@@ -302,6 +336,7 @@ export class MessageViewportRuntimeController<
 
   registerRow(key: MessageRuntimeItemKey, element: HTMLElement | null): void {
     this.#dom.registerRow(key, element)
+    this.#inputCoordinator.registerRow(key, element)
   }
 
   registerTopSpacer(element: HTMLElement | null): void { this.#dom.registerTopSpacer(element) }
@@ -316,7 +351,7 @@ export class MessageViewportRuntimeController<
 
   beginDirectScroll(input: DirectScrollInput): void {
     if (this.#destroyed) return
-    beginDirectScrollTransaction(input, this.#directScrollContext())
+    beginDirectScrollTransaction(input, this.#inputCoordinator.directScrollContext())
   }
 
   writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): boolean {
@@ -324,59 +359,20 @@ export class MessageViewportRuntimeController<
     const wrote = writeDirectScrollTopWithWriter(
       scrollTop,
       input,
-      this.#directScrollContext(),
+      this.#inputCoordinator.directScrollContext(),
     )
-    if (wrote) this.#metrics.patchScrollPosition(this.#currentScrollTop)
     return wrote
   }
 
   endDirectScroll(input: DirectScrollInput): void {
     if (this.#destroyed) return
-    endDirectScrollTransaction(input, this.#directScrollContext())
+    endDirectScrollTransaction(input, this.#inputCoordinator.directScrollContext())
   }
 
   enqueueInternalTransaction(
     intent: RuntimeTransactionIntent<TMessage, TOptimistic>,
   ): void {
     this.#enqueue(intent)
-  }
-
-  #dispatchFollowBottom(): void {
-    const snapshot = this.#data.getSnapshot()
-    if (snapshot === null || snapshot.hasMoreAfter) {
-      this.#pendingDataIntent = { kind: 'followBottom' }
-      this.#emitEvent(createNeedLatestEvent(this.#ids()))
-      return
-    }
-    this.#enqueue({ kind: 'followBottom' })
-  }
-
-  #dispatchDestination(
-    kind: 'jump' | 'restore',
-    target: MessageIdentityAnchor | AnchorState,
-  ): void {
-    const snapshot = this.#data.getSnapshot()
-    if (snapshot === null || !isTargetAvailable(snapshot.items, target)) {
-      this.#pendingDataIntent = { kind, target } as PendingDataIntent
-      this.#emitEvent(createNeedMessagesAroundEvent({
-        ...this.#ids(),
-        reason: kind,
-        target,
-      }))
-      return
-    }
-    this.#enqueue({ kind, target } as RuntimeTransactionIntent<TMessage, TOptimistic>)
-  }
-
-  #enqueueDataIntent(intent: DataArrivalIntent): void {
-    if (intent.kind === 'no-op') return
-    if (intent.kind === 'projectionRefresh') this.#enqueue({ kind: 'projectionRefresh' })
-    if (intent.kind === 'segmentRelayout') this.#enqueue({ kind: 'segmentRelayout', reason: intent.reason })
-    if (intent.kind === 'segmentShift') this.#enqueue({ kind: 'segmentShift', direction: intent.direction })
-    if (intent.kind === 'followBottom') this.#enqueue({ kind: 'followBottom' })
-    if (intent.kind === 'jump') this.#enqueue({ kind: 'jump', target: intent.target })
-    if (intent.kind === 'restore') this.#enqueue({ kind: 'restore', target: intent.target })
-    if (intent.kind === 'reset') this.#enqueue({ kind: 'reset', reason: intent.reason })
   }
 
   #recoverRelayoutBounds(target: AnchorState): void {
@@ -415,6 +411,7 @@ export class MessageViewportRuntimeController<
       this.#flow.abortPending()
       this.#revision.abortPendingPublication()
       this.#writer.releaseTransaction(active.id)
+      this.#inputCoordinator.handleTransactionAbort(active)
     }
     this.#flow.clearPending()
     this.#clearAckTimeout()
@@ -426,6 +423,7 @@ export class MessageViewportRuntimeController<
     this.#abortActive(reason)
     this.#runner.clearQueue()
     this.#writer.forceRelease()
+    this.#inputCoordinator.cancelAll()
   }
 
   #armAckTimeout(transactionId: RuntimeNextTransactionId): void {
@@ -471,15 +469,17 @@ export class MessageViewportRuntimeController<
     return { feedId: this.#feedId, generation: this.#generation }
   }
 
-  #directScrollContext() {
+  #commandContext() {
     return {
-      writer: this.#writer,
-      metrics: this.#metrics,
-      dom: this.#dom,
-      diagnostics: this.#diagnostics,
-      setCurrentScrollTop: (scrollTop: number) => {
-        this.#currentScrollTop = scrollTop
+      getDataSnapshot: () => this.#data.getSnapshot(),
+      ids: () => this.#ids(),
+      enqueue: (intent: RuntimeTransactionIntent<TMessage, TOptimistic>) =>
+        this.#enqueue(intent),
+      setPendingDataIntent: (intent: PendingDataIntent) => {
+        this.#pendingDataIntent = intent
       },
+      emitEvent: (event: Parameters<RuntimeEventListener>[0]) =>
+        this.#emitEvent(event),
     }
   }
 

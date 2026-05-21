@@ -7,11 +7,11 @@
 ```text
 src/runtime            -> removed after P1 structure isolation
 src/runtime.deprecated -> deprecated runtime reference
-src/runtime-next       -> P1 structure-only skeleton for the new runtime
+src/runtime-next       -> P5 runtime-next implementation
 ```
 
-当前仓库已经完成 P1 路径隔离：旧实现位于 `src/runtime.deprecated`，新实现入口位于 `src/runtime-next`。
-P1 的 `runtime-next` 只包含 README、导出占位和类型骨架；真实 geometry、paging、measurement、motion 和 scrollbar 仍必须从后续阶段开始实现。
+当前仓库已经完成 P5：旧实现位于 `src/runtime.deprecated`，新实现入口位于 `src/runtime-next`。
+`runtime-next` 已承载 geometry kernel、transaction/data arrival、input/motion、custom scrollbar 和自有 React adapter；demo 默认切换仍属于 P6。
 
 旧 runtime 可以参考的内容：
 
@@ -82,7 +82,7 @@ src/runtime-next/
   __tests__/
 ```
 
-P1 阶段只落地 `README.md`、`index.ts`、`types.ts` 和 `components/README.md`。P2 已开始落地 public facade、co-located contract types、commit token helper 和 ownership guard tests。下表是后续继续扩展的目标形态，不是把旧 runtime 或 `src/react` 文件搬进来的清单。
+当前目录已经落地 public facade、P3 geometry kernel、P4 transaction/data arrival、P5 input/motion 和 runtime-next 自有 components。下表是 ownership 形态，不是把旧 runtime 或 `src/react` 文件搬进来的清单。
 
 职责：
 

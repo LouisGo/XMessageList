@@ -9,6 +9,7 @@ export type ScrollWriterKind =
   | 'anchor-correction'
   | 'segment-shift-rebase'
   | 'follow-bottom'
+  | 'motion'
 
 export type ScrollWriterToken = {
   readonly transactionId: RuntimeNextTransactionId

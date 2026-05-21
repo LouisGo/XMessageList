@@ -178,10 +178,15 @@ export function promoteGeometry<TMessage, TOptimistic>(
       pending.publication.physicalWindowHeight,
     ),
     scrollTop,
+    flags: ctx.resolveScrollFlagsForPromotion(pending.transaction),
   })
   ctx.runner.markMeasurementCorrection(pending.transaction.id)
   ctx.metrics.promote(metrics)
-  ctx.setBottomLockState(pending.promotesBottomLock ? 'LOCKED' : 'UNLOCKED')
+  ctx.setBottomLockState(
+    canPromoteBottomLock(ctx, pending, metrics)
+      ? 'LOCKED'
+      : 'UNLOCKED',
+  )
   ctx.projection.publish({
     revision: pending.publication.commitToken.projectionRevision,
     commitToken: pending.publication.commitToken,
@@ -202,6 +207,24 @@ export function promoteGeometry<TMessage, TOptimistic>(
   recordPhysicalWindowDiagnostic(ctx, pending, metrics)
   ctx.runner.markMetricsPromoted(pending.transaction.id)
   ctx.finish(pending.transaction.id)
+}
+
+function canPromoteBottomLock<TMessage, TOptimistic>(
+  ctx: RuntimeTransactionFlowContext<TMessage, TOptimistic>,
+  pending: PendingPublication<TMessage, TOptimistic>,
+  metrics: ReturnType<typeof deriveCommittedMetrics>,
+): boolean {
+  if (!pending.promotesBottomLock) return false
+  if (
+    pending.publication.segment.logicalRole !== 'latest' &&
+    pending.publication.segment.logicalRole !== 'short-feed'
+  ) {
+    return false
+  }
+  if (ctx.data.requireSnapshot().hasMoreAfter) return false
+  if (metrics.isSegmentShiftPending || metrics.isSegmentShifting) return false
+
+  return Math.max(0, metrics.maxScrollPosition - metrics.scrollPosition) <= 16
 }
 
 export function planFromPublication<TMessage, TOptimistic>(

@@ -14,6 +14,8 @@ import type {
 } from '../projection/types'
 import type { RuntimeNextViewportEvent } from '../events/types'
 import type { RuntimeTransaction } from '../transactions/types'
+import type { PhysicalSegment } from '../geometry/segment/physicalSegment.types'
+import type { SegmentShiftDirection } from '../geometry/types'
 
 export function findItemByKey<TMessage, TOptimistic>(
   items: readonly MessageDataItem<TMessage, TOptimistic>[],
@@ -47,6 +49,26 @@ export function isTargetAvailable<TMessage, TOptimistic>(
   return 'key' in target
     ? items.some((item) => isMessageRuntimeItemKeyEqual(item.key, target.key))
     : hasCommittedTarget(items, target)
+}
+
+export function hasAdjacentSegmentData<TMessage, TOptimistic>(
+  snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  segment: PhysicalSegment | null,
+  direction: SegmentShiftDirection,
+): boolean {
+  if (segment === null) return false
+
+  const boundaryKey = direction === 'before'
+    ? segment.logicalStartItemKey
+    : segment.logicalEndItemKey
+  const boundaryIndex = snapshot.items.findIndex((item) =>
+    isMessageRuntimeItemKeyEqual(item.key, boundaryKey),
+  )
+  if (boundaryIndex < 0) return false
+
+  return direction === 'before'
+    ? boundaryIndex > 0
+    : boundaryIndex < snapshot.items.length - 1
 }
 
 export function targetToIdentityAnchor(

@@ -1,10 +1,23 @@
 import type { RuntimeNextModuleStatus } from './moduleStatus.types'
 export { MessageViewportRuntime } from './MessageViewportRuntime'
 export { isProjectionCommitTokenEqual } from './projection/commitToken'
+export {
+  RuntimeNextCustomScrollbar,
+  RuntimeNextMessageRowProjection,
+  RuntimeNextMessageViewport,
+  computeRuntimeNextScrollbarGeometry,
+  useMessageViewportRuntime,
+  usePhysicalScrollMetrics,
+  type RuntimeNextCustomScrollbarProps,
+  type RuntimeNextMessageRowProjectionProps,
+  type RuntimeNextMessageViewportProps,
+  type RuntimeNextScrollbarGeometry,
+  type RuntimeNextScrollbarGeometryOptions,
+} from './components'
 
-// P4 将 data/command 与 P3 几何内核接成事务；demo/React cutover 留给后续阶段。
+// P5 已接入 input / motion / runtime-next adapter；demo 默认切换仍留给 P6。
 export const RUNTIME_NEXT_STATUS: RuntimeNextModuleStatus = {
-  phase: 'P4_TRANSACTION_AND_DATA_ARRIVAL',
+  phase: 'P5_INPUT_SCROLLBAR_AND_MOTION',
   geometryImplemented: true,
   importsDeprecatedRuntime: false,
 }

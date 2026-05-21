@@ -1,10 +1,9 @@
 # runtime-next
 
 `src/runtime-next` 是新的 Physical Segment Windowing runtime 承载体。
-当前处于 P4 transaction and data arrival 阶段。public facade 已委托 runtime-next
-controller，把 data snapshot、semantic command 和 P3 geometry kernel 接成 commit-token
-驱动的事务；React adapter、custom scrollbar、wheel/momentum/motion 和 demo cutover 仍
-留给后续阶段。
+当前处于 P5 input, scrollbar, and motion 阶段。public facade 已委托 runtime-next
+controller，把 data snapshot、semantic command、P3 geometry kernel、P5 input/motion
+链路接成 commit-token 驱动的事务；demo cutover 仍留给 P6。
 
 ## 当前允许内容
 
@@ -15,9 +14,13 @@ controller，把 data snapshot、semantic command 和 P3 geometry kernel 接成 
 - `types.ts`：公共类型聚合入口，具体类型必须按领域 co-located。
 - `commands/`、`data/`、`diagnostics/`、`projection/`：P2 类型和最小合同 helper。
 - `geometry/`：P3 physical geometry kernel，按 `config/`、`segment/`、`budget/`、`window/`、`measurement/`、`diagnostics/` 等领域 co-located。
-- `controller/`、`transactions/`、`dom/`：P4 controller、transaction runner、
-  pending geometry publication、data arrival classifier、minimal DOM fact registry
-  和 scroll writer arbitration。
+- `controller/`、`transactions/`、`dom/`：controller、transaction runner、
+  pending geometry publication、data arrival classifier、DOM registry / input observer
+  和 P5 scroll coordination。
+- `scroll/`：writer arbitration、drag / handoff / momentum interaction state、
+  bounded motion 和 edge need latch。
+- `components/`：runtime-next 自有 React projection adapter、custom scrollbar、
+  hooks 和 scrollbar geometry helper；不复用旧 `src/react`。
 - `__tests__/`：ownership / contract guard tests。
 
 禁止从 `src/runtime.deprecated` 或旧 `src/react` import，也禁止把 runtime-next API

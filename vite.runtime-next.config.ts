@@ -11,5 +11,8 @@ export default defineConfig({
       formats: ['es'],
       fileName: () => 'runtime-next/index.js',
     },
+    rollupOptions: {
+      external: ['react', 'react/jsx-runtime'],
+    },
   },
 })
