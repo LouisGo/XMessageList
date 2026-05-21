@@ -68,6 +68,20 @@ export class RuntimeTransactionFlow<TMessage = unknown, TOptimistic = unknown> {
         return
       }
       if (decision.kind === 'segment-relayout') {
+        if (pending.transaction.kind === 'segmentRelayout') {
+          this.#ctx.diagnostics.record({
+            kind: 'transaction-error',
+            severity: 'warn',
+            owner: 'transactions',
+            message: 'segmentRelayout self-loop suppressed',
+            details: {
+              transactionId: pending.transaction.id,
+              reason: decision.reason,
+            },
+          })
+          this.#ctx.abort('error')
+          return
+        }
         this.#ctx.abort('error')
         this.#ctx.enqueue({
           kind: 'segmentRelayout',
@@ -242,7 +256,11 @@ export class RuntimeTransactionFlow<TMessage = unknown, TOptimistic = unknown> {
       transaction,
       plan,
       publication,
-      promotesBottomLock: kind === 'followBottom' && !data.hasMoreAfter,
+      promotesBottomLock: shouldPromoteBottomLock({
+        kind,
+        role: plan.role,
+        hasMoreAfter: data.hasMoreAfter,
+      }),
       phase: 'initial',
       stableSnapshot: this.#ctx.projection.getSnapshot(),
     }
@@ -252,4 +270,15 @@ export class RuntimeTransactionFlow<TMessage = unknown, TOptimistic = unknown> {
   #revisionReason(kind: GeometryBuildKind) {
     return kind === 'segmentRelayout' ? 'segmentRelayout' : kind
   }
+}
+
+function shouldPromoteBottomLock(input: {
+  readonly kind: GeometryBuildKind
+  readonly role: GeometryBuildPlan['role']
+  readonly hasMoreAfter: boolean
+}): boolean {
+  if (input.hasMoreAfter) return false
+  if (input.kind === 'followBottom') return true
+  return input.kind === 'bootstrap' &&
+    (input.role === 'latest' || input.role === 'short-feed')
 }

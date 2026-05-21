@@ -10,8 +10,8 @@ import type {
   MessageDataSnapshot,
   MessageViewportRuntime,
   ViewportAnchorChangedEvent,
-  ViewportEffect,
-} from '../runtime.deprecated'
+  ViewportModifier as ViewportEffect,
+} from '../runtime-next'
 import {
   type DemoMessage,
   createDemoMessages,
@@ -63,6 +63,7 @@ const JUMP_AROUND_BEFORE_PAGE_SIZE = PAGE_SIZE
 const JUMP_AROUND_AFTER_PAGE_SIZE = PAGE_SIZE
 const JUMP_HIGHLIGHT_DURATION_MS = 1_400
 const DESTINATION_REBUILD_SPACER_THRESHOLD_PX = 10_000
+const INITIAL_DEMO_GENERATION = 1
 const REACTION_EMOJIS = ['😀', '😂', '🔥', '👍', '🎉', '😭', '👀', '❤️', '🚀', '🥲']
 
 const OPERATION_DELAYS: Record<
@@ -232,7 +233,7 @@ export function useDemoMessageScenario(
   // 当前 feed 在本地持久化层的完整消息集。
   const feedMessagesRef = useRef<DemoMessage[]>([])
   const revisionRef = useRef(1)
-  const generationRef = useRef(1)
+  const generationRef = useRef(INITIAL_DEMO_GENERATION)
   const hasMoreBeforeRef = useRef(false)
   const hasMoreAfterRef = useRef(false)
   const lastViewportAnchorRef = useRef<PersistedViewportAnchor | undefined>(undefined)
@@ -259,7 +260,7 @@ export function useDemoMessageScenario(
     [activeFeedId],
   )
   const [activeRuntime, setActiveRuntime] = useState(
-    () => runtimeCache.getRuntime(initialFeedId),
+    () => runtimeCache.getRuntime(initialFeedId, INITIAL_DEMO_GENERATION + 1),
   )
 
   useEffect(() => {
@@ -413,14 +414,12 @@ export function useDemoMessageScenario(
 
   const commitLoadedFeedWindow = useCallback(async ({
     feedId,
-    runtime,
     requestId,
     token,
     loaded,
     activate,
   }: {
     feedId: string
-    runtime: MessageViewportRuntime<DemoMessage>
     requestId: string
     token: number
     loaded: LoadedFeedWindow
@@ -440,6 +439,8 @@ export function useDemoMessageScenario(
 
     generationRef.current += 1
     revisionRef.current += 1
+    const runtime = runtimeCache.getRuntime(feedId, generationRef.current)
+
     activeFeedIdRef.current = feedId
     lastViewportAnchorRef.current = loaded.usedPersistedViewportAnchor
       ? loaded.persistedViewportAnchor
@@ -475,7 +476,7 @@ export function useDemoMessageScenario(
         generation: generationRef.current,
         messages: messagesRef.current,
         revision: revisionRef.current,
-        effect: 'reset',
+        effect: 'none',
         kind: 'initial',
         anchor: loaded.resp.anchor,
         anchorStatus: loaded.resp.anchorStatus,
@@ -495,6 +496,8 @@ export function useDemoMessageScenario(
       setActiveFeedId(feedId)
       setSelectedFeedId(feedId)
       setPendingFeedId(null)
+    } else if (activeFeedIdRef.current === feedId) {
+      setActiveRuntime(runtime)
     }
 
     setLastEvent(
@@ -529,7 +532,7 @@ export function useDemoMessageScenario(
     })
 
     return true
-  }, [log, saveCurrentFeedSessionState, syncDisplayedCounts])
+  }, [log, runtimeCache, saveCurrentFeedSessionState, syncDisplayedCounts])
 
   const beginPendingOperation = useCallback((operation: string) => {
     pendingOperationCountRef.current += 1
@@ -903,7 +906,7 @@ export function useDemoMessageScenario(
           source,
           count,
           eventText: result.eventText,
-          viewportEffect: result.effect,
+          viewportModifier: result.effect,
           snapshotKind: result.kind,
           ...details,
         },
@@ -1909,20 +1912,17 @@ export function useDemoMessageScenario(
     setSelectedFeedId(feedId)
 
     const cachedState = feedSessionStateRef.current.get(feedId)
-    const hasCachedRuntime = runtimeCache.hasRuntime(feedId)
-    const cachedRuntime = hasCachedRuntime
-      ? runtimeCache.getRuntime(feedId)
+    const cachedRuntime = cachedState &&
+      runtimeCache.hasRuntime(feedId, cachedState.generation)
+      ? runtimeCache.getRuntime(feedId, cachedState.generation)
       : null
     const shouldRebuildCachedRuntime =
       !!cachedRuntime && shouldRebuildRuntimeForDestination(cachedRuntime)
     if (shouldRebuildCachedRuntime) {
-      runtimeCache.deleteRuntime(feedId)
+      runtimeCache.deleteRuntime(feedId, cachedState?.generation)
     }
     const runtimeCacheHit =
-      hasCachedRuntime && !!cachedState && !shouldRebuildCachedRuntime
-    const nextRuntime = runtimeCacheHit && cachedRuntime
-      ? cachedRuntime
-      : runtimeCache.getRuntime(feedId)
+      !!cachedRuntime && !!cachedState && !shouldRebuildCachedRuntime
     nextFeedSwitchRuntimeCacheHitRef.current = runtimeCacheHit
 
     if (runtimeCacheHit && cachedState) {
@@ -1949,11 +1949,11 @@ export function useDemoMessageScenario(
 
     loadTokenRef.current = token
 
-    if (runtimeCacheHit) {
+    if (runtimeCacheHit && cachedRuntime) {
       setPendingFeedId(null)
       stagedActivationSkipRef.current.add(feedId)
       setLastEvent(`restored cached ${feed.title}`)
-      setActiveRuntime(nextRuntime)
+      setActiveRuntime(cachedRuntime)
       setActiveFeedId(feedId)
       return
     }
@@ -1975,7 +1975,6 @@ export function useDemoMessageScenario(
         const loaded = await loadFeedWindow(feedId, feedLoadRequestId)
         await commitLoadedFeedWindow({
           feedId,
-          runtime: nextRuntime,
           requestId: feedLoadRequestId,
           token,
           loaded,
@@ -2210,7 +2209,6 @@ export function useDemoMessageScenario(
 
         await commitLoadedFeedWindow({
           feedId: activeFeedId,
-          runtime: activeRuntime,
           requestId,
           token,
           loaded,
@@ -2247,7 +2245,6 @@ export function useDemoMessageScenario(
     void loadFeed()
   }, [
     activeFeedId,
-    activeRuntime,
     commitLoadedFeedWindow,
     loadFeedWindow,
     log,
@@ -2255,11 +2252,14 @@ export function useDemoMessageScenario(
 
   useEffect(() => {
     const unsubscribe = activeRuntime.subscribeEvent((event) => {
+      const eventFeedId = 'feedId' in event
+        ? event.feedId
+        : activeFeedIdRef.current
       void log({
         requestId: createDemoRequestId('runtime.event'),
         operation: 'runtime.event',
         phase: 'info',
-        feedId: event.feedId,
+        feedId: eventFeedId,
         messageCount: messagesRef.current.length,
         details: event,
       })

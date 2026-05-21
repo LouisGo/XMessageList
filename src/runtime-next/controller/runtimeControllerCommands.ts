@@ -88,7 +88,12 @@ export function enqueueDataIntent<TMessage, TOptimistic>(
     ctx.enqueue({ kind: 'followBottom', origin: intent.origin })
   }
   if (intent.kind === 'jump') {
-    ctx.enqueue({ kind: 'jump', target: intent.target, origin: 'user' })
+    ctx.enqueue({
+      kind: 'jump',
+      target: intent.target,
+      requestedTarget: intent.requestedTarget,
+      origin: 'user',
+    })
   }
   if (intent.kind === 'restore') {
     ctx.enqueue({ kind: 'restore', target: intent.target, origin: 'lifecycle' })

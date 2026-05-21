@@ -50,11 +50,14 @@ export type {
 export type {
   BottomLockState,
   BootstrapState,
+  CommittedMessageDataItem,
   MessageDataItem,
   MessageViewportSnapshot,
+  OptimisticMessageDataItem,
   ProjectionCommit,
   ProjectionCommitToken,
   RenderWindow,
+  TombstoneMessageDataItem,
   ViewportEdgeState,
   ViewportPhase,
 } from './projection/types'

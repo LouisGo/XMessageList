@@ -1,2 +1,4 @@
-export * from './runtime.deprecated/index'
-export * from './react/index'
+export * from './runtime-next/index'
+export {
+  RuntimeNextMessageViewport as MessageViewport,
+} from './runtime-next/index'

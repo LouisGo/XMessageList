@@ -8,14 +8,7 @@ import type {
 } from '../identity/types'
 import { anchorToCommittedItemKey, stringifyMessageRuntimeItemKey } from '../identity/itemKey'
 import type {
-  PhysicalRowSelectionDirectionHint,
-} from '../geometry/window/rowSelection.types'
-import type {
-  LocalSpacerPlacement,
-} from '../geometry/window/spacerSolver.types'
-import type {
   GeometryBuildInput,
-  GeometryBuildKind,
   GeometryBuildPlan,
   MetricsDerivationInput,
 } from './geometryBuilder.types'
@@ -23,6 +16,11 @@ import {
   resolveGeometryCandidateItems,
   resolveRelayoutAnchor,
 } from './geometryBuilderRelayout'
+import {
+  resolveGeometryDirectionHint,
+  resolveGeometryRole,
+  resolveGeometrySpacerPlacement,
+} from './geometryBuilderPlanning'
 import type { PhysicalSegmentDraft, PhysicalSegmentRole } from '../geometry/segment/physicalSegment.types'
 import type { PhysicalScrollMetrics } from '../geometry/types'
 import type { MessageDataItem } from '../projection/types'
@@ -45,7 +43,7 @@ export function buildGeometryPlan<
   })
   const candidateItems = resolveGeometryCandidateItems(input)
   const anchor = resolveAnchor(input, candidateItems)
-  const directionHint = resolveDirectionHint(input.kind, input.direction)
+  const directionHint = resolveGeometryDirectionHint(input)
   const selection = selectPhysicalRows({
     items: candidateItems,
     anchor,
@@ -74,7 +72,7 @@ export function buildGeometryPlan<
     physicalWindowHeight: budget.physicalWindowHeight,
     mountedRowsHeightEstimate: selection.mountedRowsHeightEstimate,
     capMode: budget.capMode,
-    placement: resolveSpacerPlacement(input.kind, input.direction),
+    placement: resolveGeometrySpacerPlacement(input),
   })
   const items = candidateItems.slice(
     selection.startIndex,
@@ -87,7 +85,7 @@ export function buildGeometryPlan<
   }
   const role = budget.capMode === 'short-feed'
     ? 'short-feed'
-    : resolveRole(input.kind, input.data.hasMoreAfter)
+    : resolveGeometryRole(input)
   const segment = createSegmentDraft({
     input,
     role,
@@ -241,54 +239,6 @@ function resolveAnchor<TMessage, TOptimistic>(
   }
 
   return null
-}
-
-function resolveDirectionHint(
-  kind: GeometryBuildKind,
-  direction: 'before' | 'after' | undefined,
-): PhysicalRowSelectionDirectionHint {
-  if (kind === 'followBottom') {
-    return 'latest'
-  }
-  if (kind === 'segmentShift') {
-    return direction === 'before' ? 'after' : 'before'
-  }
-  if (kind === 'jump' || kind === 'restore') {
-    return 'target'
-  }
-  if (kind === 'segmentRelayout') {
-    return 'target'
-  }
-
-  return direction ?? 'latest'
-}
-
-function resolveSpacerPlacement(
-  kind: GeometryBuildKind,
-  direction: 'before' | 'after' | undefined,
-): LocalSpacerPlacement {
-  if (kind === 'followBottom' || direction === 'before') {
-    return 'end'
-  }
-  if (kind === 'jump' || kind === 'restore') {
-    return 'center'
-  }
-
-  return 'start'
-}
-
-function resolveRole(
-  kind: GeometryBuildKind,
-  hasMoreAfter: boolean,
-): PhysicalSegmentRole {
-  if (kind === 'followBottom' || (kind === 'bootstrap' && !hasMoreAfter)) {
-    return 'latest'
-  }
-  if (kind === 'jump' || kind === 'restore') {
-    return 'target'
-  }
-
-  return 'history'
 }
 
 function createLogicalSegmentId(

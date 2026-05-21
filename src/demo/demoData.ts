@@ -2,8 +2,8 @@ import type {
   CommittedMessageDataItem,
   MessageIdentityAnchor,
   MessageDataSnapshot,
-  ViewportEffect,
-} from '../runtime.deprecated'
+  ViewportModifier as ViewportEffect,
+} from '../runtime-next'
 
 export type DemoMessageKind = 'text' | 'longText' | 'image' | 'video' | 'album'
 
@@ -397,7 +397,7 @@ export function createDemoSnapshot(input: {
     hasMoreAfter: input.hasMoreAfter ?? false,
     change: {
       kind: input.kind ?? 'patch',
-      viewportEffect: input.effect,
+      viewportModifier: input.effect,
     },
   }
 }

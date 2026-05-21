@@ -1,7 +1,7 @@
 import type {
   MessageDataSnapshot,
-  ViewportEffect,
-} from '../runtime.deprecated'
+  ViewportModifier as ViewportEffect,
+} from '../runtime-next'
 import {
   type DemoMessage,
   createNewestMessage,

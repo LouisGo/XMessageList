@@ -75,12 +75,11 @@ describe('runtime-next import boundaries', () => {
     expect(violations).toEqual([])
   })
 
-  it('keeps runtime-next out of the root package entry', () => {
-    const violations = rootEntrySources
-      .filter(([, source]) => /runtime-next/.test(source))
-      .map(([path]) => path)
-
-    expect(violations).toEqual([])
+  it('uses runtime-next as the root package entry', () => {
+    expect(rootEntrySources[0]?.[1]).toContain(
+      "export * from './runtime-next/index'",
+    )
+    expect(rootEntrySources[0]?.[1]).toContain('RuntimeNextMessageViewport')
   })
 
   it('does not import through the root entry or package self-reference', () => {

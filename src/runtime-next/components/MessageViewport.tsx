@@ -225,7 +225,7 @@ const messageWindowStyle: CSSProperties = {
 }
 
 const normalFlowRowStyle: CSSProperties = {
-  display: 'block',
+  display: 'flow-root',
   position: 'static',
 }
 

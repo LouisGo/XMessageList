@@ -311,7 +311,7 @@ describe('messagesAroundRespToSnapshot', () => {
     expect(snapshot.hasMoreBefore).toBe(true)
     expect(snapshot.hasMoreAfter).toBe(false)
     expect(snapshot.change.kind).toBe('initial')
-    expect(snapshot.change.viewportEffect).toBe('reset')
+    expect(snapshot.change.viewportModifier).toBe('reset')
   })
 
   it('sets anchor to undefined when anchor messageId is empty', () => {

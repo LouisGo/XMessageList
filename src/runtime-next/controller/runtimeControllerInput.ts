@@ -179,10 +179,60 @@ export class RuntimeControllerInputCoordinator<
 
   #handleScrollFrame(scrollTop: number): void {
     if (this.#deps.getDestroyed()) return
-    this.#deps.setCurrentScrollTop(Math.max(0, scrollTop))
+    const boundedScrollTop = this.#clampNativeScrollTop(scrollTop)
+    this.#deps.setCurrentScrollTop(boundedScrollTop)
     this.#deps.metrics.patchScrollPosition(this.#deps.getCurrentScrollTop())
     reconcileBottomLockFromScroll(this.#deps, this.#scrollState)
     emitAdjacentPrefetchNeed(this.#deps, this.#edgeNeedLatch)
+  }
+
+  #clampNativeScrollTop(scrollTop: number): number {
+    const metrics = this.#deps.metrics.getMetrics()
+    const nextScrollTop = Math.max(0, scrollTop)
+    if (
+      metrics.physicalSegmentId === null ||
+      metrics.isDragLocked ||
+      metrics.isThumbFrozen
+    ) {
+      return nextScrollTop
+    }
+
+    const rangeStart = Math.min(
+      metrics.maxScrollPosition,
+      Math.max(0, metrics.safeScrollRangeStart),
+    )
+    const rangeEnd = Math.min(
+      metrics.maxScrollPosition,
+      Math.max(rangeStart, metrics.safeScrollRangeEnd),
+    )
+    const boundedScrollTop = Math.min(
+      rangeEnd,
+      Math.max(rangeStart, nextScrollTop),
+    )
+    if (boundedScrollTop === nextScrollTop) return boundedScrollTop
+
+    const token = {
+      transactionId: 'native-scroll-clamp',
+      kind: 'anchor-correction' as const,
+    }
+    const acquired = this.#deps.writer.acquire(token)
+    if (!acquired.acquired) {
+      this.#deps.diagnostics.record({
+        kind: 'writer-arbitration',
+        severity: 'warn',
+        owner: 'scroll',
+        message: 'native scroll clamp writer denied',
+      })
+      return nextScrollTop
+    }
+    this.#deps.writer.writeScrollTop(
+      this.#deps.dom.getContainer(),
+      boundedScrollTop,
+      token,
+    )
+    this.#deps.writer.release(token)
+
+    return boundedScrollTop
   }
 
   #handleWheelBoundary(event: WheelEvent): boolean {

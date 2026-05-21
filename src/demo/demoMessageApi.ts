@@ -1,8 +1,8 @@
 import type {
   CommittedMessageDataItem,
   MessageDataSnapshot,
-  ViewportEffect,
-} from '../runtime.deprecated/types'
+  ViewportModifier as ViewportEffect,
+} from '../runtime-next'
 import type { DemoMessage } from './demoData'
 import { estimateDemoMessageHeight } from './demoData'
 import { loadPersistedDemoFeed } from './demoLocalStoreClient'
@@ -154,7 +154,7 @@ export function messagesAroundRespToSnapshot<TMessage>(
     hasMoreAfter: resp.hasMoreAfter,
     change: {
       kind: options.snapshotKind,
-      viewportEffect: options.effect,
+      viewportModifier: options.effect,
     },
   }
 }

@@ -171,6 +171,36 @@ describe('runtime-next data arrival classifier', () => {
     })
   })
 
+  it('lets pending destination consume reset-shaped around data', () => {
+    const target = item('m-target')
+
+    expect(
+      classifyDataArrival({
+        snapshot: {
+          ...snapshot([target]),
+          change: {
+            kind: 'reset',
+            viewportModifier: 'reset',
+          },
+        },
+        activeProjection: null,
+        pendingIntent: {
+          kind: 'jump',
+          target: {
+            messageId: 'm-target',
+          },
+          origin: 'user',
+          priority: 'destination',
+        },
+      }).intent,
+    ).toEqual({
+      kind: 'jump',
+      target: {
+        messageId: 'm-target',
+      },
+    })
+  })
+
   it('resolves pending segmentShift only when adjacent data exists', () => {
     const m1 = item('m-1')
     const m2 = item('m-2')

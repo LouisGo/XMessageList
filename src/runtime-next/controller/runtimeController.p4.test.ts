@@ -6,6 +6,7 @@ import type {
   MessageDataItem,
   MessageViewportSnapshot,
   ProjectionCommitToken,
+  RuntimeNextViewportEvent,
 } from '../types'
 
 function item(messageId: string, estimatedHeight = 64): MessageDataItem<{ text: string }> {
@@ -30,6 +31,8 @@ function snapshot(input: {
   readonly revision?: number
   readonly hasMoreBefore?: boolean
   readonly hasMoreAfter?: boolean
+  readonly anchor?: { readonly messageId: string; readonly position?: number }
+  readonly anchorStatus?: 'normal' | 'deleted'
   readonly modifier?: 'none' | 'items-change' | 'append' | 'auto-scroll-to-bottom'
 }) {
   return {
@@ -37,6 +40,8 @@ function snapshot(input: {
     generation: input.generation ?? 1,
     revision: input.revision ?? 1,
     items: input.items,
+    anchor: input.anchor,
+    anchorStatus: input.anchorStatus ?? 'normal',
     hasMoreBefore: input.hasMoreBefore ?? false,
     hasMoreAfter: input.hasMoreAfter ?? false,
     change: {
@@ -391,12 +396,49 @@ describe('runtime-next P4 transaction integration', () => {
     }))
     const token = commit(runtime)
     expect(runtime.getSnapshot().commitToken).toEqual(token)
+    expect(events).toContain('destinationSettled')
     expect(
       runtime.getSnapshot().items.some((snapshotItem) =>
         snapshotItem.key.kind === 'committed' &&
         snapshotItem.key.messageId === 'm-target',
       ),
     ).toBe(true)
+  })
+
+  it('settles deleted jump targets after promoting fallback anchor geometry', () => {
+    const runtime = new MessageViewportRuntime<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    const events: RuntimeNextViewportEvent[] = []
+    runtime.subscribeEvent((event) => events.push(event))
+    runtime.attach(createContainer({ height: 320 }))
+    runtime.setDataSnapshot(snapshot({ items: [item('m-1'), item('m-2')] }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    commit(runtime)
+    runtime.dispatch({
+      type: 'jump',
+      target: { messageId: 'm-deleted', position: 7 },
+    })
+
+    runtime.setDataSnapshot(snapshot({
+      items: [item('m-6'), item('m-fallback'), item('m-8')],
+      revision: 2,
+      modifier: 'append',
+      anchor: { messageId: 'm-fallback', position: 6 },
+      anchorStatus: 'deleted',
+    }))
+    commit(runtime)
+
+    expect(events).toContainEqual({
+      type: 'destinationSettled',
+      feedId: 'feed',
+      generation: 1,
+      intent: 'jump',
+      target: { messageId: 'm-deleted', position: 7 },
+      resolution: 'fallback-deleted',
+      resolvedTarget: { messageId: 'm-fallback', position: 6 },
+    })
   })
 
   it('does not publish a blank relayout when logical bounds disappeared', () => {

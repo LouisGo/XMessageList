@@ -1,39 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageViewportRuntime } from '../runtime.deprecated'
+import { MessageViewportRuntime } from '../runtime-next'
 import type { DemoMessage } from './demoData'
 import { LRUCache } from './utils/lru'
 
 export const DEMO_FEED_RUNTIME_CACHE_CAPACITY = 3
 
-const DEMO_RUNTIME_WINDOW = {
-  overscan: 3,
-  maxMountedItems: 180,
-}
-
 type DemoRuntimeFactory = (
   feedId: string,
+  generation: number,
 ) => MessageViewportRuntime<DemoMessage>
 
 export type DemoFeedRuntimeCache = {
-  getRuntime: (feedId: string) => MessageViewportRuntime<DemoMessage>
-  hasRuntime: (feedId: string) => boolean
-  deleteRuntime: (feedId: string) => boolean
+  getRuntime: (
+    feedId: string,
+    generation: number,
+  ) => MessageViewportRuntime<DemoMessage>
+  hasRuntime: (feedId: string, generation: number) => boolean
+  deleteRuntime: (feedId: string, generation?: number) => boolean
   getCachedFeedIds: () => string[]
   destroyAll: () => void
 }
 
-function createDemoFeedRuntime(feedId: string): MessageViewportRuntime<DemoMessage> {
+function createDemoFeedRuntime(
+  feedId: string,
+  generation: number,
+): MessageViewportRuntime<DemoMessage> {
   return new MessageViewportRuntime<DemoMessage>({
     feedId,
-    generation: 1,
-    window: DEMO_RUNTIME_WINDOW,
-    bottomUnlockThresholdPx: 200,
-    edgeLoadThresholdPx: 72,
-    debug: {
-      diagnostics: {
-        channels: 'all',
-      },
-    },
+    generation,
   })
 }
 
@@ -52,24 +46,44 @@ export function createDemoFeedRuntimeCache({
   )
 
   return {
-    getRuntime(feedId) {
-      return cache.getOrSet(feedId, () => createRuntime(feedId))
+    getRuntime(feedId, generation) {
+      const key = createRuntimeCacheKey(feedId, generation)
+      return cache.getOrSet(key, () => createRuntime(feedId, generation))
     },
-    hasRuntime(feedId) {
-      return cache.has(feedId)
+    hasRuntime(feedId, generation) {
+      return cache.has(createRuntimeCacheKey(feedId, generation))
     },
-    deleteRuntime(feedId) {
-      const runtime = cache.peek(feedId)
+    deleteRuntime(feedId, generation) {
+      const keys = generation === undefined
+        ? cache.getLruKeys().filter((key) => getFeedIdFromRuntimeCacheKey(key) === feedId)
+        : [createRuntimeCacheKey(feedId, generation)]
+      let deleted = false
 
-      if (!runtime) {
-        return false
-      }
+      keys.forEach((key) => {
+        const runtime = cache.peek(key)
 
-      runtime.destroy()
-      return cache.delete(feedId)
+        if (!runtime) {
+          return
+        }
+
+        runtime.destroy()
+        deleted = cache.delete(key) || deleted
+      })
+
+      return deleted
     },
     getCachedFeedIds() {
-      return cache.getLruKeys()
+      const feedIds: string[] = []
+
+      cache.getLruKeys().forEach((key) => {
+        const feedId = getFeedIdFromRuntimeCacheKey(key)
+
+        if (!feedIds.includes(feedId)) {
+          feedIds.push(feedId)
+        }
+      })
+
+      return feedIds
     },
     destroyAll() {
       cache.forEach((runtime) => {
@@ -114,4 +128,14 @@ export function useDemoFeedRuntimeCache(): DemoFeedRuntimeCache {
     }),
     [cache, destroyAll],
   )
+}
+
+function createRuntimeCacheKey(feedId: string, generation: number): string {
+  return `${feedId}::${generation}`
+}
+
+function getFeedIdFromRuntimeCacheKey(key: string): string {
+  const separatorIndex = key.lastIndexOf('::')
+
+  return separatorIndex >= 0 ? key.slice(0, separatorIndex) : key
 }

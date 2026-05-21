@@ -7,8 +7,8 @@ import type {
   AnchorState,
   MessageViewportSnapshot,
   MessageViewportRuntime,
-  MessageViewportRuntimeEvent,
-} from '../../runtime.deprecated'
+  RuntimeNextViewportEvent as MessageViewportRuntimeEvent,
+} from '../../runtime-next'
 import { createDemoMessages, type DemoMessage } from '../demoData'
 import {
   type PersistedDemoFeed,
@@ -83,10 +83,19 @@ function createRuntimeStub(
     feedId: 'feed-runtime',
     generation: 1,
     revision: 1,
+    commitToken: {
+      feedId: 'feed-runtime',
+      generation: 1,
+      projectionRevision: 1,
+      segmentId: 'test-segment',
+      segmentRevision: 1,
+      transactionId: 'test-transaction',
+    },
     items: [],
     renderWindow: { startIndex: 0, endIndex: -1, itemKeys: [] },
     topSpacer: 0,
     bottomSpacer: 0,
+    naturalBlankHeight: 0,
     bottomLockState: 'UNLOCKED',
     bootstrapState: 'READY',
     viewportPhase: 'IDLE',
@@ -287,8 +296,8 @@ describe('useDemoMessageScenario', () => {
     expect(runtimeRelease.runtime.dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'bootstrap', mode: 'latest' }),
     )
-    expect(runtimeCache.getRuntime).toHaveBeenCalledWith('feed-runtime')
-    expect(runtimeCache.getRuntime).toHaveBeenCalledWith('feed-release')
+    expect(runtimeCache.getRuntime).toHaveBeenCalledWith('feed-runtime', 2)
+    expect(runtimeCache.getRuntime).toHaveBeenCalledWith('feed-release', 3)
 
     const feedRuntimeSnapshotCalls = vi.mocked(
       runtimeFeed.runtime.setDataSnapshot,
@@ -331,10 +340,19 @@ describe('useDemoMessageScenario', () => {
       feedId: 'feed-runtime',
       generation: 1,
       revision: 1,
+      commitToken: {
+        feedId: 'feed-runtime',
+        generation: 1,
+        projectionRevision: 1,
+        segmentId: 'test-segment',
+        segmentRevision: 1,
+        transactionId: 'test-transaction',
+      },
       items: [],
       renderWindow: { startIndex: 0, endIndex: -1, itemKeys: [] },
       topSpacer: 0,
       bottomSpacer: 12_001,
+      naturalBlankHeight: 0,
       bottomLockState: 'UNLOCKED',
       bootstrapState: 'READY',
       viewportPhase: 'IDLE',
@@ -386,7 +404,7 @@ describe('useDemoMessageScenario', () => {
       scenario?.selectFeed('feed-runtime')
     })
 
-    expect(runtimeCache.deleteRuntime).toHaveBeenCalledWith('feed-runtime')
+    expect(runtimeCache.deleteRuntime).toHaveBeenCalledWith('feed-runtime', 2)
     expect(scenario?.pendingFeedId).toBe('feed-runtime')
     expect(scenario?.activeRuntime).toBe(runtimeRelease.runtime)
 
@@ -979,7 +997,7 @@ describe('useDemoMessageScenario', () => {
     expect(latestSnapshot?.hasMoreBefore).toBe(true)
     expect(latestSnapshot?.change).toEqual({
       kind: 'reset',
-      viewportEffect: 'auto-scroll-to-bottom',
+      viewportModifier: 'auto-scroll-to-bottom',
     })
     expect(
       latestLastItem?.kind === 'committed'
@@ -1037,7 +1055,7 @@ describe('useDemoMessageScenario', () => {
     expect(scenario?.messageCount).toBeGreaterThan(40)
     expect(
       vi.mocked(runtime.setDataSnapshot).mock.calls.some(([snapshot]) =>
-        snapshot.change.viewportEffect === 'append',
+        snapshot.change.viewportModifier === 'append',
       ),
     ).toBe(true)
     expect(mockWriteDemoLog).toHaveBeenCalledWith(

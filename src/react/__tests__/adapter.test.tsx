@@ -3,10 +3,12 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   MessageViewport,
+} from '..'
+import {
   MessageViewportRuntime,
   type MessageDataSnapshot,
   type MessageViewportSnapshot,
-} from '../..'
+} from '../../runtime.deprecated'
 import { FakeScheduler, createFakeObservers } from '../../test/fakes'
 
 type TestMessage = {

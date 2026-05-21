@@ -42,7 +42,11 @@ export type DataArrivalIntent =
   | { readonly kind: 'segmentRelayout'; readonly reason: 'resize' | 'measurement' | 'coverage-risk' | 'cap-exceeded' | 'cap-fallback' | 'spacer-oscillation' | 'bootstrap-stabilization' }
   | { readonly kind: 'segmentShift'; readonly direction: DataIntentShiftDirection }
   | { readonly kind: 'followBottom'; readonly origin: PendingFollowBottomOrigin }
-  | { readonly kind: 'jump'; readonly target: MessageIdentityAnchor }
+  | {
+      readonly kind: 'jump'
+      readonly target: MessageIdentityAnchor
+      readonly requestedTarget?: MessageIdentityAnchor
+    }
   | { readonly kind: 'restore'; readonly target: MessageIdentityAnchor | AnchorState }
   | { readonly kind: 'reset'; readonly reason: string }
   | { readonly kind: 'no-op'; readonly reason: string }

@@ -15,9 +15,9 @@ export {
   type RuntimeNextScrollbarGeometryOptions,
 } from './components'
 
-// P5 已接入 input / motion / runtime-next adapter；demo 默认切换仍留给 P6。
+// P6 将 demo/default entry 切到 runtime-next；旧 runtime 仅保留为参考备份。
 export const RUNTIME_NEXT_STATUS: RuntimeNextModuleStatus = {
-  phase: 'P5_INPUT_SCROLLBAR_AND_MOTION',
+  phase: 'P6_DEMO_DEFAULT_RUNTIME_NEXT',
   geometryImplemented: true,
   importsDeprecatedRuntime: false,
 }

@@ -5,9 +5,9 @@ import {
   useState,
 } from 'react'
 import {
-  MessageViewport,
+  RuntimeNextMessageViewport,
   type MessageDataItem,
-} from '../index'
+} from '../runtime-next'
 import { type DemoMessage } from './demoData'
 import { useDemoFeedRuntimeCache } from './useDemoFeedRuntimeCache'
 import { useDemoMessageScenario } from './useDemoMessageScenario'
@@ -305,7 +305,7 @@ export function DemoMessageViewport() {
         </section>
       </aside>
         <section className="chat-surface" aria-label="Message runtime demo">
-          <MessageViewport
+          <RuntimeNextMessageViewport
             runtime={scenario.activeRuntime}
             className="message-viewport"
             renderMessage={renderDemoItem}

@@ -1,6 +1,7 @@
 import type { RuntimeDataStore } from '../data/store'
 import type { DiagnosticRecorder } from '../diagnostics/recorder'
 import type { RuntimeDomRegistry } from '../dom/domRegistry'
+import type { RuntimeNextViewportEvent } from '../events/types'
 import type { PhysicalMetricsStore } from '../geometry/metrics/metricsStore'
 import type { PhysicalScrollMetrics } from '../geometry/types'
 import type { PendingGeometryProjection } from '../geometry/publication/publication.types'
@@ -58,4 +59,5 @@ export type RuntimeTransactionFlowContext<TMessage, TOptimistic> = {
   readonly abort: (reason: TransactionAbortReason) => void
   readonly recoverRelayoutBounds: (target: AnchorState) => void
   readonly deferPendingDataIntent: (intent: PendingDataIntent) => void
+  readonly emitEvent: (event: RuntimeNextViewportEvent) => void
 }

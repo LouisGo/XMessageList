@@ -1,5 +1,6 @@
 import type { MessageDataItem } from '../projection/types'
 import type { MessageRuntimeItemKey } from '../identity/types'
+import type { MessageIdentityAnchor } from '../identity/types'
 import { anchorToCommittedItemKey, isMessageRuntimeItemKeyEqual } from '../identity/itemKey'
 import type {
   DataArrivalClassification,
@@ -15,6 +16,10 @@ export function classifyDataArrival<
 ): DataArrivalClassification {
   const pending = input.pendingIntent
 
+  if (pending !== null) {
+    return classifyPendingIntent(input, pending)
+  }
+
   if (input.snapshot.change.viewportModifier === 'reset') {
     return {
       intent: {
@@ -22,10 +27,6 @@ export function classifyDataArrival<
         reason: 'data-reset',
       },
     }
-  }
-
-  if (pending !== null) {
-    return classifyPendingIntent(input, pending)
   }
 
   if (input.snapshot.change.viewportModifier === 'auto-scroll-to-bottom') {
@@ -103,19 +104,7 @@ function classifyPendingIntent<TMessage, TOptimistic>(
             },
           }
     case 'jump':
-      return hasCommittedTarget(input.snapshot.items, pending.target.messageId)
-        ? {
-            intent: {
-              kind: 'jump',
-              target: pending.target,
-            },
-          }
-        : {
-            intent: {
-              kind: 'no-op',
-              reason: 'pending-jump-target-missing',
-            },
-          }
+      return classifyPendingJump(input, pending)
     case 'restore':
       return isRestoreTargetAvailable(input, pending)
         ? {
@@ -131,6 +120,53 @@ function classifyPendingIntent<TMessage, TOptimistic>(
             },
           }
   }
+}
+
+function classifyPendingJump<TMessage, TOptimistic>(
+  input: DataArrivalClassifierInput<TMessage, TOptimistic>,
+  pending: Extract<PendingDataIntent, { readonly kind: 'jump' }>,
+): DataArrivalClassification {
+  if (hasCommittedTarget(input.snapshot.items, pending.target.messageId)) {
+    return {
+      intent: {
+        kind: 'jump',
+        target: pending.target,
+      },
+    }
+  }
+
+  const fallback = resolveDeletedJumpFallback(input)
+  if (fallback !== null) {
+    return {
+      intent: {
+        kind: 'jump',
+        target: fallback,
+        requestedTarget: pending.target,
+      },
+    }
+  }
+
+  return {
+    intent: {
+      kind: 'no-op',
+      reason: 'pending-jump-target-missing',
+    },
+  }
+}
+
+function resolveDeletedJumpFallback<TMessage, TOptimistic>(
+  input: DataArrivalClassifierInput<TMessage, TOptimistic>,
+): MessageIdentityAnchor | null {
+  const anchor = input.snapshot.anchor
+  if (
+    input.snapshot.anchorStatus !== 'deleted' ||
+    anchor === undefined ||
+    !hasCommittedTarget(input.snapshot.items, anchor.messageId)
+  ) {
+    return null
+  }
+
+  return anchor
 }
 
 function isActiveProjectionStillAddressable<TMessage, TOptimistic>(

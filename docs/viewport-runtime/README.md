@@ -60,7 +60,7 @@ React、demo、业务层都不能根据 raw `scrollTop` / `scrollHeight` 自行�
 | --- | --- | --- |
 | `src/runtime` | 已移除 | 不再作为实现或 import 入口。 |
 | `src/runtime.deprecated` | 旧 runtime 参考实现 | 保留备份和必要行为参考，不接受新架构实现。 |
-| `src/runtime-next` | P5 runtime-next 实现 | 承载 runtime、input/motion、geometry、transaction 和自有 React projection adapter；demo 默认切换仍在 P6。 |
+| `src/runtime-next` | P6 默认 runtime-next 实现 | 承载 runtime、input/motion、geometry、transaction 和自有 React projection adapter；默认 demo/root package entry 已切换到这里。 |
 | `src/react` | deprecated React projection adapter | 与 `src/runtime.deprecated` 一起冻结，只服务旧 demo / 旧合同；不能被 runtime-next import 或复用。 |
 | `src/demo` | demo / data host | 可复用 mock 与场景，不得实现第二套 geometry engine。 |
 

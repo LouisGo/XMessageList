@@ -4,6 +4,7 @@ export type RuntimeNextPhase =
   | 'P3_GEOMETRY_KERNEL_IN_PROGRESS'
   | 'P4_TRANSACTION_AND_DATA_ARRIVAL'
   | 'P5_INPUT_SCROLLBAR_AND_MOTION'
+  | 'P6_DEMO_DEFAULT_RUNTIME_NEXT'
 
 export type RuntimeNextModuleStatus = {
   readonly phase: RuntimeNextPhase

@@ -46,7 +46,11 @@ export type DataArrivalIntent =
   | { readonly kind: 'segmentRelayout'; readonly reason: SegmentRelayoutReason }
   | { readonly kind: 'segmentShift'; readonly direction: SegmentShiftDirection }
   | { readonly kind: 'followBottom'; readonly origin?: PendingFollowBottomOrigin }
-  | { readonly kind: 'jump'; readonly target: MessageIdentityAnchor }
+  | {
+      readonly kind: 'jump'
+      readonly target: MessageIdentityAnchor
+      readonly requestedTarget?: MessageIdentityAnchor
+    }
   | { readonly kind: 'restore'; readonly target: MessageIdentityAnchor | AnchorState }
   | { readonly kind: 'reset'; readonly reason: string }
   | { readonly kind: 'no-op'; readonly reason: string }
@@ -68,6 +72,7 @@ export type RuntimeTransactionIntent<TMessage = unknown, TOptimistic = unknown> 
   | {
       readonly kind: 'jump'
       readonly target: MessageIdentityAnchor
+      readonly requestedTarget?: MessageIdentityAnchor
       readonly origin?: 'user'
     }
   | {

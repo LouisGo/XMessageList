@@ -1,15 +1,15 @@
 # runtime-next
 
 `src/runtime-next` 是新的 Physical Segment Windowing runtime 承载体。
-当前处于 P5 input, scrollbar, and motion 阶段。public facade 已委托 runtime-next
+当前处于 P6 demo/default cutover 阶段。public facade 已委托 runtime-next
 controller，把 data snapshot、semantic command、P3 geometry kernel、P5 input/motion
-链路接成 commit-token 驱动的事务；demo cutover 仍留给 P6。
+链路接成 commit-token 驱动的事务；默认 demo 和 root package entry 已切到 runtime-next。
 
 ## 当前允许内容
 
 - `README.md`：本地维护规则。
 - `components/README.md`：runtime-next React adapter 重写边界。
-- `index.ts`：实验入口，只导出 runtime-next 自身的 facade、helper 和类型。
+- `index.ts`：runtime-next 入口，只导出 runtime-next 自身的 facade、helper 和类型。
 - `MessageViewportRuntime.ts`：public facade 薄委托，不拥有几何逻辑。
 - `types.ts`：公共类型聚合入口，具体类型必须按领域 co-located。
 - `commands/`、`data/`、`diagnostics/`、`projection/`：P2 类型和最小合同 helper。

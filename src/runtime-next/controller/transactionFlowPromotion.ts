@@ -17,6 +17,7 @@ import {
   recordPhysicalRelayoutDiagnostic,
   recordPhysicalWindowDiagnostic,
 } from './transactionFlowDiagnostics'
+import { emitDestinationSettled } from './transactionFlowDestination'
 import { resolveTransactionScrollTop } from './transactionFlowScroll'
 import type {
   PendingPublication,
@@ -210,6 +211,7 @@ export function promoteGeometry<TMessage, TOptimistic>(
   })
   recordPhysicalWindowDiagnostic(ctx, pending, metrics)
   ctx.runner.markMetricsPromoted(pending.transaction.id)
+  emitDestinationSettled(ctx, pending.transaction)
   ctx.finish(pending.transaction.id)
 }
 

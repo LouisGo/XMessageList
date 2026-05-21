@@ -6,8 +6,8 @@
 
 - 当前代码基线：以 Git HEAD 为准；路线图不再硬编码短 hash，避免进度记录漂移。
 - 旧 runtime：已隔离到 `src/runtime.deprecated`，只作为行为备份和必要参考。
-- 新 runtime：`src/runtime-next` 已补齐 P5 input / scrollbar / motion 接线；public facade 仍保持薄委托，React/demo 不拥有几何。
-- 当前阶段：P5 已完成 runtime-next 自有 React adapter 和输入链路；下一阶段进入 P6 demo cutover and hardening。
+- 新 runtime：`src/runtime-next` 已进入 P6 demo/default cutover；public facade 仍保持薄委托，React/demo 不拥有几何。
+- 当前阶段：P6 已将默认 demo 和 root package entry 切到 runtime-next，继续做 demo hardening 验证。
 
 ## 总原则
 
@@ -378,7 +378,7 @@ P5 实施记录：
 - `scroll/interactionState.ts` 固定 drag lock、thumb freeze、segmentShift pending、momentum latch 和 suppressed delta flags；`runtimeControllerDirectScroll.ts` 在 drag 到 safe range 边界时只在相邻数据 ready 时接受 `DragSegmentHandoff`，否则保持 edge soft-stop 并发 need。
 - `transactionFlowScroll.ts` 支持 drag handoff continuation rebase 到 target segment 中段安全区；`scroll/motionEngine.ts` 为 followBottom / jump / restore 提供 target segment 内 bounded write 和 motion diagnostics。
 - `components/` 已新增 runtime-next 自有 React adapter、hooks、custom scrollbar 和 scrollbar geometry helper；adapter 使用完整 `ProjectionCommitToken` ack，custom scrollbar 只订阅 `PhysicalScrollMetrics`。
-- `x-message-list/runtime-next` 子路径导出 runtime-next facade、adapter、hooks 和 scrollbar helper；root package 仍不导出 runtime-next，demo 默认切换留给 P6。
+- `x-message-list/runtime-next` 子路径导出 runtime-next facade、adapter、hooks 和 scrollbar helper；root package 的默认导出已在 P6 切到 runtime-next。
 - 验证新增：`runtimeController.p5.test.ts` 覆盖 drag handoff / soft-stop / wheel momentum latch；`components.test.tsx` 覆盖完整 commit token ack、physical metrics 高频订阅不 rerender row tree、thumb geometry 不依赖 DOM `scrollHeight`。
 
 本阶段禁止：
@@ -415,8 +415,12 @@ Review 检查点：
 
 任务：
 
-- [ ] 为 demo 增加 runtime-next 显式入口。
-- [ ] 跑通 latest bootstrap、top/bottom paging、jump/restore、followBottom。
+- [x] 将当前 demo 组件、runtime cache 和 snapshot 合同切到 runtime-next。
+- [x] 将 root package entry 切到 runtime-next，`./runtime-next` 子路径继续保留。
+- [x] 将 demo runtime cache 改为 `feedId + generation` 隔离，避免 runtime-next 拒收跨代 snapshot。
+- [x] 将 demo data 合同从 `viewportEffect` 切到 `viewportModifier`。
+- [x] 在 runtime-next 中于 jump promote 后发出 `destinationSettled`，删除引用通过 fallback anchor settle。
+- [ ] 跑通 latest bootstrap、top/bottom paging、jump/restore、followBottom 的浏览器验证。
 - [ ] 验证 short-feed、exceptional-row、coverage failure、shift loop suppression。
 - [ ] 验证 custom scrollbar drag、thumb freeze、momentum latch。
 - [ ] 将 deprecated runtime 的测试和文档降级为 reference。

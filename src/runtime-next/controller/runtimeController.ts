@@ -28,7 +28,6 @@ import { ScrollWriterArbitration } from '../scroll/writerArbitration'
 import type { DirectScrollInput } from '../scroll/types'
 import { TransactionRunner } from '../transactions/transactionRunner'
 import type {
-  RuntimeTransaction,
   RuntimeTransactionIntent,
   TransactionAbortReason,
   TransactionStageRecord,
@@ -47,9 +46,11 @@ import {
   writeDirectScrollTopWithWriter,
 } from './runtimeControllerDirectScroll'
 import {
+  createActiveDataProjection,
   emitNeedForPendingIntent,
   recordDataIntent,
   recordTransactionStage,
+  retainWriterDeniedIntent,
   shouldRetainPendingDataIntent,
 } from './runtimeControllerSupport'
 
@@ -186,6 +187,7 @@ export class MessageViewportRuntimeController<
         this.#pendingDataIntent = intent
         this.#emitNeedForPendingIntent(intent)
       },
+      emitEvent: (event) => this.#emitEvent(event),
     })
   }
 
@@ -253,7 +255,10 @@ export class MessageViewportRuntimeController<
       return
     }
 
-    const active = this.#activeDataProjection()
+    const active = createActiveDataProjection(
+      this.#revision.getCommittedSegment(),
+      this.#projection.getSnapshot().renderWindow,
+    )
     const { intent } = classifyDataArrival({
       snapshot,
       activeProjection: active,
@@ -298,7 +303,10 @@ export class MessageViewportRuntimeController<
       }
       if (this.#data.getSnapshot() === null) {
         this.#pendingBootstrap = intent
-        this.#emitEvent(createNeedLatestEvent(this.#ids()))
+        this.#emitEvent(createNeedLatestEvent({
+          feedId: this.#feedId,
+          generation: this.#generation,
+        }))
       } else {
         this.#enqueue(intent)
       }
@@ -328,40 +336,29 @@ export class MessageViewportRuntimeController<
   subscribePhysicalScroll(listener: RuntimeListener): RuntimeUnsubscribe {
     this.#physicalListeners.add(listener); return () => this.#physicalListeners.delete(listener)
   }
-
   getSnapshot(): MessageViewportSnapshot<TMessage, TOptimistic> {
     return this.#projection.getSnapshot()
   }
-
   getPhysicalScrollMetrics(): PhysicalScrollMetrics { return this.#metrics.getMetrics() }
   getViewportAnchorState(): AnchorState | null {
     return this.#dom.resolveViewportAnchor(
       this.#projection.getSnapshot().renderWindow.itemKeys,
     )
   }
-
   getDiagnosticRecords(): RuntimeNextDiagnosticRecord[] { return this.#diagnostics.getRecords() }
-
   registerRow(key: MessageRuntimeItemKey, element: HTMLElement | null): void {
     this.#dom.registerRow(key, element)
     this.#inputCoordinator.registerRow(key, element)
   }
-
   registerTopSpacer(element: HTMLElement | null): void { this.#dom.registerTopSpacer(element) }
-
   registerBottomSpacer(element: HTMLElement | null): void { this.#dom.registerBottomSpacer(element) }
-
   registerTopSentinel(element: HTMLElement | null): void { this.#dom.registerTopSentinel(element) }
-
   registerBottomSentinel(element: HTMLElement | null): void { this.#dom.registerBottomSentinel(element) }
-
   notifyProjectionCommitted(commit: ProjectionCommitToken): void { this.#flow.handleProjectionCommitted(commit) }
-
   beginDirectScroll(input: DirectScrollInput): void {
     if (this.#destroyed) return
     beginDirectScrollTransaction(input, this.#inputCoordinator.directScrollContext())
   }
-
   writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): boolean {
     if (this.#destroyed) return false
     const wrote = writeDirectScrollTopWithWriter(
@@ -371,12 +368,10 @@ export class MessageViewportRuntimeController<
     )
     return wrote
   }
-
   endDirectScroll(input: DirectScrollInput): void {
     if (this.#destroyed) return
     endDirectScrollTransaction(input, this.#inputCoordinator.directScrollContext())
   }
-
   enqueueInternalTransaction(
     intent: RuntimeTransactionIntent<TMessage, TOptimistic>,
   ): void {
@@ -422,59 +417,13 @@ export class MessageViewportRuntimeController<
       this.#revision.abortPendingPublication()
       this.#writer.releaseTransaction(active.id)
       this.#inputCoordinator.handleTransactionAbort(active)
-      this.#retainWriterDeniedIntent(active, reason)
+      this.#pendingDataIntent =
+        retainWriterDeniedIntent(active, reason) ?? this.#pendingDataIntent
     }
     this.#flow.clearPending()
     this.#clearAckTimeout()
     this.#runner.abortActive(reason)
     this.#drain()
-  }
-
-  #retainWriterDeniedIntent(
-    transaction: RuntimeTransaction<TMessage, TOptimistic>,
-    reason: TransactionAbortReason,
-  ): void {
-    if (reason !== 'writer-denied') return
-    const intent = transaction.intent
-    if (intent.kind === 'followBottom') {
-      if (intent.origin === 'auto-scroll-hint') return
-      this.#pendingDataIntent = {
-        kind: 'followBottom',
-        origin: 'user-command',
-        priority: 'latest',
-      }
-      return
-    }
-    if (intent.kind === 'jump') {
-      this.#pendingDataIntent = {
-        kind: 'jump',
-        target: intent.target,
-        origin: 'user',
-        priority: 'destination',
-      }
-      return
-    }
-    if (intent.kind === 'restore') {
-      this.#pendingDataIntent = {
-        kind: 'restore',
-        target: intent.target,
-        origin: intent.origin ?? 'lifecycle',
-        priority: 'destination',
-      }
-      return
-    }
-    if (intent.kind === 'segmentShift') {
-      this.#pendingDataIntent = {
-        kind: 'segmentShift',
-        direction: intent.direction,
-        origin: intent.source === 'wheel'
-          ? 'wheel'
-          : intent.source === 'drag-handoff'
-            ? 'drag'
-            : 'data',
-        priority: 'edge',
-      }
-    }
   }
 
   #cancelActive(reason: TransactionAbortReason): void {
@@ -513,24 +462,13 @@ export class MessageViewportRuntimeController<
     )
   }
 
-  #activeDataProjection() {
-    const segment = this.#revision.getCommittedSegment()
-    if (segment === null) return null
-    return {
-      renderWindow: this.#projection.getSnapshot().renderWindow,
-      logicalStartItemKey: segment.logicalStartItemKey,
-      logicalEndItemKey: segment.logicalEndItemKey,
-    }
-  }
-
-  #ids(): { readonly feedId: string; readonly generation: number } {
-    return { feedId: this.#feedId, generation: this.#generation }
-  }
-
   #commandContext() {
     return {
       getDataSnapshot: () => this.#data.getSnapshot(),
-      ids: () => this.#ids(),
+      ids: () => ({
+        feedId: this.#feedId,
+        generation: this.#generation,
+      }),
       enqueue: (intent: RuntimeTransactionIntent<TMessage, TOptimistic>) =>
         this.#enqueue(intent),
       setPendingDataIntent: (intent: PendingDataIntent) => {

@@ -190,6 +190,12 @@ export function resolveTransactionScrollTop<TMessage, TOptimistic>(
   if (kind === 'followBottom') {
     return maxTop
   }
+  if (
+    kind === 'bootstrap' &&
+    pending.publication.segment.logicalRole === 'latest'
+  ) {
+    return maxTop
+  }
   if (kind === 'segmentShift') {
     const coverage = computeRealRowCoverage({
       topSpacer: pending.publication.topSpacer,
