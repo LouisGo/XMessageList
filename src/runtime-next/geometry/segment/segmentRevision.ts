@@ -44,6 +44,17 @@ export type PhysicalSegmentCommitAckResult =
       readonly reason: 'no-pending-segment' | 'commit-token-mismatch'
     }
 
+export type PhysicalSegmentCommitValidationResult =
+  | {
+      readonly valid: true
+      readonly segment: PhysicalSegment
+      readonly commitToken: ProjectionCommitToken
+    }
+  | {
+      readonly valid: false
+      readonly reason: 'no-pending-segment' | 'commit-token-mismatch'
+    }
+
 export class PhysicalSegmentRevisionController {
   readonly #feedId: RuntimeNextFeedId
   readonly #generation: RuntimeNextGeneration
@@ -112,21 +123,15 @@ export class PhysicalSegmentRevisionController {
   acknowledgeCommit(
     commitToken: ProjectionCommitToken,
   ): PhysicalSegmentCommitAckResult {
-    if (this.#pending === null) {
+    const validation = this.validatePendingCommitToken(commitToken)
+    if ('reason' in validation) {
       return {
         committed: false,
-        reason: 'no-pending-segment',
+        reason: validation.reason,
       }
     }
 
-    if (!isProjectionCommitTokenEqual(this.#pending.commitToken, commitToken)) {
-      return {
-        committed: false,
-        reason: 'commit-token-mismatch',
-      }
-    }
-
-    const committed = this.#pending
+    const committed = this.#pending!
     this.#committedSegment = committed.segment
     this.#lastCommitToken = committed.commitToken
     this.#pending = null
@@ -135,6 +140,30 @@ export class PhysicalSegmentRevisionController {
       committed: true,
       segment: committed.segment,
       commitToken: committed.commitToken,
+    }
+  }
+
+  validatePendingCommitToken(
+    commitToken: ProjectionCommitToken,
+  ): PhysicalSegmentCommitValidationResult {
+    if (this.#pending === null) {
+      return {
+        valid: false,
+        reason: 'no-pending-segment',
+      }
+    }
+
+    if (!isProjectionCommitTokenEqual(this.#pending.commitToken, commitToken)) {
+      return {
+        valid: false,
+        reason: 'commit-token-mismatch',
+      }
+    }
+
+    return {
+      valid: true,
+      segment: this.#pending.segment,
+      commitToken: this.#pending.commitToken,
     }
   }
 

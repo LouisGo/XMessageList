@@ -93,11 +93,12 @@ stateDiagram-v2
 
     commit_ack --> prepare_scroll
     prepare_scroll --> abort_writer_denied
-    prepare_scroll --> ack_revision
-    ack_revision --> abort_token_mismatch
-    ack_revision --> commit_scroll
+    prepare_scroll --> validate_revision
+    validate_revision --> abort_token_mismatch
+    validate_revision --> commit_scroll
     commit_scroll --> abort_writer_denied
-    commit_scroll --> promote_metrics
+    commit_scroll --> ack_revision
+    ack_revision --> promote_metrics
     promote_metrics --> finish
 
     builder_abort --> [*]
@@ -111,7 +112,8 @@ stateDiagram-v2
 
 代码事实：
 
-- `prepareTransactionScrollTop()` 在 revision ack 之前 acquire writer / prepare motion，但真正写入发生在 exact token ack 后的 `commit()`。
+- `prepareTransactionScrollTop()` 在 revision ack 之前 acquire writer / prepare motion；随后只校验 commit token，不提升 segment revision。
+- scrollTop / motion writer commit 成功后才 `acknowledgeCommit()`，避免 writer 失败时 committed segment、projection、metrics 分裂。
 - `followBottom`、`jump`、`restore` 使用 `ScrollMotionEngine.prepare()`；当前 motion 是同步写入并立即 settle，不是分帧动画。
 - `segmentShift` 使用 `segment-shift-rebase` writer。drag handoff source 会把 scrollTop rebase 到 safe range 内的中段位置。
 - `bootstrap`、`segmentRelayout`、`reset` 等非 motion/non-shift 几何事务使用 `anchor-correction` writer。
@@ -176,16 +178,18 @@ stateDiagram-v2
 
 - geometry promote：必须是 `followBottom` intent，并且 active segment role 是 `latest` 或 `short-feed`，`hasMoreAfter=false`，没有 segment shift pending/shifting，且距离 max scroll position 不超过 16px。
 - scroll frame reconcile：active segment role 是 `latest` 或 `short-feed`，`hasMoreAfter=false`，没有 segment shift in-flight，且距离 max scroll position 不超过 16px。
+- direct scroll write 成功后会用同一套 resolver 同步 reconcile；只有 lock 状态实际变化时才 patch projection。
+- segmentShift settle 清理 shift flags 后也会重新 reconcile。
 
 解锁来源：
 
 - 任意不满足上述条件的 geometry promote。
-- scroll frame reconcile 发现离底、非 latest/short-feed、仍有 after 数据、或 segment shift in-flight。
+- resolver 发现离底、非 latest/short-feed、仍有 after 数据、或 segment shift in-flight。
 
 当前边界：
 
 - `bootstrap(latest)` 本身不是锁定来源。
-- direct scroll 不直接写 bottomLockState；它写 scrollPosition，随后真实 scroll frame 才 reconcile。
+- direct scroll 不发布 row projection；它只在 bottom lock 实际变化时 patch projection state。
 
 ## 7. Command 与 Pending Intent 状态机
 
@@ -231,11 +235,7 @@ flowchart TD
     B -->|no| D{modifier reset}
 
     D -->|yes| R[reset intent]
-    D -->|no| E{modifier auto scroll}
-
-    E -->|yes hasMoreAfter| F[pending follow]
-    E -->|yes ready| G[followBottom intent]
-    E -->|no| H{pendingDataIntent}
+    D -->|no| H{pendingDataIntent}
 
     H -->|segmentShift| I{adjacent data}
     I -->|yes| J[segmentShift intent]
@@ -249,7 +249,10 @@ flowchart TD
     O -->|yes| P[destination intent]
     O -->|no| Q[retain pending destination]
 
-    H -->|none| S{active segment}
+    H -->|none| E{modifier auto scroll}
+    E -->|yes hasMoreAfter| F[pending follow]
+    E -->|yes ready| G[followBottom intent]
+    E -->|no| S{active segment}
     S -->|no| T[no op]
     S -->|yes| U{addressable}
     U -->|yes| V[projectionRefresh]
@@ -259,7 +262,8 @@ flowchart TD
 代码事实：
 
 - `reset` 优先于 pending intent。
-- `auto-scroll-to-bottom` 优先于 pending intent。
+- pending intent 优先于 `auto-scroll-to-bottom`；auto-scroll hint 不会覆盖 pending jump/restore/segmentShift。
+- pending intent 记录 `origin` 与 `priority`，用于区分 user destination、edge shift、user follow 和 auto-scroll hint。
 - `prepend` / `append` 不是 transaction kind。
 - 每次 accepted data snapshot 后，input coordinator 会先同步 adjacent prefetch state，再处理 pending/classifier。
 
@@ -343,23 +347,27 @@ stateDiagram-v2
     momentum_latched --> momentum_latched
     momentum_latched --> idle
 
+    idle --> segment_shift_pending
+    segment_shift_pending --> segment_shift
     idle --> segment_shift
     segment_shift --> idle
 ```
 
-flag 对应关系：
+实现事实：
+
+- `ScrollInteractionState` 的内部 truth 是 `ScrollInteractionMode` discriminated union；`PhysicalScrollMetrics` 里的 boolean flags 是派生输出。
 
 - `dragging`：`isDragLocked=true`。
 - `dragging_edge_pending`：`isDragLocked=true`，`isSegmentShiftPending=true`，`isThumbFrozen=false`。
 - `drag_handoff`：`isDragLocked=true`，`isThumbFrozen=true`，`isSegmentShiftPending=true`，`isSegmentShifting=true`。
 - `momentum_latched`：`isMomentumLatched=true`，`isSegmentShiftPending=true`，`suppressedMomentumDeltaPx>0`。
+- `segment_shift_pending`：`isSegmentShiftPending=true`，`isSegmentShifting=false`。
 - `segment_shift`：`isSegmentShifting=true`，`isSegmentShiftPending=true`。
 
 清理路径：
 
-- `completeSegmentShift()` 清 thumb frozen、shift pending/shifting、momentum latch 和 suppressed delta。
-- `abortSegmentShift()` 清同一组 flags。
-- `endDrag()` 只清 `isDragLocked`。
+- `completeSegmentShift()` / `abortSegmentShift()` 按 mode 回到 `idle` 或 `dragging`。
+- `endDrag()` 在 handoff 中会保留 segment shift 语义，但释放 drag lock。
 
 ## 13. Direct Scroll / Custom Scrollbar 状态机
 
@@ -383,9 +391,10 @@ stateDiagram-v2
 
 - thumb pointer down 调用 `beginDirectScroll(custom-scrollbar-drag)`，acquire `direct-drag` writer，设置 drag lock。
 - drag write 在 safe range 内直接写 scrollTop，并 patch physical `scrollPosition`。
+- direct write 成功后立即 reconcile bottom lock；lock 不变时不会触发 projection change。
 - drag write 越过 safe edge 且目标数据缺失：clamp 到 safe edge，设置 pending shift，发 need event，返回 true。
 - drag write 越过 safe edge 且目标数据 ready：freeze thumb，释放 direct-drag writer，enqueue `segmentShift(source='drag-handoff')`，返回 false。
-- segmentShift commit 后下一帧 `completeSegmentShift()` 解冻 thumb；如果 pointer 仍按住，会重新 acquire direct-drag writer。
+- segmentShift commit 后会先尝试重新 acquire direct-drag writer；下一帧 `completeSegmentShift()` 解冻 thumb。若 writer 被抢占，会记录 `drag-lock-stolen` 并释放 drag lock。
 - track click 是 one-shot acquire/write/release，不进入 drag lock。
 - React custom scrollbar 在 `isThumbFrozen=true` 时复用上一份 visible geometry，并暂停 pointermove 写入。
 
@@ -430,6 +439,7 @@ stateDiagram-v2
 - 发 need 后 patch `adjacentPrefetchBefore/After='needed'`。
 - data snapshot 到达后，如果相邻数据已可构建，patch 为 `ready`。
 - 如果对应方向没有更多数据，patch 为 `idle`。
+- geometry promotion 会按新 committed segment 重新计算 adjacent prefetch flags；不再把旧 segment 的 before/after 状态原样带入新 segment。
 - 当前代码没有写 `in-flight`。
 
 ## 16. ScrollMotionEngine 状态机

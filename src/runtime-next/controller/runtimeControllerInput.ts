@@ -1,4 +1,7 @@
-import type { PendingDataIntent } from '../data/classifier.types'
+import type {
+  PendingDataIntent,
+  PendingSegmentShiftOrigin,
+} from '../data/classifier.types'
 import type { RuntimeDataStore } from '../data/store'
 import type { DiagnosticRecorder } from '../diagnostics/recorder'
 import type { RuntimeDomRegistry } from '../dom/domRegistry'
@@ -7,6 +10,7 @@ import { RuntimeDomInputController } from '../dom/inputController'
 import { RuntimeDomObserverController } from '../dom/observerController'
 import type { RuntimeNextViewportEvent } from '../events/types'
 import type { PhysicalMetricsStore } from '../geometry/metrics/metricsStore'
+import type { PhysicalSegment } from '../geometry/segment/physicalSegment.types'
 import type { PhysicalScrollMetrics, SegmentShiftDirection } from '../geometry/types'
 import type { PhysicalSegmentRevisionController } from '../geometry/segment/segmentRevision'
 import type { MessageRuntimeItemKey } from '../identity/types'
@@ -25,7 +29,9 @@ import type {
 import { hasAdjacentSegmentData } from './controllerHelpers'
 import {
   emitAdjacentPrefetchNeed,
+  reconcileBottomLockFromMetrics,
   reconcileBottomLockFromScroll,
+  resolveAdjacentPrefetchFlags,
   syncAdjacentPrefetchState,
 } from './runtimeControllerInputHelpers'
 import { handleWheelBoundaryEvent } from './runtimeControllerWheel'
@@ -105,14 +111,18 @@ export class RuntimeControllerInputCoordinator<
       diagnostics: this.#deps.diagnostics,
       scrollState: this.#scrollState,
       setCurrentScrollTop: this.#deps.setCurrentScrollTop,
+      reconcileBottomLock: () =>
+        reconcileBottomLockFromMetrics(this.#deps, this.#scrollState),
       canBuildSegmentShift: (direction: SegmentShiftDirection) =>
         this.#canBuildSegmentShift(direction),
       enqueueSegmentShift: (
         direction: SegmentShiftDirection,
         source: 'drag-handoff' | 'wheel',
       ) => this.#enqueueSegmentShift(direction, source),
-      deferSegmentShiftNeed: (direction: SegmentShiftDirection) =>
-        this.#deferSegmentShiftNeed(direction),
+      deferSegmentShiftNeed: (
+        direction: SegmentShiftDirection,
+        origin: PendingSegmentShiftOrigin,
+      ) => this.#deferSegmentShiftNeed(direction, origin),
     }
   }
 
@@ -143,21 +153,27 @@ export class RuntimeControllerInputCoordinator<
     this.#scrollState.abortSegmentShift()
     this.#scrollState.endDrag()
     this.#deps.metrics.patchFlags(this.#scrollState.toFlags())
+    reconcileBottomLockFromMetrics(this.#deps, this.#scrollState)
   }
 
   resolveScrollFlagsForPromotion(
     transaction: RuntimeTransaction<TMessage, TOptimistic>,
+    segment: PhysicalSegment,
   ): Partial<PhysicalScrollMetrics> {
     if (transaction.kind === 'segmentShift') {
       this.#scheduleSegmentShiftSettle(transaction, 'commit')
     }
 
     const currentMetrics = this.#deps.metrics.getMetrics()
+    const snapshot = this.#deps.data.requireSnapshot()
 
     return {
       ...this.#scrollState.toFlags(),
-      adjacentPrefetchBefore: currentMetrics.adjacentPrefetchBefore,
-      adjacentPrefetchAfter: currentMetrics.adjacentPrefetchAfter,
+      ...resolveAdjacentPrefetchFlags({
+        snapshot,
+        segment,
+        previousMetrics: currentMetrics,
+      }),
     }
   }
 
@@ -180,7 +196,7 @@ export class RuntimeControllerInputCoordinator<
       enqueueSegmentShift: (direction) =>
         this.#enqueueSegmentShift(direction, 'wheel'),
       deferSegmentShiftNeed: (direction) =>
-        this.#deferSegmentShiftNeed(direction),
+        this.#deferSegmentShiftNeed(direction, 'wheel'),
     })
   }
 
@@ -223,14 +239,24 @@ export class RuntimeControllerInputCoordinator<
   ): void {
     this.#scrollState.beginSegmentShift({ direction })
     this.#deps.metrics.patchFlags(this.#scrollState.toFlags())
+    reconcileBottomLockFromMetrics(this.#deps, this.#scrollState)
     this.#deps.enqueue({ kind: 'segmentShift', direction, source })
   }
 
-  #deferSegmentShiftNeed(direction: SegmentShiftDirection): void {
-    const intent: PendingDataIntent = { kind: 'segmentShift', direction }
+  #deferSegmentShiftNeed(
+    direction: SegmentShiftDirection,
+    origin: PendingSegmentShiftOrigin,
+  ): void {
+    const intent: PendingDataIntent = {
+      kind: 'segmentShift',
+      direction,
+      origin,
+      priority: 'edge',
+    }
     this.#deps.setPendingDataIntent(intent)
     this.#scrollState.markEdgePending({ direction, overflowPx: 0 })
     this.#deps.metrics.patchFlags(this.#scrollState.toFlags())
+    reconcileBottomLockFromMetrics(this.#deps, this.#scrollState)
     this.#deps.emitNeedForPendingIntent(intent)
   }
 
@@ -249,6 +275,7 @@ export class RuntimeControllerInputCoordinator<
       this.#segmentShiftSettleFrame = null
       this.#scrollState.completeSegmentShift()
       this.#deps.metrics.patchFlags(this.#scrollState.toFlags())
+      reconcileBottomLockFromMetrics(this.#deps, this.#scrollState)
       this.#recordSegmentShiftSettle(source, result)
     })
   }
@@ -285,9 +312,22 @@ export class RuntimeControllerInputCoordinator<
 
   #restoreDragWriterOwnership(): void {
     if (!this.#scrollState.isDragLocked()) return
-    this.#deps.writer.acquire({
+    const result = this.#deps.writer.acquire({
       transactionId: 'direct-scroll',
       kind: 'direct-drag',
+    })
+    if (result.acquired) return
+    const active = 'active' in result ? result.active : null
+
+    this.#scrollState.endDrag()
+    this.#deps.metrics.patchFlags(this.#scrollState.toFlags())
+    reconcileBottomLockFromMetrics(this.#deps, this.#scrollState)
+    this.#deps.diagnostics.record({
+      kind: 'drag-lock-stolen',
+      severity: 'warn',
+      owner: 'scroll',
+      message: 'scroll.dragSegmentHandoff.writerDenied',
+      details: { active },
     })
   }
 }

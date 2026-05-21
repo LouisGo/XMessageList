@@ -106,6 +106,30 @@ describe('runtime-next P5 input, scrollbar, and motion integration', () => {
     )
   })
 
+  it('reconciles bottom lock immediately after direct scroll writes', () => {
+    const runtime = new MessageViewportRuntime<{ text: string }>({
+      feedId: 'feed',
+      generation: 1,
+    })
+    runtime.attach(createContainer({ height: 200 }))
+    runtime.setDataSnapshot(snapshot({
+      items: Array.from({ length: 8 }, (_, index) => item(`m-${index + 1}`, 250)),
+    }))
+    runtime.dispatch({ type: 'followBottom' })
+    commit(runtime)
+    const metricsBeforeScroll = runtime.getPhysicalScrollMetrics()
+    expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
+
+    expect(runtime.writeDirectScrollTop(metricsBeforeScroll.safeScrollRangeStart, {
+      source: 'custom-scrollbar-track',
+    })).toBe(true)
+
+    expect(runtime.getPhysicalScrollMetrics().scrollPosition).toBe(
+      metricsBeforeScroll.safeScrollRangeStart,
+    )
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+  })
+
   it('runs drag segment handoff with thumb freeze and continuation rebase', () => {
     vi.useFakeTimers()
     const runtime = new MessageViewportRuntime<{ text: string }>({

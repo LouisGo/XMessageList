@@ -28,6 +28,7 @@ import { ScrollWriterArbitration } from '../scroll/writerArbitration'
 import type { DirectScrollInput } from '../scroll/types'
 import { TransactionRunner } from '../transactions/transactionRunner'
 import type {
+  RuntimeTransaction,
   RuntimeTransactionIntent,
   TransactionAbortReason,
   TransactionStageRecord,
@@ -170,8 +171,11 @@ export class MessageViewportRuntimeController<
       setCurrentScrollTop: (scrollTop) => {
         this.#currentScrollTop = scrollTop
       },
-      resolveScrollFlagsForPromotion: (transaction) =>
-        this.#inputCoordinator.resolveScrollFlagsForPromotion(transaction),
+      resolveScrollFlagsForPromotion: (transaction, segment) =>
+        this.#inputCoordinator.resolveScrollFlagsForPromotion(
+          transaction,
+          segment,
+        ),
       armAckTimeout: (transactionId) => this.#armAckTimeout(transactionId),
       clearAckTimeout: () => this.#clearAckTimeout(),
       enqueue: (intent) => this.#enqueue(intent),
@@ -260,7 +264,11 @@ export class MessageViewportRuntimeController<
       intent.kind === 'no-op' &&
       intent.reason === 'latest-data-still-missing'
     ) {
-      this.#pendingDataIntent = { kind: 'followBottom' }
+      this.#pendingDataIntent = {
+        kind: 'followBottom',
+        origin: 'auto-scroll-hint',
+        priority: 'latest',
+      }
       this.#emitNeedForPendingIntent(this.#pendingDataIntent)
       recordDataIntent(this.#diagnostics, intent)
       return
@@ -379,6 +387,8 @@ export class MessageViewportRuntimeController<
     this.#pendingDataIntent = {
       kind: 'restore',
       target,
+      origin: 'lifecycle',
+      priority: 'destination',
     }
     this.#emitNeedForPendingIntent(this.#pendingDataIntent)
   }
@@ -412,11 +422,59 @@ export class MessageViewportRuntimeController<
       this.#revision.abortPendingPublication()
       this.#writer.releaseTransaction(active.id)
       this.#inputCoordinator.handleTransactionAbort(active)
+      this.#retainWriterDeniedIntent(active, reason)
     }
     this.#flow.clearPending()
     this.#clearAckTimeout()
     this.#runner.abortActive(reason)
     this.#drain()
+  }
+
+  #retainWriterDeniedIntent(
+    transaction: RuntimeTransaction<TMessage, TOptimistic>,
+    reason: TransactionAbortReason,
+  ): void {
+    if (reason !== 'writer-denied') return
+    const intent = transaction.intent
+    if (intent.kind === 'followBottom') {
+      if (intent.origin === 'auto-scroll-hint') return
+      this.#pendingDataIntent = {
+        kind: 'followBottom',
+        origin: 'user-command',
+        priority: 'latest',
+      }
+      return
+    }
+    if (intent.kind === 'jump') {
+      this.#pendingDataIntent = {
+        kind: 'jump',
+        target: intent.target,
+        origin: 'user',
+        priority: 'destination',
+      }
+      return
+    }
+    if (intent.kind === 'restore') {
+      this.#pendingDataIntent = {
+        kind: 'restore',
+        target: intent.target,
+        origin: intent.origin ?? 'lifecycle',
+        priority: 'destination',
+      }
+      return
+    }
+    if (intent.kind === 'segmentShift') {
+      this.#pendingDataIntent = {
+        kind: 'segmentShift',
+        direction: intent.direction,
+        origin: intent.source === 'wheel'
+          ? 'wheel'
+          : intent.source === 'drag-handoff'
+            ? 'drag'
+            : 'data',
+        priority: 'edge',
+      }
+    }
   }
 
   #cancelActive(reason: TransactionAbortReason): void {

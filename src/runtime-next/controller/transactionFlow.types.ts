@@ -4,6 +4,7 @@ import type { RuntimeDomRegistry } from '../dom/domRegistry'
 import type { PhysicalMetricsStore } from '../geometry/metrics/metricsStore'
 import type { PhysicalScrollMetrics } from '../geometry/types'
 import type { PendingGeometryProjection } from '../geometry/publication/publication.types'
+import type { PhysicalSegment } from '../geometry/segment/physicalSegment.types'
 import type {
   PhysicalSegmentRevisionController,
 } from '../geometry/segment/segmentRevision'
@@ -48,6 +49,7 @@ export type RuntimeTransactionFlowContext<TMessage, TOptimistic> = {
   readonly setCurrentScrollTop: (scrollTop: number) => void
   readonly resolveScrollFlagsForPromotion: (
     transaction: RuntimeTransaction<TMessage, TOptimistic>,
+    segment: PhysicalSegment,
   ) => Partial<PhysicalScrollMetrics>
   readonly armAckTimeout: (transactionId: string) => void
   readonly clearAckTimeout: () => void

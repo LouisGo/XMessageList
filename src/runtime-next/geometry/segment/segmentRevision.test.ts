@@ -107,6 +107,28 @@ describe('physical segment revision controller', () => {
     )
   })
 
+  it('validates a pending commit token without committing the segment', () => {
+    const controller = new PhysicalSegmentRevisionController({
+      feedId: 'feed',
+      generation: 1,
+    })
+
+    const pending = controller.startPublication({
+      projectionRevision: 10,
+      transactionId: 'tx-validate',
+      reason: 'bootstrap',
+      segment: createDraft(),
+    })
+
+    expect(controller.validatePendingCommitToken(pending.commitToken)).toEqual({
+      valid: true,
+      segment: pending.segment,
+      commitToken: pending.commitToken,
+    })
+    expect(controller.getCommittedSegment()).toBeNull()
+    expect(controller.getPendingSegment()).toEqual(pending.segment)
+  })
+
   it('does not reuse an aborted revision and keeps the previous stable segment intact', () => {
     const controller = new PhysicalSegmentRevisionController({
       feedId: 'feed',

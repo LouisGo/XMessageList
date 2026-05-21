@@ -24,6 +24,10 @@ export function classifyDataArrival<
     }
   }
 
+  if (pending !== null) {
+    return classifyPendingIntent(input, pending)
+  }
+
   if (input.snapshot.change.viewportModifier === 'auto-scroll-to-bottom') {
     return input.snapshot.hasMoreAfter
       ? {
@@ -35,12 +39,9 @@ export function classifyDataArrival<
       : {
           intent: {
             kind: 'followBottom',
+            origin: 'auto-scroll-hint',
           },
         }
-  }
-
-  if (pending !== null) {
-    return classifyPendingIntent(input, pending)
   }
 
   if (input.activeProjection === null) {
@@ -98,6 +99,7 @@ function classifyPendingIntent<TMessage, TOptimistic>(
         : {
             intent: {
               kind: 'followBottom',
+              origin: pending.origin,
             },
           }
     case 'jump':

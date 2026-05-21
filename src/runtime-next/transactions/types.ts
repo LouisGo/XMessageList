@@ -1,3 +1,7 @@
+import type {
+  PendingDestinationOrigin,
+  PendingFollowBottomOrigin,
+} from '../data/classifier.types'
 import type { MessageDataSnapshot } from '../data/types'
 import type {
   AnchorState,
@@ -41,7 +45,7 @@ export type DataArrivalIntent =
   | { readonly kind: 'projectionRefresh' }
   | { readonly kind: 'segmentRelayout'; readonly reason: SegmentRelayoutReason }
   | { readonly kind: 'segmentShift'; readonly direction: SegmentShiftDirection }
-  | { readonly kind: 'followBottom' }
+  | { readonly kind: 'followBottom'; readonly origin?: PendingFollowBottomOrigin }
   | { readonly kind: 'jump'; readonly target: MessageIdentityAnchor }
   | { readonly kind: 'restore'; readonly target: MessageIdentityAnchor | AnchorState }
   | { readonly kind: 'reset'; readonly reason: string }
@@ -61,9 +65,17 @@ export type RuntimeTransactionIntent<TMessage = unknown, TOptimistic = unknown> 
       readonly direction: SegmentShiftDirection
       readonly source?: 'edge' | 'drag-handoff' | 'wheel' | 'keyboard' | 'data'
     }
-  | { readonly kind: 'jump'; readonly target: MessageIdentityAnchor }
-  | { readonly kind: 'restore'; readonly target: MessageIdentityAnchor | AnchorState }
-  | { readonly kind: 'followBottom' }
+  | {
+      readonly kind: 'jump'
+      readonly target: MessageIdentityAnchor
+      readonly origin?: 'user'
+    }
+  | {
+      readonly kind: 'restore'
+      readonly target: MessageIdentityAnchor | AnchorState
+      readonly origin?: PendingDestinationOrigin
+    }
+  | { readonly kind: 'followBottom'; readonly origin?: PendingFollowBottomOrigin }
   | { readonly kind: 'reset'; readonly reason: string }
   | {
       readonly kind: 'dataArrival'

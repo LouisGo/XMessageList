@@ -85,8 +85,8 @@ export class RuntimeTransactionFlow<TMessage = unknown, TOptimistic = unknown> {
       return
     }
 
-    const result = this.#ctx.revision.acknowledgeCommit(commit)
-    if (!result.committed) {
+    const validation = this.#ctx.revision.validatePendingCommitToken(commit)
+    if ('reason' in validation) {
       scrollWrite.cancel()
       this.#ctx.abort('commit-token-mismatch')
       return
@@ -94,6 +94,11 @@ export class RuntimeTransactionFlow<TMessage = unknown, TOptimistic = unknown> {
     const appliedScroll = scrollWrite.commit()
     if (!appliedScroll.ok) {
       this.#ctx.abort('writer-denied')
+      return
+    }
+    const result = this.#ctx.revision.acknowledgeCommit(commit)
+    if (!result.committed) {
+      this.#ctx.abort('commit-token-mismatch')
       return
     }
     promoteGeometry(
@@ -203,6 +208,8 @@ export class RuntimeTransactionFlow<TMessage = unknown, TOptimistic = unknown> {
           this.#ctx.deferPendingDataIntent({
             kind: 'segmentShift',
             direction: error.direction,
+            origin: 'data',
+            priority: 'edge',
           })
         }
         this.#ctx.abort('missing-data')

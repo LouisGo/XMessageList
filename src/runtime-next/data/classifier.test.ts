@@ -81,6 +81,8 @@ describe('runtime-next data arrival classifier', () => {
         activeProjection: null,
         pendingIntent: {
           kind: 'followBottom',
+          origin: 'user-command',
+          priority: 'latest',
         },
       }).intent,
     ).toEqual({
@@ -93,10 +95,13 @@ describe('runtime-next data arrival classifier', () => {
         activeProjection: null,
         pendingIntent: {
           kind: 'followBottom',
+          origin: 'user-command',
+          priority: 'latest',
         },
       }).intent,
     ).toEqual({
       kind: 'followBottom',
+      origin: 'user-command',
     })
   })
 
@@ -117,6 +122,7 @@ describe('runtime-next data arrival classifier', () => {
       }).intent,
     ).toEqual({
       kind: 'followBottom',
+      origin: 'auto-scroll-hint',
     })
     expect(
       classifyDataArrival({
@@ -134,6 +140,34 @@ describe('runtime-next data arrival classifier', () => {
     ).toEqual({
       kind: 'no-op',
       reason: 'latest-data-still-missing',
+    })
+  })
+
+  it('does not let auto-scroll-to-bottom override a pending destination', () => {
+    const m1 = item('m-1')
+
+    expect(
+      classifyDataArrival({
+        snapshot: {
+          ...snapshot([m1]),
+          change: {
+            kind: 'append',
+            viewportModifier: 'auto-scroll-to-bottom',
+          },
+        },
+        activeProjection: null,
+        pendingIntent: {
+          kind: 'jump',
+          target: {
+            messageId: 'missing-target',
+          },
+          origin: 'user',
+          priority: 'destination',
+        },
+      }).intent,
+    ).toEqual({
+      kind: 'no-op',
+      reason: 'pending-jump-target-missing',
     })
   })
 
@@ -157,6 +191,8 @@ describe('runtime-next data arrival classifier', () => {
         pendingIntent: {
           kind: 'segmentShift',
           direction: 'before',
+          origin: 'data',
+          priority: 'edge',
         },
       }).intent,
     ).toEqual({
@@ -178,6 +214,8 @@ describe('runtime-next data arrival classifier', () => {
         pendingIntent: {
           kind: 'segmentShift',
           direction: 'before',
+          origin: 'data',
+          priority: 'edge',
         },
       }).intent,
     ).toEqual({

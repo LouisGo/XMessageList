@@ -1,4 +1,5 @@
 import type { DiagnosticRecorder } from '../diagnostics/recorder'
+import type { PendingSegmentShiftOrigin } from '../data/classifier.types'
 import type { RuntimeDomRegistry } from '../dom/domRegistry'
 import type { PhysicalMetricsStore } from '../geometry/metrics/metricsStore'
 import type { ScrollWriterArbitration } from '../scroll/writerArbitration'
@@ -20,12 +21,16 @@ type DirectScrollContext = {
   readonly diagnostics: DiagnosticRecorder
   readonly scrollState: ScrollInteractionState
   readonly setCurrentScrollTop: (scrollTop: number) => void
+  readonly reconcileBottomLock: () => void
   readonly canBuildSegmentShift: (direction: SegmentShiftDirection) => boolean
   readonly enqueueSegmentShift: (
     direction: SegmentShiftDirection,
     source: 'drag-handoff' | 'wheel',
   ) => void
-  readonly deferSegmentShiftNeed: (direction: SegmentShiftDirection) => void
+  readonly deferSegmentShiftNeed: (
+    direction: SegmentShiftDirection,
+    origin: PendingSegmentShiftOrigin,
+  ) => void
 }
 
 export function beginDirectScrollTransaction(
@@ -121,6 +126,7 @@ export function writeDirectScrollTopWithWriter(
   if (wrote) {
     ctx.setCurrentScrollTop(boundedScrollTop)
     ctx.metrics.patchScrollPosition(boundedScrollTop)
+    ctx.reconcileBottomLock()
   } else {
     recordWriterIssue(
       ctx.diagnostics,
@@ -151,19 +157,22 @@ export function writeDirectScrollTopWithWriter(
   if (boundary.kind === 'inside') {
     ctx.scrollState.clearEdgePending()
     ctx.metrics.patchFlags(ctx.scrollState.toFlags())
+    ctx.reconcileBottomLock()
     return true
   }
 
   if (!ctx.canBuildSegmentShift(boundary.direction)) {
     ctx.scrollState.markEdgePending(boundary)
     ctx.metrics.patchFlags(ctx.scrollState.toFlags())
-    ctx.deferSegmentShiftNeed(boundary.direction)
+    ctx.reconcileBottomLock()
+    ctx.deferSegmentShiftNeed(boundary.direction, 'drag')
     return true
   }
 
   if (!ctx.scrollState.isSegmentShiftInFlight()) {
     ctx.scrollState.acceptDragHandoff(boundary)
     ctx.metrics.patchFlags(ctx.scrollState.toFlags())
+    ctx.reconcileBottomLock()
     ctx.writer.release(token)
     ctx.diagnostics.record({
       kind: 'transaction-lifecycle',
@@ -195,6 +204,7 @@ export function endDirectScrollTransaction(
   if (released || ctx.scrollState.isDragLocked()) {
     ctx.scrollState.endDrag()
     ctx.metrics.patchFlags(ctx.scrollState.toFlags())
+    ctx.reconcileBottomLock()
     ctx.diagnostics.record({
       kind: 'transaction-lifecycle',
       severity: 'info',

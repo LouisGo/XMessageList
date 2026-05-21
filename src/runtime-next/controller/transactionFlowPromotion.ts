@@ -11,6 +11,7 @@ import {
   edgeStateFromSnapshot,
   phaseForTransaction,
 } from './controllerHelpers'
+import { resolveBottomLockState } from './bottomLock'
 import { decidePromotionCorrection } from './transactionPromoter'
 import {
   recordPhysicalRelayoutDiagnostic,
@@ -178,15 +179,18 @@ export function promoteGeometry<TMessage, TOptimistic>(
       pending.publication.physicalWindowHeight,
     ),
     scrollTop,
-    flags: ctx.resolveScrollFlagsForPromotion(pending.transaction),
+    flags: ctx.resolveScrollFlagsForPromotion(pending.transaction, segment),
   })
   ctx.runner.markMeasurementCorrection(pending.transaction.id)
   ctx.metrics.promote(metrics)
-  ctx.setBottomLockState(
-    canPromoteBottomLock(ctx, pending, metrics)
-      ? 'LOCKED'
-      : 'UNLOCKED',
-  )
+  ctx.setBottomLockState(resolveBottomLockState({
+    data: ctx.data.requireSnapshot(),
+    segment,
+    metrics,
+    hasSegmentShiftInFlight:
+      metrics.isSegmentShiftPending || metrics.isSegmentShifting,
+    allowLock: pending.promotesBottomLock,
+  }))
   ctx.projection.publish({
     revision: pending.publication.commitToken.projectionRevision,
     commitToken: pending.publication.commitToken,
@@ -207,24 +211,6 @@ export function promoteGeometry<TMessage, TOptimistic>(
   recordPhysicalWindowDiagnostic(ctx, pending, metrics)
   ctx.runner.markMetricsPromoted(pending.transaction.id)
   ctx.finish(pending.transaction.id)
-}
-
-function canPromoteBottomLock<TMessage, TOptimistic>(
-  ctx: RuntimeTransactionFlowContext<TMessage, TOptimistic>,
-  pending: PendingPublication<TMessage, TOptimistic>,
-  metrics: ReturnType<typeof deriveCommittedMetrics>,
-): boolean {
-  if (!pending.promotesBottomLock) return false
-  if (
-    pending.publication.segment.logicalRole !== 'latest' &&
-    pending.publication.segment.logicalRole !== 'short-feed'
-  ) {
-    return false
-  }
-  if (ctx.data.requireSnapshot().hasMoreAfter) return false
-  if (metrics.isSegmentShiftPending || metrics.isSegmentShifting) return false
-
-  return Math.max(0, metrics.maxScrollPosition - metrics.scrollPosition) <= 16
 }
 
 export function planFromPublication<TMessage, TOptimistic>(

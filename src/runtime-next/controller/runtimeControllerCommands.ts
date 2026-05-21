@@ -30,11 +30,15 @@ export function dispatchFollowBottom<TMessage, TOptimistic>(
 ): void {
   const snapshot = ctx.getDataSnapshot()
   if (snapshot === null || snapshot.hasMoreAfter) {
-    ctx.setPendingDataIntent({ kind: 'followBottom' })
+    ctx.setPendingDataIntent({
+      kind: 'followBottom',
+      origin: 'user-command',
+      priority: 'latest',
+    })
     ctx.emitEvent(createNeedLatestEvent(ctx.ids()))
     return
   }
-  ctx.enqueue({ kind: 'followBottom' })
+  ctx.enqueue({ kind: 'followBottom', origin: 'user-command' })
 }
 
 export function dispatchDestination<TMessage, TOptimistic>(
@@ -44,7 +48,12 @@ export function dispatchDestination<TMessage, TOptimistic>(
 ): void {
   const snapshot = ctx.getDataSnapshot()
   if (snapshot === null || !isTargetAvailable(snapshot.items, target)) {
-    ctx.setPendingDataIntent({ kind, target } as PendingDataIntent)
+    ctx.setPendingDataIntent({
+      kind,
+      target,
+      origin: 'user',
+      priority: 'destination',
+    } as PendingDataIntent)
     ctx.emitEvent(createNeedMessagesAroundEvent({
       ...ctx.ids(),
       reason: kind,
@@ -52,7 +61,11 @@ export function dispatchDestination<TMessage, TOptimistic>(
     }))
     return
   }
-  ctx.enqueue({ kind, target } as RuntimeTransactionIntent<TMessage, TOptimistic>)
+  ctx.enqueue({
+    kind,
+    target,
+    origin: 'user',
+  } as RuntimeTransactionIntent<TMessage, TOptimistic>)
 }
 
 export function enqueueDataIntent<TMessage, TOptimistic>(
@@ -71,8 +84,14 @@ export function enqueueDataIntent<TMessage, TOptimistic>(
       source: 'data',
     })
   }
-  if (intent.kind === 'followBottom') ctx.enqueue({ kind: 'followBottom' })
-  if (intent.kind === 'jump') ctx.enqueue({ kind: 'jump', target: intent.target })
-  if (intent.kind === 'restore') ctx.enqueue({ kind: 'restore', target: intent.target })
+  if (intent.kind === 'followBottom') {
+    ctx.enqueue({ kind: 'followBottom', origin: intent.origin })
+  }
+  if (intent.kind === 'jump') {
+    ctx.enqueue({ kind: 'jump', target: intent.target, origin: 'user' })
+  }
+  if (intent.kind === 'restore') {
+    ctx.enqueue({ kind: 'restore', target: intent.target, origin: 'lifecycle' })
+  }
   if (intent.kind === 'reset') ctx.enqueue({ kind: 'reset', reason: intent.reason })
 }

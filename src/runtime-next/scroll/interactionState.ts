@@ -27,140 +27,262 @@ export type DirectScrollBoundaryDecision =
       readonly overflowPx: number
     }
 
+export type ScrollInteractionMode =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'dragging' }
+  | {
+      readonly kind: 'drag-edge-pending'
+      readonly direction: SegmentShiftDirection
+      readonly overflowPx: number
+    }
+  | {
+      readonly kind: 'drag-handoff'
+      readonly direction: SegmentShiftDirection
+      readonly overflowPx: number
+    }
+  | {
+      readonly kind: 'wheel-latched'
+      readonly direction: SegmentShiftDirection
+      readonly suppressedDeltaPx: number
+      readonly phase: 'waiting-data' | 'shifting'
+    }
+  | {
+      readonly kind: 'segment-shift-pending'
+      readonly direction: SegmentShiftDirection
+      readonly overflowPx: number
+    }
+  | {
+      readonly kind: 'segment-shift'
+      readonly direction: SegmentShiftDirection | null
+    }
+
 export class ScrollInteractionState {
-  #isDragLocked = false
-  #isThumbFrozen = false
-  #isSegmentShiftPending = false
-  #pendingShiftDirection: SegmentShiftDirection | null = null
-  #pendingEdgeOverflowPx = 0
-  #isSegmentShifting = false
-  #isMomentumLatched = false
-  #momentumLatchDirection: SegmentShiftDirection | null = null
-  #suppressedMomentumDeltaPx = 0
+  #mode: ScrollInteractionMode = { kind: 'idle' }
 
   beginDrag(): void {
-    this.#isDragLocked = true
-    this.#isThumbFrozen = false
+    this.#mode = { kind: 'dragging' }
   }
 
   endDrag(): void {
-    this.#isDragLocked = false
+    if (
+      this.#mode.kind === 'dragging' ||
+      this.#mode.kind === 'drag-edge-pending'
+    ) {
+      this.#mode = { kind: 'idle' }
+      return
+    }
+    if (this.#mode.kind === 'drag-handoff') {
+      this.#mode = {
+        kind: 'segment-shift',
+        direction: this.#mode.direction,
+      }
+    }
   }
 
   markEdgePending(input: {
     readonly direction: SegmentShiftDirection
     readonly overflowPx: number
   }): void {
-    this.#isSegmentShiftPending = true
-    this.#pendingShiftDirection = input.direction
-    this.#pendingEdgeOverflowPx = input.overflowPx
+    if (
+      this.#mode.kind === 'dragging' ||
+      this.#mode.kind === 'drag-edge-pending'
+    ) {
+      this.#mode = {
+        kind: 'drag-edge-pending',
+        direction: input.direction,
+        overflowPx: input.overflowPx,
+      }
+      return
+    }
+    if (this.#mode.kind === 'wheel-latched') return
+    if (this.#mode.kind === 'drag-handoff') return
+
+    this.#mode = {
+      kind: 'segment-shift-pending',
+      direction: input.direction,
+      overflowPx: input.overflowPx,
+    }
   }
 
   clearEdgePending(): void {
-    if (this.#isSegmentShifting || this.#isThumbFrozen) return
-    this.#isSegmentShiftPending = false
-    this.#pendingShiftDirection = null
-    this.#pendingEdgeOverflowPx = 0
+    if (this.#mode.kind === 'drag-edge-pending') {
+      this.#mode = { kind: 'dragging' }
+      return
+    }
+    if (this.#mode.kind === 'segment-shift-pending') {
+      this.#mode = { kind: 'idle' }
+    }
   }
 
   acceptDragHandoff(input: {
     readonly direction: SegmentShiftDirection
     readonly overflowPx: number
   }): void {
-    this.#isThumbFrozen = true
-    this.#isSegmentShiftPending = true
-    this.#isSegmentShifting = true
-    this.#pendingShiftDirection = input.direction
-    this.#pendingEdgeOverflowPx = input.overflowPx
+    this.#mode = {
+      kind: 'drag-handoff',
+      direction: input.direction,
+      overflowPx: input.overflowPx,
+    }
   }
 
   beginSegmentShift(input: {
     readonly direction: SegmentShiftDirection | null
   }): void {
-    this.#isSegmentShifting = true
-    this.#isSegmentShiftPending = true
-    this.#pendingShiftDirection = input.direction
+    if (this.#mode.kind === 'drag-handoff') return
+    if (
+      this.#mode.kind === 'wheel-latched' &&
+      this.#mode.direction === input.direction
+    ) {
+      this.#mode = {
+        ...this.#mode,
+        phase: 'shifting',
+      }
+      return
+    }
+    this.#mode = {
+      kind: 'segment-shift',
+      direction: input.direction,
+    }
   }
 
   completeSegmentShift(): void {
-    this.#isThumbFrozen = false
-    this.#isSegmentShiftPending = false
-    this.#pendingShiftDirection = null
-    this.#pendingEdgeOverflowPx = 0
-    this.#isSegmentShifting = false
-    this.#isMomentumLatched = false
-    this.#momentumLatchDirection = null
-    this.#suppressedMomentumDeltaPx = 0
+    if (
+      this.#mode.kind === 'drag-handoff' ||
+      this.#mode.kind === 'drag-edge-pending'
+    ) {
+      this.#mode = { kind: 'dragging' }
+      return
+    }
+    this.#mode = { kind: 'idle' }
   }
 
   abortSegmentShift(): void {
-    this.#isThumbFrozen = false
-    this.#isSegmentShiftPending = false
-    this.#pendingShiftDirection = null
-    this.#pendingEdgeOverflowPx = 0
-    this.#isSegmentShifting = false
-    this.#isMomentumLatched = false
-    this.#momentumLatchDirection = null
-    this.#suppressedMomentumDeltaPx = 0
+    this.completeSegmentShift()
   }
 
   latchMomentum(input: {
     readonly direction: SegmentShiftDirection
     readonly deltaPx: number
   }): void {
-    this.#isMomentumLatched = true
-    this.#momentumLatchDirection = input.direction
-    this.#isSegmentShiftPending = true
-    this.#pendingShiftDirection = input.direction
-    this.#suppressedMomentumDeltaPx += Math.abs(input.deltaPx)
+    this.#mode = {
+      kind: 'wheel-latched',
+      direction: input.direction,
+      suppressedDeltaPx: Math.abs(input.deltaPx),
+      phase: 'waiting-data',
+    }
   }
 
   suppressMomentumDelta(input: {
     readonly direction: SegmentShiftDirection
     readonly deltaPx: number
   }): boolean {
-    if (this.#momentumLatchDirection !== input.direction) return false
-    this.#suppressedMomentumDeltaPx += Math.abs(input.deltaPx)
+    if (
+      this.#mode.kind !== 'wheel-latched' ||
+      this.#mode.direction !== input.direction
+    ) {
+      return false
+    }
+    this.#mode = {
+      ...this.#mode,
+      suppressedDeltaPx:
+        this.#mode.suppressedDeltaPx + Math.abs(input.deltaPx),
+    }
     return true
   }
 
   releaseMomentumLatch(): void {
-    this.#isMomentumLatched = false
-    this.#momentumLatchDirection = null
-    this.#suppressedMomentumDeltaPx = 0
+    if (this.#mode.kind === 'wheel-latched') {
+      this.#mode = { kind: 'idle' }
+    }
   }
 
   isDragLocked(): boolean {
-    return this.#isDragLocked
+    return this.toFlags().isDragLocked
   }
 
   isThumbFrozen(): boolean {
-    return this.#isThumbFrozen
+    return this.toFlags().isThumbFrozen
   }
 
   isSegmentShiftInFlight(): boolean {
-    return this.#isSegmentShifting || this.#isSegmentShiftPending
+    const flags = this.toFlags()
+    return flags.isSegmentShifting || flags.isSegmentShiftPending
   }
 
   isMomentumLatched(): boolean {
-    return this.#isMomentumLatched
+    return this.#mode.kind === 'wheel-latched'
   }
 
   getMomentumLatchDirection(): SegmentShiftDirection | null {
-    return this.#momentumLatchDirection
+    return this.#mode.kind === 'wheel-latched'
+      ? this.#mode.direction
+      : null
   }
 
   toFlags(): ScrollInteractionFlags {
-    return {
-      isDragLocked: this.#isDragLocked,
-      isThumbFrozen: this.#isThumbFrozen,
-      isSegmentShiftPending: this.#isSegmentShiftPending,
-      pendingShiftDirection: this.#pendingShiftDirection,
-      pendingEdgeOverflowPx: this.#pendingEdgeOverflowPx,
-      isSegmentShifting: this.#isSegmentShifting,
-      isMomentumLatched: this.#isMomentumLatched,
-      suppressedMomentumDeltaPx: this.#suppressedMomentumDeltaPx,
+    switch (this.#mode.kind) {
+      case 'idle':
+        return idleFlags()
+      case 'dragging':
+        return {
+          ...idleFlags(),
+          isDragLocked: true,
+        }
+      case 'drag-edge-pending':
+        return {
+          ...idleFlags(),
+          isDragLocked: true,
+          isSegmentShiftPending: true,
+          pendingShiftDirection: this.#mode.direction,
+          pendingEdgeOverflowPx: this.#mode.overflowPx,
+        }
+      case 'drag-handoff':
+        return {
+          ...idleFlags(),
+          isDragLocked: true,
+          isThumbFrozen: true,
+          isSegmentShiftPending: true,
+          pendingShiftDirection: this.#mode.direction,
+          pendingEdgeOverflowPx: this.#mode.overflowPx,
+          isSegmentShifting: true,
+        }
+      case 'wheel-latched':
+        return {
+          ...idleFlags(),
+          isSegmentShiftPending: true,
+          pendingShiftDirection: this.#mode.direction,
+          isSegmentShifting: this.#mode.phase === 'shifting',
+          isMomentumLatched: true,
+          suppressedMomentumDeltaPx: this.#mode.suppressedDeltaPx,
+        }
+      case 'segment-shift-pending':
+        return {
+          ...idleFlags(),
+          isSegmentShiftPending: true,
+          pendingShiftDirection: this.#mode.direction,
+          pendingEdgeOverflowPx: this.#mode.overflowPx,
+        }
+      case 'segment-shift':
+        return {
+          ...idleFlags(),
+          isSegmentShiftPending: true,
+          pendingShiftDirection: this.#mode.direction,
+          isSegmentShifting: true,
+        }
     }
+  }
+}
+
+function idleFlags(): ScrollInteractionFlags {
+  return {
+    isDragLocked: false,
+    isThumbFrozen: false,
+    isSegmentShiftPending: false,
+    pendingShiftDirection: null,
+    pendingEdgeOverflowPx: 0,
+    isSegmentShifting: false,
+    isMomentumLatched: false,
+    suppressedMomentumDeltaPx: 0,
   }
 }
 
