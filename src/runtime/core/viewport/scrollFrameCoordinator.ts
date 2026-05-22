@@ -23,6 +23,9 @@ import type {
   RuntimeDiagnosticEmitter,
   ScrollFrameMetrics,
 } from '../state/runtimeTypes'
+import { readScrollFrameMetrics } from './scrollFrameMetrics'
+import { maybeSlideWindow } from './scrollFrameWindowSlide'
+import { ScrollbarDragEdgeCoordinator } from './scrollbarDragEdgeCoordinator'
 
 export type ScrollFrameDeps<TMessage, TOptimistic> = {
   scheduler: RuntimeScheduler
@@ -74,9 +77,14 @@ export type ScrollFrameDeps<TMessage, TOptimistic> = {
 export class ScrollFrameCoordinator<TMessage, TOptimistic> {
   private scrollRaf: number | null = null
 
-  private scrollbarDragEdgeRecheckRaf: number | null = null
+  private readonly scrollbarDragEdge: ScrollbarDragEdgeCoordinator<
+    TMessage,
+    TOptimistic
+  >
 
-  constructor(private readonly deps: ScrollFrameDeps<TMessage, TOptimistic>) {}
+  constructor(private readonly deps: ScrollFrameDeps<TMessage, TOptimistic>) {
+    this.scrollbarDragEdge = new ScrollbarDragEdgeCoordinator(deps)
+  }
 
   scheduleScrollRaf(): void {
     if (this.scrollRaf !== null) {
@@ -97,25 +105,7 @@ export class ScrollFrameCoordinator<TMessage, TOptimistic> {
   }
 
   scheduleScrollbarDragEdgeRecheck(reason: string): void {
-    if (
-      !this.deps.getScrollbarDragIntentActive() ||
-      this.scrollbarDragEdgeRecheckRaf !== null
-    ) {
-      return
-    }
-
-    const token = this.deps.lifecycle.getCurrent()
-    this.scrollbarDragEdgeRecheckRaf =
-      this.deps.scheduler.requestAnimationFrame(() => {
-        this.scrollbarDragEdgeRecheckRaf = null
-        this.incrementFrame()
-
-        if (!this.deps.lifecycle.isCurrent(token.feedId, token.generation)) {
-          return
-        }
-
-        this.handleScrollbarDragEdgeRecheckFrame(reason)
-      })
+    this.scrollbarDragEdge.scheduleRecheck(reason)
   }
 
   cancelScheduledWork(): void {
@@ -124,61 +114,7 @@ export class ScrollFrameCoordinator<TMessage, TOptimistic> {
       this.scrollRaf = null
     }
 
-    if (this.scrollbarDragEdgeRecheckRaf !== null) {
-      this.deps.scheduler.cancelAnimationFrame(this.scrollbarDragEdgeRecheckRaf)
-      this.scrollbarDragEdgeRecheckRaf = null
-    }
-  }
-
-  private handleScrollbarDragEdgeRecheckFrame(reason: string): void {
-    if (
-      !this.deps.getScrollbarDragIntentActive() ||
-      this.deps.getState() !== 'READY'
-    ) {
-      return
-    }
-
-    const data = this.deps.getDataSnapshot()
-    const container = this.deps.registry.getContainer()
-
-    if (!data || !container) {
-      return
-    }
-
-    const metrics = readScrollFrameMetrics(container)
-    const edgeMetrics = this.getScrollbarDragEdgeIntentMetrics(data, metrics)
-    this.deps.setLastScrollSource('user')
-    this.deps.emitDiagnostic({
-      channel: 'edge',
-      severity: 'debug',
-      name: 'edge.scrollbarDragRecheck',
-      details: () => ({
-        reason,
-        edgeIntent: this.deps.getScrollbarDragEdgeIntent(),
-        scrollTop: edgeMetrics.scrollTop,
-        distanceToBottom: edgeMetrics.distanceToBottom,
-        actualScrollTop: metrics.scrollTop,
-        actualDistanceToBottom: metrics.distanceToBottom,
-        scrollHeight: edgeMetrics.scrollHeight,
-        clientHeight: edgeMetrics.clientHeight,
-      }),
-    })
-    this.deps.edge.emitEdgeNeeds({
-      data,
-      metrics: edgeMetrics,
-      scrollSource: 'user',
-      lastUserScrollTop: this.deps.getLastUserScrollTop(),
-      lastUserDistanceToBottom: this.deps.getLastUserDistanceToBottom(),
-    })
-    const edgeIntent = this.deps.getScrollbarDragEdgeIntent()
-    if (edgeIntent) {
-      this.deps.edge.emitScrollbarDragEdgeNeed({
-        data,
-        edge: edgeIntent,
-      })
-    }
-    this.deps.setLastUserScrollTop(edgeMetrics.scrollTop)
-    this.deps.setLastUserDistanceToBottom(edgeMetrics.distanceToBottom)
+    this.scrollbarDragEdge.cancelScheduledWork()
   }
 
   private handleScrollFrame(): void {
@@ -204,7 +140,7 @@ export class ScrollFrameCoordinator<TMessage, TOptimistic> {
     this.emitEdgeNeeds(data, metrics, scrollSource)
 
     if (scrollSource === 'user') {
-      this.updateScrollbarDragEdgeIntent(data, metrics)
+      this.scrollbarDragEdge.updateEdgeIntent(data, metrics)
       // 只有真实用户滚动能更新用户意图基线；runtime 写 scrollTop 不应影响 edge latch 释放。
       this.deps.updatePendingFollowBottomForUserScroll(metrics.scrollTop)
       this.deps.setLastUserScrollTop(metrics.scrollTop)
@@ -213,7 +149,7 @@ export class ScrollFrameCoordinator<TMessage, TOptimistic> {
     }
 
     if (this.deps.getState() === 'READY') {
-      this.maybeSlideWindow(data, metrics)
+      maybeSlideWindow(this.deps, data, metrics)
     }
   }
 
@@ -289,59 +225,6 @@ export class ScrollFrameCoordinator<TMessage, TOptimistic> {
     })
   }
 
-  private updateScrollbarDragEdgeIntent(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    metrics: ScrollFrameMetrics,
-  ): void {
-    if (!this.deps.getScrollbarDragIntentActive()) {
-      return
-    }
-
-    const snapshot = this.deps.store.getSnapshot()
-
-    if (
-      data.hasMoreBefore &&
-      snapshot.renderWindow.startIndex === 0 &&
-      metrics.scrollTop <= this.deps.getEdgeLoadThresholdPx()
-    ) {
-      this.deps.setScrollbarDragEdgeIntent('before')
-      return
-    }
-
-    if (
-      data.hasMoreAfter &&
-      snapshot.renderWindow.endIndex >= data.items.length - 1 &&
-      metrics.distanceToBottom <= this.deps.getEdgeLoadThresholdPx()
-    ) {
-      this.deps.setScrollbarDragEdgeIntent('after')
-    }
-  }
-
-  private getScrollbarDragEdgeIntentMetrics(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    metrics: ScrollFrameMetrics,
-  ): ScrollFrameMetrics {
-    const edgeIntent = this.deps.getScrollbarDragEdgeIntent()
-
-    if (edgeIntent === 'before' && data.hasMoreBefore) {
-      return {
-        ...metrics,
-        scrollTop: 0,
-        distanceToBottom: Math.max(0, metrics.scrollHeight - metrics.clientHeight),
-      }
-    }
-
-    if (edgeIntent === 'after' && data.hasMoreAfter) {
-      return {
-        ...metrics,
-        scrollTop: Math.max(0, metrics.scrollHeight - metrics.clientHeight),
-        distanceToBottom: 0,
-      }
-    }
-
-    return metrics
-  }
-
   private updateBottomLockForDataWindow(
     data: MessageDataSnapshot<TMessage, TOptimistic>,
     distanceToBottom: number,
@@ -358,120 +241,6 @@ export class ScrollFrameCoordinator<TMessage, TOptimistic> {
     )
   }
 
-  private maybeSlideWindow(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    metrics: ScrollFrameMetrics,
-  ): void {
-    if (this.deps.getReadySubstate() === 'READY_MOTION_ACTIVE') {
-      return
-    }
-
-    const snapshot = this.deps.store.getSnapshot()
-    const edgeThresholdPx = this.deps.getEdgeThresholdPx(metrics)
-    const nearTop = metrics.scrollTop < snapshot.topSpacer + edgeThresholdPx
-    const nearBottom =
-      metrics.distanceToBottom < snapshot.bottomSpacer + edgeThresholdPx
-
-    if (!nearTop && !nearBottom) {
-      return
-    }
-
-    const anchor = this.deps.anchor.captureViewportAnchor()
-
-    if (!anchor) {
-      this.enqueueAnchorlessWindowSlide(data, metrics, snapshot.renderWindow)
-      return
-    }
-
-    const anchorIndex = this.deps.renderWindow.findIndexByKey(
-      data.items,
-      anchor.key,
-    )
-
-    if (anchorIndex < 0) {
-      return
-    }
-
-    const nextWindow = this.deps.renderWindow.computeWindowAroundAnchor({
-      items: data.items,
-      anchorIndex,
-      viewportHeight: metrics.clientHeight,
-      viewportWidth: metrics.clientWidth,
-    })
-
-    if (this.deps.projection.isRenderWindowEqual(snapshot.renderWindow, nextWindow)) {
-      return
-    }
-
-    this.deps.transactions.enqueue(
-      'resize',
-      () =>
-        this.deps.transactionController.runWindowSlideTransaction(
-          anchor,
-          nextWindow,
-          {
-            feedId: data.feedId,
-            generation: data.generation,
-            revision: data.revision,
-          },
-        ),
-      'window-slide',
-    )
-  }
-
-  private enqueueAnchorlessWindowSlide(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    metrics: ScrollFrameMetrics,
-    currentWindow: RenderWindow,
-  ): void {
-    const estimatedAnchorIndex = this.deps.renderWindow.findEstimatedIndexAtOffset(
-      data.items,
-      metrics.scrollTop + metrics.clientHeight / 2,
-      metrics.clientWidth,
-    )
-    const nextWindow =
-      estimatedAnchorIndex >= 0
-        ? this.deps.renderWindow.computeWindowAroundAnchor({
-            items: data.items,
-            anchorIndex: estimatedAnchorIndex,
-            viewportHeight: metrics.clientHeight,
-            viewportWidth: metrics.clientWidth,
-          })
-        : null
-
-    this.deps.emitDiagnostic({
-      channel: 'anchor',
-      severity: 'warn',
-      name: 'anchor.captureMissing',
-      correlationId:
-        `data:${data.feedId}:${data.generation}:${this.deps.store.getSnapshot().revision}`,
-      details: () => ({
-        reason: 'window-slide',
-        scrollTop: metrics.scrollTop,
-        distanceToBottom: metrics.distanceToBottom,
-        topSpacer: this.deps.store.getSnapshot().topSpacer,
-        bottomSpacer: this.deps.store.getSnapshot().bottomSpacer,
-        estimatedAnchorIndex,
-      }),
-    })
-
-    if (
-      nextWindow &&
-      !this.deps.projection.isRenderWindowEqual(currentWindow, nextWindow)
-    ) {
-      this.deps.transactions.enqueue(
-        'resize',
-        () =>
-          this.deps.runAnchorlessWindowSlideTransaction(nextWindow, {
-            feedId: data.feedId,
-            generation: data.generation,
-            revision: data.revision,
-          }),
-        'window-slide',
-      )
-    }
-  }
-
   private keepCurrentWindow(
     items: Array<MessageDataItem<TMessage, TOptimistic>>,
   ): RenderWindow {
@@ -485,21 +254,5 @@ export class ScrollFrameCoordinator<TMessage, TOptimistic> {
 
   private incrementFrame(): void {
     this.deps.setCurrentFrame(this.deps.getCurrentFrame() + 1)
-  }
-}
-
-export function readScrollFrameMetrics(
-  container: HTMLElement,
-): ScrollFrameMetrics {
-  const scrollTop = container.scrollTop
-  const clientHeight = container.clientHeight
-  const scrollHeight = container.scrollHeight
-
-  return {
-    scrollTop,
-    clientHeight,
-    clientWidth: container.clientWidth,
-    scrollHeight,
-    distanceToBottom: Math.max(0, scrollHeight - scrollTop - clientHeight),
   }
 }

@@ -7,10 +7,15 @@ import type {
 import {
   MIN_MOUNTED_ITEMS,
   clamp,
+  getWidthBucket,
   getRuntimeItemKey,
   serializeRuntimeItemKey,
 } from '../shared/utils'
 import type { SpacerEngine } from './spacerEngine'
+import {
+  buildEstimatedHeightPrefix,
+  findEstimatedPrefixIndex,
+} from './estimatedHeightIndex'
 
 type WindowAroundInput = {
   items: MessageDataItem[]
@@ -30,6 +35,12 @@ export class RenderWindowEngine {
 
   private committedMessageIdToIndex = new Map<string, number>()
 
+  private heightIndexedItems: MessageDataItem[] | null = null
+
+  private heightIndexWidthBucket = -1
+
+  private estimatedHeightPrefix: number[] = []
+
   constructor(
     private readonly config: NormalizedWindowConfig,
     private readonly spacer: SpacerEngine,
@@ -39,6 +50,9 @@ export class RenderWindowEngine {
     this.indexedItems = null
     this.keyToIndex.clear()
     this.committedMessageIdToIndex.clear()
+    this.heightIndexedItems = null
+    this.heightIndexWidthBucket = -1
+    this.estimatedHeightPrefix = []
   }
 
   computeLatestWindow(
@@ -133,23 +147,8 @@ export class RenderWindowEngine {
     }
 
     const targetOffset = Math.max(0, offsetPx)
-    let height = 0
-
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index]
-
-      if (!item) {
-        continue
-      }
-
-      height += this.spacer.estimateItemHeight(item, width)
-
-      if (height >= targetOffset) {
-        return index
-      }
-    }
-
-    return items.length - 1
+    const prefix = this.ensureEstimatedHeightPrefix(items, width)
+    return findEstimatedPrefixIndex(prefix, targetOffset)
   }
 
   private walkBackwardByEstimatedHeight(
@@ -276,5 +275,26 @@ export class RenderWindowEngine {
         this.committedMessageIdToIndex.set(key.messageId, index)
       }
     }
+  }
+
+  private ensureEstimatedHeightPrefix(
+    items: MessageDataItem[],
+    width: number,
+  ): number[] {
+    const widthBucket = getWidthBucket(width)
+
+    if (
+      this.heightIndexedItems === items &&
+      this.heightIndexWidthBucket === widthBucket
+    ) {
+      return this.estimatedHeightPrefix
+    }
+
+    // 快速拖动可能直接落进 spacer-only 区域；prefix index 让 offset -> item 从 O(n) 收敛到 O(log n)。
+    const prefix = buildEstimatedHeightPrefix(items, width, this.spacer)
+    this.heightIndexedItems = items
+    this.heightIndexWidthBucket = widthBucket
+    this.estimatedHeightPrefix = prefix
+    return prefix
   }
 }

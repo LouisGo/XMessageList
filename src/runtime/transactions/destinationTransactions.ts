@@ -7,11 +7,11 @@ import type {
 } from '../types'
 import type {
   DestinationMotionForcedStart,
-  MeasurableRow,
-  RestoreTarget,
 } from '../core/state/runtimeTypes'
-import { areRuntimeItemKeysEqual } from '../shared/utils'
-import { getJumpResolution } from './transactionShared'
+import {
+  createSettledRestoreAnchor,
+  getJumpResolution,
+} from './transactionShared'
 
 export async function runJumpTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
@@ -293,17 +293,5 @@ async function runAnchorRestoreTransaction<TMessage, TOptimistic>(
     }
     deps.setTransactionState('idle')
     throw error
-  }
-}
-
-function createSettledRestoreAnchor(
-  target: RestoreTarget,
-  resolved: MeasurableRow,
-): AnchorState {
-  return {
-    key: resolved.key,
-    offsetWithinMessage: areRuntimeItemKeysEqual(resolved.key, target.key)
-      ? target.offsetWithinMessage
-      : 0,
   }
 }

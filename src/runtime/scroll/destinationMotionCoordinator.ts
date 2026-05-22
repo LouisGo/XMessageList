@@ -14,7 +14,6 @@ import type {
   ScrollMotionOptions,
   ScrollSource,
   DestinationState,
-  ViewportTransactionKind,
   ViewportAnchorChangeReason,
 } from '../types'
 import type {
@@ -23,11 +22,21 @@ import type {
   RuntimeDiagnosticEmitter,
   ReadySubstate,
 } from '../core/state/runtimeTypes'
+import {
+  createDestinationMotionCorrelationId,
+  emitDestinationMotionStartDiagnostic,
+} from './destinationMotionDiagnostics'
+import {
+  applyDestinationMotionCancel,
+  type DestinationMotionCancelContext,
+} from './destinationMotionCancel'
+import {
+  getForcedDestinationStartTop,
+  getInstantDestinationMotionReason,
+} from './destinationMotionPolicy'
+import { startDestinationScrollMotion } from './destinationMotionRunner'
 
-export type DestinationMotionCancelContext = {
-  transactionKind?: ViewportTransactionKind
-  transactionId?: string
-}
+export type { DestinationMotionCancelContext } from './destinationMotionCancel'
 
 export class DestinationMotionCoordinator<TMessage, TOptimistic> {
   private readonly motionEngine = new ScrollMotionEngine()
@@ -98,32 +107,30 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
       destination: input.destination,
     }
 
-    const instantReason = this.getInstantDestinationMotionReason()
+    const instantReason = getInstantDestinationMotionReason(
+      this.scrollMotionOptions,
+      container,
+    )
     const forcedStartTop =
       !instantReason
-        ? this.getForcedStartTop(targetTop, input.forceAnimateFrom)
+        ? getForcedDestinationStartTop(
+            targetTop,
+            input.forceAnimateFrom,
+            this.scrollMotionOptions.maxDistancePx,
+          )
         : null
     const motionCorrelationId =
-      `motion:${input.source}:${input.data.feedId}:${input.data.generation}:${input.data.revision}`
-    this.emitDiagnostic({
-      channel: 'motion',
-      severity: 'info',
-      name: 'destinationMotion.start',
+      createDestinationMotionCorrelationId(input.source, input.data)
+    emitDestinationMotionStartDiagnostic({
+      emitDiagnostic: this.emitDiagnostic,
+      source: input.source,
+      data: input.data,
+      container,
+      targetTop,
+      forcedStartTop,
+      instantReason,
+      options: this.scrollMotionOptions,
       correlationId: motionCorrelationId,
-      details: () => ({
-        source: input.source,
-        decision: instantReason ? 'instant' : 'engine',
-        instantReason,
-        currentTop: container.scrollTop,
-        targetTop,
-        distancePx: targetTop - container.scrollTop,
-        forcedStartTop,
-        scrollHeight: container.scrollHeight,
-        clientHeight: container.clientHeight,
-        enabled: this.scrollMotionOptions.enabled,
-        respectReducedMotion: this.scrollMotionOptions.respectReducedMotion,
-        reducedMotion: this.isReducedMotionRequested(),
-      }),
     })
 
     // motion 完成前只暴露 MOTION_ACTIVE 阶段；最终 bottom lock 和 destinationSettled
@@ -148,32 +155,19 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
       bottomLockState: this.scrollIntent.getBottomLockState(),
       viewportPhase: 'MOTION_ACTIVE',
     })
-    this.motionEngine.start({
+    startDestinationScrollMotion({
+      motionEngine: this.motionEngine,
       container,
       source: input.source,
       targetTop,
-      maxDistancePx: this.scrollMotionOptions.maxDistancePx,
-      minDurationMs: this.scrollMotionOptions.minDurationMs,
-      maxDurationMs: this.scrollMotionOptions.maxDurationMs,
-      targetEpsilonPx: this.scrollMotionOptions.targetEpsilonPx,
+      options: this.scrollMotionOptions,
       allowPreposition: input.allowPreposition,
-      now: () => this.scheduler.now(),
-      requestFrame: (callback) => this.scheduler.requestAnimationFrame(callback),
-      cancelFrame: (handle) => this.scheduler.cancelAnimationFrame(handle),
-      onFrameWrite: (nextTop, source) => this.writeScrollTop(nextTop, source),
-      onSettle: () => this.settleDestinationMotion(),
-      onCancel: (reason) => this.handleDestinationMotionCancel(reason),
-      onDecision: (decision) =>
-        this.emitDiagnostic({
-          channel: 'motion',
-          severity: 'debug',
-          name: 'scrollMotion.decision',
-          correlationId: motionCorrelationId,
-          details: () => ({
-            source: input.source,
-            ...decision,
-          }),
-        }),
+      scheduler: this.scheduler,
+      correlationId: motionCorrelationId,
+      writeScrollTop: (nextTop, source) => this.writeScrollTop(nextTop, source),
+      settle: () => this.settleDestinationMotion(),
+      cancel: (reason) => this.handleDestinationMotionCancel(reason),
+      emitDiagnostic: this.emitDiagnostic,
     })
   }
 
@@ -207,21 +201,6 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
 
   scrollTo(source: ScrollMotionSource, targetTop: number): void {
     this.writeScrollTop(targetTop, source)
-  }
-
-  private getForcedStartTop(
-    targetTop: number,
-    forceAnimateFrom: DestinationMotionForcedStart | undefined,
-  ): number | null {
-    if (!forceAnimateFrom) {
-      return null
-    }
-
-    if (forceAnimateFrom === 'beforeTarget') {
-      return Math.max(0, targetTop - this.scrollMotionOptions.maxDistancePx)
-    }
-
-    return targetTop + this.scrollMotionOptions.maxDistancePx
   }
 
   writeScrollTop(nextScrollTop: number, source: ScrollSource): void {
@@ -295,87 +274,20 @@ export class DestinationMotionCoordinator<TMessage, TOptimistic> {
   }
 
   private handleDestinationMotionCancel(reason: ScrollMotionCancelReason): void {
-    const settle = this.destinationMotionSettle
-    const container = this.registry.getContainer()
-    const context = this.cancelContext
-
-    this.emitDiagnostic({
-      channel: 'motion',
-      severity: reason === 'user-interrupt' ? 'info' : 'debug',
-      name: 'destinationMotion.cancel',
-      correlationId: settle
-        ? `motion:${settle.source}:${settle.data.feedId}:${settle.data.generation}:${settle.data.revision}`
-        : undefined,
-      details: () => ({
-        source: settle?.source ?? null,
-        reason,
-        targetTop: settle?.targetTop ?? null,
-        scrollTop: container?.scrollTop ?? null,
-        distancePx:
-          settle && container ? settle.targetTop - container.scrollTop : null,
-        transactionKind: context?.transactionKind ?? null,
-        transactionId: context?.transactionId ?? null,
-      }),
-    })
-
-    this.clearDestinationMotionSettle()
-
-    if (!settle || this.isDestroyed()) {
-      return
-    }
-
-    if (
-      reason === 'transaction-supersede' &&
-      settle.source === 'jump' &&
-      settle.destination
-    ) {
-      // Data/resize transactions invalidate the measured target coordinate,
-      // but not the user's jump intent. Re-resolve after the superseding
-      // transaction commits; do not emit destinationSettled from a partial move.
-      this.onDestinationMotionSupersede(settle, context)
-      return
-    }
-
-    if (reason !== 'user-interrupt' && reason !== 'resize-during-motion') {
-      return
-    }
-
-    const bottomLockState =
-      reason === 'resize-during-motion' ? settle.bottomLockState : 'UNLOCKED'
-
-    // 用户打断表示放弃目的地；resize 打断只是坐标失效，仍保留原事务期望的 lock 语义。
-    this.setDestinationState(reason === 'user-interrupt' ? 'interrupted' : 'settled')
-    this.scrollIntent.setBottomLockState(bottomLockState)
-    this.projection.publish({
-      data: settle.data,
-      renderWindow: settle.renderWindow,
-      bootstrapState: this.store.getSnapshot().bootstrapState,
-      bottomLockState,
-      viewportPhase: 'IDLE',
+    applyDestinationMotionCancel({
+      reason,
+      settle: this.destinationMotionSettle,
+      container: this.registry.getContainer(),
+      context: this.cancelContext,
+      isDestroyed: this.isDestroyed,
+      store: this.store,
+      scrollIntent: this.scrollIntent,
+      projection: this.projection,
+      setDestinationState: this.setDestinationState,
+      clearDestinationMotionSettle: () => this.clearDestinationMotionSettle(),
+      onDestinationMotionSupersede: this.onDestinationMotionSupersede,
+      emitDiagnostic: this.emitDiagnostic,
     })
   }
 
-  private getInstantDestinationMotionReason():
-    | 'disabled'
-    | 'reduced-motion'
-    | null {
-    if (!this.scrollMotionOptions.enabled) {
-      return 'disabled'
-    }
-
-    if (!this.scrollMotionOptions.respectReducedMotion) {
-      return null
-    }
-
-    return this.isReducedMotionRequested() ? 'reduced-motion' : null
-  }
-
-  private isReducedMotionRequested(): boolean {
-    const ownerWindow = this.registry.getContainer()?.ownerDocument.defaultView
-    return Boolean(
-      ownerWindow
-        ?.matchMedia?.('(prefers-reduced-motion: reduce)')
-        .matches,
-    )
-  }
 }

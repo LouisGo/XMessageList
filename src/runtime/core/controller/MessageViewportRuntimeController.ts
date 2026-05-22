@@ -1,16 +1,12 @@
 import { DomRegistry } from '../../dom/domRegistry'
 import { LifecycleGuard } from '../state/lifecycleGuard'
 import { MeasurementEngine, type HeightDelta } from '../../dom/measurementEngine'
-import { ProjectionStore, createEmptySnapshot } from '../state/projectionStore'
+import { ProjectionStore } from '../state/projectionStore'
 import { RenderWindowEngine } from '../../window/renderWindowEngine'
-import { ScrollIntentEngine } from '../../scroll/scrollIntentEngine'
-import { SpacerEngine, type HeightCache } from '../../window/spacerEngine'
+import type { HeightCache } from '../../window/spacerEngine'
 import { TransactionRunner } from '../../transactions/transactionRunner'
 import { CommitCoordinator } from '../projection/commitCoordinator'
-import { ProjectionCoordinator } from '../projection/projectionCoordinator'
 import { ResizeStabilizationCoordinator } from '../viewport/resizeStabilizationCoordinator'
-import { DestinationIntentCoordinator } from '../commands/destinationIntentCoordinator'
-import { ViewportCompactionCoordinator } from '../commands/viewportCompactionCoordinator'
 import { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import { RuntimeCommandRouter } from '../commands/runtimeCommandRouter'
 import { RuntimeLifecycleCoordinator } from '../viewport/runtimeLifecycleCoordinator'
@@ -18,29 +14,20 @@ import { RuntimeDomInputCoordinator } from '../input/runtimeDomInputCoordinator'
 import { RuntimeEventHub } from '../events/runtimeEventHub'
 import { RuntimeDataSnapshotCoordinator } from '../data/runtimeDataSnapshotCoordinator'
 import { RuntimeRecoveryAndMeasurement } from '../recovery/runtimeRecoveryAndMeasurement'
-import {
-  readScrollFrameMetrics,
-  ScrollFrameCoordinator,
-} from '../viewport/scrollFrameCoordinator'
+import { ScrollFrameCoordinator } from '../viewport/scrollFrameCoordinator'
+import { createRuntimeControllerServices } from './runtimeControllerComposition'
+import { RuntimeViewportAnchorEvents } from './runtimeViewportAnchorEvents'
 import {
   DiagnosticRecorder,
   type RuntimeDiagnosticInput,
 } from '../../debug/diagnosticRecorder'
 import {
-  BOOTSTRAP_HEIGHT_EPSILON_PX,
-  BOOTSTRAP_SETTLE_TIMEOUT_MS,
-  BOOTSTRAP_STABLE_FRAMES,
-  DEFAULT_EDGE_LOAD_THRESHOLD_PX,
-  DEFAULT_SCROLL_MOTION_OPTIONS,
-  DEFAULT_VIEWPORT_COMPACTION_SPACER_THRESHOLD_PX,
-  VIEWPORT_ANCHOR_IDLE_MS,
   cloneAnchorState,
   type BootstrapCommand,
   type CommitRecoveryInput,
   type ContainerSize,
   type DestinationMotionForcedStart,
   type ReadySubstate,
-  type ScrollFrameMetrics,
 } from '../state/runtimeTypes'
 import { AnchorCoordinator } from '../../dom/anchorCoordinator'
 import { EdgeNeedCoordinator } from '../../events/edgeNeedCoordinator'
@@ -61,26 +48,14 @@ import type {
   RenderWindow,
   RuntimeEventListener,
   RuntimeListener,
-  RuntimeObserverFactory,
-  RuntimeScheduler,
   RuntimeState,
-  ScrollMotionOptions,
   ScrollSource,
   TransactionState,
   DestinationState,
   ViewportPhase,
-  ViewportTransactionKind,
   ViewportAnchorChangeReason,
   ViewportDiagnosticRecord,
-  NormalizedWindowConfig,
 } from '../../types'
-import {
-  DEFAULT_BOTTOM_LOCK_THRESHOLD_PX,
-  DEFAULT_BOTTOM_UNLOCK_THRESHOLD_PX,
-  createDefaultObserverFactory,
-  createDefaultScheduler,
-  mergeWindowConfig,
-} from '../../shared/utils'
 
 /**
  * MessageViewportRuntimeController 是独立于 React 的 IM viewport engine 实现体。
@@ -90,12 +65,6 @@ export class MessageViewportRuntimeController<
   TMessage = unknown,
   TOptimistic = unknown,
 > {
-  private readonly config: NormalizedWindowConfig
-
-  private readonly scheduler: RuntimeScheduler
-
-  private readonly observerFactory: RuntimeObserverFactory
-
   private readonly heightCache: HeightCache = new Map()
 
   private readonly store: ProjectionStore<TMessage, TOptimistic>
@@ -103,8 +72,6 @@ export class MessageViewportRuntimeController<
   private readonly registry = new DomRegistry()
 
   private readonly lifecycle: LifecycleGuard
-
-  private readonly spacer: SpacerEngine
 
   private readonly renderWindow: RenderWindowEngine
 
@@ -119,26 +86,12 @@ export class MessageViewportRuntimeController<
 
   private readonly domInput: RuntimeDomInputCoordinator<TMessage, TOptimistic>
 
-  private readonly destinationIntent: DestinationIntentCoordinator<
-    TMessage,
-    TOptimistic
-  >
-
-  private readonly viewportCompaction: ViewportCompactionCoordinator<
-    TMessage,
-    TOptimistic
-  >
-
   private readonly commandRouter: RuntimeCommandRouter<TMessage, TOptimistic>
 
   private readonly runtimeLifecycle: RuntimeLifecycleCoordinator<
     TMessage,
     TOptimistic
   >
-
-  private readonly scrollIntent: ScrollIntentEngine
-
-  private readonly projection: ProjectionCoordinator<TMessage, TOptimistic>
 
   private readonly commit: CommitCoordinator<TMessage, TOptimistic>
 
@@ -162,19 +115,11 @@ export class MessageViewportRuntimeController<
 
   private readonly recovery: RuntimeRecoveryAndMeasurement<TMessage, TOptimistic>
 
+  private readonly anchorEvents: RuntimeViewportAnchorEvents<TMessage, TOptimistic>
+
   private readonly eventListeners = new Set<RuntimeEventListener>()
 
   private readonly eventHub: RuntimeEventHub
-
-  private readonly commitTimeoutMs: Required<
-    NonNullable<MessageViewportRuntimeOptions['commitTimeoutMs']>
-  >
-
-  private readonly edgeLoadThresholdPx: number
-
-  private readonly viewportCompactionSpacerThresholdPx: number
-
-  private readonly scrollMotionOptions: Required<ScrollMotionOptions>
 
   private readonly diagnostics: DiagnosticRecorder
 
@@ -182,13 +127,9 @@ export class MessageViewportRuntimeController<
 
   private state: RuntimeState = 'INITIAL'
 
-  private activeTransactionKind: ViewportTransactionKind | null = null
-
   private dataSnapshot: MessageDataSnapshot<TMessage, TOptimistic> | null = null
 
   private pendingBootstrap: BootstrapCommand | null = null
-
-  private anchorIdleTimer: number | null = null
 
   private currentFrame = 0
 
@@ -209,426 +150,96 @@ export class MessageViewportRuntimeController<
   private scrollbarDragEdgeIntent: 'before' | 'after' | null = null
 
   constructor(options: MessageViewportRuntimeOptions = {}) {
-    const feedId = options.feedId ?? ''
-    const generation = options.generation ?? 0
-    const defaultObservers = createDefaultObserverFactory()
-
-    this.config = mergeWindowConfig(options.window)
-    this.scheduler = options.scheduler ?? createDefaultScheduler()
-    this.observerFactory = {
-      createResizeObserver:
-        options.observers?.createResizeObserver ??
-        defaultObservers.createResizeObserver,
-      createIntersectionObserver:
-        options.observers?.createIntersectionObserver ??
-        defaultObservers.createIntersectionObserver,
-    }
-    this.commitTimeoutMs = {
-      bootstrap: options.commitTimeoutMs?.bootstrap ?? 1000,
-      normal: options.commitTimeoutMs?.normal ?? 500,
-      jump: options.commitTimeoutMs?.jump ?? 800,
-    }
-    this.scrollMotionOptions = {
-      ...DEFAULT_SCROLL_MOTION_OPTIONS,
-      ...options.scrollMotion,
-    }
-    this.edgeLoadThresholdPx =
-      options.edgeLoadThresholdPx ?? DEFAULT_EDGE_LOAD_THRESHOLD_PX
-    this.viewportCompactionSpacerThresholdPx =
-      normalizeViewportCompactionSpacerThresholdPx(
-        options.viewportCompaction?.spacerThresholdPx,
-      )
-    this.diagnostics = new DiagnosticRecorder(
-      options.debug?.diagnostics,
-      () => this.scheduler.now(),
-      () => this.getDiagnosticContext(),
-      (event) => this.emitEvent(event),
+    const services = createRuntimeControllerServices<TMessage, TOptimistic>(
+      options,
+      {
+        stateAxes: this.stateAxes,
+        heightCache: this.heightCache,
+        eventListeners: this.eventListeners,
+        getState: () => this.state,
+        setState: (state) => { this.state = state },
+        getDataSnapshot: () => this.dataSnapshot,
+        setDataSnapshot: (snapshot) => { this.dataSnapshot = snapshot },
+        setPendingBootstrap: (command) => { this.pendingBootstrap = command },
+        getCurrentFrame: () => this.currentFrame,
+        setCurrentFrame: (frame) => { this.currentFrame = frame },
+        getRetainedScrollTop: () => this.retainedScrollTop,
+        setRetainedScrollTop: (scrollTop) => { this.retainedScrollTop = scrollTop },
+        getLastScrollSource: () => this.lastScrollSource,
+        setLastScrollSource: (source) => { this.lastScrollSource = source },
+        getLastDiagnosticScrollSource: () => this.lastDiagnosticScrollSource,
+        setLastDiagnosticScrollSource: (source) => {
+          this.lastDiagnosticScrollSource = source
+        },
+        getLastUserScrollTop: () => this.lastUserScrollTop,
+        setLastUserScrollTop: (scrollTop) => { this.lastUserScrollTop = scrollTop },
+        getLastUserDistanceToBottom: () => this.lastUserDistanceToBottom,
+        setLastUserDistanceToBottom: (distance) => {
+          this.lastUserDistanceToBottom = distance
+        },
+        getLastContainerSize: () => this.lastContainerSize,
+        setLastContainerSize: (size) => { this.lastContainerSize = size },
+        getScrollbarDragIntentActive: () => this.scrollbarDragIntentActive,
+        setScrollbarDragIntentActive: (active) => {
+          this.scrollbarDragIntentActive = active
+        },
+        getScrollbarDragEdgeIntent: () => this.scrollbarDragEdgeIntent,
+        setScrollbarDragEdgeIntent: (edge) => {
+          this.scrollbarDragEdgeIntent = edge
+        },
+        canEmitEdgeNeeds: () => this.canEmitEdgeNeeds(),
+        tryRunPendingBootstrap: () => this.tryRunPendingBootstrap(),
+        enqueuePrependTransaction: () => this.enqueuePrependTransaction(),
+        enqueueAppendTransaction: (effect) => this.enqueueAppendTransaction(effect),
+        enqueueProjectionRefresh: () => this.enqueueProjectionRefresh(),
+        enqueueJumpTransaction: (target, jumpOptions) =>
+          this.enqueueJumpTransaction(target, jumpOptions),
+        enqueueRestoreTransaction: (target) =>
+          this.enqueueRestoreTransaction(target),
+        enqueueViewportCompactionTransaction: (target) =>
+          this.enqueueViewportCompactionTransaction(target),
+        enqueueResetTransaction: (reason) => this.enqueueResetTransaction(reason),
+        enqueueFollowBottomTransaction: () => this.enqueueFollowBottomTransaction(),
+        keepCurrentWindow: (items) => this.keepCurrentWindow(items),
+        measureCurrentWindow: () => this.measureCurrentWindow(),
+        recoverAfterCommitFailure: (input) => this.recoverAfterCommitFailure(input),
+        deriveRuntimeStateFromSnapshot: (snapshot) =>
+          this.deriveRuntimeStateFromSnapshot(snapshot),
+        captureViewportAnchor: () => this.captureViewportAnchor(),
+        readContainerSize: (container) => this.readContainerSize(container),
+        attachDomListeners: (container) => this.attachDomListeners(container),
+        detachDomListeners: (container) => this.detachDomListeners(container),
+        cancelScheduledWork: () => this.cancelScheduledWork(),
+        emitViewportAnchorChanged: (reason, anchor) =>
+          this.emitViewportAnchorChanged(reason, anchor),
+        getDiagnosticContext: () => this.getDiagnosticContext(),
+        emitEvent: (event) => this.emitEvent(event),
+        emitDiagnostic: (input) => this.emitDiagnostic(input),
+        emitError: (code) => this.emitError(code),
+      },
     )
 
-    this.store = new ProjectionStore(
-      createEmptySnapshot<TMessage, TOptimistic>(feedId, generation),
-    )
-    this.lifecycle = new LifecycleGuard(feedId, generation)
-    this.spacer = new SpacerEngine(this.heightCache)
-    this.renderWindow = new RenderWindowEngine(this.config, this.spacer)
-    this.measurement = new MeasurementEngine(
-      this.heightCache,
-      this.observerFactory,
-      () => this.resizeStabilization.scheduleHeightStabilization(),
-    )
-    this.scrollIntent = new ScrollIntentEngine(
-      options.bottomLockThresholdPx ?? DEFAULT_BOTTOM_LOCK_THRESHOLD_PX,
-      options.bottomUnlockThresholdPx ?? DEFAULT_BOTTOM_UNLOCK_THRESHOLD_PX,
-    )
-    this.eventHub = new RuntimeEventHub({
-      eventListeners: this.eventListeners,
-      emitDiagnostic: (input) => this.emitDiagnostic(input),
-      getCurrentToken: () => this.lifecycle.getCurrent(),
-      captureViewportAnchor: () => this.captureViewportAnchor(),
-    })
-    this.projection = new ProjectionCoordinator(
-      this.store,
-      this.registry,
-      this.spacer,
-      (input) => this.emitDiagnostic(input),
-    )
-    this.commit = new CommitCoordinator(
-      this.scheduler,
-      this.commitTimeoutMs,
-      (code) => this.emitError(code),
-    )
-    this.anchor = new AnchorCoordinator(
-      this.registry,
-      this.store,
-      this.renderWindow,
-      (currentFeedId, currentGeneration) =>
-        this.nextFrame(currentFeedId, currentGeneration),
-      (nextScrollTop, source) => this.motion.writeScrollTop(nextScrollTop, source),
-      (code) => this.emitError(code),
-    )
-    this.edge = new EdgeNeedCoordinator(
-      this.registry,
-      this.store,
-      this.observerFactory,
-      this.edgeLoadThresholdPx,
-      () => this.dataSnapshot,
-      () => this.lastScrollSource,
-      () => this.canEmitEdgeNeeds(),
-      () => this.destinationIntent.hasPendingFollowBottom(),
-      (event) => this.emitEvent(event),
-    )
-    this.destinationIntent = new DestinationIntentCoordinator({
-      lifecycle: this.lifecycle,
-      renderWindow: this.renderWindow,
-      scrollIntent: this.scrollIntent,
-      edge: this.edge,
-      getDataSnapshot: () => this.dataSnapshot,
-      getViewportSnapshot: () => this.store.getSnapshot(),
-      getScrollTop: () => this.registry.getContainer()?.scrollTop ?? 0,
-      setReadySubstate: (substate) =>
-        this.stateAxes.setReadySubstate(substate),
-      getReadySubstate: () => this.stateAxes.getReadySubstate(),
-      setDestinationState: (state) => {
-        this.stateAxes.setDestinationState(state)
-      },
-      getDestinationState: () => this.stateAxes.getDestinationState(),
-      enqueueFollowBottomTransaction: () => this.enqueueFollowBottomTransaction(),
-      enqueueJumpTransaction: (target, options) =>
-        this.enqueueJumpTransaction(target, options),
-      enqueueRestoreTransaction: (target) =>
-        this.enqueueRestoreTransaction(target),
-      emitEvent: (event) => this.emitEvent(event),
-      emitDiagnostic: (input) => this.emitDiagnostic(input),
-      spacerThresholdPx: this.viewportCompactionSpacerThresholdPx,
-    })
-    this.viewportCompaction = new ViewportCompactionCoordinator({
-      renderWindow: this.renderWindow,
-      getViewportSnapshot: () => this.store.getSnapshot(),
-      captureViewportAnchor: () => this.captureViewportAnchor(),
-      getState: () => this.state,
-      getReadySubstate: () => this.stateAxes.getReadySubstate(),
-      setReadySubstate: (substate) =>
-        this.stateAxes.setReadySubstate(substate),
-      enqueueViewportCompactionTransaction: (target) =>
-        this.enqueueViewportCompactionTransaction(target),
-      emitEvent: (event) => this.emitEvent(event),
-      emitDiagnostic: (input) => this.emitDiagnostic(input),
-      spacerThresholdPx: this.viewportCompactionSpacerThresholdPx,
-    })
-    this.commandRouter = new RuntimeCommandRouter({
-      getState: () => this.state,
-      stateAxes: this.stateAxes,
-      destinationIntent: this.destinationIntent,
-      viewportCompaction: this.viewportCompaction,
-      setPendingBootstrap: (command) => {
-        this.pendingBootstrap = command
-      },
-      tryRunPendingBootstrap: () => this.tryRunPendingBootstrap(),
-      enqueueResetTransaction: (reason) => this.enqueueResetTransaction(reason),
-      emitDiagnostic: (input) => this.emitDiagnostic(input),
-    })
-    this.motion = new DestinationMotionCoordinator(
-      this.registry,
-      this.store,
-      this.scheduler,
-      this.scrollIntent,
-      this.projection,
-      this.scrollMotionOptions,
-      (substate) => this.stateAxes.setReadySubstate(substate),
-      (state) => this.stateAxes.setDestinationState(state),
-      () => this.currentFrame,
-      () => this.state === 'DESTROYED',
-      (reason) => this.emitViewportAnchorChanged(reason),
-      (settle) => this.destinationIntent.handleDestinationMotionSettle(settle),
-      (settle, context) =>
-        this.destinationIntent.handleDestinationMotionSupersede(settle, context),
-      (scrollTop, source) =>
-        this.destinationIntent.recordActiveFollowBottomIntentScrollWrite(
-          scrollTop,
-          source,
-        ),
-      (input) => this.emitDiagnostic(input),
-    )
-    this.transactions = new TransactionRunner({
-      onEnqueue: (kind, id) =>
-        this.handleTransactionEnqueue(kind, id),
-      onStart: (kind, id) => {
-        this.handleTransactionStart(kind, id)
-        this.motion.cancel('transaction-supersede', {
-          transactionKind: kind,
-          transactionId: id,
-        })
-      },
-      onComplete: (kind, id) => this.handleTransactionComplete(kind, id),
-      onDrop: (kind, id, reason) =>
-        this.handleTransactionDrop(kind, id, reason),
-      onError: (kind, id, error) =>
-        this.handleTransactionError(kind, id, error),
-    })
-    this.transactionController = new ViewportTransactionController({
-      registry: this.registry,
-      store: this.store,
-      lifecycle: this.lifecycle,
-      renderWindow: this.renderWindow,
-      measurement: this.measurement,
-      scrollIntent: this.scrollIntent,
-      projection: this.projection,
-      commit: this.commit,
-      anchor: this.anchor,
-      motion: this.motion,
-      getDataSnapshot: () => this.dataSnapshot,
-      setState: (state) => {
-        this.state = state
-      },
-      setViewportPhase: (phase) => {
-        this.stateAxes.setViewportPhase(phase)
-      },
-      setTransactionState: (state) => {
-        this.stateAxes.setTransactionState(state)
-      },
-      setDestinationState: (state) => {
-        this.stateAxes.setDestinationState(state)
-      },
-      setPendingBootstrap: (command) => {
-        this.pendingBootstrap = command
-      },
-      tryRunPendingBootstrap: () => this.tryRunPendingBootstrap(),
-      startPendingFollowBottom: (data, scrollTop) =>
-        this.destinationIntent.startPendingFollowBottom(data, scrollTop),
-      ensureActiveFollowBottomIntent: (data, scrollTop) => {
-        this.destinationIntent.ensureActiveFollowBottomIntent(data, scrollTop)
-      },
-      hasActiveFollowBottomIntent: (data) =>
-        this.destinationIntent.hasActiveFollowBottomIntent(data),
-      clearActiveFollowBottomIntent: (reason) =>
-        this.destinationIntent.clearActiveFollowBottomIntent(reason),
-      reconcileBottomLockFromViewport: (data, reason) =>
-        this.reconcileBottomLockFromViewport(data, reason),
-      keepCurrentWindow: (items) => this.keepCurrentWindow(items),
-      measureCurrentWindow: () => this.measureCurrentWindow(),
-      waitForBootstrapSettle: (currentFeedId, currentGeneration) =>
-        this.waitForBootstrapSettle(currentFeedId, currentGeneration),
-      recoverAfterCommitFailure: (input) =>
-        this.recoverAfterCommitFailure(input),
-      deriveRuntimeStateFromSnapshot: (snapshot) =>
-        this.deriveRuntimeStateFromSnapshot(snapshot),
-      emitViewportAnchorChanged: (reason, anchor) =>
-        this.emitViewportAnchorChanged(reason, anchor),
-      emitDestinationSettled: (event) =>
-        this.destinationIntent.emitDestinationSettled(event),
-      invalidateSpacerCache: () => this.spacer.invalidateEstimateCache(),
-      emitEvent: (event) => this.emitEvent(event),
-      emitDiagnostic: (input) => this.emitDiagnostic(input),
-      emitError: (code) => this.emitError(code),
-    })
-    this.scrollFrame = new ScrollFrameCoordinator({
-      scheduler: this.scheduler,
-      registry: this.registry,
-      lifecycle: this.lifecycle,
-      store: this.store,
-      scrollIntent: this.scrollIntent,
-      projection: this.projection,
-      edge: this.edge,
-      anchor: this.anchor,
-      renderWindow: this.renderWindow,
-      transactions: this.transactions,
-      transactionController: this.transactionController,
-      getDataSnapshot: () => this.dataSnapshot,
-      getCurrentFrame: () => this.currentFrame,
-      setCurrentFrame: (frame) => {
-        this.currentFrame = frame
-      },
-      getState: () => this.state,
-      getReadySubstate: () => this.stateAxes.getReadySubstate(),
-      getScrollbarDragIntentActive: () => this.scrollbarDragIntentActive,
-      getScrollbarDragEdgeIntent: () => this.scrollbarDragEdgeIntent,
-      setScrollbarDragEdgeIntent: (edge) => {
-        this.scrollbarDragEdgeIntent = edge
-      },
-      getLastUserScrollTop: () => this.lastUserScrollTop,
-      setLastUserScrollTop: (scrollTop) => {
-        this.lastUserScrollTop = scrollTop
-      },
-      getLastUserDistanceToBottom: () => this.lastUserDistanceToBottom,
-      setLastUserDistanceToBottom: (distance) => {
-        this.lastUserDistanceToBottom = distance
-      },
-      getLastDiagnosticScrollSource: () => this.lastDiagnosticScrollSource,
-      setLastDiagnosticScrollSource: (source) => {
-        this.lastDiagnosticScrollSource = source
-      },
-      setLastScrollSource: (source) => {
-        this.lastScrollSource = source
-      },
-      getEdgeLoadThresholdPx: () => this.edgeLoadThresholdPx,
-      updatePendingFollowBottomForUserScroll: (scrollTop) =>
-        this.destinationIntent.updatePendingFollowBottomForUserScroll(scrollTop),
-      updateActiveFollowBottomIntentForScroll: (data, scrollTop, source) =>
-        this.destinationIntent.updateActiveFollowBottomIntentForScroll(
-          data,
-          scrollTop,
-          source,
-        ),
-      scheduleViewportAnchorIdleEvent: () => this.scheduleViewportAnchorIdleEvent(),
-      runAnchorlessWindowSlideTransaction: (nextWindow, expectedData) =>
-        this.runAnchorlessWindowSlideTransaction(nextWindow, expectedData),
-      emitViewportAnchorChanged: (reason, anchor) =>
-        this.emitViewportAnchorChanged(reason, anchor),
-      emitDiagnostic: (input) => this.emitDiagnostic(input),
-      getEdgeThresholdPx: (metrics) => this.getEdgeThresholdPx(metrics),
-    })
-    this.domInput = new RuntimeDomInputCoordinator({
-      registry: this.registry,
-      scrollIntent: this.scrollIntent,
-      motion: this.motion,
-      scrollFrame: this.scrollFrame,
-      getState: () => this.state,
-      getCurrentFrame: () => this.currentFrame,
-      setScrollbarDragIntentActive: (active) => {
-        this.scrollbarDragIntentActive = active
-      },
-      setScrollbarDragEdgeIntent: (edge) => {
-        this.scrollbarDragEdgeIntent = edge
-      },
-      emitDiagnostic: (input) => this.emitDiagnostic(input),
-    })
-    this.resizeStabilization = new ResizeStabilizationCoordinator({
-      scheduler: this.scheduler,
-      observerFactory: this.observerFactory,
-      registry: this.registry,
-      lifecycle: this.lifecycle,
-      store: this.store,
-      measurement: this.measurement,
-      spacer: this.spacer,
-      motion: this.motion,
-      scrollIntent: this.scrollIntent,
-      renderWindow: this.renderWindow,
-      transactions: this.transactions,
-      transactionController: this.transactionController,
-      getDataSnapshot: () => this.dataSnapshot,
-      getCurrentFrame: () => this.currentFrame,
-      setCurrentFrame: (frame) => {
-        this.currentFrame = frame
-      },
-      getLastContainerSize: () => this.lastContainerSize,
-      setLastContainerSize: (size) => {
-        this.lastContainerSize = size
-      },
-      captureViewportAnchor: () => this.captureViewportAnchor(),
-      emitViewportAnchorChanged: (reason, anchor) =>
-        this.emitViewportAnchorChanged(reason, anchor),
-      emitDiagnostic: (input) => this.emitDiagnostic(input),
-    })
-    this.runtimeLifecycle = new RuntimeLifecycleCoordinator({
-      registry: this.registry,
-      store: this.store,
-      lifecycle: this.lifecycle,
-      transactions: this.transactions,
-      commit: this.commit,
-      resizeStabilization: this.resizeStabilization,
-      edge: this.edge,
-      measurement: this.measurement,
-      motion: this.motion,
-      scrollIntent: this.scrollIntent,
-      renderWindow: this.renderWindow,
-      spacer: this.spacer,
-      destinationIntent: this.destinationIntent,
-      viewportCompaction: this.viewportCompaction,
-      stateAxes: this.stateAxes,
-      heightCache: this.heightCache,
-      eventListeners: this.eventListeners,
-      getState: () => this.state,
-      setState: (state) => {
-        this.state = state
-      },
-      getCurrentFrame: () => this.currentFrame,
-      getRetainedScrollTop: () => this.retainedScrollTop,
-      setRetainedScrollTop: (scrollTop) => {
-        this.retainedScrollTop = scrollTop
-      },
-      setLastScrollSource: (source) => {
-        this.lastScrollSource = source
-      },
-      setLastUserScrollTop: (scrollTop) => {
-        this.lastUserScrollTop = scrollTop
-      },
-      setLastUserDistanceToBottom: (distance) => {
-        this.lastUserDistanceToBottom = distance
-      },
-      setLastContainerSize: (size) => {
-        this.lastContainerSize = size
-      },
-      attachDomListeners: (container) => this.attachDomListeners(container),
-      detachDomListeners: (container) => this.detachDomListeners(container),
-      cancelScheduledWork: () => this.cancelScheduledWork(),
-      readContainerSize: (container) => this.readContainerSize(container),
-      reconcileReadyBottomLockFromViewport: (reason) =>
-        this.reconcileReadyBottomLockFromViewport(reason),
-      tryRunPendingBootstrap: () => this.tryRunPendingBootstrap(),
-      emitViewportAnchorChanged: (reason) =>
-        this.emitViewportAnchorChanged(reason),
-      emitDiagnostic: (input) => this.emitDiagnostic(input),
-    })
-    this.recovery = new RuntimeRecoveryAndMeasurement({
-      scheduler: this.scheduler,
-      registry: this.registry,
-      lifecycle: this.lifecycle,
-      store: this.store,
-      measurement: this.measurement,
-      spacer: this.spacer,
-      motion: this.motion,
-      projection: this.projection,
-      scrollIntent: this.scrollIntent,
-      getState: () => this.state,
-      setState: (state) => {
-        this.state = state
-      },
-      getCurrentFrame: () => this.currentFrame,
-      setCurrentFrame: (frame) => {
-        this.currentFrame = frame
-      },
-      emitDiagnostic: (input) => this.emitDiagnostic(input),
-    })
-    this.dataSnapshotCoordinator = new RuntimeDataSnapshotCoordinator({
-      renderWindow: this.renderWindow,
-      runtimeLifecycle: this.runtimeLifecycle,
-      scrollIntent: this.scrollIntent,
-      transactions: this.transactions,
-      destinationIntent: this.destinationIntent,
-      viewportCompaction: this.viewportCompaction,
-      getDataSnapshot: () => this.dataSnapshot,
-      setDataSnapshot: (snapshot) => {
-        this.dataSnapshot = snapshot
-      },
-      getState: () => this.state,
-      emitDiagnostic: (input) => this.emitDiagnostic(input),
-      emitError: (code) => this.emitError(code),
-      tryRunPendingBootstrap: () => this.tryRunPendingBootstrap(),
-      enqueuePrependTransaction: () => this.enqueuePrependTransaction(),
-      enqueueAppendTransaction: (effect) => this.enqueueAppendTransaction(effect),
-      enqueueProjectionRefresh: () => this.enqueueProjectionRefresh(),
-      enqueueResetTransaction: (reason) => this.enqueueResetTransaction(reason),
-    })
+    this.store = services.store
+    this.registry = services.registry
+    this.lifecycle = services.lifecycle
+    this.renderWindow = services.renderWindow
+    this.measurement = services.measurement
+    this.resizeStabilization = services.resizeStabilization
+    this.scrollFrame = services.scrollFrame
+    this.domInput = services.domInput
+    this.commandRouter = services.commandRouter
+    this.runtimeLifecycle = services.runtimeLifecycle
+    this.commit = services.commit
+    this.anchor = services.anchor
+    this.edge = services.edge
+    this.motion = services.motion
+    this.transactions = services.transactions
+    this.transactionController = services.transactionController
+    this.dataSnapshotCoordinator = services.dataSnapshotCoordinator
+    this.recovery = services.recovery
+    this.anchorEvents = services.anchorEvents
+    this.eventHub = services.eventHub
+    this.diagnostics = services.diagnostics
   }
 
   attach(container: HTMLElement): void {
@@ -856,76 +467,6 @@ export class MessageViewportRuntimeController<
     )
   }
 
-  private emitTransactionDiagnostic(
-    phase: 'enqueue' | 'start' | 'complete' | 'drop' | 'error',
-    kind: ViewportTransactionKind,
-    id: string,
-    extra: Record<string, unknown> = {},
-  ): void {
-    this.emitDiagnostic({
-      channel: 'transaction',
-      severity: phase === 'error' ? 'error' : 'debug',
-      name: `transaction.${phase}`,
-      correlationId: `transaction:${id}`,
-      details: () => ({
-        kind,
-        id,
-        queueDepth: this.transactions.getPendingCount(),
-        ...extra,
-      }),
-    })
-  }
-
-  private handleTransactionEnqueue(kind: ViewportTransactionKind, id: string): void {
-    this.stateAxes.setTransactionState(
-      this.transactions.getPendingCount() > 1 ? 'queued' : 'active',
-    )
-    this.emitTransactionDiagnostic('enqueue', kind, id)
-  }
-
-  private handleTransactionStart(kind: ViewportTransactionKind, id: string): void {
-    this.activeTransactionKind = kind
-    this.stateAxes.setTransactionState('active')
-    this.emitTransactionDiagnostic('start', kind, id)
-  }
-
-  private handleTransactionComplete(
-    kind: ViewportTransactionKind,
-    id: string,
-  ): void {
-    this.stateAxes.setTransactionState(
-      this.transactions.getPendingCount() > 0 ? 'queued' : 'idle',
-    )
-    this.emitTransactionDiagnostic('complete', kind, id)
-    this.activeTransactionKind = null
-  }
-
-  private handleTransactionDrop(
-    kind: ViewportTransactionKind,
-    id: string,
-    reason: 'reset-supersede' | 'key-supersede' | 'clear' | 'stop',
-  ): void {
-    this.stateAxes.setTransactionState(
-      this.transactions.getPendingCount() > 0 ? 'queued' : 'idle',
-    )
-    this.emitTransactionDiagnostic('drop', kind, id, { reason })
-    this.activeTransactionKind = null
-  }
-
-  private handleTransactionError(
-    kind: ViewportTransactionKind,
-    id: string,
-    error: unknown,
-  ): void {
-    this.stateAxes.setTransactionState(
-      this.transactions.getPendingCount() > 0 ? 'queued' : 'idle',
-    )
-    this.emitTransactionDiagnostic('error', kind, id, {
-      error: error instanceof Error ? error.message : String(error),
-    })
-    this.activeTransactionKind = null
-  }
-
   /**
    * commit timeout / cancel 后不能把 runtime 留在中间态。
    * 这里只恢复当前 generation 仍有效的事务，避免旧事务覆盖 feed 切换或 detach 后的新状态。
@@ -963,179 +504,11 @@ export class MessageViewportRuntimeController<
     return this.anchor.captureViewportAnchor()
   }
 
-  private scheduleScrollbarDragEdgeRecheck(reason: string): void {
-    this.scrollFrame.scheduleScrollbarDragEdgeRecheck(reason)
-  }
-
-  private reconcileReadyBottomLockFromViewport(reason: string): boolean {
-    const data = this.dataSnapshot
-
-    if (!data || this.store.getSnapshot().bootstrapState !== 'READY') {
-      return false
-    }
-
-    const changed = this.reconcileBottomLockFromViewport(data, reason)
-
-    if (changed) {
-      this.projection.publish({
-        data,
-        renderWindow: this.keepCurrentWindow(data.items),
-        bootstrapState: this.store.getSnapshot().bootstrapState,
-        bottomLockState: this.scrollIntent.getBottomLockState(),
-      })
-    }
-
-    return changed
-  }
-
-  private reconcileBottomLockFromViewport(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    reason: string,
-  ): boolean {
-    const container = this.registry.getContainer()
-
-    if (!container || data.hasMoreAfter) {
-      return false
-    }
-
-    const metrics = readScrollFrameMetrics(container)
-    const previousBottomLockState = this.scrollIntent.getBottomLockState()
-    const changed = this.scrollIntent.reconcileBottomLockFromDistance(
-      metrics.distanceToBottom,
-    )
-
-    if (changed) {
-      this.emitDiagnostic({
-        channel: 'scroll',
-        severity: 'info',
-        name: 'scroll.bottomLockReconciled',
-        details: () => ({
-          reason,
-          previousBottomLockState,
-          nextBottomLockState: this.scrollIntent.getBottomLockState(),
-          scrollTop: metrics.scrollTop,
-          scrollHeight: metrics.scrollHeight,
-          clientHeight: metrics.clientHeight,
-          distanceToBottom: metrics.distanceToBottom,
-          hasMoreAfter: data.hasMoreAfter,
-        }),
-      })
-    }
-
-    return changed
-  }
-
-  private async runAnchorlessWindowSlideTransaction(
-    nextWindow: RenderWindow,
-    expectedData: { feedId: string; generation: number; revision: number },
-  ): Promise<void> {
-    const data = this.dataSnapshot
-    const container = this.registry.getContainer()
-
-    if (!data || !container) {
-      return
-    }
-
-    if (
-      data.feedId !== expectedData.feedId ||
-      data.generation !== expectedData.generation ||
-      data.revision !== expectedData.revision
-    ) {
-      return
-    }
-
-    const token = this.lifecycle.getCurrent()
-    const previousSnapshot = this.store.getSnapshot()
-    const previousBottomLockState = this.scrollIntent.getBottomLockState()
-    this.stateAxes.setViewportPhase('PROJECTING')
-
-    try {
-      const projection = this.projection.publish({
-        data,
-        renderWindow: nextWindow,
-        bootstrapState: previousSnapshot.bootstrapState,
-        bottomLockState: previousBottomLockState,
-        viewportPhase: 'PROJECTING',
-      })
-
-      await this.commit.waitForChanged(projection, 'resize')
-      this.measureCurrentWindow()
-      this.stateAxes.setViewportPhase('IDLE')
-      this.projection.publish({
-        data,
-        renderWindow: nextWindow,
-        bootstrapState: previousSnapshot.bootstrapState,
-        bottomLockState: this.scrollIntent.getBottomLockState(),
-        viewportPhase: 'IDLE',
-      })
-      this.emitViewportAnchorChanged(
-        'transaction-settle',
-        this.captureViewportAnchor(),
-      )
-    } catch (error) {
-      this.recoverAfterCommitFailure({
-        token,
-        nextState: 'READY',
-        restoreBottomLockState: previousBottomLockState,
-        restoreSnapshot: previousSnapshot,
-      })
-      throw error
-    }
-  }
-
-  private scheduleViewportAnchorIdleEvent(): void {
-    if (this.anchorIdleTimer !== null) {
-      this.scheduler.clearTimeout(this.anchorIdleTimer)
-    }
-
-    const token = this.lifecycle.getCurrent()
-    this.anchorIdleTimer = this.scheduler.setTimeout(() => {
-      this.anchorIdleTimer = null
-
-      if (!this.lifecycle.isCurrent(token.feedId, token.generation)) {
-        return
-      }
-
-      this.emitViewportAnchorChanged('scroll-idle')
-    }, VIEWPORT_ANCHOR_IDLE_MS)
-  }
-
   private emitViewportAnchorChanged(
     reason: ViewportAnchorChangeReason,
     anchorOverride?: AnchorState | null,
   ): void {
-    const data = this.dataSnapshot
-
-    if (!data || this.state === 'DESTROYED') {
-      return
-    }
-
-    const anchor =
-      typeof anchorOverride === 'undefined'
-        ? this.captureViewportAnchor()
-        : anchorOverride
-
-    this.emitEvent({
-      type: 'viewportAnchorChanged',
-      feedId: data.feedId,
-      generation: data.generation,
-      reason,
-      anchor: anchor ? cloneAnchorState(anchor) : null,
-    })
-
-    if (
-      reason === 'transaction-settle' &&
-      (this.activeTransactionKind === 'prepend' ||
-        this.activeTransactionKind === 'append')
-    ) {
-      this.scheduleScrollbarDragEdgeRecheck(
-        `transaction-settle:${this.activeTransactionKind}`,
-      )
-    }
-  }
-
-  private getEdgeThresholdPx(metrics: ScrollFrameMetrics): number {
-    return metrics.clientHeight * this.config.overscan
+    this.anchorEvents.emitChanged(reason, anchorOverride)
   }
 
   private readContainerSize(container: HTMLElement): ContainerSize {
@@ -1153,63 +526,10 @@ export class MessageViewportRuntimeController<
     this.domInput.detachDomListeners(container)
   }
 
-  private async waitForBootstrapSettle(
-    feedId: string,
-    generation: number,
-  ): Promise<void> {
-    const container = this.registry.getContainer()
-
-    if (!container) {
-      return
-    }
-
-    const startedAt = this.scheduler.now()
-    let stableFrames = 0
-    let previousScrollHeight = container.scrollHeight
-
-    while (
-      stableFrames < BOOTSTRAP_STABLE_FRAMES &&
-      this.scheduler.now() - startedAt < BOOTSTRAP_SETTLE_TIMEOUT_MS
-    ) {
-      await this.nextFrame(feedId, generation)
-
-      const nextScrollHeight = container.scrollHeight
-      const changed =
-        Math.abs(nextScrollHeight - previousScrollHeight) >
-        BOOTSTRAP_HEIGHT_EPSILON_PX
-
-      stableFrames = changed ? 0 : stableFrames + 1
-      previousScrollHeight = nextScrollHeight
-
-      if (this.scrollIntent.getBottomLockState() === 'LOCKED') {
-        this.motion.scrollToBottom('followBottom')
-      }
-    }
-  }
-
-  private nextFrame(feedId: string, generation: number): Promise<void> {
-    return new Promise((resolve) => {
-      this.scheduler.requestAnimationFrame(() => {
-        this.currentFrame += 1
-
-        if (this.lifecycle.isCurrent(feedId, generation)) {
-          resolve()
-          return
-        }
-
-        resolve()
-      })
-    })
-  }
-
   private cancelScheduledWork(): void {
     this.scrollFrame.cancelScheduledWork()
     this.resizeStabilization.cancelScheduledWork()
-
-    if (this.anchorIdleTimer !== null) {
-      this.scheduler.clearTimeout(this.anchorIdleTimer)
-      this.anchorIdleTimer = null
-    }
+    this.anchorEvents.cancelScheduledWork()
   }
 
   private emitEvent(event: MessageViewportRuntimeEvent): void {
@@ -1254,18 +574,4 @@ export class MessageViewportRuntimeController<
   private emitError(code: string): void {
     this.eventHub.emitError(code)
   }
-}
-
-function normalizeViewportCompactionSpacerThresholdPx(
-  threshold: number | undefined,
-): number {
-  if (
-    typeof threshold === 'number' &&
-    Number.isFinite(threshold) &&
-    threshold >= 0
-  ) {
-    return threshold
-  }
-
-  return DEFAULT_VIEWPORT_COMPACTION_SPACER_THRESHOLD_PX
 }

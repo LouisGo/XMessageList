@@ -76,9 +76,10 @@ export class RuntimeDomInputCoordinator<TMessage, TOptimistic> {
     container.addEventListener('pointerdown', this.handlePointerScrollIntent)
     container.addEventListener('mousedown', this.handleMouseScrollIntent)
     container.addEventListener('keydown', this.handleUserScrollIntent)
-    window.addEventListener('pointerup', this.handleScrollbarDragEnd)
-    window.addEventListener('mouseup', this.handleScrollbarDragEnd)
-    window.addEventListener('blur', this.handleScrollbarDragEnd)
+    const ownerWindow = container.ownerDocument.defaultView
+    ownerWindow?.addEventListener('pointerup', this.handleScrollbarDragEnd)
+    ownerWindow?.addEventListener('mouseup', this.handleScrollbarDragEnd)
+    ownerWindow?.addEventListener('blur', this.handleScrollbarDragEnd)
   }
 
   detachDomListeners(container: HTMLElement): void {
@@ -88,9 +89,10 @@ export class RuntimeDomInputCoordinator<TMessage, TOptimistic> {
     container.removeEventListener('pointerdown', this.handlePointerScrollIntent)
     container.removeEventListener('mousedown', this.handleMouseScrollIntent)
     container.removeEventListener('keydown', this.handleUserScrollIntent)
-    window.removeEventListener('pointerup', this.handleScrollbarDragEnd)
-    window.removeEventListener('mouseup', this.handleScrollbarDragEnd)
-    window.removeEventListener('blur', this.handleScrollbarDragEnd)
+    const ownerWindow = container.ownerDocument.defaultView
+    ownerWindow?.removeEventListener('pointerup', this.handleScrollbarDragEnd)
+    ownerWindow?.removeEventListener('mouseup', this.handleScrollbarDragEnd)
+    ownerWindow?.removeEventListener('blur', this.handleScrollbarDragEnd)
   }
 
   private readonly handleScroll = (): void => {

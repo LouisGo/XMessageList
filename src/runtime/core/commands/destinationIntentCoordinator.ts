@@ -19,11 +19,17 @@ import {
   getJumpForcedStart,
   hasCommittedMessage,
   resolvePendingJumpTarget,
+  shouldRebuildDestinationWindow,
 } from './destinationIntentHelpers'
 import {
   isAroundRebuildSnapshot,
   isLatestRebuildSnapshot,
 } from './pendingResponseGuards'
+import {
+  emitDestinationSettledEvent,
+  emitPendingDestinationNeed,
+  emitPendingFollowBottomNeed,
+} from './destinationIntentEvents'
 import type {
   AnchorState,
   DestinationState,
@@ -113,7 +119,7 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
       return
     }
 
-    if (!this.hasCommittedMessage(data, target.messageId)) {
+    if (!hasCommittedMessage(this.deps.renderWindow, data, target.messageId)) {
       this.startPendingDestinationRequest('jump', target, target, {
         forceAnimateFrom,
         animateOnResolve,
@@ -142,7 +148,10 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
       return
     }
 
-    if (identityTarget && !this.hasCommittedMessage(data, identityTarget.messageId)) {
+    if (
+      identityTarget &&
+      !hasCommittedMessage(this.deps.renderWindow, data, identityTarget.messageId)
+    ) {
       this.startPendingDestinationRequest('restore', identityTarget, target)
       return
     }
@@ -206,7 +215,8 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
     }
 
     if (pending.intent === 'jump') {
-      const resolvedJumpTarget = this.resolvePendingJumpTarget(
+      const resolvedJumpTarget = resolvePendingJumpTarget(
+        this.deps.renderWindow,
         snapshot,
         pending.target,
       )
@@ -234,7 +244,9 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
       return true
     }
 
-    if (!this.hasCommittedMessage(snapshot, pending.target.messageId)) {
+    if (
+      !hasCommittedMessage(this.deps.renderWindow, snapshot, pending.target.messageId)
+    ) {
       this.emitPendingDestinationNeed(snapshot)
       return true
     }
@@ -389,12 +401,13 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
 
     const originalTarget = destination.target
     const resolvedTarget =
-      destination.resolvedTarget && this.hasCommittedMessage(
+      destination.resolvedTarget && hasCommittedMessage(
+        this.deps.renderWindow,
         data,
         destination.resolvedTarget.messageId,
       )
         ? destination.resolvedTarget
-        : this.resolvePendingJumpTarget(data, originalTarget)
+        : resolvePendingJumpTarget(this.deps.renderWindow, data, originalTarget)
 
     this.deps.emitDiagnostic({
       channel: 'motion',
@@ -561,39 +574,13 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
   private emitPendingFollowBottomNeed(
     data: MessageDataSnapshot<TMessage, TOptimistic>,
   ): void {
-    const pending = this.pendingFollowBottom
-
-    if (!pending || pending.emittedAfterRevision === data.revision) {
-      return
-    }
-
-    pending.emittedAfterRevision = data.revision
-    this.deps.edge.setAfterEdgeLatched(true)
-    this.deps.emitEvent({
-      type: 'needLatestMessages',
-      feedId: data.feedId,
-      generation: data.generation,
-      reason: 'bottom-follow',
-    })
+    emitPendingFollowBottomNeed(this.deps, this.pendingFollowBottom, data)
   }
 
   private emitPendingDestinationNeed(
     data: MessageDataSnapshot<TMessage, TOptimistic>,
   ): void {
-    const pending = this.pendingDestinationRequest
-
-    if (!pending || pending.emittedAfterRevision === data.revision) {
-      return
-    }
-
-    pending.emittedAfterRevision = data.revision
-    this.deps.emitEvent({
-      type: 'needMessagesAround',
-      feedId: data.feedId,
-      generation: data.generation,
-      reason: pending.intent,
-      target: { ...pending.target },
-    })
+    emitPendingDestinationNeed(this.deps, this.pendingDestinationRequest, data)
   }
 
   emitDestinationSettled(event: {
@@ -602,48 +589,12 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
     resolution: 'target' | 'fallback-deleted'
     resolvedTarget?: MessageIdentityAnchor
   }): void {
-    const token = this.deps.getDataSnapshot()
-      ? {
-          feedId: this.deps.getDataSnapshot()!.feedId,
-          generation: this.deps.getDataSnapshot()!.generation,
-        }
-      : this.deps.lifecycle.getCurrent()
-
-    this.deps.emitEvent({
-      type: 'destinationSettled',
-      feedId: token.feedId,
-      generation: token.generation,
-      intent: event.intent,
-      target: { ...event.target },
-      resolution: event.resolution,
-      resolvedTarget: event.resolvedTarget
-        ? { ...event.resolvedTarget }
-        : undefined,
-    })
+    emitDestinationSettledEvent(this.deps, event)
   }
-
-  private hasCommittedMessage(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    messageId: string,
-  ): boolean {
-    return hasCommittedMessage(this.deps.renderWindow, data, messageId)
-  }
-
-  private resolvePendingJumpTarget(
-    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
-    target: MessageIdentityAnchor,
-  ): MessageIdentityAnchor | null {
-    return resolvePendingJumpTarget(this.deps.renderWindow, snapshot, target)
-  }
-
   private shouldRebuildDestinationWindow(): boolean {
-    const snapshot = this.deps.getViewportSnapshot()
-    return (
-      this.deps.spacerThresholdPx > 0 &&
-      (
-        snapshot.topSpacer > this.deps.spacerThresholdPx ||
-        snapshot.bottomSpacer > this.deps.spacerThresholdPx
-      )
+    return shouldRebuildDestinationWindow(
+      this.deps.spacerThresholdPx,
+      this.deps.getViewportSnapshot(),
     )
   }
 }

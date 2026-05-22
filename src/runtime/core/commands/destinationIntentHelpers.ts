@@ -7,6 +7,7 @@ import type {
   AnchorState,
   MessageDataSnapshot,
   MessageIdentityAnchor,
+  MessageViewportSnapshot,
 } from '../../types'
 import type { RenderWindowEngine } from '../../window/renderWindowEngine'
 
@@ -82,4 +83,15 @@ export function cloneDestinationCommandTarget(
   target: AnchorState | MessageIdentityAnchor,
 ): AnchorState | MessageIdentityAnchor {
   return isAnchorState(target) ? cloneAnchorState(target) : { ...target }
+}
+
+export function shouldRebuildDestinationWindow(
+  spacerThresholdPx: number,
+  snapshot: MessageViewportSnapshot,
+): boolean {
+  return (
+    spacerThresholdPx > 0 &&
+    (snapshot.topSpacer > spacerThresholdPx ||
+      snapshot.bottomSpacer > spacerThresholdPx)
+  )
 }

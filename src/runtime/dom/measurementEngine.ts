@@ -10,6 +10,7 @@ import {
   serializeRuntimeItemKey,
 } from '../shared/utils'
 import type { HeightCache } from '../window/spacerEngine'
+import { readResizeObserverBoxHeight } from './resizeObserverBox'
 
 export type HeightDelta = {
   key: MessageRuntimeItemKey
@@ -253,6 +254,12 @@ export class MeasurementEngine {
     entry: ResizeObserverEntry,
     target: HTMLElement,
   ): number {
+    const boxHeight = readResizeObserverBoxHeight(entry)
+
+    if (boxHeight > 0) {
+      return boxHeight
+    }
+
     if (entry.contentRect.height > 0) {
       return entry.contentRect.height
     }
