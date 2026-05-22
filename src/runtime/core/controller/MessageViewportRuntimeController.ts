@@ -372,6 +372,7 @@ export class MessageViewportRuntimeController<
     const command = this.pendingBootstrap
     this.pendingBootstrap = null
     // bootstrap 只在 data + container 都就绪后入队；否则会发布无法 commit 的 projection。
+    this.transactions.dropBySupersedeKey('data-refresh')
     this.transactions.enqueue(
       'bootstrap',
       () =>

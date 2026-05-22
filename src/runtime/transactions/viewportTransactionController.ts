@@ -50,7 +50,7 @@ import {
   runItemLocationTransaction,
   runRemoveFromStartTransaction,
 } from './reservedModifierTransactions'
-import { shouldRunDataMutationTransaction } from './dataMutationTransaction'
+import { shouldBootstrapCurrentDataForReset } from './dataMutationTransaction'
 
 export type ViewportTransactionDeps<TMessage, TOptimistic> = {
   registry: DomRegistry
@@ -225,7 +225,7 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     reason: string,
     data?: MessageDataSnapshot<TMessage, TOptimistic>,
   ): Promise<void> {
-    if (data && !shouldRunDataMutationTransaction(this.deps, data)) {
+    if (data && !shouldBootstrapCurrentDataForReset(this.deps, data)) {
       return
     }
 

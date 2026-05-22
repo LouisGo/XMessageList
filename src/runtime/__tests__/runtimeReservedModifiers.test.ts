@@ -366,6 +366,79 @@ describe('MessageViewportRuntime reserved viewport modifiers', () => {
     )
   })
 
+  it('bootstraps current data when a queued reset snapshot is superseded', async () => {
+    const { runtime, scheduler } = createRuntime({
+      debug: {
+        diagnostics: {
+          channels: ['transaction'],
+          emitEvents: false,
+          maxEntries: 100,
+        },
+      },
+    })
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(
+      createSnapshot({ count: 80, revision: 1, effect: 'reset' }),
+    )
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    runtime.setDataSnapshot(
+      createSnapshot({ count: 81, revision: 2, effect: 'append' }),
+    )
+    await Promise.resolve()
+    runtime.setDataSnapshot(
+      createSnapshot({ count: 30, revision: 3, effect: 'reset' }),
+    )
+    runtime.setDataSnapshot(
+      createSnapshot({ count: 31, revision: 4, effect: 'items-change' }),
+    )
+
+    await commitCurrentProjection(runtime, container)
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    const snapshot = runtime.getSnapshot()
+    const records = runtime.getDiagnosticRecords()
+
+    expect(snapshot.renderWindow).toEqual(
+      expect.objectContaining({
+        startIndex: 11,
+        endIndex: 30,
+      }),
+    )
+    expect(snapshot.items).toHaveLength(20)
+    expect(snapshot.items[0]?.key).toEqual({
+      kind: 'committed',
+      messageId: 'm-12',
+    })
+    expect(snapshot.items.at(-1)?.key).toEqual({
+      kind: 'committed',
+      messageId: 'm-31',
+    })
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        name: 'transaction.resetSnapshotSuperseded',
+        details: expect.objectContaining({
+          expected: expect.objectContaining({ revision: 3 }),
+          current: expect.objectContaining({ revision: 4 }),
+        }),
+      }),
+    )
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        name: 'transaction.drop',
+        details: expect.objectContaining({
+          kind: 'resize',
+          reason: 'key-supersede',
+        }),
+      }),
+    )
+  })
+
   it('drops a queued generic data refresh when a reserved modifier arrives', async () => {
     const { runtime, scheduler } = createRuntime({
       debug: {
