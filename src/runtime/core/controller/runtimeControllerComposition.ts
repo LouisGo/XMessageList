@@ -1,10 +1,7 @@
 import { TransactionRunner } from '../../transactions/transactionRunner'
-import type { ResizeStabilizationCoordinator } from '../viewport/resizeStabilizationCoordinator'
 import { DestinationIntentCoordinator } from '../commands/destinationIntentCoordinator'
 import { ViewportCompactionCoordinator } from '../commands/viewportCompactionCoordinator'
 import { RuntimeCommandRouter } from '../commands/runtimeCommandRouter'
-import type { RuntimeRecoveryAndMeasurement } from '../recovery/runtimeRecoveryAndMeasurement'
-import type { ScrollFrameCoordinator } from '../viewport/scrollFrameCoordinator'
 import { RuntimeBottomLockCoordinator } from './runtimeBottomLockCoordinator'
 import { RuntimeTransactionDiagnostics } from './runtimeTransactionDiagnostics'
 import { RuntimeViewportAnchorEvents } from './runtimeViewportAnchorEvents'
@@ -16,15 +13,14 @@ import type { MessageViewportRuntimeOptions } from '../../types'
 import type { RuntimeControllerHost } from './runtimeControllerHost'
 import { createRuntimeControllerBaseServices } from './runtimeControllerBaseServices'
 import { createRuntimeControllerViewportServices } from './runtimeControllerViewportServices'
+import { createRuntimeControllerServiceRefs } from './runtimeControllerServiceRefs'
 
 export function createRuntimeControllerServices<TMessage, TOptimistic>(
   options: MessageViewportRuntimeOptions,
   host: RuntimeControllerHost<TMessage, TOptimistic>,
 ) {
-  let resizeStabilization: ResizeStabilizationCoordinator<
-    TMessage,
-    TOptimistic
-  > | null = null
+  const serviceRefs = createRuntimeControllerServiceRefs<TMessage, TOptimistic>()
+  // 构造期循环依赖只允许经由 service ref 延迟解引用；coordinator 构造器不得同步调用这些 peer 回调。
   const {
     config,
     scheduler,
@@ -46,29 +42,17 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
   } = createRuntimeControllerBaseServices<TMessage, TOptimistic>(
     options,
     host,
-    () => resizeStabilization?.scheduleHeightStabilization(),
+    () => serviceRefs.resizeStabilization.get().scheduleHeightStabilization(),
   )
-  let recovery: RuntimeRecoveryAndMeasurement<TMessage, TOptimistic> | null = null
-  let motion: DestinationMotionCoordinator<TMessage, TOptimistic> | null = null
-  let edge: EdgeNeedCoordinator<TMessage, TOptimistic> | null = null
-  let destinationIntent: DestinationIntentCoordinator<
-    TMessage,
-    TOptimistic
-  > | null = null
-  let transactions: TransactionRunner | null = null
-  let transactionController: ViewportTransactionController<
-    TMessage,
-    TOptimistic
-  > | null = null
-  let scrollFrame: ScrollFrameCoordinator<TMessage, TOptimistic> | null = null
 
   const anchor = new AnchorCoordinator<TMessage, TOptimistic>(
     registry,
     store,
     renderWindow,
     (currentFeedId, currentGeneration) =>
-      recovery!.nextFrame(currentFeedId, currentGeneration),
-    (nextScrollTop, source) => motion!.writeScrollTop(nextScrollTop, source),
+      serviceRefs.recovery.get().nextFrame(currentFeedId, currentGeneration),
+    (nextScrollTop, source) =>
+      serviceRefs.motion.get().writeScrollTop(nextScrollTop, source),
     host.emitError,
   )
   const bottomLock = new RuntimeBottomLockCoordinator<TMessage, TOptimistic>({
@@ -80,7 +64,7 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     keepCurrentWindow: host.keepCurrentWindow,
     emitDiagnostic: host.emitDiagnostic,
   })
-  edge = new EdgeNeedCoordinator<TMessage, TOptimistic>(
+  const edge = new EdgeNeedCoordinator<TMessage, TOptimistic>(
     registry,
     store,
     observerFactory,
@@ -88,23 +72,22 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     host.getDataSnapshot,
     host.getLastScrollSource,
     host.canEmitEdgeNeeds,
-    () => destinationIntent!.hasPendingFollowBottom(),
+    () => serviceRefs.destinationIntent.get().hasPendingFollowBottom(),
     host.emitEvent,
   )
-  let transactionDiagnostics: RuntimeTransactionDiagnostics | null = null
   const anchorEvents = new RuntimeViewportAnchorEvents({
     scheduler,
     lifecycle,
     getDataSnapshot: host.getDataSnapshot,
     getState: host.getState,
     getActiveTransactionKind: () =>
-      transactionDiagnostics!.getActiveTransactionKind(),
+      serviceRefs.transactionDiagnostics.get().getActiveTransactionKind(),
     captureViewportAnchor: host.captureViewportAnchor,
     scheduleScrollbarDragEdgeRecheck: (reason) =>
-      scrollFrame!.scheduleScrollbarDragEdgeRecheck(reason),
+      serviceRefs.scrollFrame.get().scheduleScrollbarDragEdgeRecheck(reason),
     emitEvent: host.emitEvent,
   })
-  destinationIntent = new DestinationIntentCoordinator<TMessage, TOptimistic>({
+  const destinationIntent = new DestinationIntentCoordinator<TMessage, TOptimistic>({
     lifecycle,
     renderWindow,
     scrollIntent,
@@ -125,6 +108,7 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     emitDiagnostic: host.emitDiagnostic,
     spacerThresholdPx: viewportCompactionSpacerThresholdPx,
   })
+  serviceRefs.destinationIntent.setOnce(destinationIntent)
   const viewportCompaction = new ViewportCompactionCoordinator<
     TMessage,
     TOptimistic
@@ -151,7 +135,7 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     enqueueResetTransaction: host.enqueueResetTransaction,
     emitDiagnostic: host.emitDiagnostic,
   })
-  motion = new DestinationMotionCoordinator<TMessage, TOptimistic>(
+  const motion = new DestinationMotionCoordinator<TMessage, TOptimistic>(
     registry,
     store,
     scheduler,
@@ -163,37 +147,43 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     host.getCurrentFrame,
     () => host.getState() === 'DESTROYED',
     (reason) => host.emitViewportAnchorChanged(reason),
-    (settle) => destinationIntent!.handleDestinationMotionSettle(settle),
+    (settle) =>
+      serviceRefs.destinationIntent.get().handleDestinationMotionSettle(settle),
     (settle, context) =>
-      destinationIntent!.handleDestinationMotionSupersede(settle, context),
+      serviceRefs.destinationIntent.get().handleDestinationMotionSupersede(settle, context),
     (scrollTop, source) =>
-      destinationIntent!.recordActiveFollowBottomIntentScrollWrite(
+      serviceRefs.destinationIntent.get().recordActiveFollowBottomIntentScrollWrite(
         scrollTop,
         source,
       ),
     host.emitDiagnostic,
   )
-  transactionDiagnostics = new RuntimeTransactionDiagnostics({
+  serviceRefs.motion.setOnce(motion)
+  const transactionDiagnostics = new RuntimeTransactionDiagnostics({
     stateAxes: host.stateAxes,
-    getPendingCount: () => transactions!.getPendingCount(),
+    getPendingCount: () => serviceRefs.transactions.get().getPendingCount(),
     emitDiagnostic: host.emitDiagnostic,
   })
-  transactions = new TransactionRunner({
-    onEnqueue: (kind, id) => transactionDiagnostics!.handleEnqueue(kind, id),
+  serviceRefs.transactionDiagnostics.setOnce(transactionDiagnostics)
+  const transactions = new TransactionRunner({
+    onEnqueue: (kind, id) =>
+      serviceRefs.transactionDiagnostics.get().handleEnqueue(kind, id),
     onStart: (kind, id) => {
-      transactionDiagnostics!.handleStart(kind, id)
-      motion!.cancel('transaction-supersede', {
+      serviceRefs.transactionDiagnostics.get().handleStart(kind, id)
+      serviceRefs.motion.get().cancel('transaction-supersede', {
         transactionKind: kind,
         transactionId: id,
       })
     },
-    onComplete: (kind, id) => transactionDiagnostics!.handleComplete(kind, id),
+    onComplete: (kind, id) =>
+      serviceRefs.transactionDiagnostics.get().handleComplete(kind, id),
     onDrop: (kind, id, reason) =>
-      transactionDiagnostics!.handleDrop(kind, id, reason),
+      serviceRefs.transactionDiagnostics.get().handleDrop(kind, id, reason),
     onError: (kind, id, error) =>
-      transactionDiagnostics!.handleError(kind, id, error),
+      serviceRefs.transactionDiagnostics.get().handleError(kind, id, error),
   })
-  transactionController = new ViewportTransactionController<
+  serviceRefs.transactions.setOnce(transactions)
+  const transactionController = new ViewportTransactionController<
     TMessage,
     TOptimistic
   >({
@@ -215,25 +205,25 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     setPendingBootstrap: host.setPendingBootstrap,
     tryRunPendingBootstrap: host.tryRunPendingBootstrap,
     startPendingFollowBottom: (data, scrollTop) =>
-      destinationIntent!.startPendingFollowBottom(data, scrollTop),
+      serviceRefs.destinationIntent.get().startPendingFollowBottom(data, scrollTop),
     ensureActiveFollowBottomIntent: (data, scrollTop) => {
-      destinationIntent!.ensureActiveFollowBottomIntent(data, scrollTop)
+      serviceRefs.destinationIntent.get().ensureActiveFollowBottomIntent(data, scrollTop)
     },
     hasActiveFollowBottomIntent: (data) =>
-      destinationIntent!.hasActiveFollowBottomIntent(data),
+      serviceRefs.destinationIntent.get().hasActiveFollowBottomIntent(data),
     clearActiveFollowBottomIntent: (reason) =>
-      destinationIntent!.clearActiveFollowBottomIntent(reason),
+      serviceRefs.destinationIntent.get().clearActiveFollowBottomIntent(reason),
     reconcileBottomLockFromViewport: (data, reason) =>
       bottomLock.reconcileFromViewport(data, reason),
     keepCurrentWindow: host.keepCurrentWindow,
     measureCurrentWindow: host.measureCurrentWindow,
     waitForBootstrapSettle: (currentFeedId, currentGeneration) =>
-      recovery!.waitForBootstrapSettle(currentFeedId, currentGeneration),
+      serviceRefs.recovery.get().waitForBootstrapSettle(currentFeedId, currentGeneration),
     recoverAfterCommitFailure: host.recoverAfterCommitFailure,
     deriveRuntimeStateFromSnapshot: host.deriveRuntimeStateFromSnapshot,
     emitViewportAnchorChanged: host.emitViewportAnchorChanged,
     emitDestinationSettled: (event) =>
-      destinationIntent!.emitDestinationSettled(event),
+      serviceRefs.destinationIntent.get().emitDestinationSettled(event),
     invalidateSpacerCache: () => spacer.invalidateEstimateCache(),
     emitEvent: host.emitEvent,
     emitDiagnostic: host.emitDiagnostic,
@@ -267,9 +257,9 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     projection,
     edgeLoadThresholdPx,
   })
-  scrollFrame = viewportServices.scrollFrame
-  resizeStabilization = viewportServices.resizeStabilization
-  recovery = viewportServices.recovery
+  serviceRefs.scrollFrame.setOnce(viewportServices.scrollFrame)
+  serviceRefs.resizeStabilization.setOnce(viewportServices.resizeStabilization)
+  serviceRefs.recovery.setOnce(viewportServices.recovery)
 
   return {
     store,
@@ -277,8 +267,8 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     lifecycle,
     renderWindow,
     measurement,
-    resizeStabilization,
-    scrollFrame,
+    resizeStabilization: viewportServices.resizeStabilization,
+    scrollFrame: viewportServices.scrollFrame,
     domInput: viewportServices.domInput,
     destinationIntent,
     viewportCompaction,
@@ -291,7 +281,7 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     transactions,
     transactionController,
     dataSnapshotCoordinator: viewportServices.dataSnapshotCoordinator,
-    recovery,
+    recovery: viewportServices.recovery,
     anchorEvents,
     eventHub,
     diagnostics,

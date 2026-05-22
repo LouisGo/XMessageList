@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -10,7 +11,6 @@ const RUNTIME_DIR = path.join(ROOT, 'src', 'runtime')
 const CODE_EXTENSIONS = new Set(['.ts', '.tsx'])
 const LOGIC_BUDGET = 300
 const CLASS_OR_REACT_BUDGET = 600
-const ignoredSegments = new Set(['__tests__'])
 
 const files = await collectRuntimeCodeFiles(RUNTIME_DIR)
 const violations = []
@@ -19,7 +19,7 @@ for (const file of files) {
   const source = await readFile(file, 'utf8')
   const lines = countLines(source)
   const kind = getBudgetKind(file, source)
-  const budget = kind === 'class-or-react' ? CLASS_OR_REACT_BUDGET : LOGIC_BUDGET
+  const budget = kind === 'logic' ? LOGIC_BUDGET : CLASS_OR_REACT_BUDGET
 
   if (lines > budget) {
     violations.push({
@@ -46,10 +46,6 @@ async function collectRuntimeCodeFiles(directory) {
   const files = []
 
   for (const entry of entries) {
-    if (ignoredSegments.has(entry.name)) {
-      continue
-    }
-
     const absolute = path.join(directory, entry.name)
 
     if (entry.isDirectory()) {
@@ -66,11 +62,44 @@ async function collectRuntimeCodeFiles(directory) {
 }
 
 function getBudgetKind(file, source) {
-  if (path.extname(file) === '.tsx' || /\bclass\s+\w+/.test(source)) {
+  if (isTestFile(file)) {
+    return 'test'
+  }
+
+  if (isReactComponentFile(file) || hasExportedClass(source, file)) {
     return 'class-or-react'
   }
 
   return 'logic'
+}
+
+function isTestFile(file) {
+  return /\.(test|spec)\.tsx?$/.test(path.basename(file))
+}
+
+function isReactComponentFile(file) {
+  return path.extname(file) === '.tsx'
+}
+
+function hasExportedClass(source, file) {
+  const sourceFile = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    path.extname(file) === '.tsx' ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  )
+
+  return sourceFile.statements.some((statement) =>
+    ts.isClassDeclaration(statement) && hasExportModifier(statement),
+  )
+}
+
+function hasExportModifier(node) {
+  return node.modifiers?.some((modifier) =>
+    modifier.kind === ts.SyntaxKind.ExportKeyword ||
+    modifier.kind === ts.SyntaxKind.DefaultKeyword,
+  ) ?? false
 }
 
 function countLines(source) {

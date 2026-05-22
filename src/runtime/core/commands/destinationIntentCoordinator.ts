@@ -4,12 +4,9 @@ import type { ScrollIntentEngine } from '../../scroll/scrollIntentEngine'
 import type { DestinationMotionCancelContext } from '../../scroll/destinationMotionCoordinator'
 import type { LifecycleGuard } from '../state/lifecycleGuard'
 import {
-  USER_SCROLL_DIRECTION_EPSILON_PX,
-  type ActiveFollowBottomIntent,
   type DestinationMotionForcedStart,
   type DestinationMotionSettle,
   type PendingDestinationRequest,
-  type PendingFollowBottom,
   type ReadySubstate,
   type RuntimeDiagnosticEmitter,
 } from '../state/runtimeTypes'
@@ -21,15 +18,13 @@ import {
   resolvePendingJumpTarget,
   shouldRebuildDestinationWindow,
 } from './destinationIntentHelpers'
-import {
-  isAroundRebuildSnapshot,
-  isLatestRebuildSnapshot,
-} from './pendingResponseGuards'
+import { isAroundRebuildSnapshot } from './pendingResponseGuards'
 import {
   emitDestinationSettledEvent,
   emitPendingDestinationNeed,
-  emitPendingFollowBottomNeed,
 } from './destinationIntentEvents'
+import { ActiveFollowBottomIntentTracker } from './activeFollowBottomIntentTracker'
+import { PendingFollowBottomTracker } from './pendingFollowBottomTracker'
 import type {
   AnchorState,
   DestinationState,
@@ -70,14 +65,37 @@ type DestinationIntentDeps<TMessage, TOptimistic> = {
   spacerThresholdPx: number
 }
 export class DestinationIntentCoordinator<TMessage, TOptimistic> {
-  private pendingFollowBottom: PendingFollowBottom | null = null
-  private activeFollowBottomIntent: ActiveFollowBottomIntent | null = null
   private pendingDestinationRequest: PendingDestinationRequest | null = null
-  private followBottomCommandCounter = 0
+  private readonly pendingFollowBottom: PendingFollowBottomTracker<
+    TMessage,
+    TOptimistic
+  >
+  private readonly activeFollowBottom: ActiveFollowBottomIntentTracker<
+    TMessage,
+    TOptimistic
+  >
   private destinationCommandCounter = 0
-  constructor(private readonly deps: DestinationIntentDeps<TMessage, TOptimistic>) {}
+
+  constructor(private readonly deps: DestinationIntentDeps<TMessage, TOptimistic>) {
+    this.pendingFollowBottom = new PendingFollowBottomTracker({
+      edge: deps.edge,
+      lifecycle: deps.lifecycle,
+      scrollIntent: deps.scrollIntent,
+      getDataSnapshot: deps.getDataSnapshot,
+      setReadySubstate: deps.setReadySubstate,
+      getReadySubstate: deps.getReadySubstate,
+      setDestinationState: deps.setDestinationState,
+      getDestinationState: deps.getDestinationState,
+      emitEvent: deps.emitEvent,
+      emitDiagnostic: deps.emitDiagnostic,
+    })
+    this.activeFollowBottom = new ActiveFollowBottomIntentTracker({
+      getDataSnapshot: deps.getDataSnapshot,
+      emitDiagnostic: deps.emitDiagnostic,
+    })
+  }
   hasPendingFollowBottom(): boolean {
-    return this.pendingFollowBottom !== null
+    return this.pendingFollowBottom.has()
   }
   startFollowBottomCommand(): void {
     const data = this.deps.getDataSnapshot()
@@ -87,7 +105,7 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
     }
 
     const scrollTop = this.deps.getScrollTop()
-    const commandId = this.startActiveFollowBottomIntent(data, scrollTop).commandId
+    const commandId = this.activeFollowBottom.ensure(data, scrollTop).commandId
 
     if (data.hasMoreAfter || this.shouldRebuildDestinationWindow()) {
       // followBottom 面向 feed latest；当前 DataWindow 还缺 latest page 时请求 latest window。
@@ -163,29 +181,21 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
   drivePendingFollowBottom(
     snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
   ): boolean {
-    const pending = this.pendingFollowBottom
+    const result = this.pendingFollowBottom.drive(snapshot)
 
-    if (!pending) {
+    if (result === 'none') {
       return false
     }
 
-    if (
-      pending.feedId !== snapshot.feedId ||
-      pending.generation !== snapshot.generation
-    ) {
-      this.clearPendingFollowBottom()
-      this.clearActiveFollowBottomIntent('generation-change')
+    if (result === 'generation-change') {
+      this.activeFollowBottom.clear('generation-change')
       return false
     }
 
-    if (!isLatestRebuildSnapshot(snapshot)) {
-      // pending latest 只消费 reset rebuild 回包；普通 append/patch 只能重发 need，
-      // 不能把当前 DataWindow 的 after edge 误当成 feed latest。
-      this.emitPendingFollowBottomNeed(snapshot)
+    if (result === 'pending') {
       return true
     }
 
-    this.clearPendingFollowBottom()
     this.deps.enqueueFollowBottomTransaction()
     return true
   }
@@ -257,18 +267,7 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
   }
 
   clearPendingFollowBottom(): void {
-    if (!this.pendingFollowBottom) {
-      return
-    }
-
-    this.pendingFollowBottom = null
-
-    if (this.deps.getReadySubstate() === 'READY_FOLLOW_BOTTOM_PENDING') {
-      this.deps.setReadySubstate('READY_IDLE')
-    }
-    if (this.deps.getDestinationState() === 'pendingData') {
-      this.deps.setDestinationState('idle')
-    }
+    this.pendingFollowBottom.clear()
   }
 
   clearPendingDestinationRequest(): void {
@@ -289,32 +288,11 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
   hasActiveFollowBottomIntent(
     data: MessageDataSnapshot<TMessage, TOptimistic>,
   ): boolean {
-    return (
-      this.activeFollowBottomIntent?.feedId === data.feedId &&
-      this.activeFollowBottomIntent.generation === data.generation
-    )
+    return this.activeFollowBottom.has(data)
   }
 
   clearActiveFollowBottomIntent(reason: string): void {
-    const intent = this.activeFollowBottomIntent
-
-    if (!intent) {
-      return
-    }
-
-    this.activeFollowBottomIntent = null
-    this.deps.emitDiagnostic({
-      channel: 'motion',
-      severity: 'debug',
-      name: 'followBottom.intent.clear',
-      correlationId: `command:${intent.commandId}`,
-      details: () => ({
-        reason,
-        feedId: intent.feedId,
-        generation: intent.generation,
-        lastScrollTop: intent.lastScrollTop,
-      }),
-    })
+    this.activeFollowBottom.clear(reason)
   }
 
   updateActiveFollowBottomIntentForScroll(
@@ -322,47 +300,22 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
     scrollTop: number,
     scrollSource: ScrollSource,
   ): void {
-    const intent = this.activeFollowBottomIntent
+    const cancelReason = this.activeFollowBottom.updateForScroll(
+      data,
+      scrollTop,
+      scrollSource,
+    )
 
-    if (!intent) {
-      return
-    }
-
-    if (intent.feedId !== data.feedId || intent.generation !== data.generation) {
-      this.clearActiveFollowBottomIntent('generation-change')
-      return
-    }
-
-    if (
-      scrollSource === 'user' &&
-      scrollTop < intent.lastScrollTop - USER_SCROLL_DIRECTION_EPSILON_PX
-    ) {
-      this.clearActiveFollowBottomIntent('user-scroll-up')
+    if (cancelReason === 'user-scroll-up') {
       this.clearPendingFollowBottom()
-      return
     }
-
-    intent.lastScrollTop = scrollTop
   }
 
   recordActiveFollowBottomIntentScrollWrite(
     scrollTop: number,
     source: ScrollSource,
   ): void {
-    const intent = this.activeFollowBottomIntent
-    const data = this.deps.getDataSnapshot()
-
-    if (
-      !intent ||
-      !data ||
-      source !== 'followBottom' ||
-      intent.feedId !== data.feedId ||
-      intent.generation !== data.generation
-    ) {
-      return
-    }
-
-    intent.lastScrollTop = scrollTop
+    this.activeFollowBottom.recordScrollWrite(scrollTop, source)
   }
 
   handleDestinationMotionSettle(
@@ -443,20 +396,11 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
   }
 
   updatePendingFollowBottomForUserScroll(scrollTop: number): void {
-    const pending = this.pendingFollowBottom
+    const cancelReason = this.pendingFollowBottom.updateForUserScroll(scrollTop)
 
-    if (!pending) {
-      return
-    }
-
-    if (scrollTop < pending.lastScrollTop - USER_SCROLL_DIRECTION_EPSILON_PX) {
-      // 用户主动向上阅读时，pending follow-bottom 必须让位，不能继续追逐 latest。
-      this.clearPendingFollowBottom()
+    if (cancelReason === 'user-scroll-up') {
       this.clearActiveFollowBottomIntent('user-scroll-up')
-      return
     }
-
-    pending.lastScrollTop = scrollTop
   }
 
   startPendingFollowBottom(
@@ -466,30 +410,7 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
   ): void {
     const resolvedCommandId =
       commandId ?? this.ensureActiveFollowBottomIntent(data, scrollTop).commandId
-    this.pendingFollowBottom = {
-      feedId: data.feedId,
-      generation: data.generation,
-      commandId: resolvedCommandId,
-      emittedAfterRevision: null,
-      lastScrollTop: scrollTop,
-    }
-    this.deps.setReadySubstate('READY_FOLLOW_BOTTOM_PENDING')
-    this.deps.setDestinationState('pendingData')
-    this.deps.scrollIntent.setBottomLockState('UNLOCKED')
-    this.deps.emitDiagnostic({
-      channel: 'motion',
-      severity: 'info',
-      name: 'followBottom.pending',
-      correlationId: `command:${resolvedCommandId}`,
-      details: () => ({
-        revision: data.revision,
-        itemCount: data.items.length,
-        hasMoreBefore: data.hasMoreBefore,
-        hasMoreAfter: data.hasMoreAfter,
-        scrollTop,
-      }),
-    })
-    this.emitPendingFollowBottomNeed(data)
+    this.pendingFollowBottom.start(data, scrollTop, resolvedCommandId)
   }
 
   private startPendingDestinationRequest(
@@ -528,53 +449,11 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
     this.emitPendingDestinationNeed(data)
   }
 
-  private startActiveFollowBottomIntent(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-    scrollTop: number,
-  ): ActiveFollowBottomIntent {
-    this.followBottomCommandCounter += 1
-    const intent = {
-      feedId: data.feedId,
-      generation: data.generation,
-      commandId: `follow-bottom-${this.followBottomCommandCounter}`,
-      lastScrollTop: scrollTop,
-    }
-
-    this.activeFollowBottomIntent = intent
-    this.deps.emitDiagnostic({
-      channel: 'motion',
-      severity: 'info',
-      name: 'followBottom.intent.start',
-      correlationId: `command:${intent.commandId}`,
-      details: () => ({
-        revision: data.revision,
-        itemCount: data.items.length,
-        hasMoreAfter: data.hasMoreAfter,
-        scrollTop,
-      }),
-    })
-    return intent
-  }
-
-  // 确认已经存在一个追底意图，供 auto-scroll-to-bottom 这类数据事务复用。
-  // 它不发起 latest 请求，只让后续 supersede/resize 后仍能继续追底。
   ensureActiveFollowBottomIntent(
     data: MessageDataSnapshot<TMessage, TOptimistic>,
     scrollTop: number,
-  ): ActiveFollowBottomIntent {
-    if (this.hasActiveFollowBottomIntent(data)) {
-      const intent = this.activeFollowBottomIntent as ActiveFollowBottomIntent
-      intent.lastScrollTop = scrollTop
-      return intent
-    }
-
-    return this.startActiveFollowBottomIntent(data, scrollTop)
-  }
-
-  private emitPendingFollowBottomNeed(
-    data: MessageDataSnapshot<TMessage, TOptimistic>,
-  ): void {
-    emitPendingFollowBottomNeed(this.deps, this.pendingFollowBottom, data)
+  ) {
+    return this.activeFollowBottom.ensure(data, scrollTop)
   }
 
   private emitPendingDestinationNeed(

@@ -24,6 +24,8 @@ export class SpacerEngine {
 
   private readonly rangeHeightCache = new Map<string, number>()
 
+  private estimateRevision = 0
+
   constructor(
     private readonly heightCache: HeightCache,
   ) {}
@@ -31,6 +33,11 @@ export class SpacerEngine {
   invalidateEstimateCache(): void {
     this.rangeHeightCacheIdentity = null
     this.rangeHeightCache.clear()
+    this.estimateRevision += 1
+  }
+
+  getEstimateRevision(): number {
+    return this.estimateRevision
   }
 
   setRangeCacheIdentity(identity: string): void {

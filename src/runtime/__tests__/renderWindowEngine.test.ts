@@ -17,12 +17,22 @@ describe('RenderWindowEngine', () => {
   it('reuses a prefix height index for repeated offset lookups', () => {
     const items = createItems(5_000)
     let estimateCalls = 0
+    let estimateRevision = 0
     const spacer = {
       estimateItemHeight() {
         estimateCalls += 1
         return 10
       },
-    } as Pick<SpacerEngine, 'estimateItemHeight'> as SpacerEngine
+      getEstimateRevision() {
+        return estimateRevision
+      },
+      invalidateEstimateCache() {
+        estimateRevision += 1
+      },
+    } as Pick<
+      SpacerEngine,
+      'estimateItemHeight' | 'getEstimateRevision' | 'invalidateEstimateCache'
+    > as SpacerEngine
     const engine = new RenderWindowEngine(
       { overscan: 3, maxMountedItems: 200 },
       spacer,
@@ -33,5 +43,40 @@ describe('RenderWindowEngine', () => {
 
     expect(engine.findEstimatedIndexAtOffset(items, 8_880, 320)).toBe(887)
     expect(estimateCalls).toBe(items.length)
+  })
+
+  it('rebuilds the prefix height index when spacer estimates change', () => {
+    const items = createItems(100)
+    let estimateCalls = 0
+    let estimateRevision = 0
+    let itemHeight = 10
+    const spacer = {
+      estimateItemHeight() {
+        estimateCalls += 1
+        return itemHeight
+      },
+      getEstimateRevision() {
+        return estimateRevision
+      },
+      invalidateEstimateCache() {
+        estimateRevision += 1
+      },
+    } as Pick<
+      SpacerEngine,
+      'estimateItemHeight' | 'getEstimateRevision' | 'invalidateEstimateCache'
+    > as SpacerEngine
+    const engine = new RenderWindowEngine(
+      { overscan: 3, maxMountedItems: 200 },
+      spacer,
+    )
+
+    expect(engine.findEstimatedIndexAtOffset(items, 250, 320)).toBe(24)
+    expect(estimateCalls).toBe(items.length)
+
+    itemHeight = 50
+    spacer.invalidateEstimateCache()
+
+    expect(engine.findEstimatedIndexAtOffset(items, 250, 320)).toBe(4)
+    expect(estimateCalls).toBe(items.length * 2)
   })
 })

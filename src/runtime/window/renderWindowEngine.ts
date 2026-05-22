@@ -39,6 +39,8 @@ export class RenderWindowEngine {
 
   private heightIndexWidthBucket = -1
 
+  private heightIndexEstimateRevision = -1
+
   private estimatedHeightPrefix: number[] = []
 
   constructor(
@@ -52,6 +54,7 @@ export class RenderWindowEngine {
     this.committedMessageIdToIndex.clear()
     this.heightIndexedItems = null
     this.heightIndexWidthBucket = -1
+    this.heightIndexEstimateRevision = -1
     this.estimatedHeightPrefix = []
   }
 
@@ -282,18 +285,22 @@ export class RenderWindowEngine {
     width: number,
   ): number[] {
     const widthBucket = getWidthBucket(width)
+    const estimateRevision = this.spacer.getEstimateRevision()
 
     if (
       this.heightIndexedItems === items &&
-      this.heightIndexWidthBucket === widthBucket
+      this.heightIndexWidthBucket === widthBucket &&
+      this.heightIndexEstimateRevision === estimateRevision
     ) {
       return this.estimatedHeightPrefix
     }
 
     // 快速拖动可能直接落进 spacer-only 区域；prefix index 让 offset -> item 从 O(n) 收敛到 O(log n)。
+    // height cache 更新不会改变 DataSnapshot identity，必须用 spacer revision 兜住失效边界。
     const prefix = buildEstimatedHeightPrefix(items, width, this.spacer)
     this.heightIndexedItems = items
     this.heightIndexWidthBucket = widthBucket
+    this.heightIndexEstimateRevision = estimateRevision
     this.estimatedHeightPrefix = prefix
     return prefix
   }
