@@ -11,6 +11,7 @@ import type {
 } from '../../types'
 import type { RuntimeDiagnosticEmitter } from '../state/runtimeTypes'
 import { getRuntimeItemKey } from '../../shared/utils'
+import type { ViewportCompactionCoordinator } from '../commands/viewportCompactionCoordinator'
 
 type RuntimeDataSnapshotDeps<TMessage, TOptimistic> = {
   renderWindow: RenderWindowEngine
@@ -18,6 +19,7 @@ type RuntimeDataSnapshotDeps<TMessage, TOptimistic> = {
   scrollIntent: ScrollIntentEngine
   transactions: TransactionRunner
   destinationIntent: DestinationIntentCoordinator<TMessage, TOptimistic>
+  viewportCompaction: ViewportCompactionCoordinator<TMessage, TOptimistic>
   getDataSnapshot: () => MessageDataSnapshot<TMessage, TOptimistic> | null
   setDataSnapshot: (
     snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
@@ -54,6 +56,7 @@ export class RuntimeDataSnapshotCoordinator<TMessage, TOptimistic> {
       generationChanged ||
       previous?.revision !== snapshot.revision
     const viewportModifier = getViewportModifier(snapshot.change)
+    const previousBottomLockState = this.deps.scrollIntent.getBottomLockState()
 
     if (generationChanged) {
       this.deps.runtimeLifecycle.resetForGeneration(
@@ -98,7 +101,20 @@ export class RuntimeDataSnapshotCoordinator<TMessage, TOptimistic> {
       return
     }
 
+    if (this.deps.viewportCompaction.drivePendingViewportCompaction(snapshot)) {
+      return
+    }
+
     if (this.deps.getState() === 'INITIAL' || this.deps.getState() === 'ATTACHED') {
+      return
+    }
+
+    if (
+      this.deps.viewportCompaction.tryStartForDataMutation(snapshot, viewportModifier, {
+        generationChanged,
+        previousBottomLockState,
+      })
+    ) {
       return
     }
 

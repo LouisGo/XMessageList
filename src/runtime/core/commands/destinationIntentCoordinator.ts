@@ -30,8 +30,6 @@ import type {
   ScrollSource,
 } from '../../types'
 
-const DESTINATION_REBUILD_SPACER_THRESHOLD_PX = 10_000
-
 type DestinationIntentDeps<TMessage, TOptimistic> = {
   lifecycle: LifecycleGuard
   renderWindow: RenderWindowEngine
@@ -59,6 +57,7 @@ type DestinationIntentDeps<TMessage, TOptimistic> = {
   ) => void
   emitEvent: (event: MessageViewportRuntimeEvent) => void
   emitDiagnostic: RuntimeDiagnosticEmitter
+  spacerThresholdPx: number
 }
 export class DestinationIntentCoordinator<TMessage, TOptimistic> {
   private pendingFollowBottom: PendingFollowBottom | null = null
@@ -194,23 +193,18 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
       return false
     }
 
-    const resolvedJumpTarget =
-      pending.intent === 'jump'
-        ? this.resolvePendingJumpTarget(snapshot, pending.target)
-        : null
-
-    if (
-      pending.intent === 'jump'
-        ? !resolvedJumpTarget
-        : !this.hasCommittedMessage(snapshot, pending.target.messageId)
-    ) {
-      this.emitPendingDestinationNeed(snapshot)
-      return true
-    }
-
-    this.clearPendingDestinationRequest()
-
     if (pending.intent === 'jump') {
+      const resolvedJumpTarget = this.resolvePendingJumpTarget(
+        snapshot,
+        pending.target,
+      )
+
+      if (!resolvedJumpTarget) {
+        this.emitPendingDestinationNeed(snapshot)
+        return true
+      }
+
+      this.clearPendingDestinationRequest()
       this.deps.enqueueJumpTransaction(resolvedJumpTarget, {
         forceAnimateFrom: pending.forceAnimateFrom,
         animate: pending.animateOnResolve,
@@ -219,6 +213,12 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
       return true
     }
 
+    if (!this.hasCommittedMessage(snapshot, pending.target.messageId)) {
+      this.emitPendingDestinationNeed(snapshot)
+      return true
+    }
+
+    this.clearPendingDestinationRequest()
     this.deps.enqueueRestoreTransaction(pending.commandTarget)
     return true
   }
@@ -618,8 +618,11 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
   private shouldRebuildDestinationWindow(): boolean {
     const snapshot = this.deps.getViewportSnapshot()
     return (
-      snapshot.topSpacer > DESTINATION_REBUILD_SPACER_THRESHOLD_PX ||
-      snapshot.bottomSpacer > DESTINATION_REBUILD_SPACER_THRESHOLD_PX
+      this.deps.spacerThresholdPx > 0 &&
+      (
+        snapshot.topSpacer > this.deps.spacerThresholdPx ||
+        snapshot.bottomSpacer > this.deps.spacerThresholdPx
+      )
     )
   }
 }

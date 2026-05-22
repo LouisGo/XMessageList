@@ -1049,6 +1049,131 @@ describe('MessageViewportRuntime', () => {
     )
   })
 
+  it('requests viewport compaction on the next prepend when spacer is too large', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 300,
+      revision: 1,
+      effect: 'reset',
+      estimatedHeight: 104,
+      hasMoreAfter: true,
+    }))
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'restored',
+      target: { messageId: 'm-150' },
+    })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    mountProjection(runtime, container, runtime.getSnapshot(), -container.scrollTop)
+
+    const beforeRevision = runtime.getSnapshot().revision
+    expect(runtime.getSnapshot().topSpacer).toBeGreaterThan(10_000)
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+    events.length = 0
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 320,
+      revision: 2,
+      effect: 'prepend',
+      start: -19,
+      estimatedHeight: 104,
+      hasMoreAfter: true,
+    }))
+    await Promise.resolve()
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'needMessagesAround',
+        reason: 'viewport-compaction',
+        target: { messageId: 'm-149' },
+      }),
+    )
+    expect(runtime.getSnapshot().revision).toBe(beforeRevision)
+    expect(runtime.getDebugSnapshot().readySubstate).toBe(
+      'READY_VIEWPORT_COMPACTION_PENDING',
+    )
+  })
+
+  it('compacts the data window around the current visual anchor without moving it', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 300,
+      revision: 1,
+      effect: 'reset',
+      estimatedHeight: 104,
+      hasMoreAfter: true,
+    }))
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'restored',
+      target: {
+        key: { kind: 'committed', messageId: 'm-150' },
+        offsetWithinMessage: 18,
+      },
+    })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    mountProjection(runtime, container, runtime.getSnapshot(), -container.scrollTop)
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 320,
+      revision: 2,
+      effect: 'prepend',
+      start: -19,
+      estimatedHeight: 104,
+      hasMoreAfter: true,
+    }))
+    await Promise.resolve()
+
+    const pendingSnapshot = runtime.getSnapshot()
+    container.scrollTop = getExpectedRestoreScrollTop(
+      pendingSnapshot,
+      'm-155',
+      22,
+    )
+    mountProjection(runtime, container, pendingSnapshot, -container.scrollTop)
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 41,
+      revision: 3,
+      effect: 'reset',
+      start: 140,
+      estimatedHeight: 104,
+      hasMoreAfter: true,
+    }))
+    await Promise.resolve()
+
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot, -container.scrollTop)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const settled = runtime.getSnapshot()
+    expect(container.scrollTop).toBe(
+      getExpectedRestoreScrollTop(settled, 'm-155', 22),
+    )
+    expect(settled.topSpacer).toBeLessThan(10_000)
+    expect(settled.bottomSpacer).toBeLessThan(10_000)
+    expect(runtime.getDebugSnapshot().readySubstate).toBe('READY_IDLE')
+    expect(runtime.getDebugSnapshot().transactionState).toBe('idle')
+  })
+
   it('re-resolves jump destination when a data transaction supersedes motion', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })

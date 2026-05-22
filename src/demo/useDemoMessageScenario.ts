@@ -61,6 +61,8 @@ const RESTORE_BEFORE_PAGE_SIZE = Math.max(1, Math.floor(PAGE_SIZE / 2))
 const RESTORE_AFTER_PAGE_SIZE = PAGE_SIZE
 const JUMP_AROUND_BEFORE_PAGE_SIZE = PAGE_SIZE
 const JUMP_AROUND_AFTER_PAGE_SIZE = PAGE_SIZE
+const VIEWPORT_COMPACTION_BEFORE_PAGE_SIZE = PAGE_SIZE
+const VIEWPORT_COMPACTION_AFTER_PAGE_SIZE = PAGE_SIZE
 const JUMP_HIGHLIGHT_DURATION_MS = 1_400
 const DESTINATION_REBUILD_SPACER_THRESHOLD_PX = 10_000
 const REACTION_EMOJIS = ['😀', '😂', '🔥', '👍', '🎉', '😭', '👀', '❤️', '🚀', '🥲']
@@ -83,21 +85,26 @@ const OPERATION_DELAYS: Record<
   >,
   number
 > = {
-  'history.prepend': 200,
-  'history.append': 200,
-  'history.latest': 200,
-  'history.around': 200,
-  'message.append': 80,
+  'history.prepend': 30,
+  'history.append': 30,
+  'history.latest': 40,
+  'history.around': 60,
+  'message.append': 50,
   'message.longBurst': 620,
-  'message.edit': 100,
+  'message.edit': 50,
   'message.delete': 90,
-  'message.react': 70,
+  'message.react': 20,
   'message.resize': 200,
   'message.send': 60,
   'feed.clear': 220,
 }
 
 type DemoSnapshotKind = MessageDataSnapshot['change']['kind']
+type AroundTargetReason = 'jump' | 'restore' | 'viewport-compaction'
+type AroundTargetLoader = (
+  target: { messageId: string; position?: number },
+  reason: AroundTargetReason,
+) => void
 
 type LoggedOperationResult = {
   effect: ViewportEffect
@@ -240,6 +247,11 @@ export function useDemoMessageScenario(
   const loadingAfterRef = useRef(false)
   const feedLoadingRef = useRef(false)
   const queuedLatestFollowBottomRef = useRef(false)
+  const queuedAroundTargetRef = useRef<{
+    target: { messageId: string; position?: number }
+    reason: AroundTargetReason
+  } | null>(null)
+  const loadAroundTargetWindowRef = useRef<AroundTargetLoader | null>(null)
   const loadTokenRef = useRef(0)
   const feedSessionStateRef = useRef(new Map<string, CachedFeedSessionState>())
   const nextFeedSwitchRuntimeCacheHitRef = useRef(false)
@@ -311,6 +323,7 @@ export function useDemoMessageScenario(
     loadingAfterRef.current = false
     feedLoadingRef.current = false
     queuedLatestFollowBottomRef.current = false
+    queuedAroundTargetRef.current = null
     setLoadingBefore(false)
     setFeedLoading(false)
     syncDisplayedCounts()
@@ -1326,6 +1339,22 @@ export function useDemoMessageScenario(
     loadingAfterRef.current = false
     setLoadingAfter(false)
 
+    if (queuedAroundTargetRef.current) {
+      const queued = queuedAroundTargetRef.current
+      const loadAroundTargetWindow = loadAroundTargetWindowRef.current
+      queuedAroundTargetRef.current = null
+
+      if (
+        !loadAroundTargetWindow ||
+        activeFeedIdRef.current !== requestFeedId
+      ) {
+        return
+      }
+
+      loadAroundTargetWindow(queued.target, queued.reason)
+      return
+    }
+
     if (!queuedLatestFollowBottomRef.current) {
       return
     }
@@ -1492,25 +1521,35 @@ export function useDemoMessageScenario(
 
   const loadAroundTargetWindow = useCallback((
     target: { messageId: string; position?: number },
-    reason: 'jump' | 'restore',
+    reason: AroundTargetReason,
   ) => {
     const before =
       reason === 'jump'
         ? JUMP_AROUND_BEFORE_PAGE_SIZE
-        : RESTORE_BEFORE_PAGE_SIZE
+        : reason === 'viewport-compaction'
+          ? VIEWPORT_COMPACTION_BEFORE_PAGE_SIZE
+          : RESTORE_BEFORE_PAGE_SIZE
     const after =
       reason === 'jump'
         ? JUMP_AROUND_AFTER_PAGE_SIZE
-        : RESTORE_AFTER_PAGE_SIZE
+        : reason === 'viewport-compaction'
+          ? VIEWPORT_COMPACTION_AFTER_PAGE_SIZE
+          : RESTORE_AFTER_PAGE_SIZE
 
     if (loadingAfterRef.current) {
+      queuedAroundTargetRef.current = { target, reason }
       void log({
         requestId: createDemoRequestId('history.around'),
         operation: 'history.around',
-        phase: 'skip',
+        phase: 'info',
         feedId: activeFeedIdRef.current,
         messageCount: messagesRef.current.length,
-        details: { reason: 'already-loading', target, intent: reason },
+        details: {
+          reason: 'already-loading',
+          queued: true,
+          target,
+          intent: reason,
+        },
       })
       return
     }
@@ -1572,6 +1611,10 @@ export function useDemoMessageScenario(
       skipPersist: true,
     })
   }, [finishAfterDataRequest, log, runLoggedOperation])
+
+  useEffect(() => {
+    loadAroundTargetWindowRef.current = loadAroundTargetWindow
+  }, [loadAroundTargetWindow])
 
   const appendMessage = useCallback(() => {
     void runLoggedOperation({
@@ -2072,6 +2115,7 @@ export function useDemoMessageScenario(
           hasMoreAfterRef.current = false
           lastViewportAnchorRef.current = undefined
           queuedLatestFollowBottomRef.current = false
+          queuedAroundTargetRef.current = null
           feedMessagesRef.current = []
           messagesRef.current = []
           syncDisplayedCounts()
@@ -2157,6 +2201,7 @@ export function useDemoMessageScenario(
     nextFeedSwitchRuntimeCacheHitRef.current = false
     activeFeedIdRef.current = activeFeedId
     queuedLatestFollowBottomRef.current = false
+    queuedAroundTargetRef.current = null
 
     if (runtimeCacheHit) {
       feedLoadingRef.current = false

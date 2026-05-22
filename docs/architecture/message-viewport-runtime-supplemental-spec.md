@@ -116,6 +116,11 @@ bottom locked initial viewport
 当前窗口和目标之间的空洞。如果目标已经在 partial DataWindow 内，即使物理滚到
 当前 DOM 底部，也不能把它解释成 feed latest bottom。
 
+当 runtime 因 spacer compaction 发出
+`needMessagesAround(reason: 'viewport-compaction', target)` 时，接入方同样必须返回
+围绕 target 的短 DataWindow。该路径不是 destination jump，不应播放目的地动画；
+viewport runtime 会在 commit 后按原视觉 anchor offset 修正 `scrollTop`。
+
 注意：
 
 ```text id="jlwm75"

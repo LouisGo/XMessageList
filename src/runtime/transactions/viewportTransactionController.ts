@@ -38,6 +38,7 @@ import {
 import {
   runJumpTransaction,
   runRestoreTransaction,
+  runViewportCompactionTransaction,
 } from './destinationTransactions'
 import { runFollowBottomTransaction } from './followBottomTransactions'
 
@@ -342,6 +343,12 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     target: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
   ): Promise<void> {
     return runRestoreTransaction(this.deps, target)
+  }
+
+  async runViewportCompactionTransaction(
+    target: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
+  ): Promise<void> {
+    return runViewportCompactionTransaction(this.deps, target)
   }
 
   async runFollowBottomTransaction(): Promise<void> {

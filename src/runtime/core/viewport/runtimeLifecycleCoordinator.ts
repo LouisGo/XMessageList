@@ -1,4 +1,5 @@
 import type { DestinationIntentCoordinator } from '../commands/destinationIntentCoordinator'
+import type { ViewportCompactionCoordinator } from '../commands/viewportCompactionCoordinator'
 import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import type { ProjectionStore } from '../state/projectionStore'
 import type { LifecycleGuard } from '../state/lifecycleGuard'
@@ -37,6 +38,7 @@ type RuntimeLifecycleDeps<TMessage, TOptimistic> = {
   renderWindow: RenderWindowEngine
   spacer: SpacerEngine
   destinationIntent: DestinationIntentCoordinator<TMessage, TOptimistic>
+  viewportCompaction: ViewportCompactionCoordinator<TMessage, TOptimistic>
   stateAxes: RuntimeStateAxes
   heightCache: HeightCache
   eventListeners: Set<RuntimeEventListener>
@@ -215,5 +217,6 @@ export class RuntimeLifecycleCoordinator<TMessage, TOptimistic> {
     this.deps.destinationIntent.clearPendingFollowBottom()
     this.deps.destinationIntent.clearActiveFollowBottomIntent(reason)
     this.deps.destinationIntent.clearPendingDestinationRequest()
+    this.deps.viewportCompaction.clearPendingViewportCompaction(reason)
   }
 }

@@ -148,6 +148,7 @@ type ReadySubstate =
   | 'READY_IDLE'
   | 'READY_FOLLOW_BOTTOM_PENDING'
   | 'READY_DESTINATION_PENDING'
+  | 'READY_VIEWPORT_COMPACTION_PENDING'
   | 'READY_MOTION_ACTIVE';
 ```
 
@@ -157,6 +158,8 @@ type ReadySubstate =
 - `READY_FOLLOW_BOTTOM_PENDING`：显式 `followBottom` 正在等待 latest DataWindow 到达。
 - `READY_DESTINATION_PENDING`：显式 `jump` / `restore` 目标不在当前 DataWindow，
   runtime 正在等待 around-target DataWindow。
+- `READY_VIEWPORT_COMPACTION_PENDING`：runtime 已把下一次 prepend / append 升级为
+  围绕当前视觉 anchor 的短 DataWindow 重建请求。
 - `READY_MOTION_ACTIVE`：`ScrollMotionEngine` 拥有 `scrollTop` 写入权。
 
 Motion 不是 transaction。Transaction 在 commit + measure 后释放串行权；

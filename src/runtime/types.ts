@@ -248,6 +248,7 @@ export type ViewportTransactionKind =
   | 'bootstrap'
   | 'prepend'
   | 'append'
+  | 'viewportCompaction'
   | 'followBottom'
   | 'jump'
   | 'restore'
@@ -348,7 +349,7 @@ export type MessageViewportRuntimeEvent =
       type: 'needMessagesAround'
       feedId: string
       generation: number
-      reason: 'jump' | 'restore'
+      reason: 'jump' | 'restore' | 'viewport-compaction'
       target: MessageIdentityAnchor
     }
   | {
@@ -411,4 +412,7 @@ export type MessageViewportRuntimeOptions = {
   bottomLockThresholdPx?: number
   bottomUnlockThresholdPx?: number
   edgeLoadThresholdPx?: number
+  viewportCompaction?: {
+    spacerThresholdPx?: number
+  }
 }

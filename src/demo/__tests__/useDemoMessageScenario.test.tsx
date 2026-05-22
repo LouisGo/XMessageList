@@ -142,6 +142,16 @@ function assertRuntimeStub(runtime: RuntimeStub | undefined): RuntimeStub {
   return runtime
 }
 
+function assertScenario(
+  scenario: DemoMessageScenario | null,
+): DemoMessageScenario {
+  if (!scenario) {
+    throw new Error('TestHarness did not publish a scenario')
+  }
+
+  return scenario
+}
+
 async function flushTimers(timeoutMs: number): Promise<void> {
   await act(async () => {
     vi.advanceTimersByTime(timeoutMs)
@@ -191,36 +201,36 @@ describe('useDemoMessageScenario', () => {
     })
 
     await flushTimers(180)
-    expect(scenario?.activeFeedId).toBe('feed-runtime')
+    expect(assertScenario(scenario).activeFeedId).toBe('feed-runtime')
 
     await act(async () => {
-      scenario?.selectFeed('feed-release')
+      assertScenario(scenario).selectFeed('feed-release')
     })
     await flushTimers(180)
 
-    expect(scenario?.activeFeedId).toBe('feed-release')
-    expect(scenario?.messageCount).toBe(300)
-    expect(scenario?.loadedMessageCount).toBe(20)
+    expect(assertScenario(scenario).activeFeedId).toBe('feed-release')
+    expect(assertScenario(scenario).messageCount).toBe(300)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(20)
 
     for (let index = 0; index < 14; index += 1) {
       await act(async () => {
-        scenario?.loadHistoryBatch('manual')
+        assertScenario(scenario).loadHistoryBatch('manual')
       })
       await flushTimers(300)
     }
 
-    expect(scenario?.messageCount).toBe(300)
-    expect(scenario?.loadedMessageCount).toBe(300)
+    expect(assertScenario(scenario).messageCount).toBe(300)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(300)
 
     const beforeExtraLoad = store.get('feed-release')
     expect(beforeExtraLoad?.messages).toHaveLength(300)
 
     await act(async () => {
-      scenario?.loadHistoryBatch('manual')
+      assertScenario(scenario).loadHistoryBatch('manual')
     })
     await Promise.resolve()
 
-    expect(scenario?.lastEvent).toBe('no older messages')
+    expect(assertScenario(scenario).lastEvent).toBe('no older messages')
     expect(store.get('feed-release')?.messages).toHaveLength(300)
   })
 
@@ -260,29 +270,29 @@ describe('useDemoMessageScenario', () => {
     })
     await flushTimers(180)
 
-    expect(scenario?.activeFeedId).toBe('feed-runtime')
-    expect(scenario?.activeRuntime).toBe(runtimeFeed.runtime)
+    expect(assertScenario(scenario).activeFeedId).toBe('feed-runtime')
+    expect(assertScenario(scenario).activeRuntime).toBe(runtimeFeed.runtime)
     expect(runtimeFeed.runtime.setDataSnapshot).toHaveBeenCalled()
     expect(runtimeFeed.runtime.dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'bootstrap', mode: 'latest' }),
     )
 
     await act(async () => {
-      scenario?.selectFeed('feed-release')
+      assertScenario(scenario).selectFeed('feed-release')
     })
 
-    expect(scenario?.selectedFeedId).toBe('feed-release')
-    expect(scenario?.pendingFeedId).toBe('feed-release')
-    expect(scenario?.activeFeedId).toBe('feed-runtime')
-    expect(scenario?.activeRuntime).toBe(runtimeFeed.runtime)
+    expect(assertScenario(scenario).selectedFeedId).toBe('feed-release')
+    expect(assertScenario(scenario).pendingFeedId).toBe('feed-release')
+    expect(assertScenario(scenario).activeFeedId).toBe('feed-runtime')
+    expect(assertScenario(scenario).activeRuntime).toBe(runtimeFeed.runtime)
     expect(runtimeRelease.runtime.setDataSnapshot).not.toHaveBeenCalled()
 
     await flushTimers(180)
 
-    expect(scenario?.activeFeedId).toBe('feed-release')
-    expect(scenario?.selectedFeedId).toBe('feed-release')
-    expect(scenario?.pendingFeedId).toBeNull()
-    expect(scenario?.activeRuntime).toBe(runtimeRelease.runtime)
+    expect(assertScenario(scenario).activeFeedId).toBe('feed-release')
+    expect(assertScenario(scenario).selectedFeedId).toBe('feed-release')
+    expect(assertScenario(scenario).pendingFeedId).toBeNull()
+    expect(assertScenario(scenario).activeRuntime).toBe(runtimeRelease.runtime)
     expect(runtimeRelease.runtime.setDataSnapshot).toHaveBeenCalled()
     expect(runtimeRelease.runtime.dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'bootstrap', mode: 'latest' }),
@@ -298,13 +308,13 @@ describe('useDemoMessageScenario', () => {
     ).mock.calls.length
 
     await act(async () => {
-      scenario?.selectFeed('feed-runtime')
+      assertScenario(scenario).selectFeed('feed-runtime')
     })
 
-    expect(scenario?.activeFeedId).toBe('feed-runtime')
-    expect(scenario?.selectedFeedId).toBe('feed-runtime')
-    expect(scenario?.pendingFeedId).toBeNull()
-    expect(scenario?.activeRuntime).toBe(runtimeFeed.runtime)
+    expect(assertScenario(scenario).activeFeedId).toBe('feed-runtime')
+    expect(assertScenario(scenario).selectedFeedId).toBe('feed-runtime')
+    expect(assertScenario(scenario).pendingFeedId).toBeNull()
+    expect(assertScenario(scenario).activeRuntime).toBe(runtimeFeed.runtime)
     await flushTimers(180)
 
     expect(runtimeFeed.runtime.setDataSnapshot).toHaveBeenCalledTimes(
@@ -378,21 +388,21 @@ describe('useDemoMessageScenario', () => {
     await flushTimers(180)
 
     await act(async () => {
-      scenario?.selectFeed('feed-release')
+      assertScenario(scenario).selectFeed('feed-release')
     })
     await flushTimers(180)
 
     await act(async () => {
-      scenario?.selectFeed('feed-runtime')
+      assertScenario(scenario).selectFeed('feed-runtime')
     })
 
     expect(runtimeCache.deleteRuntime).toHaveBeenCalledWith('feed-runtime')
-    expect(scenario?.pendingFeedId).toBe('feed-runtime')
-    expect(scenario?.activeRuntime).toBe(runtimeRelease.runtime)
+    expect(assertScenario(scenario).pendingFeedId).toBe('feed-runtime')
+    expect(assertScenario(scenario).activeRuntime).toBe(runtimeRelease.runtime)
 
     await flushTimers(180)
 
-    expect(scenario?.activeRuntime).toBe(runtimeFeedReload.runtime)
+    expect(assertScenario(scenario).activeRuntime).toBe(runtimeFeedReload.runtime)
     expect(runtimeFeedReload.runtime.setDataSnapshot).toHaveBeenCalled()
     expect(mockWriteDemoLog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -423,23 +433,23 @@ describe('useDemoMessageScenario', () => {
     })
 
     await flushTimers(180)
-    expect(scenario?.activeFeedId).toBe('feed-runtime')
-    expect(scenario?.pendingOperation).toBe('idle')
+    expect(assertScenario(scenario).activeFeedId).toBe('feed-runtime')
+    expect(assertScenario(scenario).pendingOperation).toBe('idle')
 
     await act(async () => {
-      scenario?.appendLongBurst()
-      scenario?.appendMessage()
+      assertScenario(scenario).appendLongBurst()
+      assertScenario(scenario).appendMessage()
     })
 
-    expect(scenario?.pendingOperation).toBe('message.longBurst + message.append')
+    expect(assertScenario(scenario).pendingOperation).toBe('message.longBurst + message.append')
 
     await flushTimers(100)
-    expect(scenario?.pendingOperation).toBe('message.longBurst')
+    expect(assertScenario(scenario).pendingOperation).toBe('message.longBurst')
 
     await flushTimers(520)
-    expect(scenario?.pendingOperation).toBe('idle')
-    expect(scenario?.messageCount).toBe(45)
-    expect(scenario?.loadedMessageCount).toBe(25)
+    expect(assertScenario(scenario).pendingOperation).toBe('idle')
+    expect(assertScenario(scenario).messageCount).toBe(45)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(25)
     expect(store.get('feed-runtime')?.messages).toHaveLength(45)
   })
 
@@ -469,8 +479,8 @@ describe('useDemoMessageScenario', () => {
 
     await flushTimers(180)
 
-    expect(scenario?.activeFeedId).toBe('feed-runtime')
-    expect(scenario?.loadedMessageCount).toBe(31)
+    expect(assertScenario(scenario).activeFeedId).toBe('feed-runtime')
+    expect(assertScenario(scenario).loadedMessageCount).toBe(31)
     expect(runtime.dispatch).toHaveBeenCalledWith({
       type: 'bootstrap',
       mode: 'restored',
@@ -499,9 +509,9 @@ describe('useDemoMessageScenario', () => {
     })
     await flushTimers(220)
 
-    expect(scenario?.loadedMessageCount).toBe(51)
-    expect(scenario?.loadingAfter).toBe(false)
-    expect(scenario?.lastEvent).toBe('loaded 20 newer messages')
+    expect(assertScenario(scenario).loadedMessageCount).toBe(51)
+    expect(assertScenario(scenario).loadingAfter).toBe(false)
+    expect(assertScenario(scenario).lastEvent).toBe('loaded 20 newer messages')
     expect(runtime.dispatch).not.toHaveBeenCalledWith({ type: 'followBottom' })
     expect(mockWriteDemoLog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -537,10 +547,10 @@ describe('useDemoMessageScenario', () => {
     })
 
     await flushTimers(180)
-    expect(scenario?.loadedMessageCount).toBe(31)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(31)
 
     await act(async () => {
-      scenario?.followBottom('sidebar')
+      assertScenario(scenario).followBottom('sidebar')
       emitEvent({
         type: 'needLatestMessages',
         feedId: 'feed-runtime',
@@ -548,11 +558,11 @@ describe('useDemoMessageScenario', () => {
         reason: 'bottom-follow',
       })
     })
-    expect(scenario?.loadingAfter).toBe(false)
+    expect(assertScenario(scenario).loadingAfter).toBe(false)
     await flushTimers(220)
 
-    expect(scenario?.loadedMessageCount).toBe(20)
-    expect(scenario?.loadingAfter).toBe(false)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(20)
+    expect(assertScenario(scenario).loadingAfter).toBe(false)
     expect(runtime.dispatch).toHaveBeenLastCalledWith({ type: 'followBottom' })
     expect(mockWriteDemoLog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -591,7 +601,7 @@ describe('useDemoMessageScenario', () => {
     })
 
     await flushTimers(180)
-    expect(scenario?.loadedMessageCount).toBe(20)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(20)
 
     await act(async () => {
       emitEvent({
@@ -602,11 +612,11 @@ describe('useDemoMessageScenario', () => {
         target: { messageId: 'feed-runtime-m-72', position: 72 },
       })
     })
-    expect(scenario?.loadingAfter).toBe(false)
+    expect(assertScenario(scenario).loadingAfter).toBe(false)
     await flushTimers(220)
 
-    expect(scenario?.loadedMessageCount).toBe(41)
-    expect(scenario?.loadingAfter).toBe(false)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(41)
+    expect(assertScenario(scenario).loadingAfter).toBe(false)
     expect(mockWriteDemoLog).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: 'history.around',
@@ -636,6 +646,146 @@ describe('useDemoMessageScenario', () => {
       expect.objectContaining({
         operation: 'history.append',
         details: expect.objectContaining({ source: 'follow-bottom' }),
+      }),
+    )
+  })
+
+  it('loads an around-target window when runtime asks for viewport compaction', async () => {
+    const { runtime, emitEvent } = createRuntimeStub()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    store.set('feed-runtime', makeFeed('feed-runtime', 120))
+
+    await act(async () => {
+      root.render(
+        <TestHarness runtime={runtime} onScenario={(next) => {
+          scenario = next
+        }}
+        />,
+      )
+    })
+
+    await flushTimers(180)
+
+    await act(async () => {
+      emitEvent({
+        type: 'needMessagesAround',
+        feedId: 'feed-runtime',
+        generation: 2,
+        reason: 'viewport-compaction',
+        target: { messageId: 'feed-runtime-m-72', position: 72 },
+      })
+    })
+    await flushTimers(220)
+
+    expect(assertScenario(scenario).loadedMessageCount).toBe(41)
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'history.around',
+        phase: 'start',
+        details: expect.objectContaining({
+          intent: 'viewport-compaction',
+          before: 20,
+          after: 20,
+        }),
+      }),
+    )
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'history.around',
+        phase: 'success',
+        details: expect.objectContaining({
+          intent: 'viewport-compaction',
+          loaded: 41,
+          target: { messageId: 'feed-runtime-m-72', position: 72 },
+        }),
+      }),
+    )
+  })
+
+  it('queues viewport compaction around-load until the active append request finishes', async () => {
+    const restoredAnchor = {
+      messageId: 'feed-runtime-m-32',
+      position: 32,
+      offsetWithinMessage: 24,
+    }
+    const { runtime, emitEvent } = createRuntimeStub()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    store.set('feed-runtime', makeFeed('feed-runtime', 120, {
+      lastViewportAnchor: restoredAnchor,
+    }))
+
+    await act(async () => {
+      root.render(
+        <TestHarness runtime={runtime} onScenario={(next) => {
+          scenario = next
+        }}
+        />,
+      )
+    })
+
+    await flushTimers(180)
+
+    await act(async () => {
+      emitEvent({
+        type: 'needMoreAfter',
+        feedId: 'feed-runtime',
+        generation: 2,
+        reason: 'near-bottom',
+      })
+      emitEvent({
+        type: 'needMessagesAround',
+        feedId: 'feed-runtime',
+        generation: 2,
+        reason: 'viewport-compaction',
+        target: { messageId: 'feed-runtime-m-40', position: 40 },
+      })
+    })
+
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'history.around',
+        phase: 'info',
+        details: expect.objectContaining({
+          reason: 'already-loading',
+          queued: true,
+          intent: 'viewport-compaction',
+          target: { messageId: 'feed-runtime-m-40', position: 40 },
+        }),
+      }),
+    )
+
+    await flushTimers(220)
+    expect(assertScenario(scenario).loadedMessageCount).toBeGreaterThan(31)
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'history.around',
+        phase: 'start',
+        details: expect.objectContaining({
+          intent: 'viewport-compaction',
+          target: { messageId: 'feed-runtime-m-40', position: 40 },
+        }),
+      }),
+    )
+
+    await flushTimers(220)
+
+    expect(assertScenario(scenario).loadedMessageCount).toBe(41)
+    expect(assertScenario(scenario).loadingAfter).toBe(false)
+    expect(mockWriteDemoLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'history.around',
+        phase: 'success',
+        details: expect.objectContaining({
+          intent: 'viewport-compaction',
+          loaded: 41,
+          target: { messageId: 'feed-runtime-m-40', position: 40 },
+        }),
       }),
     )
   })
@@ -676,7 +826,7 @@ describe('useDemoMessageScenario', () => {
 
     const latestSnapshot = vi.mocked(runtime.setDataSnapshot).mock.calls.at(-1)?.[0]
 
-    expect(scenario?.loadedMessageCount).toBe(36)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(36)
     expect(latestSnapshot?.anchorStatus).toBe('deleted')
     expect(latestSnapshot?.anchor).toEqual({
       messageId: 'feed-runtime-m-16',
@@ -713,7 +863,7 @@ describe('useDemoMessageScenario', () => {
     await flushTimers(180)
 
     act(() => {
-      scenario?.jumpToQuote({
+      assertScenario(scenario).jumpToQuote({
         origin: {
           messageId: 'feed-runtime-m-32',
           position: 32,
@@ -787,12 +937,12 @@ describe('useDemoMessageScenario', () => {
       })
     })
 
-    expect(scenario?.highlightedMessageId).toBe('feed-runtime-m-12')
-    expect(scenario?.highlightToken).toBe(1)
+    expect(assertScenario(scenario).highlightedMessageId).toBe('feed-runtime-m-12')
+    expect(assertScenario(scenario).highlightToken).toBe(1)
 
     await flushTimers(1400)
 
-    expect(scenario?.highlightedMessageId).toBeNull()
+    expect(assertScenario(scenario).highlightedMessageId).toBeNull()
   })
 
   it('does not highlight when a deleted quote target falls back', async () => {
@@ -825,11 +975,11 @@ describe('useDemoMessageScenario', () => {
       })
     })
 
-    expect(scenario?.highlightedMessageId).toBeNull()
+    expect(assertScenario(scenario).highlightedMessageId).toBeNull()
     expect(alertSpy).toHaveBeenCalledWith(
       'Quoted message was deleted. Jumped to a nearby message.',
     )
-    expect(scenario?.lastEvent).toBe(
+    expect(assertScenario(scenario).lastEvent).toBe(
       'quoted message was deleted; jumped to nearby message',
     )
   })
@@ -863,7 +1013,7 @@ describe('useDemoMessageScenario', () => {
     expect(peerMessage).toBeDefined()
 
     await act(async () => {
-      scenario?.editMessage(selfMessage?.id ?? '', 'edited body from test')
+      assertScenario(scenario).editMessage(selfMessage?.id ?? '', 'edited body from test')
     })
     await flushTimers(100)
 
@@ -874,7 +1024,7 @@ describe('useDemoMessageScenario', () => {
     expect(edited?.editedAt).toBeTruthy()
 
     await act(async () => {
-      scenario?.reactToMessage(selfMessage?.id ?? '')
+      assertScenario(scenario).reactToMessage(selfMessage?.id ?? '')
     })
     await flushTimers(70)
 
@@ -884,7 +1034,7 @@ describe('useDemoMessageScenario', () => {
     expect(reacted?.reactions).toEqual(['😀'])
 
     await act(async () => {
-      scenario?.deleteMessage(peerMessage?.id ?? '')
+      assertScenario(scenario).deleteMessage(peerMessage?.id ?? '')
     })
     await flushTimers(90)
 
@@ -893,8 +1043,8 @@ describe('useDemoMessageScenario', () => {
         (message) => message.id === peerMessage?.id,
       ),
     ).toBe(false)
-    expect(scenario?.messageCount).toBe(39)
-    expect(scenario?.loadedMessageCount).toBe(19)
+    expect(assertScenario(scenario).messageCount).toBe(39)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(19)
   })
 
   it('keeps the restored window contiguous when new messages arrive after the current window', async () => {
@@ -923,17 +1073,17 @@ describe('useDemoMessageScenario', () => {
 
     await flushTimers(180)
 
-    expect(scenario?.loadedMessageCount).toBe(31)
-    expect(scenario?.messageCount).toBe(80)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(31)
+    expect(assertScenario(scenario).messageCount).toBe(80)
 
     await act(async () => {
-      scenario?.appendMessage()
+      assertScenario(scenario).appendMessage()
     })
     await flushTimers(90)
 
-    expect(scenario?.messageCount).toBe(81)
-    expect(scenario?.loadedMessageCount).toBe(31)
-    expect(scenario?.lastEvent).toContain('after current window')
+    expect(assertScenario(scenario).messageCount).toBe(81)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(31)
+    expect(assertScenario(scenario).lastEvent).toContain('after current window')
   })
 
   it('rebuilds the latest window and follows bottom when sending from a restored middle window', async () => {
@@ -962,19 +1112,19 @@ describe('useDemoMessageScenario', () => {
 
     await flushTimers(180)
 
-    expect(scenario?.loadedMessageCount).toBe(31)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(31)
 
     await act(async () => {
-      scenario?.sendMessage('send from restored middle')
+      assertScenario(scenario).sendMessage('send from restored middle')
     })
     await flushTimers(60)
 
     const latestSnapshot = vi.mocked(runtime.setDataSnapshot).mock.calls.at(-1)?.[0]
     const latestLastItem = latestSnapshot?.items.at(-1)
 
-    expect(scenario?.messageCount).toBe(81)
-    expect(scenario?.loadedMessageCount).toBe(20)
-    expect(scenario?.lastEvent).toBe('sent feed-runtime-m-81 and rebuilt latest')
+    expect(assertScenario(scenario).messageCount).toBe(81)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(20)
+    expect(assertScenario(scenario).lastEvent).toBe('sent feed-runtime-m-81 and rebuilt latest')
     expect(latestSnapshot?.hasMoreAfter).toBe(false)
     expect(latestSnapshot?.hasMoreBefore).toBe(true)
     expect(latestSnapshot?.change).toEqual({
@@ -1007,34 +1157,34 @@ describe('useDemoMessageScenario', () => {
     })
     await flushTimers(180)
 
-    expect(scenario?.messageCount).toBe(40)
-    expect(scenario?.eventStormRunning).toBe(false)
+    expect(assertScenario(scenario).messageCount).toBe(40)
+    expect(assertScenario(scenario).eventStormRunning).toBe(false)
 
     await act(async () => {
-      scenario?.toggleEventStorm()
+      assertScenario(scenario).toggleEventStorm()
     })
 
-    expect(scenario?.eventStormRunning).toBe(true)
-    expect(scenario?.pendingOperation).toBe('mock.eventStorm')
+    expect(assertScenario(scenario).eventStormRunning).toBe(true)
+    expect(assertScenario(scenario).pendingOperation).toBe('mock.eventStorm')
 
     await flushTimers(80)
 
-    expect(scenario?.messageCount).toBeGreaterThan(40)
-    expect(scenario?.loadedMessageCount).toBeGreaterThan(20)
+    expect(assertScenario(scenario).messageCount).toBeGreaterThan(40)
+    expect(assertScenario(scenario).loadedMessageCount).toBeGreaterThan(20)
 
     await flushTimers(1_000)
 
-    expect(scenario?.eventStormRunning).toBe(true)
+    expect(assertScenario(scenario).eventStormRunning).toBe(true)
 
     await act(async () => {
-      scenario?.toggleEventStorm()
+      assertScenario(scenario).toggleEventStorm()
       await Promise.resolve()
     })
 
-    expect(scenario?.eventStormRunning).toBe(false)
-    expect(scenario?.pendingOperation).toBe('idle')
-    expect(scenario?.lastEvent).toBe('event storm stopped')
-    expect(scenario?.messageCount).toBeGreaterThan(40)
+    expect(assertScenario(scenario).eventStormRunning).toBe(false)
+    expect(assertScenario(scenario).pendingOperation).toBe('idle')
+    expect(assertScenario(scenario).lastEvent).toBe('event storm stopped')
+    expect(assertScenario(scenario).messageCount).toBeGreaterThan(40)
     expect(
       vi.mocked(runtime.setDataSnapshot).mock.calls.some(([snapshot]) =>
         snapshot.change.viewportEffect === 'append',
@@ -1075,20 +1225,20 @@ describe('useDemoMessageScenario', () => {
     await flushTimers(180)
 
     await act(async () => {
-      scenario?.toggleBotPush()
+      assertScenario(scenario).toggleBotPush()
       await Promise.resolve()
     })
 
-    expect(scenario?.botPushActive).toBe(true)
-    expect(scenario?.pendingOperation).toBe('mock.botPush')
-    expect(scenario?.messageCount).toBe(42)
-    expect(scenario?.loadedMessageCount).toBe(22)
+    expect(assertScenario(scenario).botPushActive).toBe(true)
+    expect(assertScenario(scenario).pendingOperation).toBe('mock.botPush')
+    expect(assertScenario(scenario).messageCount).toBe(42)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(22)
 
     await flushTimers(1_000)
 
-    expect(scenario?.botPushActive).toBe(true)
-    expect(scenario?.messageCount).toBe(44)
-    expect(scenario?.loadedMessageCount).toBe(24)
+    expect(assertScenario(scenario).botPushActive).toBe(true)
+    expect(assertScenario(scenario).messageCount).toBe(44)
+    expect(assertScenario(scenario).loadedMessageCount).toBe(24)
     expect(
       store.get('feed-runtime')?.messages.slice(-4).some(
         (message) => message.kind !== 'text',
@@ -1096,17 +1246,17 @@ describe('useDemoMessageScenario', () => {
     ).toBe(true)
 
     await act(async () => {
-      scenario?.toggleBotPush()
+      assertScenario(scenario).toggleBotPush()
     })
 
-    expect(scenario?.botPushActive).toBe(false)
-    expect(scenario?.pendingOperation).toBe('idle')
+    expect(assertScenario(scenario).botPushActive).toBe(false)
+    expect(assertScenario(scenario).pendingOperation).toBe('idle')
 
-    const messageCountAfterStop = scenario?.messageCount
+    const messageCountAfterStop = assertScenario(scenario).messageCount
 
     await flushTimers(3_000)
 
-    expect(scenario?.messageCount).toBe(messageCountAfterStop)
+    expect(assertScenario(scenario).messageCount).toBe(messageCountAfterStop)
     expect(mockWriteDemoLog).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: 'mock.botPush',
@@ -1144,7 +1294,7 @@ describe('useDemoMessageScenario', () => {
     await flushTimers(180)
 
     await act(async () => {
-      scenario?.rememberRuntimeViewportAnchor({
+      assertScenario(scenario).rememberRuntimeViewportAnchor({
         type: 'viewportAnchorChanged',
         feedId: 'feed-runtime',
         generation: 2,
@@ -1202,14 +1352,14 @@ describe('useDemoMessageScenario', () => {
     await flushTimers(180)
 
     await act(async () => {
-      scenario?.selectFeed('feed-release')
+      assertScenario(scenario).selectFeed('feed-release')
     })
     await flushTimers(180)
 
-    expect(scenario?.activeFeedId).toBe('feed-release')
+    expect(assertScenario(scenario).activeFeedId).toBe('feed-release')
 
     await act(async () => {
-      scenario?.rememberRuntimeViewportAnchor({
+      assertScenario(scenario).rememberRuntimeViewportAnchor({
         type: 'viewportAnchorChanged',
         feedId: 'feed-runtime',
         generation: 2,

@@ -10,6 +10,7 @@ import { CommitCoordinator } from '../projection/commitCoordinator'
 import { ProjectionCoordinator } from '../projection/projectionCoordinator'
 import { ResizeStabilizationCoordinator } from '../viewport/resizeStabilizationCoordinator'
 import { DestinationIntentCoordinator } from '../commands/destinationIntentCoordinator'
+import { ViewportCompactionCoordinator } from '../commands/viewportCompactionCoordinator'
 import { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import { RuntimeCommandRouter } from '../commands/runtimeCommandRouter'
 import { RuntimeLifecycleCoordinator } from '../viewport/runtimeLifecycleCoordinator'
@@ -31,6 +32,7 @@ import {
   BOOTSTRAP_STABLE_FRAMES,
   DEFAULT_EDGE_LOAD_THRESHOLD_PX,
   DEFAULT_SCROLL_MOTION_OPTIONS,
+  DEFAULT_VIEWPORT_COMPACTION_SPACER_THRESHOLD_PX,
   VIEWPORT_ANCHOR_IDLE_MS,
   cloneAnchorState,
   type BootstrapCommand,
@@ -122,6 +124,11 @@ export class MessageViewportRuntimeController<
     TOptimistic
   >
 
+  private readonly viewportCompaction: ViewportCompactionCoordinator<
+    TMessage,
+    TOptimistic
+  >
+
   private readonly commandRouter: RuntimeCommandRouter<TMessage, TOptimistic>
 
   private readonly runtimeLifecycle: RuntimeLifecycleCoordinator<
@@ -164,6 +171,8 @@ export class MessageViewportRuntimeController<
   >
 
   private readonly edgeLoadThresholdPx: number
+
+  private readonly viewportCompactionSpacerThresholdPx: number
 
   private readonly scrollMotionOptions: Required<ScrollMotionOptions>
 
@@ -225,6 +234,10 @@ export class MessageViewportRuntimeController<
     }
     this.edgeLoadThresholdPx =
       options.edgeLoadThresholdPx ?? DEFAULT_EDGE_LOAD_THRESHOLD_PX
+    this.viewportCompactionSpacerThresholdPx =
+      normalizeViewportCompactionSpacerThresholdPx(
+        options.viewportCompaction?.spacerThresholdPx,
+      )
     this.diagnostics = new DiagnosticRecorder(
       options.debug?.diagnostics,
       () => this.scheduler.now(),
@@ -306,11 +319,27 @@ export class MessageViewportRuntimeController<
         this.enqueueRestoreTransaction(target),
       emitEvent: (event) => this.emitEvent(event),
       emitDiagnostic: (input) => this.emitDiagnostic(input),
+      spacerThresholdPx: this.viewportCompactionSpacerThresholdPx,
+    })
+    this.viewportCompaction = new ViewportCompactionCoordinator({
+      renderWindow: this.renderWindow,
+      getViewportSnapshot: () => this.store.getSnapshot(),
+      captureViewportAnchor: () => this.captureViewportAnchor(),
+      getState: () => this.state,
+      getReadySubstate: () => this.stateAxes.getReadySubstate(),
+      setReadySubstate: (substate) =>
+        this.stateAxes.setReadySubstate(substate),
+      enqueueViewportCompactionTransaction: (target) =>
+        this.enqueueViewportCompactionTransaction(target),
+      emitEvent: (event) => this.emitEvent(event),
+      emitDiagnostic: (input) => this.emitDiagnostic(input),
+      spacerThresholdPx: this.viewportCompactionSpacerThresholdPx,
     })
     this.commandRouter = new RuntimeCommandRouter({
       getState: () => this.state,
       stateAxes: this.stateAxes,
       destinationIntent: this.destinationIntent,
+      viewportCompaction: this.viewportCompaction,
       setPendingBootstrap: (command) => {
         this.pendingBootstrap = command
       },
@@ -524,6 +553,7 @@ export class MessageViewportRuntimeController<
       renderWindow: this.renderWindow,
       spacer: this.spacer,
       destinationIntent: this.destinationIntent,
+      viewportCompaction: this.viewportCompaction,
       stateAxes: this.stateAxes,
       heightCache: this.heightCache,
       eventListeners: this.eventListeners,
@@ -585,6 +615,7 @@ export class MessageViewportRuntimeController<
       scrollIntent: this.scrollIntent,
       transactions: this.transactions,
       destinationIntent: this.destinationIntent,
+      viewportCompaction: this.viewportCompaction,
       getDataSnapshot: () => this.dataSnapshot,
       setDataSnapshot: (snapshot) => {
         this.dataSnapshot = snapshot
@@ -796,6 +827,16 @@ export class MessageViewportRuntimeController<
       'restore',
       () => this.transactionController.runRestoreTransaction(target),
       'restore',
+    )
+  }
+
+  private enqueueViewportCompactionTransaction(
+    target: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
+  ): void {
+    this.transactions.enqueue(
+      'viewportCompaction',
+      () => this.transactionController.runViewportCompactionTransaction(target),
+      'viewport-compaction',
     )
   }
 
@@ -1213,4 +1254,18 @@ export class MessageViewportRuntimeController<
   private emitError(code: string): void {
     this.eventHub.emitError(code)
   }
+}
+
+function normalizeViewportCompactionSpacerThresholdPx(
+  threshold: number | undefined,
+): number {
+  if (
+    typeof threshold === 'number' &&
+    Number.isFinite(threshold) &&
+    threshold >= 0
+  ) {
+    return threshold
+  }
+
+  return DEFAULT_VIEWPORT_COMPACTION_SPACER_THRESHOLD_PX
 }

@@ -1,4 +1,5 @@
 import type { DestinationIntentCoordinator } from './destinationIntentCoordinator'
+import type { ViewportCompactionCoordinator } from './viewportCompactionCoordinator'
 import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import type {
   MessageRuntimeCommand,
@@ -10,6 +11,7 @@ type RuntimeCommandRouterDeps<TMessage, TOptimistic> = {
   getState: () => RuntimeState
   stateAxes: RuntimeStateAxes
   destinationIntent: DestinationIntentCoordinator<TMessage, TOptimistic>
+  viewportCompaction: ViewportCompactionCoordinator<TMessage, TOptimistic>
   setPendingBootstrap: (
     command: Extract<MessageRuntimeCommand, { type: 'bootstrap' }>,
   ) => void
@@ -46,22 +48,26 @@ export class RuntimeCommandRouter<TMessage, TOptimistic> {
         break
       case 'followBottom':
         this.deps.destinationIntent.clearPendingDestinationRequest()
+        this.deps.viewportCompaction.clearPendingViewportCompaction('follow-bottom')
         this.deps.destinationIntent.startFollowBottomCommand()
         break
       case 'jump':
         this.deps.destinationIntent.clearPendingFollowBottom()
         this.deps.destinationIntent.clearActiveFollowBottomIntent('jump')
+        this.deps.viewportCompaction.clearPendingViewportCompaction('jump')
         this.deps.destinationIntent.startJumpCommand(command.target, command.origin)
         break
       case 'restore':
         this.deps.destinationIntent.clearPendingFollowBottom()
         this.deps.destinationIntent.clearActiveFollowBottomIntent('restore')
+        this.deps.viewportCompaction.clearPendingViewportCompaction('restore')
         this.deps.destinationIntent.startRestoreCommand(command.target)
         break
       case 'reset':
         this.deps.destinationIntent.clearPendingFollowBottom()
         this.deps.destinationIntent.clearActiveFollowBottomIntent('reset')
         this.deps.destinationIntent.clearPendingDestinationRequest()
+        this.deps.viewportCompaction.clearPendingViewportCompaction('reset')
         this.deps.enqueueResetTransaction(command.reason)
         break
     }

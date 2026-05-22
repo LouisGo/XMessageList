@@ -51,6 +51,7 @@ export type ReadySubstate =
   | 'READY_IDLE'
   | 'READY_FOLLOW_BOTTOM_PENDING'
   | 'READY_DESTINATION_PENDING'
+  | 'READY_VIEWPORT_COMPACTION_PENDING'
   | 'READY_MOTION_ACTIVE'
 
 export type PendingFollowBottom = {
@@ -78,6 +79,17 @@ export type PendingDestinationRequest = {
   emittedAfterRevision: number | null
   forceAnimateFrom?: DestinationMotionForcedStart
   animateOnResolve: boolean
+}
+
+export type PendingViewportCompaction = {
+  feedId: string
+  generation: number
+  commandId: string
+  triggerRevision: number
+  triggerModifier: 'prepend' | 'append'
+  target: MessageIdentityAnchor
+  commandTarget: AnchorState
+  emittedAfterRevision: number | null
 }
 
 export type DestinationMotionSettle<TMessage, TOptimistic> = {
@@ -142,6 +154,7 @@ export const BOOTSTRAP_STABLE_FRAMES = 2
 export const BOOTSTRAP_HEIGHT_EPSILON_PX = 1
 export const BOOTSTRAP_SETTLE_TIMEOUT_MS = 300
 export const DEFAULT_EDGE_LOAD_THRESHOLD_PX = 96
+export const DEFAULT_VIEWPORT_COMPACTION_SPACER_THRESHOLD_PX = 6000
 export const VIEWPORT_ANCHOR_IDLE_MS = 180
 export const USER_SCROLL_DIRECTION_EPSILON_PX = 0.5
 

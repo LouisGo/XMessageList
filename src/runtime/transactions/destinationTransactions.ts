@@ -155,6 +155,36 @@ export async function runRestoreTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
   target: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
 ): Promise<void> {
+  return runAnchorRestoreTransaction(deps, target, {
+    transactionKind: 'restore',
+    missingTargetErrorCode: 'restore-target-missing',
+    missingDomErrorCode: 'restore-target-dom-missing',
+    updateDestinationState: true,
+  })
+}
+
+export async function runViewportCompactionTransaction<TMessage, TOptimistic>(
+  deps: ViewportTransactionDeps<TMessage, TOptimistic>,
+  target: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
+): Promise<void> {
+  return runAnchorRestoreTransaction(deps, target, {
+    transactionKind: 'viewportCompaction',
+    missingTargetErrorCode: 'viewport-compaction-target-missing',
+    missingDomErrorCode: 'viewport-compaction-target-dom-missing',
+    updateDestinationState: false,
+  })
+}
+
+async function runAnchorRestoreTransaction<TMessage, TOptimistic>(
+  deps: ViewportTransactionDeps<TMessage, TOptimistic>,
+  target: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
+  options: {
+    transactionKind: 'restore' | 'viewportCompaction'
+    missingTargetErrorCode: string
+    missingDomErrorCode: string
+    updateDestinationState: boolean
+  },
+): Promise<void> {
   const data = deps.getDataSnapshot()
   const container = deps.registry.getContainer()
 
@@ -165,7 +195,7 @@ export async function runRestoreTransaction<TMessage, TOptimistic>(
   const restoreTarget = deps.anchor.resolveRestoreTarget(data, target)
 
   if (!restoreTarget) {
-    deps.emitError('restore-target-missing')
+    deps.emitError(options.missingTargetErrorCode)
     return
   }
 
@@ -180,7 +210,9 @@ export async function runRestoreTransaction<TMessage, TOptimistic>(
   })
 
   deps.setTransactionState('active')
-  deps.setDestinationState('resolvingDom')
+  if (options.updateDestinationState) {
+    deps.setDestinationState('resolvingDom')
+  }
   deps.setViewportPhase('PROJECTING')
 
   try {
@@ -192,8 +224,10 @@ export async function runRestoreTransaction<TMessage, TOptimistic>(
       viewportPhase: 'PROJECTING',
     })
 
-    await deps.commit.waitForChanged(projection, 'restore')
-    deps.setDestinationState('resolvingDom')
+    await deps.commit.waitForChanged(projection, options.transactionKind)
+    if (options.updateDestinationState) {
+      deps.setDestinationState('resolvingDom')
+    }
 
     const resolvedRestoreTarget =
       deps.anchor.getDirectMeasurableRow(restoreTarget.key) ??
@@ -202,7 +236,7 @@ export async function runRestoreTransaction<TMessage, TOptimistic>(
         targetKey: restoreTarget.key,
         targetIndex: restoreTarget.index,
         renderWindow,
-        missingDomErrorCode: 'restore-target-dom-missing',
+        missingDomErrorCode: options.missingDomErrorCode,
       }))
 
     if (!resolvedRestoreTarget) {
@@ -212,13 +246,17 @@ export async function runRestoreTransaction<TMessage, TOptimistic>(
         restoreBottomLockState: previousBottomLockState,
         restoreSnapshot: previousSnapshot,
       })
-      deps.setDestinationState('idle')
+      if (options.updateDestinationState) {
+        deps.setDestinationState('idle')
+      }
       deps.setTransactionState('idle')
       return
     }
 
     deps.measureCurrentWindow()
-    deps.setDestinationState('motionActive')
+    if (options.updateDestinationState) {
+      deps.setDestinationState('motionActive')
+    }
     deps.setViewportPhase('CORRECTING')
     deps.anchor.alignToResolvedRestoreTarget(
       container,
@@ -226,8 +264,10 @@ export async function runRestoreTransaction<TMessage, TOptimistic>(
       resolvedRestoreTarget,
     )
     deps.scrollIntent.setBottomLockState('UNLOCKED')
-    deps.reconcileBottomLockFromViewport(data, 'restore-settle')
-    deps.setDestinationState('settled')
+    deps.reconcileBottomLockFromViewport(data, `${options.transactionKind}-settle`)
+    if (options.updateDestinationState) {
+      deps.setDestinationState('settled')
+    }
     deps.setViewportPhase('IDLE')
     deps.setTransactionState('idle')
     deps.projection.publish({
@@ -248,7 +288,9 @@ export async function runRestoreTransaction<TMessage, TOptimistic>(
       restoreBottomLockState: previousBottomLockState,
       restoreSnapshot: previousSnapshot,
     })
-    deps.setDestinationState('idle')
+    if (options.updateDestinationState) {
+      deps.setDestinationState('idle')
+    }
     deps.setTransactionState('idle')
     throw error
   }

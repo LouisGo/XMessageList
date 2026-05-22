@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/immutability, react-hooks/exhaustive-deps */
+/* eslint-disable react-hooks/exhaustive-deps */
 import {
   type PointerEvent as ReactPointerEvent,
   useLayoutEffect,
@@ -11,9 +11,9 @@ import {
   type CustomScrollbarGeometry,
 } from './customScrollbarGeometry'
 
-type CustomScrollbarProps = {
+type CustomScrollbarProps<TMessage = unknown, TOptimistic = unknown> = {
   container: HTMLElement | null
-  runtime: MessageViewportRuntime<unknown, unknown>
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
   enabled?: boolean
   geometryVersion?: number
 }
@@ -87,12 +87,12 @@ body.x-message-scrollbar-dragging {
 }
 `
 
-export function CustomScrollbar({
+export function CustomScrollbar<TMessage = unknown, TOptimistic = unknown>({
   container,
   runtime,
   enabled = true,
   geometryVersion,
-}: CustomScrollbarProps) {
+}: CustomScrollbarProps<TMessage, TOptimistic>) {
   const trackRef = useRef<HTMLDivElement | null>(null)
   const thumbRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLElement | null>(container)

@@ -217,6 +217,7 @@ type ReadySubstate =
   | 'READY_IDLE'
   | 'READY_FOLLOW_BOTTOM_PENDING'
   | 'READY_DESTINATION_PENDING'
+  | 'READY_VIEWPORT_COMPACTION_PENDING'
   | 'READY_MOTION_ACTIVE';
 ```
 
@@ -227,6 +228,9 @@ type ReadySubstate =
 - `READY_DESTINATION_PENDING` 表示显式 `jump` / `restore` 的目标不在当前
   DataWindow，runtime 已发出 `needMessagesAround`，正在等待接入层围绕目标
   重建窗口；它也不是 transaction。
+- `READY_VIEWPORT_COMPACTION_PENDING` 表示当前 DataWindow 的 spacer 已超过
+  runtime 阈值，下一次 prepend / append 被升级为围绕当前视觉 anchor 的 around
+  重建请求；它也不是 transaction。
 - `READY_MOTION_ACTIVE` 表示 `ScrollMotionEngine` 正在拥有 `scrollTop` 写入权。
 - 任意新 transaction 启动前，`TransactionRunner` 必须同步取消 active motion。
 - Motion settle 可以保持 public state 为 `READY`，但必须在 settle 后再 emit
@@ -237,8 +241,10 @@ stateDiagram-v2
   [*] --> READY_IDLE
   READY_IDLE --> READY_FOLLOW_BOTTOM_PENDING: followBottom waits latest data
   READY_IDLE --> READY_DESTINATION_PENDING: jump / restore waits around data
+  READY_IDLE --> READY_VIEWPORT_COMPACTION_PENDING: prepend / append waits compact data
   READY_FOLLOW_BOTTOM_PENDING --> READY_MOTION_ACTIVE: latest window resolved
   READY_DESTINATION_PENDING --> READY_MOTION_ACTIVE: target DOM resolved
+  READY_VIEWPORT_COMPACTION_PENDING --> READY_IDLE: compact transaction settled
   READY_MOTION_ACTIVE --> READY_IDLE: settle / cancel cleanup
 ```
 
@@ -483,7 +489,7 @@ type MessageViewportRuntimeEvent =
       type: 'needMessagesAround';
       feedId: string;
       generation: number;
-      reason: 'jump' | 'restore';
+      reason: 'jump' | 'restore' | 'viewport-compaction';
       target: MessageIdentityAnchor;
     }
   | {
@@ -534,12 +540,22 @@ window 并替换 DataWindow，不能沿当前 after edge 逐页补齐中间空�
 `needMessagesAround(reason: 'jump' | 'restore', target)`。接入方必须围绕 target
 执行 around query 并替换 DataWindow，不能顺序补齐当前窗口和目标之间的消息。
 
+当 READY_IDLE 下已有 projection 的单侧 spacer 超过 runtime compaction 阈值时，
+下一次 `prepend` / `append` 数据到达不会继续扩大当前 DataWindow。Runtime 会捕获
+当前 viewport 顶部的 committed anchor，发出
+`needMessagesAround(reason: 'viewport-compaction', target)`，由接入方围绕该
+anchor 返回短 DataWindow。返回 snapshot 被 `viewportCompaction` transaction 消费，
+commit 后按原 `offsetWithinMessage` 校正 `scrollTop`，释放旧 spacer 且保持可见内容
+不跳变。
+
 显式 `followBottom` 的 `bottom-follow` 语义由 runtime pending command 保持。
 在 pending 期间，runtime 不发普通 `near-bottom`，也不把当前 DataWindow 的物理
 底部解释成 feed latest bottom。用户主动向上滚动、jump / restore / reset、
 generation change 或 detach 会取消 pending command。`jump` / `restore` 的
 around-target pending 由后续 matching snapshot 消费；新的 destination command、
-reset、generation change 或 detach 会取消它。
+reset、generation change 或 detach 会取消它。`viewport-compaction` pending 同样由
+matching snapshot 消费，新的 destination command、reset、generation change 或 detach
+会取消它。
 
 React/demo 层不得用 raw `scrollTop` / `scrollHeight` 自行重建向下分页判断；
 否则会绕过 runtime 的 scroll source classification、edge latch 和 transaction
