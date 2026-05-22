@@ -64,6 +64,9 @@ export type ViewportTransactionKind =
   | 'restore'
   | 'resize'
   | 'identityRebind'
+  | 'removeFromStart'
+  | 'itemLocation'
+  | 'anchorRisk'
   | 'reset'
 
 export type ScrollSource =

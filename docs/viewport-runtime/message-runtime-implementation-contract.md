@@ -220,9 +220,12 @@ snapshot.change.viewportModifier
 | items-change           | refresh projection + stabilize      |
 | auto-scroll-to-bottom  | append and follow latest if allowed |
 | reset                  | run reset bootstrap                 |
+| remove-from-start      | preserve current visual anchor      |
+| item-location          | align snapshot anchor to top        |
+| identity-remap         | migrate optimistic key to committed |
+| anchor-risk            | preserve/fallback visual anchor     |
 
-`remove-from-start`、`item-location`、`identity-remap`、`anchor-risk` 是保留设计槽位；
-在 runtime 有专门 transaction 前，不能作为普通 refresh 静默降级。
+`identity-remap` 必须携带显式 `identityRemaps`；runtime 不按 index、内容或相邻位置推断 optimistic -> committed 绑定。
 
 ---
 

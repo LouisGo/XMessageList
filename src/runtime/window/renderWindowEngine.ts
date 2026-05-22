@@ -12,10 +12,7 @@ import {
   serializeRuntimeItemKey,
 } from '../shared/utils'
 import type { SpacerEngine } from './spacerEngine'
-import {
-  buildEstimatedHeightPrefix,
-  findEstimatedPrefixIndex,
-} from './estimatedHeightIndex'
+import { HeightRangeIndex } from './heightRangeIndex'
 
 type WindowAroundInput = {
   items: MessageDataItem[]
@@ -41,7 +38,7 @@ export class RenderWindowEngine {
 
   private heightIndexEstimateRevision = -1
 
-  private estimatedHeightPrefix: number[] = []
+  private estimatedHeightIndex: HeightRangeIndex | null = null
 
   constructor(
     private readonly config: NormalizedWindowConfig,
@@ -55,7 +52,7 @@ export class RenderWindowEngine {
     this.heightIndexedItems = null
     this.heightIndexWidthBucket = -1
     this.heightIndexEstimateRevision = -1
-    this.estimatedHeightPrefix = []
+    this.estimatedHeightIndex = null
   }
 
   computeLatestWindow(
@@ -150,8 +147,9 @@ export class RenderWindowEngine {
     }
 
     const targetOffset = Math.max(0, offsetPx)
-    const prefix = this.ensureEstimatedHeightPrefix(items, width)
-    return findEstimatedPrefixIndex(prefix, targetOffset)
+    return this.ensureEstimatedHeightIndex(items, width).findIndexAtOffset(
+      targetOffset,
+    )
   }
 
   private walkBackwardByEstimatedHeight(
@@ -280,28 +278,33 @@ export class RenderWindowEngine {
     }
   }
 
-  private ensureEstimatedHeightPrefix(
+  private ensureEstimatedHeightIndex(
     items: MessageDataItem[],
     width: number,
-  ): number[] {
+  ): HeightRangeIndex {
     const widthBucket = getWidthBucket(width)
     const estimateRevision = this.spacer.getEstimateRevision()
 
     if (
       this.heightIndexedItems === items &&
       this.heightIndexWidthBucket === widthBucket &&
-      this.heightIndexEstimateRevision === estimateRevision
+      this.heightIndexEstimateRevision === estimateRevision &&
+      this.estimatedHeightIndex
     ) {
-      return this.estimatedHeightPrefix
+      return this.estimatedHeightIndex
     }
 
     // 快速拖动可能直接落进 spacer-only 区域；prefix index 让 offset -> item 从 O(n) 收敛到 O(log n)。
     // height cache 更新不会改变 DataSnapshot identity，必须用 spacer revision 兜住失效边界。
-    const prefix = buildEstimatedHeightPrefix(items, width, this.spacer)
+    const index = new HeightRangeIndex(
+      items,
+      width,
+      (item, itemWidth) => this.spacer.estimateItemHeight(item, itemWidth),
+    )
     this.heightIndexedItems = items
     this.heightIndexWidthBucket = widthBucket
     this.heightIndexEstimateRevision = estimateRevision
-    this.estimatedHeightPrefix = prefix
-    return prefix
+    this.estimatedHeightIndex = index
+    return index
   }
 }

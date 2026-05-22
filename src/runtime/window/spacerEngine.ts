@@ -10,10 +10,9 @@ import {
   getWidthBucket,
   serializeRuntimeItemKey,
 } from '../shared/utils'
+import { HeightRangeIndex } from './heightRangeIndex'
 
 export type HeightCache = Map<string, HeightRecord>
-
-const MAX_RANGE_HEIGHT_CACHE_ENTRIES = 128
 
 /**
  * SpacerEngine 只做“局部估算 + 实测修正”，不建立全局精确 offset。
@@ -22,7 +21,13 @@ const MAX_RANGE_HEIGHT_CACHE_ENTRIES = 128
 export class SpacerEngine {
   private rangeHeightCacheIdentity: string | null = null
 
-  private readonly rangeHeightCache = new Map<string, number>()
+  private rangeIndexCache: {
+    items: MessageDataItem[]
+    identity: string
+    widthBucket: number
+    estimateRevision: number
+    index: HeightRangeIndex
+  } | null = null
 
   private estimateRevision = 0
 
@@ -32,7 +37,7 @@ export class SpacerEngine {
 
   invalidateEstimateCache(): void {
     this.rangeHeightCacheIdentity = null
-    this.rangeHeightCache.clear()
+    this.rangeIndexCache = null
     this.estimateRevision += 1
   }
 
@@ -46,7 +51,7 @@ export class SpacerEngine {
     }
 
     this.rangeHeightCacheIdentity = identity
-    this.rangeHeightCache.clear()
+    this.rangeIndexCache = null
   }
 
   estimateItemHeight(item: MessageDataItem, width: number): number {
@@ -71,27 +76,18 @@ export class SpacerEngine {
     endIndex: number,
     width: number,
   ): number {
-    const safeStart = Math.max(0, startIndex)
-    const safeEnd = Math.min(items.length, endIndex)
-    const cacheKey = `${getWidthBucket(width)}:${safeStart}:${safeEnd}`
-    const cached = this.rangeHeightCache.get(cacheKey)
+    return this.ensureRangeIndex(items, width).estimateRangeHeight(
+      startIndex,
+      endIndex,
+    )
+  }
 
-    if (typeof cached === 'number') {
-      return cached
-    }
-
-    let height = 0
-
-    for (let index = safeStart; index < safeEnd; index += 1) {
-      const item = items[index]
-      if (item) {
-        height += this.estimateItemHeight(item, width)
-      }
-    }
-
-    const clampedHeight = Math.max(0, height)
-    this.setRangeCache(cacheKey, clampedHeight)
-    return clampedHeight
+  findEstimatedIndexAtOffset(
+    items: MessageDataItem[],
+    offsetPx: number,
+    width: number,
+  ): number {
+    return this.ensureRangeIndex(items, width).findIndexAtOffset(offsetPx)
   }
 
   computeTopSpacer(
@@ -110,15 +106,38 @@ export class SpacerEngine {
     return this.estimateRangeHeight(items, endIndex + 1, items.length, width)
   }
 
-  private setRangeCache(cacheKey: string, height: number): void {
-    if (this.rangeHeightCache.size >= MAX_RANGE_HEIGHT_CACHE_ENTRIES) {
-      const oldest = this.rangeHeightCache.keys().next().value
+  private ensureRangeIndex(
+    items: MessageDataItem[],
+    width: number,
+  ): HeightRangeIndex {
+    const widthBucket = getWidthBucket(width)
+    const identity =
+      this.rangeHeightCacheIdentity ??
+      `adhoc:${items.length}:${this.estimateRevision}`
 
-      if (typeof oldest === 'string') {
-        this.rangeHeightCache.delete(oldest)
-      }
+    if (
+      this.rangeIndexCache &&
+      this.rangeIndexCache.items === items &&
+      this.rangeIndexCache.identity === identity &&
+      this.rangeIndexCache.widthBucket === widthBucket &&
+      this.rangeIndexCache.estimateRevision === this.estimateRevision
+    ) {
+      return this.rangeIndexCache.index
     }
 
-    this.rangeHeightCache.set(cacheKey, height)
+    const index = new HeightRangeIndex(
+      items,
+      width,
+      (item, itemWidth) => this.estimateItemHeight(item, itemWidth),
+    )
+
+    this.rangeIndexCache = {
+      items,
+      identity,
+      widthBucket,
+      estimateRevision: this.estimateRevision,
+      index,
+    }
+    return index
   }
 }

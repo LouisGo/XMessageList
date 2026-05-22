@@ -13,7 +13,6 @@ import {
   markUserScrollIntent,
   startFollowBottomMotionFromMiddle,
 } from './runtimeTestUtils'
-import type { MessageViewportRuntimeEvent } from '..'
 
 describe('MessageViewportRuntime direct scroll and measurement', () => {
   it('latches top edge loading until the user leaves the edge', async () => {
@@ -68,36 +67,6 @@ describe('MessageViewportRuntime direct scroll and measurement', () => {
     await flushTrustedScrollFrame(container, scheduler)
 
     expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
-  })
-
-  it('rejects reserved viewport modifiers instead of silently refreshing', async () => {
-    const { runtime, scheduler } = createRuntime()
-    const container = createContainer({ height: 300 })
-    const events: MessageViewportRuntimeEvent[] = []
-
-    runtime.subscribeEvent((event) => {
-      events.push(event)
-    })
-    runtime.attach(container)
-    runtime.setDataSnapshot(createSnapshot({ count: 10, revision: 1, effect: 'reset' }))
-    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
-    await Promise.resolve()
-    await flushBootstrap(runtime, scheduler, container)
-
-    runtime.setDataSnapshot({
-      ...createSnapshot({ count: 10, revision: 2, effect: 'items-change' }),
-      change: {
-        kind: 'patch',
-        viewportModifier: 'anchor-risk',
-      },
-    })
-
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: 'viewportError',
-        code: 'viewport-modifier-anchor-risk-not-implemented',
-      }),
-    )
   })
 
   it('reports whether direct scrollbar scrollTop write reaches an attached container', () => {

@@ -217,6 +217,12 @@ export function createRuntimeControllerViewportServices<
     enqueuePrependTransaction: input.host.enqueuePrependTransaction,
     enqueueAppendTransaction: input.host.enqueueAppendTransaction,
     enqueueProjectionRefresh: input.host.enqueueProjectionRefresh,
+    enqueueRemoveFromStartTransaction:
+      input.host.enqueueRemoveFromStartTransaction,
+    enqueueItemLocationTransaction: input.host.enqueueItemLocationTransaction,
+    enqueueIdentityRebindTransaction:
+      input.host.enqueueIdentityRebindTransaction,
+    enqueueAnchorRiskTransaction: input.host.enqueueAnchorRiskTransaction,
     enqueueResetTransaction: input.host.enqueueResetTransaction,
   })
 

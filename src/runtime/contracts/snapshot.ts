@@ -7,6 +7,11 @@ import type {
   ViewportModifier,
 } from './identity'
 
+export type MessageIdentityRemap = {
+  from: Extract<MessageRuntimeItemKey, { kind: 'optimistic' }>
+  to: Extract<MessageRuntimeItemKey, { kind: 'committed' }>
+}
+
 export type MessageDataSnapshotChange = {
   kind:
     | 'initial'
@@ -17,6 +22,8 @@ export type MessageDataSnapshotChange = {
     | 'identityRebind'
     | 'reset'
   viewportModifier?: ViewportModifier | ReservedViewportModifier
+  // identity-remap 必须显式携带 key 映射；runtime 不按 index 或内容猜测身份绑定。
+  identityRemaps?: MessageIdentityRemap[]
   /**
    * @deprecated 请使用 viewportModifier。
    */

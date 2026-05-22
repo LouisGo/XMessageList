@@ -33,6 +33,10 @@ type RuntimeDataSnapshotDeps<TMessage, TOptimistic> = {
     effect: 'append' | 'auto-scroll-to-bottom',
   ) => void
   enqueueProjectionRefresh: () => void
+  enqueueRemoveFromStartTransaction: () => void
+  enqueueItemLocationTransaction: () => void
+  enqueueIdentityRebindTransaction: () => void
+  enqueueAnchorRiskTransaction: () => void
   enqueueResetTransaction: (reason: string) => void
 }
 
@@ -78,13 +82,6 @@ export class RuntimeDataSnapshotCoordinator<TMessage, TOptimistic> {
       this.deps.scrollIntent.setBottomLockState('UNLOCKED')
     }
 
-    // reserved modifier 代表合同预留位，不能静默降级成普通 refresh；
-    // 否则类型上承诺了 anchor/identity 语义，实际却可能破坏视觉锚点。
-    if (isReservedViewportModifier(viewportModifier)) {
-      this.deps.emitError(`viewport-modifier-${viewportModifier}-not-implemented`)
-      return
-    }
-
     if (viewportModifier !== 'none') {
       this.deps.transactions.dropBySupersedeKey('window-slide')
     }
@@ -110,6 +107,7 @@ export class RuntimeDataSnapshotCoordinator<TMessage, TOptimistic> {
     }
 
     if (
+      !isReservedViewportModifier(viewportModifier) &&
       this.deps.viewportCompaction.tryStartForDataMutation(snapshot, viewportModifier, {
         generationChanged,
         previousBottomLockState,
@@ -125,6 +123,18 @@ export class RuntimeDataSnapshotCoordinator<TMessage, TOptimistic> {
       case 'append':
       case 'auto-scroll-to-bottom':
         this.deps.enqueueAppendTransaction(viewportModifier)
+        break
+      case 'remove-from-start':
+        this.deps.enqueueRemoveFromStartTransaction()
+        break
+      case 'item-location':
+        this.deps.enqueueItemLocationTransaction()
+        break
+      case 'identity-remap':
+        this.deps.enqueueIdentityRebindTransaction()
+        break
+      case 'anchor-risk':
+        this.deps.enqueueAnchorRiskTransaction()
         break
       case 'reset':
         this.deps.enqueueResetTransaction('data-reset')

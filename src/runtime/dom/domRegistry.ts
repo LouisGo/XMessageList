@@ -68,6 +68,33 @@ export class DomRegistry {
     return this.rows.get(serializedKey) ?? null
   }
 
+  migrateRowKey(
+    from: MessageRuntimeItemKey,
+    to: MessageRuntimeItemKey,
+  ): boolean {
+    const fromKey = serializeRuntimeItemKey(from)
+    const toKey = serializeRuntimeItemKey(to)
+
+    if (fromKey === toKey) {
+      return false
+    }
+
+    const element = this.rows.get(fromKey)
+
+    if (!element) {
+      return false
+    }
+
+    this.rows.delete(fromKey)
+
+    if (!this.rows.has(toKey)) {
+      this.rows.set(toKey, element)
+    }
+
+    this.elementToKey.set(element, toKey)
+    return true
+  }
+
   resolveKey(element: HTMLElement): string | null {
     return this.elementToKey.get(element) ?? null
   }

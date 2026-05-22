@@ -198,6 +198,29 @@ export class MessageViewportRuntimeController<
           this.enqueueRestoreTransaction(target),
         enqueueViewportCompactionTransaction: (target) =>
           this.enqueueViewportCompactionTransaction(target),
+        enqueueRemoveFromStartTransaction: () => this.transactions.enqueue(
+          'removeFromStart',
+          () => this.transactionController.runRemoveFromStartTransaction(),
+          'remove-from-start',
+        ),
+        enqueueItemLocationTransaction: () =>
+          this.transactions.enqueue(
+            'itemLocation',
+            () => this.transactionController.runItemLocationTransaction(),
+            'item-location',
+          ),
+        enqueueIdentityRebindTransaction: () =>
+          this.transactions.enqueue(
+            'identityRebind',
+            () => this.transactionController.runIdentityRebindTransaction(),
+            'identity-rebind',
+          ),
+        enqueueAnchorRiskTransaction: () =>
+          this.transactions.enqueue(
+            'anchorRisk',
+            () => this.transactionController.runAnchorRiskTransaction(),
+            'anchor-risk',
+          ),
         enqueueResetTransaction: (reason) => this.enqueueResetTransaction(reason),
         enqueueFollowBottomTransaction: () => this.enqueueFollowBottomTransaction(),
         keepCurrentWindow: (items) => this.keepCurrentWindow(items),

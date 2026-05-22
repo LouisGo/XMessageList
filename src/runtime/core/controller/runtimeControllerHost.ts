@@ -69,6 +69,10 @@ export type RuntimeControllerHost<TMessage, TOptimistic> = {
   enqueueViewportCompactionTransaction: (
     target: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
   ) => void
+  enqueueRemoveFromStartTransaction: () => void
+  enqueueItemLocationTransaction: () => void
+  enqueueIdentityRebindTransaction: () => void
+  enqueueAnchorRiskTransaction: () => void
   enqueueResetTransaction: (reason: string) => void
   enqueueFollowBottomTransaction: () => void
   keepCurrentWindow: (

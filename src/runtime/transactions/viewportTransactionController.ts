@@ -44,6 +44,12 @@ import {
 } from './destinationTransactions'
 import { runFollowBottomTransaction } from './followBottomTransactions'
 import { runProjectionRefreshTransaction } from './projectionRefreshTransactions'
+import {
+  runAnchorRiskTransaction,
+  runIdentityRebindTransaction,
+  runItemLocationTransaction,
+  runRemoveFromStartTransaction,
+} from './reservedModifierTransactions'
 
 export type ViewportTransactionDeps<TMessage, TOptimistic> = {
   registry: DomRegistry
@@ -157,6 +163,22 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     target: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
   ): Promise<void> {
     return runViewportCompactionTransaction(this.deps, target)
+  }
+
+  async runRemoveFromStartTransaction(): Promise<void> {
+    return runRemoveFromStartTransaction(this.deps)
+  }
+
+  async runItemLocationTransaction(): Promise<void> {
+    return runItemLocationTransaction(this.deps)
+  }
+
+  async runIdentityRebindTransaction(): Promise<void> {
+    return runIdentityRebindTransaction(this.deps)
+  }
+
+  async runAnchorRiskTransaction(): Promise<void> {
+    return runAnchorRiskTransaction(this.deps)
   }
 
   async runFollowBottomTransaction(): Promise<void> {

@@ -13,6 +13,7 @@ export type {
 export type {
   BootstrapState,
   BottomLockState,
+  MessageIdentityRemap,
   MessageDataSnapshotChange,
   MessageDataSnapshot,
   MessageViewportSnapshot,

@@ -1,5 +1,6 @@
 import {
   Component,
+  memo,
   type CSSProperties,
   type ReactNode,
   useCallback,
@@ -9,6 +10,7 @@ import {
   useRef,
 } from 'react'
 import {
+  getItemContentVersion,
   getRuntimeItemKey,
   serializeRuntimeItemKey,
 } from '../../runtime'
@@ -63,6 +65,52 @@ export function MessageRowProjection<
     >
       {children}
     </div>
+  )
+}
+
+type MemoizedMessageRowProjectionProps<
+  TMessage = unknown,
+  TOptimistic = unknown,
+> = {
+  item: MessageDataItem<TMessage, TOptimistic>
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
+  renderMessage: (item: MessageDataItem<TMessage, TOptimistic>) => ReactNode
+  testId?: string
+}
+
+const MemoizedMessageRowProjection = memo(
+  function MemoizedMessageRowProjection<
+    TMessage = unknown,
+    TOptimistic = unknown,
+  >({
+    item,
+    runtime,
+    renderMessage,
+    testId,
+  }: MemoizedMessageRowProjectionProps<TMessage, TOptimistic>) {
+    return (
+      <MessageRowProjection item={item} runtime={runtime} testId={testId}>
+        {renderMessage(item)}
+      </MessageRowProjection>
+    )
+  },
+  areMessageRowProjectionPropsEqual,
+) as <TMessage = unknown, TOptimistic = unknown>(
+  props: MemoizedMessageRowProjectionProps<TMessage, TOptimistic>,
+) => ReactNode
+
+function areMessageRowProjectionPropsEqual<TMessage, TOptimistic>(
+  previous: MemoizedMessageRowProjectionProps<TMessage, TOptimistic>,
+  next: MemoizedMessageRowProjectionProps<TMessage, TOptimistic>,
+): boolean {
+  return (
+    previous.runtime === next.runtime &&
+    previous.renderMessage === next.renderMessage &&
+    previous.testId === next.testId &&
+    serializeRuntimeItemKey(getRuntimeItemKey(previous.item)) ===
+      serializeRuntimeItemKey(getRuntimeItemKey(next.item)) &&
+    previous.item.version === next.item.version &&
+    getItemContentVersion(previous.item) === getItemContentVersion(next.item)
   )
 }
 
@@ -323,14 +371,13 @@ export function MessageViewport<
             const serializedKey = serializeRuntimeItemKey(key)
 
             return (
-            <MessageRowProjection
-              key={serializedKey}
-              item={item}
-              runtime={runtime}
-              testId={`message-row-${serializedKey}`}
-            >
-                {renderMessage(item)}
-              </MessageRowProjection>
+              <MemoizedMessageRowProjection
+                key={serializedKey}
+                item={item}
+                runtime={runtime}
+                renderMessage={renderMessage}
+                testId={`message-row-${serializedKey}`}
+              />
             )
           })}
         </div>

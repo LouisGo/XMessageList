@@ -4,6 +4,7 @@ import type {
   MessageDataSnapshot,
   MessageIdentityAnchor,
   MessageRuntimeItemKey,
+  ViewportTransactionKind,
 } from '../types'
 import type {
   DestinationMotionForcedStart,
@@ -175,11 +176,11 @@ export async function runViewportCompactionTransaction<TMessage, TOptimistic>(
   })
 }
 
-async function runAnchorRestoreTransaction<TMessage, TOptimistic>(
+export async function runAnchorRestoreTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
   target: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
   options: {
-    transactionKind: 'restore' | 'viewportCompaction'
+    transactionKind: ViewportTransactionKind
     missingTargetErrorCode: string
     missingDomErrorCode: string
     updateDestinationState: boolean

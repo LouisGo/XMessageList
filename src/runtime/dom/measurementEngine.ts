@@ -89,6 +89,52 @@ export class MeasurementEngine {
     }
   }
 
+  migrateKey(
+    from: MessageRuntimeItemKey,
+    to: MessageRuntimeItemKey,
+  ): boolean {
+    const fromKey = serializeRuntimeItemKey(from)
+    const toKey = serializeRuntimeItemKey(to)
+
+    if (fromKey === toKey) {
+      return false
+    }
+
+    let migrated = false
+    const cached = this.heightCache.get(fromKey)
+
+    if (cached) {
+      this.heightCache.set(toKey, cached)
+      this.heightCache.delete(fromKey)
+      migrated = true
+    }
+
+    const pending = this.pendingHeights.get(fromKey)
+
+    if (pending) {
+      this.pendingHeights.set(toKey, {
+        ...pending,
+        key: to,
+      })
+      this.pendingHeights.delete(fromKey)
+      migrated = true
+    }
+
+    const element = this.keyToElement.get(fromKey)
+
+    if (element) {
+      this.keyToElement.delete(fromKey)
+      if (!this.keyToElement.has(toKey)) {
+        this.keyToElement.set(toKey, element)
+      }
+      this.elementToKey.set(element, to)
+      this.elementToSerializedKey.set(element, toKey)
+      migrated = true
+    }
+
+    return migrated
+  }
+
   disconnect(): void {
     this.rowObserver?.disconnect()
     this.pendingHeights.clear()

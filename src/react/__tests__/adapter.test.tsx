@@ -392,6 +392,127 @@ describe('React adapter', () => {
     })
   })
 
+  it('does not re-run row renderers for projection-only snapshot updates', async () => {
+    const listeners = new Set<() => void>()
+    const itemA = {
+      kind: 'committed' as const,
+      key: { kind: 'committed' as const, messageId: 'm-1' },
+      message: { id: 'm-1' },
+      version: 1,
+      contentVersion: 1,
+      estimatedHeight: 48,
+    }
+    const itemB = {
+      kind: 'committed' as const,
+      key: { kind: 'committed' as const, messageId: 'm-2' },
+      message: { id: 'm-2' },
+      version: 1,
+      contentVersion: 1,
+      estimatedHeight: 48,
+    }
+    let snapshot: MessageViewportSnapshot<TestMessage> = {
+      feedId: 'feed',
+      generation: 1,
+      revision: 1,
+      items: [itemA, itemB],
+      renderWindow: {
+        startIndex: 0,
+        endIndex: 1,
+        itemKeys: [itemA.key, itemB.key],
+      },
+      topSpacer: 0,
+      bottomSpacer: 0,
+      bottomLockState: 'UNLOCKED',
+      bootstrapState: 'READY',
+      viewportPhase: 'IDLE',
+      edgeState: {
+        before: 'idle',
+        after: 'idle',
+      },
+    }
+    const runtime = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+
+        return () => {
+          listeners.delete(listener)
+        }
+      },
+      attach: vi.fn(),
+      detach: vi.fn(),
+      dispatch: vi.fn(),
+      notifyProjectionCommitted: vi.fn(),
+      registerRow: vi.fn(),
+      registerTopSentinel: vi.fn(),
+      registerBottomSentinel: vi.fn(),
+      registerTopSpacer: vi.fn(),
+      registerBottomSpacer: vi.fn(),
+      subscribeEvent: vi.fn(() => () => {}),
+      beginDirectScroll: vi.fn(),
+      writeDirectScrollTop: vi.fn(),
+      endDirectScroll: vi.fn(),
+      getViewportAnchorState: vi.fn(() => null),
+      getDiagnosticRecords: vi.fn(() => []),
+      getDebugSnapshot: vi.fn(),
+    } as unknown as MessageViewportRuntime<TestMessage>
+    const renderMessage = vi.fn((item: MessageDataSnapshot<TestMessage>['items'][number]) =>
+      item.kind === 'committed' ? <span>{item.message.id}</span> : null,
+    )
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(
+        <MessageViewport
+          runtime={runtime}
+          renderMessage={renderMessage}
+          customScrollbar={false}
+        />,
+      )
+    })
+
+    expect(renderMessage).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      snapshot = {
+        ...snapshot,
+        revision: 2,
+        topSpacer: 24,
+        viewportPhase: 'PROJECTING',
+      }
+      for (const listener of listeners) {
+        listener()
+      }
+    })
+
+    expect(renderMessage).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      snapshot = {
+        ...snapshot,
+        revision: 3,
+        viewportPhase: 'IDLE',
+        items: [
+          itemA,
+          {
+            ...itemB,
+            contentVersion: 2,
+          },
+        ],
+      }
+      for (const listener of listeners) {
+        listener()
+      }
+    })
+
+    expect(renderMessage).toHaveBeenCalledTimes(3)
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
   it('detaches the old runtime and attaches the new one when runtime changes', async () => {
     const scheduler = new FakeScheduler()
     const observers = createFakeObservers()
