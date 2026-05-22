@@ -780,6 +780,85 @@ describe('React adapter', () => {
     })
   })
 
+  it('coalesces custom thumb pointer moves into one animation-frame scroll write', async () => {
+    const runtime = createMockRuntime()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const frameCallbacks: FrameRequestCallback[] = []
+
+    vi.mocked(window.requestAnimationFrame).mockImplementation((callback) => {
+      frameCallbacks.push(callback)
+      return frameCallbacks.length
+    })
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
+    })
+
+    const scrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    expect(scrollContainer).not.toBeNull()
+    if (!scrollContainer) {
+      return
+    }
+
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      value: 1200,
+    })
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      configurable: true,
+      writable: true,
+      value: 0,
+    })
+
+    while (frameCallbacks.length > 0) {
+      frameCallbacks.shift()?.(0)
+    }
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+    while (frameCallbacks.length > 0) {
+      frameCallbacks.shift()?.(0)
+    }
+
+    const thumb = host.querySelector<HTMLElement>(
+      '[data-testid="custom-scrollbar-thumb"]',
+    )
+    expect(thumb).not.toBeNull()
+    if (!thumb) {
+      return
+    }
+
+    runtime.writeDirectScrollTop.mockClear()
+
+    await act(async () => {
+      thumb.dispatchEvent(createPointerEvent('pointerdown', 20, 1))
+      document.dispatchEvent(createPointerEvent('pointermove', 60, 1))
+      document.dispatchEvent(createPointerEvent('pointermove', 80, 1))
+      document.dispatchEvent(createPointerEvent('pointermove', 100, 1))
+    })
+
+    expect(runtime.writeDirectScrollTop).not.toHaveBeenCalled()
+
+    while (frameCallbacks.length > 0) {
+      frameCallbacks.shift()?.(16)
+    }
+
+    expect(runtime.writeDirectScrollTop).toHaveBeenCalledTimes(1)
+    expect(scrollContainer.scrollTop).toBeGreaterThan(0)
+
+    await act(async () => {
+      document.dispatchEvent(createPointerEvent('pointerup', 100, 1))
+      root.unmount()
+    })
+  })
+
   it('keeps custom thumb dragging functional with a real attached runtime', async () => {
     const scheduler = new FakeScheduler()
     const observers = createFakeObservers()

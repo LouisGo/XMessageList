@@ -19,6 +19,22 @@ export type CustomScrollbarGeometry = {
   maxScrollTop: number
 }
 
+export type ScrollbarPointerInput = {
+  pointerY: number
+  trackTop: number
+  grabOffset: number
+  geometry: CustomScrollbarGeometry
+  fallbackScrollTop: number
+}
+
+export type ScrollbarTrackPageInput = {
+  clickY: number
+  scrollTop: number
+  clientHeight: number
+  geometry: CustomScrollbarGeometry
+  pageInset?: number
+}
+
 const defaultGeometryOptions = {
   trackInsetStart: 4,
   trackInsetEnd: 4,
@@ -70,4 +86,73 @@ export function computeCustomScrollbarGeometry(
     thumbLength,
     maxScrollTop,
   }
+}
+
+export function getScrollTopForScrollbarPointer(
+  input: ScrollbarPointerInput,
+): number {
+  const { pointerY, trackTop, grabOffset, geometry, fallbackScrollTop } = input
+
+  if (!geometry.scrollable) {
+    return fallbackScrollTop
+  }
+
+  const availableTravel = getAvailableThumbTravel(geometry)
+  if (availableTravel <= 0 || geometry.maxScrollTop <= 0) {
+    return 0
+  }
+
+  const rawThumbTop = pointerY - trackTop - grabOffset
+  const thumbTop = Math.min(
+    geometry.trackStart + availableTravel,
+    Math.max(geometry.trackStart, rawThumbTop),
+  )
+  const progress = (thumbTop - geometry.trackStart) / availableTravel
+
+  return progress * geometry.maxScrollTop
+}
+
+export function getScrollbarPointerOverflowDirection(
+  pointerY: number,
+  trackTop: number,
+  geometry: CustomScrollbarGeometry,
+): 'before' | 'after' | null {
+  if (!geometry.scrollable) {
+    return null
+  }
+
+  const pointerTrackY = pointerY - trackTop
+  const minThumbTop = geometry.trackStart
+  const maxThumbTop = geometry.trackStart + getAvailableThumbTravel(geometry)
+
+  if (pointerTrackY < minThumbTop) {
+    return 'before'
+  }
+
+  if (pointerTrackY > maxThumbTop + geometry.thumbLength) {
+    return 'after'
+  }
+
+  return null
+}
+
+export function getScrollbarTrackPageScrollTop(
+  input: ScrollbarTrackPageInput,
+): number {
+  const pageInset = input.pageInset ?? 32
+  const viewportPage = Math.max(1, input.clientHeight - pageInset)
+  const thumbStart = input.geometry.thumbTop
+  const thumbEnd = thumbStart + input.geometry.thumbLength
+
+  if (input.clickY >= thumbStart && input.clickY <= thumbEnd) {
+    return input.scrollTop
+  }
+
+  return input.clickY < thumbStart
+    ? Math.max(0, input.scrollTop - viewportPage)
+    : Math.min(input.geometry.maxScrollTop, input.scrollTop + viewportPage)
+}
+
+function getAvailableThumbTravel(geometry: CustomScrollbarGeometry): number {
+  return Math.max(0, geometry.trackLength - geometry.thumbLength)
 }
