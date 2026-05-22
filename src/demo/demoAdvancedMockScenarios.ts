@@ -134,6 +134,14 @@ export function applyEventStormTick(input: {
 }): AdvancedMockPublishResult | null {
   const random = input.random ?? Math.random
   const state = input.state
+
+  syncStormReservedSequences({
+    feedId: input.feedId,
+    feedMessages: input.feedMessages,
+    messages: input.messages,
+    state,
+  })
+
   const eventCount = pickStormEventCount(random)
   const details = createTickDetails(state.tickIndex + 1)
   let nextFeedMessages = input.feedMessages
@@ -465,6 +473,65 @@ function reserveStormAppends(input: {
   return deliveries
 }
 
+function syncStormReservedSequences(input: {
+  feedId: string
+  feedMessages: DemoMessage[]
+  messages: DemoMessage[]
+  state: AdvancedMockEventStormState
+}): void {
+  const occupiedMessages = [...input.feedMessages, ...input.messages]
+  const occupiedIds = new Set(occupiedMessages.map((message) => message.id))
+  const occupiedSequences = new Set(
+    occupiedMessages.map((message) => message.sequence),
+  )
+  const reservedIds = new Set<string>()
+  const reservedSequences = new Set<number>()
+  const nextKnownSequence = Math.max(
+    getNextMessageSequence(input.feedMessages),
+    getNextMessageSequence(input.messages),
+  )
+  let nextSequence = Math.max(input.state.nextSequence, nextKnownSequence)
+
+  input.state.deliveryBuffer = input.state.deliveryBuffer.map((message) => {
+    const hasConflict =
+      occupiedIds.has(message.id) ||
+      occupiedSequences.has(message.sequence) ||
+      reservedIds.has(message.id) ||
+      reservedSequences.has(message.sequence)
+
+    if (!hasConflict) {
+      reservedIds.add(message.id)
+      reservedSequences.add(message.sequence)
+      nextSequence = Math.max(nextSequence, message.sequence + 1)
+      return message
+    }
+
+    while (
+      occupiedSequences.has(nextSequence) ||
+      reservedSequences.has(nextSequence) ||
+      occupiedIds.has(createDemoMessageId(input.feedId, nextSequence)) ||
+      reservedIds.has(createDemoMessageId(input.feedId, nextSequence))
+    ) {
+      nextSequence += 1
+    }
+
+    const nextId = createDemoMessageId(input.feedId, nextSequence)
+    const remapped = {
+      ...message,
+      id: nextId,
+      sequence: nextSequence,
+      body: message.body.split(message.id).join(nextId),
+    }
+
+    reservedIds.add(remapped.id)
+    reservedSequences.add(remapped.sequence)
+    nextSequence += 1
+    return remapped
+  })
+
+  input.state.nextSequence = Math.max(input.state.nextSequence, nextSequence)
+}
+
 function createStormMessage(
   feedId: string,
   sequence: number,
@@ -529,6 +596,12 @@ function createBotBody(
   }
 
   return `${prefix}${suffix}`
+}
+
+function createDemoMessageId(feedId: string, sequence: number): string {
+  const channel = sequence > 0 ? 'm' : 'h'
+
+  return `${feedId}-${channel}-${Math.abs(sequence)}`
 }
 
 function pickStormEventCount(random: RandomSource): number {

@@ -4,7 +4,12 @@ import {
   applyEventStormTick,
   createEventStormState,
 } from '../demoAdvancedMockScenarios'
-import { createDemoMessages, type DemoMessage } from '../demoData'
+import {
+  createDemoMessages,
+  createNewestMessage,
+  createOutgoingMessage,
+  type DemoMessage,
+} from '../demoData'
 
 describe('demoAdvancedMockScenarios', () => {
   it('deletes a single message from the last 100 loaded messages', () => {
@@ -61,6 +66,68 @@ describe('demoAdvancedMockScenarios', () => {
         index > 0 && sequence - (deletedSequences[index - 1] ?? sequence) > 1,
       ),
     ).toBe(true)
+  })
+
+  it('does not let delayed storm appends overwrite messages sent during the storm', () => {
+    const feedId = 'feed-runtime'
+    const baseMessages = createDemoMessages(3, feedId)
+    const state = createEventStormState(baseMessages)
+    const bufferedStormMessage = {
+      ...createNewestMessage({
+        feedId,
+        sequence: 4,
+      }),
+      body: 'feed-runtime-m-4 buffered storm message',
+    }
+    const sentMessage = createOutgoingMessage('local send', {
+      feedId,
+      sequence: 4,
+      quoteCandidates: baseMessages,
+      random: () => 0.9,
+    })
+    const currentMessages = [...baseMessages, sentMessage]
+
+    state.deliveryBuffer = [bufferedStormMessage]
+    state.nextSequence = 5
+
+    const result = applyEventStormTick({
+      feedId,
+      feedMessages: currentMessages,
+      messages: currentMessages,
+      hasMoreAfter: false,
+      state,
+      random: createRandomSource([
+        0.1, // one event in this tick
+        0.1, // choose append
+        0.2, // reserve one extra storm append
+        0.9, // keep normal storm kind
+        0, // pick first storm text
+        0, // pick first storm author
+        0.9, // keep expanded state
+        0.9, // no initial reaction
+        0.2, // deliver one buffered append
+        0.9, // do not hold newest buffered append
+        0, // deliver the remapped conflicting append
+        0.9, // no quote on delivery
+      ]),
+    })
+
+    if (!result) {
+      throw new Error('expected storm append to publish a result')
+    }
+
+    expect(result.messages.find((message) => message.id === sentMessage.id)?.body)
+      .toBe('local send')
+    expect(result.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'feed-runtime-m-5',
+          body: 'feed-runtime-m-5 buffered storm message',
+        }),
+      ]),
+    )
+    expect(result.details.visibleOutOfOrderAppendCount).toBe(0)
+    expect(result.details.visibleTailAppendCount).toBe(1)
   })
 })
 
