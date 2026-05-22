@@ -33,6 +33,9 @@ function createSnapshot(input: {
   start?: number
   estimatedHeight?: number
   hasMoreAfter?: boolean
+  kind?: MessageDataSnapshot['change']['kind']
+  anchor?: MessageDataSnapshot['anchor']
+  anchorStatus?: MessageDataSnapshot['anchorStatus']
 }): MessageDataSnapshot<TestMessage> {
   const start = input.start ?? 1
   const estimatedHeight = input.estimatedHeight ?? 50
@@ -53,17 +56,20 @@ function createSnapshot(input: {
         estimatedHeight,
       }
     }),
-    anchor: { messageId: `m-${start + input.count - 1}` },
-    anchorStatus: 'normal',
+    anchor: input.anchor ?? { messageId: `m-${start + input.count - 1}` },
+    anchorStatus: input.anchorStatus ?? 'normal',
     hasMoreBefore: true,
     hasMoreAfter: input.hasMoreAfter ?? false,
     change: {
       kind:
-        input.effect === 'prepend'
+        input.kind ??
+        (input.effect === 'prepend'
           ? 'prepend'
           : input.effect === 'append' || input.effect === 'auto-scroll-to-bottom'
             ? 'append'
-            : 'initial',
+            : input.effect === 'reset'
+              ? 'reset'
+              : 'patch'),
       viewportModifier: input.effect,
     },
   }
@@ -952,6 +958,65 @@ describe('MessageViewportRuntime', () => {
     expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
   })
 
+  it('does not consume pending jump rebuild from a non-reset snapshot containing the target', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    events.length = 0
+
+    runtime.dispatch({
+      type: 'jump',
+      target: { messageId: 'm-100', position: 100 },
+    })
+    await Promise.resolve()
+
+    const beforeRevision = runtime.getSnapshot().revision
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 30,
+      revision: 2,
+      effect: 'items-change',
+      kind: 'patch',
+      start: 86,
+    }))
+    await Promise.resolve()
+
+    expect(runtime.getDebugSnapshot().readySubstate).toBe(
+      'READY_DESTINATION_PENDING',
+    )
+    expect(runtime.getDebugSnapshot().destinationState).toBe('pendingData')
+    expect(runtime.getSnapshot().revision).toBe(beforeRevision)
+    expect(
+      events.filter((event) =>
+        event.type === 'needMessagesAround' && event.reason === 'jump',
+      ),
+    ).toHaveLength(2)
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 30,
+      revision: 3,
+      effect: 'reset',
+      kind: 'reset',
+      start: 86,
+      anchor: { messageId: 'm-100', position: 100 },
+    }))
+    await Promise.resolve()
+
+    expect(runtime.getDebugSnapshot().destinationState).toBe('resolvingDom')
+    expect(runtime.getSnapshot().items.some((item) =>
+      item.key.kind === 'committed' && item.key.messageId === 'm-100',
+    )).toBe(true)
+  })
+
   it('rebuilds the latest window before follow-bottom when spacer is too large', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
@@ -1100,6 +1165,69 @@ describe('MessageViewportRuntime', () => {
     expect(runtime.getDebugSnapshot().readySubstate).toBe(
       'READY_VIEWPORT_COMPACTION_PENDING',
     )
+  })
+
+  it('does not consume pending viewport compaction from a normal append snapshot', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 300,
+      revision: 1,
+      effect: 'reset',
+      estimatedHeight: 104,
+      hasMoreAfter: true,
+    }))
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'restored',
+      target: { messageId: 'm-150' },
+    })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    mountProjection(runtime, container, runtime.getSnapshot(), -container.scrollTop)
+    events.length = 0
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 320,
+      revision: 2,
+      effect: 'prepend',
+      start: -19,
+      estimatedHeight: 104,
+      hasMoreAfter: true,
+    }))
+    await Promise.resolve()
+
+    const beforeRevision = runtime.getSnapshot().revision
+    expect(runtime.getDebugSnapshot().readySubstate).toBe(
+      'READY_VIEWPORT_COMPACTION_PENDING',
+    )
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 340,
+      revision: 3,
+      effect: 'append',
+      start: -19,
+      estimatedHeight: 104,
+      hasMoreAfter: true,
+    }))
+    await Promise.resolve()
+
+    expect(runtime.getDebugSnapshot().readySubstate).toBe(
+      'READY_VIEWPORT_COMPACTION_PENDING',
+    )
+    expect(runtime.getSnapshot().revision).toBe(beforeRevision)
+    expect(
+      events.filter((event) =>
+        event.type === 'needMessagesAround' &&
+        event.reason === 'viewport-compaction',
+      ),
+    ).toHaveLength(2)
   })
 
   it('compacts the data window around the current visual anchor without moving it', async () => {
@@ -1460,6 +1588,77 @@ describe('MessageViewportRuntime', () => {
       getExpectedRestoreScrollTop(snapshot, 'm-5000', 18),
     )
     expect(runtime.getDebugSnapshot().readySubstate).toBe('READY_IDLE')
+  })
+
+  it('restores to the resolved anchor when a missing restore target was deleted', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+    const restoreTarget = {
+      key: { kind: 'committed' as const, messageId: 'm-17' },
+      offsetWithinMessage: 18,
+    }
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 30,
+      revision: 1,
+      effect: 'reset',
+      start: 31,
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    events.length = 0
+
+    runtime.dispatch({ type: 'restore', target: restoreTarget })
+    await Promise.resolve()
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'needMessagesAround',
+        reason: 'restore',
+        target: { messageId: 'm-17' },
+      }),
+    )
+
+    const aroundSnapshot = createSnapshot({
+      count: 42,
+      revision: 2,
+      effect: 'reset',
+      start: 1,
+    })
+    runtime.setDataSnapshot({
+      ...aroundSnapshot,
+      items: aroundSnapshot.items.filter(
+        (item) => item.key.kind !== 'committed' || item.key.messageId !== 'm-17',
+      ),
+      anchor: { messageId: 'm-14', position: 14 },
+      anchorStatus: 'deleted',
+    })
+    await Promise.resolve()
+
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot, -container.scrollTop)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(container.scrollTop).toBe(
+      getExpectedRestoreScrollTop(snapshot, 'm-14', 0),
+    )
+    expect(runtime.getDebugSnapshot().readySubstate).toBe('READY_IDLE')
+    expect(runtime.getDebugSnapshot().destinationState).toBe('settled')
+    expect(events.some((event) =>
+      event.type === 'viewportError' && event.code === 'restore-target-missing',
+    )).toBe(false)
   })
 
   it('falls back to a nearest measurable row when the restore target DOM is missing', async () => {
@@ -2017,7 +2216,20 @@ describe('MessageViewportRuntime', () => {
           event.type === 'needLatestMessages' &&
           event.reason === 'bottom-follow',
       ),
-    ).toHaveLength(2)
+    ).toHaveLength(3)
+    expect(runtime.getDebugSnapshot().destinationState).toBe('pendingData')
+
+    runtime.setDataSnapshot(
+      createSnapshot({
+        count: 20,
+        revision: 4,
+        effect: 'auto-scroll-to-bottom',
+        kind: 'reset',
+        hasMoreAfter: false,
+        start: 31,
+      }),
+    )
+    await Promise.resolve()
 
     const snapshot = runtime.getSnapshot()
     expect(snapshot.viewportPhase).toBe('PROJECTING')
@@ -2071,6 +2283,7 @@ describe('MessageViewportRuntime', () => {
         count: 20,
         revision: 2,
         effect: 'auto-scroll-to-bottom',
+        kind: 'reset',
         hasMoreAfter: false,
         start: 81,
       }),

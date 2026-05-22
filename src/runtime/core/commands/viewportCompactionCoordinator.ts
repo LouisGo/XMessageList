@@ -15,6 +15,7 @@ import type {
   RuntimeDiagnosticEmitter,
 } from '../state/runtimeTypes'
 import { cloneAnchorState } from '../state/runtimeTypes'
+import { isAroundRebuildSnapshot } from './pendingResponseGuards'
 
 type ViewportCompactionDeps<TMessage, TOptimistic> = {
   renderWindow: RenderWindowEngine
@@ -101,6 +102,23 @@ export class ViewportCompactionCoordinator<TMessage, TOptimistic> {
     ) {
       this.clearPendingViewportCompaction('generation-change')
       return false
+    }
+
+    if (!isAroundRebuildSnapshot(snapshot)) {
+      // compaction 必须等待 around reset 短窗口；普通 append/prepend/patch
+      // 不能因为仍包含视觉 anchor 就提前释放 pending。
+      this.emitPendingNeed(snapshot)
+      return true
+    }
+
+    const hasPendingTarget = this.hasCommittedMessage(snapshot, pending.target.messageId)
+    const hasDeletedFallback = Boolean(
+      snapshot.anchor && snapshot.anchorStatus === 'deleted',
+    )
+
+    if (!hasPendingTarget && !hasDeletedFallback) {
+      this.emitPendingNeed(snapshot)
+      return true
     }
 
     const currentAnchor = this.resolveCurrentViewportAnchor(snapshot)

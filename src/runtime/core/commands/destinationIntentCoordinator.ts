@@ -20,6 +20,10 @@ import {
   hasCommittedMessage,
   resolvePendingJumpTarget,
 } from './destinationIntentHelpers'
+import {
+  isAroundRebuildSnapshot,
+  isLatestRebuildSnapshot,
+} from './pendingResponseGuards'
 import type {
   AnchorState,
   DestinationState,
@@ -165,8 +169,9 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
       return false
     }
 
-    if (snapshot.hasMoreAfter) {
-      // 每个 data revision 最多发一次 latest-window need，避免 BFF 未返回时重复拉取。
+    if (!isLatestRebuildSnapshot(snapshot)) {
+      // pending latest 只消费 reset rebuild 回包；普通 append/patch 只能重发 need，
+      // 不能把当前 DataWindow 的 after edge 误当成 feed latest。
       this.emitPendingFollowBottomNeed(snapshot)
       return true
     }
@@ -193,6 +198,13 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
       return false
     }
 
+    if (!isAroundRebuildSnapshot(snapshot)) {
+      // pending destination 只消费 around-target reset；普通同 generation
+      // snapshot 即使包含 target，也不能提前完成远距离 rebuild。
+      this.emitPendingDestinationNeed(snapshot)
+      return true
+    }
+
     if (pending.intent === 'jump') {
       const resolvedJumpTarget = this.resolvePendingJumpTarget(
         snapshot,
@@ -210,6 +222,15 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
         animate: pending.animateOnResolve,
         originalTarget: pending.target,
       })
+      return true
+    }
+
+    if (
+      snapshot.anchorStatus === 'deleted' &&
+      snapshot.anchor
+    ) {
+      this.clearPendingDestinationRequest()
+      this.deps.enqueueRestoreTransaction(snapshot.anchor)
       return true
     }
 

@@ -535,10 +535,16 @@ append / refresh 追底判断前的状态修正；它不能把 programmatic 远�
 外部显式 `followBottom` 但当前 DataWindow 仍有 `hasMoreAfter=true` 时，runtime
 发出 `needLatestMessages(reason: 'bottom-follow')`。接入方必须直接请求 latest
 window 并替换 DataWindow，不能沿当前 after edge 逐页补齐中间空洞。
+pending 期间只有 `change.kind='reset'` 且 `hasMoreAfter=false` 的 latest
+rebuild snapshot 才能消费该 intent；普通 append / patch 即使暂时
+`hasMoreAfter=false` 也只能触发 runtime 继续请求 latest。
 
 外部显式 `jump` / `restore` 但目标不在当前 DataWindow 时，runtime 发出
 `needMessagesAround(reason: 'jump' | 'restore', target)`。接入方必须围绕 target
 执行 around query 并替换 DataWindow，不能顺序补齐当前窗口和目标之间的消息。
+pending 期间只有 `change.kind='reset'` 的 around rebuild snapshot 才会继续解析
+target / deleted fallback；普通 append / patch 即使包含 target，也不能消费该
+pending。
 
 当 READY_IDLE 下已有 projection 的单侧 spacer 超过 runtime compaction 阈值时，
 下一次 `prepend` / `append` 数据到达不会继续扩大当前 DataWindow。Runtime 会捕获
@@ -547,6 +553,9 @@ window 并替换 DataWindow，不能沿当前 after edge 逐页补齐中间空�
 anchor 返回短 DataWindow。返回 snapshot 被 `viewportCompaction` transaction 消费，
 commit 后按原 `offsetWithinMessage` 校正 `scrollTop`，释放旧 spacer 且保持可见内容
 不跳变。
+compaction pending 只消费 `change.kind='reset'` 且包含 pending target 或 deleted
+fallback 的 around rebuild snapshot；普通 append / prepend / patch 不能因为仍包含
+当前视觉 anchor 就提前完成 compaction。
 
 显式 `followBottom` 的 `bottom-follow` 语义由 runtime pending command 保持。
 在 pending 期间，runtime 不发普通 `near-bottom`，也不把当前 DataWindow 的物理

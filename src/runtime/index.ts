@@ -1,5 +1,8 @@
 export { MessageViewportRuntime } from './MessageViewportRuntime'
 export {
+  DEFAULT_VIEWPORT_COMPACTION_SPACER_THRESHOLD_PX,
+} from './core/state/runtimeTypes'
+export {
   DEFAULT_BOTTOM_LOCK_THRESHOLD_PX,
   DEFAULT_BOTTOM_UNLOCK_THRESHOLD_PX,
   areRuntimeItemKeysEqual,

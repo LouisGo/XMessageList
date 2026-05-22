@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageViewportRuntime } from '../runtime'
+import {
+  DEFAULT_VIEWPORT_COMPACTION_SPACER_THRESHOLD_PX,
+  MessageViewportRuntime,
+} from '../runtime'
 import type { DemoMessage } from './demoData'
 import { LRUCache } from './utils/lru'
 
@@ -29,6 +32,9 @@ function createDemoFeedRuntime(feedId: string): MessageViewportRuntime<DemoMessa
     window: DEMO_RUNTIME_WINDOW,
     bottomUnlockThresholdPx: 200,
     edgeLoadThresholdPx: 72,
+    viewportCompaction: {
+      spacerThresholdPx: DEFAULT_VIEWPORT_COMPACTION_SPACER_THRESHOLD_PX,
+    },
     debug: {
       diagnostics: {
         channels: 'all',

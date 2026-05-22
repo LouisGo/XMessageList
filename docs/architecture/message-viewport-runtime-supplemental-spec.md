@@ -115,11 +115,15 @@ bottom locked initial viewport
 目标直接重建 DataWindow；不能通过 `needMoreAfter` / `needMoreBefore` 顺序补齐
 当前窗口和目标之间的空洞。如果目标已经在 partial DataWindow 内，即使物理滚到
 当前 DOM 底部，也不能把它解释成 feed latest bottom。
+pending 期间，普通 append / patch snapshot 即使包含目标消息，也不能被视为
+around rebuild 回包；只有 `change.kind='reset'` 的重建窗口才会继续解析目标。
 
 当 runtime 因 spacer compaction 发出
 `needMessagesAround(reason: 'viewport-compaction', target)` 时，接入方同样必须返回
 围绕 target 的短 DataWindow。该路径不是 destination jump，不应播放目的地动画；
 viewport runtime 会在 commit 后按原视觉 anchor offset 修正 `scrollTop`。
+该 pending 同样只消费 `change.kind='reset'` 且包含 pending target 或 deleted
+fallback 的重建窗口，避免普通 append / patch 提前释放 spacer compaction。
 
 注意：
 

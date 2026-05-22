@@ -326,12 +326,12 @@ transaction active，因为此时没有 projection 正在等待 commit；但它�
 驱动规则：
 
 - 首次进入 pending 时 emit `needLatestMessages(bottom-follow)`。
-- 每次 `setDataSnapshot` 到达后，如果 `feedId + generation` 仍匹配且
-  `hasMoreAfter=true`，runtime 继续保持 pending，并允许再次 emit
-  `needLatestMessages(bottom-follow)`；同一个 data revision 最多 emit 一次，
-  避免请求风暴。
-- 当 `hasMoreAfter=false`，runtime 消费 pending command，启动 latest-window
-  transaction；commit + measure 后进入 bounded motion。
+- 每次 `setDataSnapshot` 到达后，如果 `feedId + generation` 仍匹配但 snapshot
+  不是 `change.kind='reset' && hasMoreAfter=false` 的 latest rebuild 回包，runtime
+  继续保持 pending，并允许再次 emit `needLatestMessages(bottom-follow)`；同一个
+  data revision 最多 emit 一次，避免请求风暴。
+- 当 latest rebuild 回包到达且 `hasMoreAfter=false`，runtime 消费 pending
+  command，启动 latest-window transaction；commit + measure 后进入 bounded motion。
 - 用户主动向上滚动、显式 `jump` / `restore` / `reset`、generation change、
   detach / destroy 都取消 pending command。
 - Pending 期间普通 near-bottom edge latch 被抑制；runtime 只允许
@@ -412,6 +412,7 @@ runtime 还必须在生命周期恢复和事务追底判断前，用真实
 command jump(target identity, optional origin identity)
 -> if target not in DataWindow: emit needMessagesAround(jump, target), no motion
 -> data layer loads around target directly, without filling the gap
+-> ignore ordinary append/patch snapshots while pending
 -> runtime computes window around target
 -> if anchorStatus is deleted, use snapshot.anchor as resolved jump target
 -> publish projection
