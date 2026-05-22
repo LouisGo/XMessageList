@@ -12,23 +12,68 @@ export type MessageIdentityRemap = {
   to: Extract<MessageRuntimeItemKey, { kind: 'committed' }>
 }
 
-export type MessageDataSnapshotChange = {
-  kind:
-    | 'initial'
-    | 'prepend'
-    | 'append'
-    | 'patch'
-    | 'delete'
-    | 'identityRebind'
-    | 'reset'
-  viewportModifier?: ViewportModifier | ReservedViewportModifier
-  // identity-remap 必须显式携带 key 映射；runtime 不按 index 或内容猜测身份绑定。
-  identityRemaps?: MessageIdentityRemap[]
+export type NonEmptyMessageIdentityRemaps = [
+  MessageIdentityRemap,
+  ...MessageIdentityRemap[],
+]
+
+type MessageDataSnapshotChangeKind =
+  | 'initial'
+  | 'prepend'
+  | 'append'
+  | 'patch'
+  | 'delete'
+  | 'identityRebind'
+  | 'reset'
+
+type MessageDataSnapshotChangeBase = {
+  kind: MessageDataSnapshotChangeKind
   /**
    * @deprecated 请使用 viewportModifier。
    */
   viewportEffect?: ViewportEffect
 }
+
+type IdentityRemapSnapshotChange = MessageDataSnapshotChangeBase & {
+  kind: 'identityRebind'
+  viewportModifier: 'identity-remap'
+  // identity-remap 必须显式携带 key 映射；runtime 不按 index 或内容猜测身份绑定。
+  identityRemaps: NonEmptyMessageIdentityRemaps
+}
+
+type LegacyIdentityRemapSnapshotChange = Omit<
+  MessageDataSnapshotChangeBase,
+  'viewportEffect'
+> & {
+  kind: 'identityRebind'
+  viewportModifier?: undefined
+  /**
+   * @deprecated 请使用 viewportModifier。
+   */
+  viewportEffect: 'identity-remap'
+  // 兼容迁移期旧字段，但同样要求显式、非空映射。
+  identityRemaps: NonEmptyMessageIdentityRemaps
+}
+
+type NonIdentityRemapSnapshotChange = MessageDataSnapshotChangeBase & {
+  kind:
+    | Exclude<MessageDataSnapshotChangeKind, 'identityRebind'>
+    | 'identityRebind'
+  viewportModifier?: Exclude<
+    ViewportModifier | ReservedViewportModifier,
+    'identity-remap'
+  >
+  /**
+   * @deprecated 请使用 viewportModifier。
+   */
+  viewportEffect?: Exclude<ViewportEffect, 'identity-remap'>
+  identityRemaps?: never
+}
+
+export type MessageDataSnapshotChange =
+  | IdentityRemapSnapshotChange
+  | LegacyIdentityRemapSnapshotChange
+  | NonIdentityRemapSnapshotChange
 
 export type MessageDataSnapshot<TMessage = unknown, TOptimistic = unknown> = {
   feedId: string

@@ -32,6 +32,7 @@ export type {
   MessageViewportRuntimeEvent,
   MessageViewportRuntimeOptions,
   MessageViewportSnapshot,
+  NonEmptyMessageIdentityRemaps,
   OptimisticMessageDataItem,
   ProjectionCommit,
   RenderWindow,

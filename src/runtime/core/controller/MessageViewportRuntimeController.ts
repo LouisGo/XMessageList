@@ -16,6 +16,7 @@ import { RuntimeDataSnapshotCoordinator } from '../data/runtimeDataSnapshotCoord
 import { RuntimeRecoveryAndMeasurement } from '../recovery/runtimeRecoveryAndMeasurement'
 import { ScrollFrameCoordinator } from '../viewport/scrollFrameCoordinator'
 import { createRuntimeControllerServices } from './runtimeControllerComposition'
+import { enqueueReservedDataTransaction } from './runtimeControllerReservedEnqueue'
 import { RuntimeViewportAnchorEvents } from './runtimeViewportAnchorEvents'
 import {
   DiagnosticRecorder,
@@ -189,39 +190,26 @@ export class MessageViewportRuntimeController<
         },
         canEmitEdgeNeeds: () => this.canEmitEdgeNeeds(),
         tryRunPendingBootstrap: () => this.tryRunPendingBootstrap(),
-        enqueuePrependTransaction: () => this.enqueuePrependTransaction(),
-        enqueueAppendTransaction: (effect) => this.enqueueAppendTransaction(effect),
-        enqueueProjectionRefresh: () => this.enqueueProjectionRefresh(),
+        enqueuePrependTransaction: (snapshot) => this.enqueuePrependTransaction(snapshot),
+        enqueueAppendTransaction: (snapshot, effect) =>
+          this.enqueueAppendTransaction(snapshot, effect),
+        enqueueProjectionRefresh: (snapshot) => this.enqueueProjectionRefresh(snapshot),
         enqueueJumpTransaction: (target, jumpOptions) =>
           this.enqueueJumpTransaction(target, jumpOptions),
         enqueueRestoreTransaction: (target) =>
           this.enqueueRestoreTransaction(target),
         enqueueViewportCompactionTransaction: (target) =>
           this.enqueueViewportCompactionTransaction(target),
-        enqueueRemoveFromStartTransaction: () => this.transactions.enqueue(
-          'removeFromStart',
-          () => this.transactionController.runRemoveFromStartTransaction(),
-          'remove-from-start',
-        ),
-        enqueueItemLocationTransaction: () =>
-          this.transactions.enqueue(
-            'itemLocation',
-            () => this.transactionController.runItemLocationTransaction(),
-            'item-location',
-          ),
-        enqueueIdentityRebindTransaction: () =>
-          this.transactions.enqueue(
-            'identityRebind',
-            () => this.transactionController.runIdentityRebindTransaction(),
-            'identity-rebind',
-          ),
-        enqueueAnchorRiskTransaction: () =>
-          this.transactions.enqueue(
-            'anchorRisk',
-            () => this.transactionController.runAnchorRiskTransaction(),
-            'anchor-risk',
-          ),
-        enqueueResetTransaction: (reason) => this.enqueueResetTransaction(reason),
+        enqueueRemoveFromStartTransaction: (snapshot) =>
+          enqueueReservedDataTransaction(this.transactions, this.transactionController, 'removeFromStart', snapshot),
+        enqueueItemLocationTransaction: (snapshot) =>
+          enqueueReservedDataTransaction(this.transactions, this.transactionController, 'itemLocation', snapshot),
+        enqueueIdentityRebindTransaction: (snapshot) =>
+          enqueueReservedDataTransaction(this.transactions, this.transactionController, 'identityRebind', snapshot),
+        enqueueAnchorRiskTransaction: (snapshot) =>
+          enqueueReservedDataTransaction(this.transactions, this.transactionController, 'anchorRisk', snapshot),
+        enqueueResetTransaction: (reason, snapshot) =>
+          this.enqueueResetTransaction(reason, snapshot),
         enqueueFollowBottomTransaction: () => this.enqueueFollowBottomTransaction(),
         keepCurrentWindow: (items) => this.keepCurrentWindow(items),
         measureCurrentWindow: () => this.measureCurrentWindow(),
@@ -406,15 +394,20 @@ export class MessageViewportRuntimeController<
     )
   }
 
-  private enqueuePrependTransaction(): void {
+  private enqueuePrependTransaction(
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): void {
     this.transactions.enqueue(
       'prepend',
-      () => this.transactionController.runPrependTransaction(),
+      () => this.transactionController.runPrependTransaction(snapshot),
       'prepend',
     )
   }
 
-  private enqueueAppendTransaction(effect: 'append' | 'auto-scroll-to-bottom'): void {
+  private enqueueAppendTransaction(
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+    effect: 'append' | 'auto-scroll-to-bottom',
+  ): void {
     const supersedeKey =
       effect === 'auto-scroll-to-bottom' ? 'append-follow-bottom' : 'append'
 
@@ -426,15 +419,18 @@ export class MessageViewportRuntimeController<
 
     this.transactions.enqueue(
       'append',
-      () => this.transactionController.runAppendTransaction(effect),
+      () => this.transactionController.runAppendTransaction(snapshot, effect),
       supersedeKey,
     )
   }
 
-  private enqueueProjectionRefresh(): void {
+  private enqueueProjectionRefresh(
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): void {
     this.transactions.enqueue(
       'resize',
-      () => this.transactionController.runProjectionRefreshTransaction(),
+      () => this.transactionController.runProjectionRefreshTransaction(snapshot),
+      'data-refresh',
     )
   }
 
@@ -474,10 +470,13 @@ export class MessageViewportRuntimeController<
     )
   }
 
-  private enqueueResetTransaction(reason: string): void {
+  private enqueueResetTransaction(
+    reason: string,
+    snapshot?: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): void {
     this.transactions.enqueue(
       'reset',
-      () => this.transactionController.runReset(reason),
+      () => this.transactionController.runReset(reason, snapshot),
       'reset',
     )
   }

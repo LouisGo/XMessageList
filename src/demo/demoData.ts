@@ -2,8 +2,11 @@ import type {
   CommittedMessageDataItem,
   MessageIdentityAnchor,
   MessageDataSnapshot,
+  MessageDataSnapshotChange,
   ViewportEffect,
 } from '../runtime'
+
+export type DemoViewportEffect = Exclude<ViewportEffect, 'identity-remap'>
 
 export type DemoMessageKind = 'text' | 'longText' | 'image' | 'video' | 'album'
 
@@ -375,7 +378,7 @@ export function createDemoSnapshot(input: {
   generation: number
   messages: DemoMessage[]
   revision: number
-  effect: ViewportEffect
+  effect: DemoViewportEffect
   kind?: MessageDataSnapshot['change']['kind']
   anchor?: MessageIdentityAnchor
   anchorStatus?: MessageDataSnapshot['anchorStatus']
@@ -395,10 +398,21 @@ export function createDemoSnapshot(input: {
     anchorStatus: input.anchorStatus ?? 'normal',
     hasMoreBefore: input.hasMoreBefore ?? input.messages.length > 0,
     hasMoreAfter: input.hasMoreAfter ?? false,
-    change: {
+    change: createDemoSnapshotChange({
       kind: input.kind ?? 'patch',
-      viewportEffect: input.effect,
-    },
+      effect: input.effect,
+    }),
+  }
+}
+
+export function createDemoSnapshotChange(input: {
+  kind: MessageDataSnapshot['change']['kind']
+  effect: DemoViewportEffect
+}): MessageDataSnapshotChange {
+  return {
+    kind: input.kind,
+    viewportModifier: input.effect,
+    viewportEffect: input.effect,
   }
 }
 

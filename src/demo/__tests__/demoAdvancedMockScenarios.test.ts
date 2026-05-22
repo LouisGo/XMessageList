@@ -16,6 +16,7 @@ describe('demoAdvancedMockScenarios', () => {
     const { result, deletedMessages } = runDeleteScenario([0.1, 0.2])
 
     expect(result.details.delete).toBe(1)
+    expect(result.effect).toBe('anchor-risk')
     expect(result.details.deleteModes).toEqual(
       expect.objectContaining({ single: 1 }),
     )
@@ -28,6 +29,7 @@ describe('demoAdvancedMockScenarios', () => {
     const deletedSequences = deletedMessages.map((message) => message.sequence)
 
     expect(result.details.delete).toBe(6)
+    expect(result.effect).toBe('anchor-risk')
     expect(result.details.deleteModes).toEqual(
       expect.objectContaining({ contiguous: 1 }),
     )
@@ -56,6 +58,7 @@ describe('demoAdvancedMockScenarios', () => {
       .sort((left, right) => left - right)
 
     expect(result.details.delete).toBe(10)
+    expect(result.effect).toBe('anchor-risk')
     expect(result.details.deleteModes).toEqual(
       expect.objectContaining({ jump: 1 }),
     )

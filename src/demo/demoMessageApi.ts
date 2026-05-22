@@ -1,10 +1,9 @@
 import type {
   CommittedMessageDataItem,
   MessageDataSnapshot,
-  ViewportEffect,
 } from '../runtime/types'
-import type { DemoMessage } from './demoData'
-import { estimateDemoMessageHeight } from './demoData'
+import type { DemoMessage, DemoViewportEffect } from './demoData'
+import { createDemoSnapshotChange, estimateDemoMessageHeight } from './demoData'
 import { loadPersistedDemoFeed } from './demoLocalStoreClient'
 import type {
   GetLatestMessagesReq,
@@ -137,7 +136,7 @@ export function messagesAroundRespToSnapshot<TMessage>(
     generation: number
     revision: number
     toCommittedItem: (message: TMessage) => CommittedMessageDataItem<TMessage>
-    effect: ViewportEffect
+    effect: DemoViewportEffect
     snapshotKind: MessageDataSnapshot['change']['kind']
   },
 ): MessageDataSnapshot<TMessage> {
@@ -152,10 +151,10 @@ export function messagesAroundRespToSnapshot<TMessage>(
     anchorStatus: resp.anchorStatus,
     hasMoreBefore: resp.hasMoreBefore,
     hasMoreAfter: resp.hasMoreAfter,
-    change: {
+    change: createDemoSnapshotChange({
       kind: options.snapshotKind,
-      viewportEffect: options.effect,
-    },
+      effect: options.effect,
+    }),
   }
 }
 

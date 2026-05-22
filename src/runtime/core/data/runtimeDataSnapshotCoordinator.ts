@@ -28,16 +28,32 @@ type RuntimeDataSnapshotDeps<TMessage, TOptimistic> = {
   emitDiagnostic: RuntimeDiagnosticEmitter
   emitError: (code: string) => void
   tryRunPendingBootstrap: () => boolean
-  enqueuePrependTransaction: () => void
+  enqueuePrependTransaction: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
   enqueueAppendTransaction: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
     effect: 'append' | 'auto-scroll-to-bottom',
   ) => void
-  enqueueProjectionRefresh: () => void
-  enqueueRemoveFromStartTransaction: () => void
-  enqueueItemLocationTransaction: () => void
-  enqueueIdentityRebindTransaction: () => void
-  enqueueAnchorRiskTransaction: () => void
-  enqueueResetTransaction: (reason: string) => void
+  enqueueProjectionRefresh: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
+  enqueueRemoveFromStartTransaction: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
+  enqueueItemLocationTransaction: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
+  enqueueIdentityRebindTransaction: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
+  enqueueAnchorRiskTransaction: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
+  enqueueResetTransaction: (
+    reason: string,
+    snapshot?: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
 }
 
 export class RuntimeDataSnapshotCoordinator<TMessage, TOptimistic> {
@@ -86,6 +102,10 @@ export class RuntimeDataSnapshotCoordinator<TMessage, TOptimistic> {
       this.deps.transactions.dropBySupersedeKey('window-slide')
     }
 
+    if (isReservedViewportModifier(viewportModifier)) {
+      this.deps.transactions.dropBySupersedeKey('data-refresh')
+    }
+
     if (this.deps.tryRunPendingBootstrap()) {
       return
     }
@@ -106,6 +126,12 @@ export class RuntimeDataSnapshotCoordinator<TMessage, TOptimistic> {
       return
     }
 
+    if (viewportModifier === 'auto-scroll-to-bottom') {
+      this.deps.destinationIntent.ensureActiveFollowBottomIntentForCurrentScroll(
+        snapshot,
+      )
+    }
+
     if (
       !isReservedViewportModifier(viewportModifier) &&
       this.deps.viewportCompaction.tryStartForDataMutation(snapshot, viewportModifier, {
@@ -118,29 +144,29 @@ export class RuntimeDataSnapshotCoordinator<TMessage, TOptimistic> {
 
     switch (viewportModifier) {
       case 'prepend':
-        this.deps.enqueuePrependTransaction()
+        this.deps.enqueuePrependTransaction(snapshot)
         break
       case 'append':
       case 'auto-scroll-to-bottom':
-        this.deps.enqueueAppendTransaction(viewportModifier)
+        this.deps.enqueueAppendTransaction(snapshot, viewportModifier)
         break
       case 'remove-from-start':
-        this.deps.enqueueRemoveFromStartTransaction()
+        this.deps.enqueueRemoveFromStartTransaction(snapshot)
         break
       case 'item-location':
-        this.deps.enqueueItemLocationTransaction()
+        this.deps.enqueueItemLocationTransaction(snapshot)
         break
       case 'identity-remap':
-        this.deps.enqueueIdentityRebindTransaction()
+        this.deps.enqueueIdentityRebindTransaction(snapshot)
         break
       case 'anchor-risk':
-        this.deps.enqueueAnchorRiskTransaction()
+        this.deps.enqueueAnchorRiskTransaction(snapshot)
         break
       case 'reset':
-        this.deps.enqueueResetTransaction('data-reset')
+        this.deps.enqueueResetTransaction('data-reset', snapshot)
         break
       default:
-        this.deps.enqueueProjectionRefresh()
+        this.deps.enqueueProjectionRefresh(snapshot)
         break
     }
   }

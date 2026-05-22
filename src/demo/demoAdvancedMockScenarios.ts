@@ -1,8 +1,8 @@
 import type {
   MessageDataSnapshot,
-  ViewportEffect,
 } from '../runtime'
 import {
+  type DemoViewportEffect,
   type DemoMessage,
   createNewestMessage,
   getNextMessageSequence,
@@ -87,7 +87,7 @@ export type AdvancedMockEventStormState = {
 export type AdvancedMockPublishResult = {
   feedMessages: DemoMessage[]
   messages: DemoMessage[]
-  effect: ViewportEffect
+  effect: DemoViewportEffect
   kind: AdvancedMockSnapshotKind
   eventText: string
   details: Record<string, unknown>
@@ -674,8 +674,12 @@ function resolveAdvancedMockEffect(input: {
   visiblePatchCount: number
   visibleDeleteCount: number
   feedOnlyChangeCount: number
-}): ViewportEffect {
-  if (input.visibleDeleteCount > 0 || input.visibleOutOfOrderAppendCount > 0) {
+}): DemoViewportEffect {
+  if (input.visibleDeleteCount > 0) {
+    return 'anchor-risk'
+  }
+
+  if (input.visibleOutOfOrderAppendCount > 0) {
     return 'items-change'
   }
 
@@ -695,7 +699,7 @@ function resolveAdvancedMockEffect(input: {
 }
 
 function resolveAdvancedMockSnapshotKind(input: {
-  effect: ViewportEffect
+  effect: DemoViewportEffect
   visibleTailAppendCount: number
   visibleOutOfOrderAppendCount: number
   visibleDeleteCount: number

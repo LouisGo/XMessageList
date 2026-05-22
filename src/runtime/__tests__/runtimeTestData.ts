@@ -1,15 +1,22 @@
-import type { MessageDataSnapshot } from '..'
+import type {
+  MessageDataSnapshot,
+  MessageDataSnapshotChange,
+  NonEmptyMessageIdentityRemaps,
+} from '..'
 
 export type TestMessage = {
   id: string
   text: string
 }
 
-export function createSnapshot(input: {
+type CreateSnapshotEffect = NonNullable<
+  MessageDataSnapshot['change']['viewportModifier']
+>
+
+type CreateSnapshotBaseInput = {
   count: number
   revision: number
-  effect:
-    NonNullable<MessageDataSnapshot['change']['viewportModifier']>
+  effect: CreateSnapshotEffect
   start?: number
   estimatedHeight?: number
   hasMoreAfter?: boolean
@@ -17,10 +24,25 @@ export function createSnapshot(input: {
   kind?: MessageDataSnapshot['change']['kind']
   anchor?: MessageDataSnapshot['anchor']
   anchorStatus?: MessageDataSnapshot['anchorStatus']
-  identityRemaps?: MessageDataSnapshot['change']['identityRemaps']
-}): MessageDataSnapshot<TestMessage> {
+}
+
+type CreateSnapshotInput =
+  | (Omit<CreateSnapshotBaseInput, 'effect' | 'kind'> & {
+      effect: 'identity-remap'
+      kind?: 'identityRebind'
+      identityRemaps: NonEmptyMessageIdentityRemaps
+    })
+  | (CreateSnapshotBaseInput & {
+      effect: Exclude<CreateSnapshotEffect, 'identity-remap'>
+      identityRemaps?: never
+    })
+
+export function createSnapshot(
+  input: CreateSnapshotInput,
+): MessageDataSnapshot<TestMessage> {
   const start = input.start ?? 1
   const estimatedHeight = input.estimatedHeight ?? 50
+  const change = createSnapshotChange(input)
 
   return {
     feedId: 'feed',
@@ -42,19 +64,7 @@ export function createSnapshot(input: {
     anchorStatus: input.anchorStatus ?? 'normal',
     hasMoreBefore: input.hasMoreBefore ?? true,
     hasMoreAfter: input.hasMoreAfter ?? false,
-    change: {
-      kind:
-        input.kind ??
-        (input.effect === 'prepend'
-          ? 'prepend'
-          : input.effect === 'append' || input.effect === 'auto-scroll-to-bottom'
-            ? 'append'
-            : input.effect === 'reset'
-              ? 'reset'
-              : 'patch'),
-      viewportModifier: input.effect,
-      identityRemaps: input.identityRemaps,
-    },
+    change,
   }
 }
 
@@ -63,8 +73,7 @@ export function cloneSnapshotWithItems(
   input: {
     revision: number
     items: MessageDataSnapshot<TestMessage>['items']
-    effect?: NonNullable<MessageDataSnapshot['change']['viewportModifier']>
-    identityRemaps?: MessageDataSnapshot['change']['identityRemaps']
+    effect?: Exclude<CreateSnapshotEffect, 'identity-remap'>
   },
 ): MessageDataSnapshot<TestMessage> {
   const lastItem = input.items.at(-1)
@@ -80,8 +89,32 @@ export function cloneSnapshotWithItems(
     change: {
       kind: 'patch',
       viewportModifier: input.effect ?? 'items-change',
-      identityRemaps: input.identityRemaps,
     },
+  }
+}
+
+function createSnapshotChange(
+  input: CreateSnapshotInput,
+): MessageDataSnapshotChange {
+  if (input.effect === 'identity-remap') {
+    return {
+      kind: input.kind ?? 'identityRebind',
+      viewportModifier: 'identity-remap',
+      identityRemaps: input.identityRemaps,
+    }
+  }
+
+  return {
+    kind:
+      input.kind ??
+      (input.effect === 'prepend'
+        ? 'prepend'
+        : input.effect === 'append' || input.effect === 'auto-scroll-to-bottom'
+          ? 'append'
+          : input.effect === 'reset'
+            ? 'reset'
+            : 'patch'),
+    viewportModifier: input.effect,
   }
 }
 

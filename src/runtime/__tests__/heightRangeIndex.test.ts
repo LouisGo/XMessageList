@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { SpacerEngine } from '../window/spacerEngine'
 import type { MessageDataItem } from '..'
 
@@ -43,5 +43,24 @@ describe('HeightRangeIndex', () => {
     spacer.setRangeCacheIdentity('feed:1:2')
 
     expect(spacer.estimateRangeHeight(items, 0, 2, 320)).toBe(111)
+  })
+
+  it('keeps repeated 20k item range and offset queries to one index build', () => {
+    const items = createItems(20_000)
+    const spacer = new SpacerEngine(new Map())
+    const estimateItemHeight = vi.spyOn(spacer, 'estimateItemHeight')
+
+    spacer.setRangeCacheIdentity('feed:1:large')
+
+    expect(spacer.estimateRangeHeight(items, 0, 5_000, 320)).toBeGreaterThan(0)
+    expect(estimateItemHeight).toHaveBeenCalledTimes(items.length)
+
+    for (let index = 0; index < 100; index += 1) {
+      const start = index * 50
+      spacer.estimateRangeHeight(items, start, start + 1_000, 320)
+      spacer.findEstimatedIndexAtOffset(items, index * 2_500, 320)
+    }
+
+    expect(estimateItemHeight).toHaveBeenCalledTimes(items.length)
   })
 })

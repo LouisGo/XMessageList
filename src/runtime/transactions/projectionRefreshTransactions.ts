@@ -1,13 +1,14 @@
-import type { AnchorState } from '../types'
+import type { AnchorState, MessageDataSnapshot } from '../types'
+import { shouldRunDataMutationTransaction } from './dataMutationTransaction'
 import type { ViewportTransactionDeps } from './viewportTransactionController'
 
 export async function runProjectionRefreshTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
+  data: MessageDataSnapshot<TMessage, TOptimistic>,
 ): Promise<void> {
-  const data = deps.getDataSnapshot()
   const container = deps.registry.getContainer()
 
-  if (!data || !container) {
+  if (!container || !shouldRunDataMutationTransaction(deps, data)) {
     return
   }
 

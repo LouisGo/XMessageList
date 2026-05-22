@@ -50,6 +50,7 @@ import {
   runItemLocationTransaction,
   runRemoveFromStartTransaction,
 } from './reservedModifierTransactions'
+import { shouldRunDataMutationTransaction } from './dataMutationTransaction'
 
 export type ViewportTransactionDeps<TMessage, TOptimistic> = {
   registry: DomRegistry
@@ -127,18 +128,23 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     return runBootstrapTransaction(this.deps, mode, target)
   }
 
-  async runPrependTransaction(): Promise<void> {
-    return runPrependTransaction(this.deps)
+  async runPrependTransaction(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): Promise<void> {
+    return runPrependTransaction(this.deps, data)
   }
 
   async runAppendTransaction(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
     effect: 'append' | 'auto-scroll-to-bottom',
   ): Promise<void> {
-    return runAppendTransaction(this.deps, effect)
+    return runAppendTransaction(this.deps, data, effect)
   }
 
-  async runProjectionRefreshTransaction(): Promise<void> {
-    return runProjectionRefreshTransaction(this.deps)
+  async runProjectionRefreshTransaction(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): Promise<void> {
+    return runProjectionRefreshTransaction(this.deps, data)
   }
 
   async runJumpTransaction(
@@ -165,20 +171,28 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     return runViewportCompactionTransaction(this.deps, target)
   }
 
-  async runRemoveFromStartTransaction(): Promise<void> {
-    return runRemoveFromStartTransaction(this.deps)
+  async runRemoveFromStartTransaction(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): Promise<void> {
+    return runRemoveFromStartTransaction(this.deps, data)
   }
 
-  async runItemLocationTransaction(): Promise<void> {
-    return runItemLocationTransaction(this.deps)
+  async runItemLocationTransaction(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): Promise<void> {
+    return runItemLocationTransaction(this.deps, data)
   }
 
-  async runIdentityRebindTransaction(): Promise<void> {
-    return runIdentityRebindTransaction(this.deps)
+  async runIdentityRebindTransaction(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): Promise<void> {
+    return runIdentityRebindTransaction(this.deps, data)
   }
 
-  async runAnchorRiskTransaction(): Promise<void> {
-    return runAnchorRiskTransaction(this.deps)
+  async runAnchorRiskTransaction(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): Promise<void> {
+    return runAnchorRiskTransaction(this.deps, data)
   }
 
   async runFollowBottomTransaction(): Promise<void> {
@@ -207,7 +221,14 @@ export class ViewportTransactionController<TMessage, TOptimistic> {
     return runContainerResizeTransaction(this.deps, previousSize, nextSize)
   }
 
-  async runReset(reason: string): Promise<void> {
+  async runReset(
+    reason: string,
+    data?: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): Promise<void> {
+    if (data && !shouldRunDataMutationTransaction(this.deps, data)) {
+      return
+    }
+
     this.deps.setPendingBootstrap({ type: 'bootstrap', mode: 'latest' })
     this.deps.tryRunPendingBootstrap()
     if (!this.deps.getDataSnapshot()) {

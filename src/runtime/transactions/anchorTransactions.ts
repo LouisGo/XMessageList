@@ -2,17 +2,19 @@ import type { ViewportTransactionDeps } from './viewportTransactionController'
 import type {
   AnchorState,
   MessageDataItem,
+  MessageDataSnapshot,
   MessageRuntimeItemKey,
   RenderWindow,
 } from '../types'
+import { shouldRunDataMutationTransaction } from './dataMutationTransaction'
 
 export async function runPrependTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
+  data: MessageDataSnapshot<TMessage, TOptimistic>,
 ): Promise<void> {
-  const data = deps.getDataSnapshot()
   const container = deps.registry.getContainer()
 
-  if (!data || !container) {
+  if (!container || !shouldRunDataMutationTransaction(deps, data)) {
     return
   }
 

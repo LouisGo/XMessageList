@@ -491,13 +491,29 @@ type MessageDataSnapshotChange = {
     | 'delete'
     | 'identityRebind'
     | 'reset';
-  viewportModifier:
+  viewportModifier?:
     | 'none'
     | 'prepend'
     | 'append'
     | 'items-change'
     | 'auto-scroll-to-bottom'
-    | 'reset';
+    | 'reset'
+    | 'remove-from-start'
+    | 'item-location'
+    | 'identity-remap'
+    | 'anchor-risk';
+  /**
+   * viewportModifier 为 identity-remap 时必填且非空；
+   * 其他 modifier 禁止携带。runtime 不按 index 或内容猜测 optimistic -> committed 身份迁移。
+   */
+  identityRemaps?: [MessageIdentityRemap, ...MessageIdentityRemap[]];
+  /** @deprecated 迁移期兼容字段；新代码必须写 viewportModifier。 */
+  viewportEffect?: ViewportEffect;
+};
+
+type MessageIdentityRemap = {
+  from: { kind: 'optimistic'; clientMessageId: string };
+  to: { kind: 'committed'; messageId: string };
 };
 ```
 

@@ -311,6 +311,7 @@ describe('messagesAroundRespToSnapshot', () => {
     expect(snapshot.hasMoreBefore).toBe(true)
     expect(snapshot.hasMoreAfter).toBe(false)
     expect(snapshot.change.kind).toBe('initial')
+    expect(snapshot.change.viewportModifier).toBe('reset')
     expect(snapshot.change.viewportEffect).toBe('reset')
   })
 

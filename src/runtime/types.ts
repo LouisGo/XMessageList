@@ -14,6 +14,7 @@ export type {
   BootstrapState,
   BottomLockState,
   MessageIdentityRemap,
+  NonEmptyMessageIdentityRemaps,
   MessageDataSnapshotChange,
   MessageDataSnapshot,
   MessageViewportSnapshot,

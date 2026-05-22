@@ -92,6 +92,8 @@ describe('demoData', () => {
     expect(snapshot.items).toEqual([])
     expect(snapshot.anchor).toBeUndefined()
     expect(snapshot.hasMoreBefore).toBe(false)
+    expect(snapshot.change.viewportModifier).toBe('reset')
+    expect(snapshot.change.viewportEffect).toBe('reset')
   })
 
   it('keeps history available by default for seeded non-empty feeds', () => {

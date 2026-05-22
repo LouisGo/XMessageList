@@ -63,12 +63,12 @@ export async function correctPreservedAnchorAfterCommit<
 
 export async function runAnchorlessReservedRefresh<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
+  data: MessageDataSnapshot<TMessage, TOptimistic>,
   transactionKind: ViewportTransactionKind,
 ): Promise<void> {
-  const data = deps.getDataSnapshot()
   const container = deps.registry.getContainer()
 
-  if (!data || !container) {
+  if (!container) {
     return
   }
 

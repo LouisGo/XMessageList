@@ -1,13 +1,7 @@
 import type {
-  AnchorState,
-  MessageIdentityRemap,
-  MessageRuntimeItemKey,
+  MessageDataSnapshot,
   ViewportTransactionKind,
 } from '../types'
-import {
-  areRuntimeItemKeysEqual,
-  serializeRuntimeItemKey,
-} from '../shared/utils'
 import type { ViewportTransactionDeps } from './viewportTransactionController'
 import { runAnchorRestoreTransaction } from './destinationTransactions'
 import {
@@ -16,6 +10,11 @@ import {
   runAnchorlessReservedRefresh,
   settleReservedTransaction,
 } from './reservedModifierShared'
+import { shouldRunDataMutationTransaction } from './dataMutationTransaction'
+import {
+  getValidIdentityRemaps,
+  migrateAnchorState,
+} from './identityRemapUtils'
 
 type AnchorPreservingKind = Extract<
   ViewportTransactionKind,
@@ -24,9 +23,11 @@ type AnchorPreservingKind = Extract<
 
 export async function runRemoveFromStartTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
+  data: MessageDataSnapshot<TMessage, TOptimistic>,
 ): Promise<void> {
   return runAnchorPreservingMutationTransaction(
     deps,
+    data,
     'removeFromStart',
     'viewport-modifier-remove-from-start',
   )
@@ -34,9 +35,11 @@ export async function runRemoveFromStartTransaction<TMessage, TOptimistic>(
 
 export async function runAnchorRiskTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
+  data: MessageDataSnapshot<TMessage, TOptimistic>,
 ): Promise<void> {
   return runAnchorPreservingMutationTransaction(
     deps,
+    data,
     'anchorRisk',
     'viewport-modifier-anchor-risk',
   )
@@ -44,10 +47,13 @@ export async function runAnchorRiskTransaction<TMessage, TOptimistic>(
 
 export async function runItemLocationTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
+  data: MessageDataSnapshot<TMessage, TOptimistic>,
 ): Promise<void> {
-  const data = deps.getDataSnapshot()
+  if (!shouldRunDataMutationTransaction(deps, data)) {
+    return
+  }
 
-  if (!data?.anchor) {
+  if (!data.anchor) {
     deps.emitError('viewport-modifier-item-location-anchor-missing')
     deps.setPendingBootstrap({ type: 'bootstrap', mode: 'latest' })
     deps.tryRunPendingBootstrap()
@@ -64,11 +70,11 @@ export async function runItemLocationTransaction<TMessage, TOptimistic>(
 
 export async function runIdentityRebindTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
+  data: MessageDataSnapshot<TMessage, TOptimistic>,
 ): Promise<void> {
-  const data = deps.getDataSnapshot()
   const container = deps.registry.getContainer()
 
-  if (!data || !container) {
+  if (!container || !shouldRunDataMutationTransaction(deps, data)) {
     return
   }
 
@@ -76,7 +82,7 @@ export async function runIdentityRebindTransaction<TMessage, TOptimistic>(
 
   if (remaps.length === 0) {
     deps.emitError('viewport-modifier-identity-remap-remaps-missing')
-    await runAnchorlessReservedRefresh(deps, 'identityRebind')
+    await runAnchorlessReservedRefresh(deps, data, 'identityRebind')
     return
   }
 
@@ -161,13 +167,13 @@ export async function runIdentityRebindTransaction<TMessage, TOptimistic>(
 
 async function runAnchorPreservingMutationTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
+  data: MessageDataSnapshot<TMessage, TOptimistic>,
   transactionKind: AnchorPreservingKind,
   errorPrefix: string,
 ): Promise<void> {
-  const data = deps.getDataSnapshot()
   const container = deps.registry.getContainer()
 
-  if (!data || !container) {
+  if (!container || !shouldRunDataMutationTransaction(deps, data)) {
     return
   }
 
@@ -175,7 +181,7 @@ async function runAnchorPreservingMutationTransaction<TMessage, TOptimistic>(
 
   if (!anchor) {
     deps.emitError(`${errorPrefix}-anchor-missing`)
-    await runAnchorlessReservedRefresh(deps, transactionKind)
+    await runAnchorlessReservedRefresh(deps, data, transactionKind)
     return
   }
 
@@ -198,7 +204,7 @@ async function runAnchorPreservingMutationTransaction<TMessage, TOptimistic>(
     }
 
     deps.emitError(`${errorPrefix}-anchor-missing`)
-    await runAnchorlessReservedRefresh(deps, transactionKind)
+    await runAnchorlessReservedRefresh(deps, data, transactionKind)
     return
   }
 
@@ -252,47 +258,4 @@ async function runAnchorPreservingMutationTransaction<TMessage, TOptimistic>(
     deps.setTransactionState('idle')
     throw error
   }
-}
-
-function migrateAnchorState(
-  anchor: AnchorState,
-  remaps: MessageIdentityRemap[],
-): AnchorState {
-  const remappedKey = remapKey(anchor.key, remaps)
-
-  if (areRuntimeItemKeysEqual(remappedKey, anchor.key)) {
-    return anchor
-  }
-
-  return {
-    ...anchor,
-    key: remappedKey,
-  }
-}
-
-function remapKey(
-  key: MessageRuntimeItemKey,
-  remaps: MessageIdentityRemap[],
-): MessageRuntimeItemKey {
-  if (key.kind !== 'optimistic') {
-    return key
-  }
-
-  const serializedKey = serializeRuntimeItemKey(key)
-  const remap = remaps.find(
-    (candidate) => serializeRuntimeItemKey(candidate.from) === serializedKey,
-  )
-
-  return remap?.to ?? key
-}
-
-function getValidIdentityRemaps(
-  remaps: MessageIdentityRemap[] | undefined,
-): MessageIdentityRemap[] {
-  return (remaps ?? []).filter(
-    (remap) =>
-      remap.from?.kind === 'optimistic' &&
-      remap.to?.kind === 'committed' &&
-      serializeRuntimeItemKey(remap.from) !== serializeRuntimeItemKey(remap.to),
-  )
 }

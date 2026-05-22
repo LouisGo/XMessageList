@@ -13,6 +13,10 @@ type TestMessage = {
   id: string
 }
 
+type TestDraft = {
+  id: string
+}
+
 function createSnapshot(input?: {
   feedId?: string
   messagePrefix?: string
@@ -235,6 +239,144 @@ describe('React adapter', () => {
     )
     expect(runtime.getDebugSnapshot().state).toBe('READY')
     expect(host.querySelectorAll('[data-message-row]').length).toBeGreaterThan(0)
+  })
+
+  it('hands off an optimistic row to its committed key through real React refs', async () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = new MessageViewportRuntime<TestMessage, TestDraft>({
+      feedId: 'feed',
+      generation: 1,
+      scheduler,
+      observers,
+      window: {
+        maxMountedItems: 20,
+      },
+    })
+    const optimisticKey = {
+      kind: 'optimistic' as const,
+      clientMessageId: 'client-1',
+    }
+    const committedKey = {
+      kind: 'committed' as const,
+      messageId: 'm-1',
+    }
+    const initial: MessageDataSnapshot<TestMessage, TestDraft> = {
+      feedId: 'feed',
+      generation: 1,
+      revision: 1,
+      items: [
+        {
+          kind: 'optimistic',
+          key: optimisticKey,
+          draft: { id: 'client-1' },
+          status: 'sending',
+          version: 1,
+          contentVersion: 1,
+          estimatedHeight: 48,
+        },
+      ],
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+      change: {
+        kind: 'initial',
+        viewportModifier: 'reset',
+      },
+    }
+    const committed: MessageDataSnapshot<TestMessage, TestDraft> = {
+      ...initial,
+      revision: 2,
+      items: [
+        {
+          kind: 'committed',
+          key: committedKey,
+          message: { id: 'm-1' },
+          version: 1,
+          contentVersion: 1,
+          estimatedHeight: 48,
+        },
+      ],
+      anchor: { messageId: 'm-1' },
+      anchorStatus: 'normal',
+      change: {
+        kind: 'identityRebind',
+        viewportModifier: 'identity-remap',
+        identityRemaps: [
+          {
+            from: optimisticKey,
+            to: committedKey,
+          },
+        ],
+      },
+    }
+    const events: unknown[] = []
+    const registerRow = vi.spyOn(runtime, 'registerRow')
+    const notify = vi.spyOn(runtime, 'notifyProjectionCommitted')
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      value: 320,
+    })
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.setDataSnapshot(initial)
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+
+    await act(async () => {
+      root.render(
+        <MessageViewport<TestMessage, TestDraft>
+          runtime={runtime}
+          renderMessage={(item) =>
+            item.kind === 'optimistic'
+              ? <span>{item.draft.id}</span>
+              : item.kind === 'committed'
+                ? <span>{item.message.id}</span>
+                : null
+          }
+          style={{ height: 240 }}
+        />,
+      )
+      await flushFramesWithMicrotasks(scheduler, 4)
+    })
+
+    expect(
+      host.querySelector('[data-testid="message-row-optimistic:client-1"]'),
+    ).not.toBeNull()
+
+    await act(async () => {
+      runtime.setDataSnapshot(committed)
+      await flushFramesWithMicrotasks(scheduler, 4)
+    })
+
+    expect(
+      host.querySelector('[data-testid="message-row-optimistic:client-1"]'),
+    ).toBeNull()
+    expect(
+      host.querySelector('[data-testid="message-row-committed:m-1"]'),
+    ).not.toBeNull()
+    expect(registerRow).toHaveBeenCalledWith(optimisticKey, null)
+    expect(registerRow).toHaveBeenCalledWith(committedKey, expect.any(HTMLDivElement))
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        feedId: 'feed',
+        generation: 1,
+      }),
+    )
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ type: 'viewportError' }),
+    )
+
+    await act(async () => {
+      root.unmount()
+    })
   })
 
   it('owns standard follow-bottom UI and anchor event wiring', async () => {

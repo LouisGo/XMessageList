@@ -1045,6 +1045,10 @@ describe('useDemoMessageScenario', () => {
     ).toBe(false)
     expect(assertScenario(scenario).messageCount).toBe(39)
     expect(assertScenario(scenario).loadedMessageCount).toBe(19)
+    expect(
+      vi.mocked(runtime.setDataSnapshot).mock.calls.at(-1)?.[0].change
+        .viewportModifier,
+    ).toBe('anchor-risk')
   })
 
   it('keeps the restored window contiguous when new messages arrive after the current window', async () => {
@@ -1129,6 +1133,7 @@ describe('useDemoMessageScenario', () => {
     expect(latestSnapshot?.hasMoreBefore).toBe(true)
     expect(latestSnapshot?.change).toEqual({
       kind: 'reset',
+      viewportModifier: 'auto-scroll-to-bottom',
       viewportEffect: 'auto-scroll-to-bottom',
     })
     expect(
@@ -1187,7 +1192,7 @@ describe('useDemoMessageScenario', () => {
     expect(assertScenario(scenario).messageCount).toBeGreaterThan(40)
     expect(
       vi.mocked(runtime.setDataSnapshot).mock.calls.some(([snapshot]) =>
-        snapshot.change.viewportEffect === 'append',
+        snapshot.change.viewportModifier === 'append',
       ),
     ).toBe(true)
     expect(mockWriteDemoLog).toHaveBeenCalledWith(

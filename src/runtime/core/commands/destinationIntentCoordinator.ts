@@ -456,6 +456,12 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
     return this.activeFollowBottom.ensure(data, scrollTop)
   }
 
+  ensureActiveFollowBottomIntentForCurrentScroll(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) {
+    return this.activeFollowBottom.ensure(data, this.deps.getScrollTop())
+  }
+
   private emitPendingDestinationNeed(
     data: MessageDataSnapshot<TMessage, TOptimistic>,
   ): void {

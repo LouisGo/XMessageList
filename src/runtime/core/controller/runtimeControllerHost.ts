@@ -51,9 +51,16 @@ export type RuntimeControllerHost<TMessage, TOptimistic> = {
   setScrollbarDragEdgeIntent: (edge: 'before' | 'after' | null) => void
   canEmitEdgeNeeds: () => boolean
   tryRunPendingBootstrap: () => boolean
-  enqueuePrependTransaction: () => void
-  enqueueAppendTransaction: (effect: 'append' | 'auto-scroll-to-bottom') => void
-  enqueueProjectionRefresh: () => void
+  enqueuePrependTransaction: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
+  enqueueAppendTransaction: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+    effect: 'append' | 'auto-scroll-to-bottom',
+  ) => void
+  enqueueProjectionRefresh: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
   enqueueJumpTransaction: (
     target: MessageIdentityAnchor,
     options?: {
@@ -69,11 +76,22 @@ export type RuntimeControllerHost<TMessage, TOptimistic> = {
   enqueueViewportCompactionTransaction: (
     target: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
   ) => void
-  enqueueRemoveFromStartTransaction: () => void
-  enqueueItemLocationTransaction: () => void
-  enqueueIdentityRebindTransaction: () => void
-  enqueueAnchorRiskTransaction: () => void
-  enqueueResetTransaction: (reason: string) => void
+  enqueueRemoveFromStartTransaction: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
+  enqueueItemLocationTransaction: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
+  enqueueIdentityRebindTransaction: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
+  enqueueAnchorRiskTransaction: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
+  enqueueResetTransaction: (
+    reason: string,
+    snapshot?: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
   enqueueFollowBottomTransaction: () => void
   keepCurrentWindow: (
     items: Array<MessageDataItem<TMessage, TOptimistic>>,

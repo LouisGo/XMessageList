@@ -1,14 +1,15 @@
-import type { ScrollSource } from '../types'
+import type { MessageDataSnapshot, ScrollSource } from '../types'
+import { shouldRunDataMutationTransaction } from './dataMutationTransaction'
 import type { ViewportTransactionDeps } from './viewportTransactionController'
 
 export async function runAppendTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
+  data: MessageDataSnapshot<TMessage, TOptimistic>,
   effect: 'append' | 'auto-scroll-to-bottom',
 ): Promise<void> {
-  const data = deps.getDataSnapshot()
   const container = deps.registry.getContainer()
 
-  if (!data || !container) {
+  if (!container || !shouldRunDataMutationTransaction(deps, data)) {
     return
   }
 

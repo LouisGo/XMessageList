@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  commitCurrentProjection,
   createContainer,
   createSnapshot,
   createRuntime,
@@ -8,7 +9,11 @@ import {
   mountProjection,
 } from './runtimeTestUtils'
 import type { TestMessage } from './runtimeTestUtils'
-import type { MessageDataSnapshot, MessageViewportRuntimeEvent } from '..'
+import type {
+  MessageDataSnapshot,
+  MessageDataSnapshotChange,
+  MessageViewportRuntimeEvent,
+} from '..'
 
 describe('MessageViewportRuntime reserved viewport modifiers', () => {
   it('preserves the current visual anchor for anchor-risk mutations', async () => {
@@ -272,7 +277,7 @@ describe('MessageViewportRuntime reserved viewport modifiers', () => {
       change: {
         kind: 'identityRebind',
         viewportModifier: 'identity-remap',
-      },
+      } as MessageDataSnapshotChange,
     })
     await Promise.resolve()
 
@@ -282,5 +287,143 @@ describe('MessageViewportRuntime reserved viewport modifiers', () => {
         code: 'viewport-modifier-identity-remap-remaps-missing',
       }),
     )
+  })
+
+  it('skips a queued reserved modifier when a newer snapshot supersedes its revision', async () => {
+    const { runtime, scheduler } = createRuntime({
+      debug: {
+        diagnostics: {
+          channels: ['transaction'],
+          emitEvents: false,
+          maxEntries: 100,
+        },
+      },
+    })
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+    const optimisticKey = {
+      kind: 'optimistic' as const,
+      clientMessageId: 'client-queued',
+    }
+    const committedKey = {
+      kind: 'committed' as const,
+      messageId: 'm-queued',
+    }
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(
+      createSnapshot({ count: 30, revision: 1, effect: 'reset' }),
+    )
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    runtime.setDataSnapshot(createSnapshot({ count: 31, revision: 2, effect: 'append' }))
+    await Promise.resolve()
+
+    runtime.setDataSnapshot({
+      ...createSnapshot({ count: 31, revision: 3, effect: 'items-change' }),
+      change: {
+        kind: 'identityRebind',
+        viewportModifier: 'identity-remap',
+        identityRemaps: [
+          {
+            from: optimisticKey,
+            to: committedKey,
+          },
+        ],
+      },
+    })
+    runtime.setDataSnapshot(createSnapshot({ count: 32, revision: 4, effect: 'items-change' }))
+
+    await commitCurrentProjection(runtime, container)
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+
+    expect(runtime.getSnapshot().items.at(-1)?.key).toEqual({
+      kind: 'committed',
+      messageId: 'm-32',
+    })
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: 'viewportError',
+        code: 'viewport-modifier-identity-remap-remaps-missing',
+      }),
+    )
+    expect(runtime.getDiagnosticRecords()).toContainEqual(
+      expect.objectContaining({
+        name: 'transaction.skipStaleDataSnapshot',
+        details: expect.objectContaining({
+          expected: expect.objectContaining({ revision: 3 }),
+          current: expect.objectContaining({ revision: 4 }),
+        }),
+      }),
+    )
+  })
+
+  it('drops a queued generic data refresh when a reserved modifier arrives', async () => {
+    const { runtime, scheduler } = createRuntime({
+      debug: {
+        diagnostics: {
+          channels: ['transaction'],
+          emitEvents: false,
+          maxEntries: 100,
+        },
+      },
+    })
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(
+      createSnapshot({ count: 30, revision: 1, effect: 'reset' }),
+    )
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    runtime.setDataSnapshot(createSnapshot({ count: 31, revision: 2, effect: 'append' }))
+    await Promise.resolve()
+    runtime.setDataSnapshot(createSnapshot({ count: 32, revision: 3, effect: 'items-change' }))
+    runtime.setDataSnapshot(
+      createSnapshot({ count: 28, revision: 4, effect: 'anchor-risk' }),
+    )
+
+    await commitCurrentProjection(runtime, container)
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+    await Promise.resolve()
+    await commitCurrentProjection(runtime, container)
+
+    const records = runtime.getDiagnosticRecords()
+
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        name: 'transaction.drop',
+        details: expect.objectContaining({
+          kind: 'resize',
+          reason: 'key-supersede',
+        }),
+      }),
+    )
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        name: 'transaction.start',
+        details: expect.objectContaining({
+          kind: 'anchorRisk',
+        }),
+      }),
+    )
+    expect(
+      records.some(
+        (record) =>
+          record.name === 'transaction.start' &&
+          record.details.kind === 'resize',
+      ),
+    ).toBe(false)
   })
 })

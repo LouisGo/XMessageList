@@ -11,9 +11,9 @@ import type {
   MessageDataSnapshot,
   MessageViewportRuntime,
   ViewportAnchorChangedEvent,
-  ViewportEffect,
 } from '../runtime'
 import {
+  type DemoViewportEffect,
   type DemoMessage,
   createDemoMessages,
   createDemoSnapshot,
@@ -109,7 +109,7 @@ type AroundTargetLoader = (
 ) => void
 
 type LoggedOperationResult = {
-  effect: ViewportEffect
+  effect: DemoViewportEffect
   kind: DemoSnapshotKind
   anchor?: MessageDataSnapshot['anchor']
   anchorStatus?: MessageDataSnapshot['anchorStatus']
@@ -582,7 +582,7 @@ export function useDemoMessageScenario(
    * Demo 需要同时维护“完整 feed”与“当前 loaded window”两层状态，不能混用。
    */
   const publishCurrentMessages = useCallback((
-    effect: ViewportEffect,
+    effect: DemoViewportEffect,
     kind: DemoSnapshotKind,
     snapshotMeta: Pick<MessageDataSnapshot, 'anchor' | 'anchorStatus'> = {},
   ) => {
@@ -918,6 +918,7 @@ export function useDemoMessageScenario(
           source,
           count,
           eventText: result.eventText,
+          viewportModifier: result.effect,
           viewportEffect: result.effect,
           snapshotKind: result.kind,
           ...details,
@@ -1292,7 +1293,7 @@ export function useDemoMessageScenario(
         const oldestViewportMsg = messagesRef.current[0]
         if (!oldestViewportMsg) {
           return {
-            effect: 'none' as ViewportEffect,
+            effect: 'none' as DemoViewportEffect,
             kind: 'patch' as DemoSnapshotKind,
             eventText: 'no messages in viewport',
           }
@@ -1318,7 +1319,7 @@ export function useDemoMessageScenario(
         hasMoreBeforeRef.current = resp.hasMoreBefore
 
         return {
-          effect: 'prepend' as ViewportEffect,
+          effect: 'prepend' as DemoViewportEffect,
           kind: 'prepend' as DemoSnapshotKind,
           eventText: `loaded ${olderInView.length} older messages`,
           details: {
@@ -1414,7 +1415,7 @@ export function useDemoMessageScenario(
         const newestViewportMsg = messagesRef.current.at(-1)
         if (!newestViewportMsg) {
           return {
-            effect: 'none' as ViewportEffect,
+            effect: 'none' as DemoViewportEffect,
             kind: 'patch' as DemoSnapshotKind,
             eventText: 'no messages in viewport',
           }
@@ -1439,7 +1440,7 @@ export function useDemoMessageScenario(
         hasMoreAfterRef.current = resp.hasMoreAfter
 
         return {
-          effect: 'append' as ViewportEffect,
+          effect: 'append' as DemoViewportEffect,
           kind: 'append' as DemoSnapshotKind,
           eventText: `loaded ${newerInView.length} newer messages`,
           details: {
@@ -1502,7 +1503,7 @@ export function useDemoMessageScenario(
         lastViewportAnchorRef.current = undefined
 
         return {
-          effect: 'auto-scroll-to-bottom' as ViewportEffect,
+          effect: 'auto-scroll-to-bottom' as DemoViewportEffect,
           kind: 'reset' as DemoSnapshotKind,
           eventText: `loaded latest ${messagesRef.current.length} messages`,
           details: {
@@ -1590,7 +1591,7 @@ export function useDemoMessageScenario(
         hasMoreAfterRef.current = resp.hasMoreAfter
 
         return {
-          effect: 'reset' as ViewportEffect,
+          effect: 'reset' as DemoViewportEffect,
           kind: 'reset' as DemoSnapshotKind,
           anchor: resp.anchor,
           anchorStatus: resp.anchorStatus,
@@ -1754,7 +1755,7 @@ export function useDemoMessageScenario(
         const { previous } = updateMessageCollections(messageId, () => null)
 
         return {
-          effect: 'items-change',
+          effect: 'anchor-risk',
           kind: 'delete',
           eventText: `deleted ${previous.id}`,
           details: { messageId: previous.id },
@@ -1851,7 +1852,7 @@ export function useDemoMessageScenario(
           messagesRef.current = [...messagesRef.current, message]
 
           return {
-            effect: 'auto-scroll-to-bottom' as ViewportEffect,
+            effect: 'auto-scroll-to-bottom' as DemoViewportEffect,
             kind: 'append' as DemoSnapshotKind,
             eventText: `sent ${message.id}`,
             details: {
@@ -1889,7 +1890,7 @@ export function useDemoMessageScenario(
         hasMoreAfterRef.current = latestResp.hasMoreAfter
 
         return {
-          effect: 'auto-scroll-to-bottom' as ViewportEffect,
+          effect: 'auto-scroll-to-bottom' as DemoViewportEffect,
           kind: 'reset' as DemoSnapshotKind,
           eventText: `sent ${message.id} and rebuilt latest`,
           details: {
