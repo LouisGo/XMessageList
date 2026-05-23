@@ -1,5 +1,6 @@
 export { MessageViewportRuntime } from './MessageViewportRuntime'
 export {
+  DEFAULT_VIEWPORT_COMPACTION_DATA_WINDOW_ITEM_THRESHOLD,
   DEFAULT_VIEWPORT_COMPACTION_SPACER_THRESHOLD_PX,
 } from './core/state/runtimeTypes'
 export {
@@ -48,7 +49,9 @@ export type {
   ViewportAnchorChangeReason,
   ViewportDiagnosticEvent,
   ViewportDiagnosticRecord,
+  ViewportEdge,
   ViewportEdgeState,
+  ViewportEdgeStatus,
   ViewportEffect,
   ViewportModifier,
   WindowConfig,

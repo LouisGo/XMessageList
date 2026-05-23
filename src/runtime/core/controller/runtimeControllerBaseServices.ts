@@ -13,6 +13,7 @@ import { RuntimeEventHub } from '../events/runtimeEventHub'
 import { DiagnosticRecorder } from '../../debug/diagnosticRecorder'
 import { LifecycleGuard } from '../state/lifecycleGuard'
 import {
+  DEFAULT_VIEWPORT_COMPACTION_DATA_WINDOW_ITEM_THRESHOLD,
   DEFAULT_EDGE_LOAD_THRESHOLD_PX,
   DEFAULT_SCROLL_MOTION_OPTIONS,
   DEFAULT_VIEWPORT_COMPACTION_SPACER_THRESHOLD_PX,
@@ -63,6 +64,10 @@ export function createRuntimeControllerBaseServices<TMessage, TOptimistic>(
   const viewportCompactionSpacerThresholdPx =
     normalizeViewportCompactionSpacerThresholdPx(
       options.viewportCompaction?.spacerThresholdPx,
+    )
+  const viewportCompactionDataWindowItemThreshold =
+    normalizeViewportCompactionDataWindowItemThreshold(
+      options.viewportCompaction?.dataWindowItemThreshold,
     )
   const diagnostics = new DiagnosticRecorder(
     options.debug?.diagnostics,
@@ -121,6 +126,7 @@ export function createRuntimeControllerBaseServices<TMessage, TOptimistic>(
     scrollMotionOptions,
     edgeLoadThresholdPx,
     viewportCompactionSpacerThresholdPx,
+    viewportCompactionDataWindowItemThreshold,
     diagnostics,
   }
 }
@@ -137,4 +143,18 @@ function normalizeViewportCompactionSpacerThresholdPx(
   }
 
   return DEFAULT_VIEWPORT_COMPACTION_SPACER_THRESHOLD_PX
+}
+
+function normalizeViewportCompactionDataWindowItemThreshold(
+  threshold: number | undefined,
+): number {
+  if (
+    typeof threshold === 'number' &&
+    Number.isFinite(threshold) &&
+    threshold >= 0
+  ) {
+    return Math.floor(threshold)
+  }
+
+  return DEFAULT_VIEWPORT_COMPACTION_DATA_WINDOW_ITEM_THRESHOLD
 }

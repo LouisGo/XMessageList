@@ -16,8 +16,8 @@ import {
   getJumpForcedStart,
   hasCommittedMessage,
   resolvePendingJumpTarget,
-  shouldRebuildDestinationWindow,
 } from './destinationIntentHelpers'
+import { shouldRebuildViewportWindow } from './viewportWindowBudget'
 import { isAroundRebuildSnapshot } from './pendingResponseGuards'
 import {
   emitDestinationSettledEvent,
@@ -63,6 +63,7 @@ type DestinationIntentDeps<TMessage, TOptimistic> = {
   emitEvent: (event: MessageViewportRuntimeEvent) => void
   emitDiagnostic: RuntimeDiagnosticEmitter
   spacerThresholdPx: number
+  dataWindowItemThreshold: number
 }
 export class DestinationIntentCoordinator<TMessage, TOptimistic> {
   private pendingDestinationRequest: PendingDestinationRequest | null = null
@@ -477,9 +478,17 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
     emitDestinationSettledEvent(this.deps, event)
   }
   private shouldRebuildDestinationWindow(): boolean {
-    return shouldRebuildDestinationWindow(
-      this.deps.spacerThresholdPx,
-      this.deps.getViewportSnapshot(),
-    )
+    const data = this.deps.getDataSnapshot()
+
+    if (!data) {
+      return false
+    }
+
+    return shouldRebuildViewportWindow({
+      spacerThresholdPx: this.deps.spacerThresholdPx,
+      dataWindowItemThreshold: this.deps.dataWindowItemThreshold,
+      viewportSnapshot: this.deps.getViewportSnapshot(),
+      dataSnapshot: data,
+    })
   }
 }

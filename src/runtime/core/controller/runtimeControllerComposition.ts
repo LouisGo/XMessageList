@@ -38,6 +38,7 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     scrollMotionOptions,
     edgeLoadThresholdPx,
     viewportCompactionSpacerThresholdPx,
+    viewportCompactionDataWindowItemThreshold,
     diagnostics,
   } = createRuntimeControllerBaseServices<TMessage, TOptimistic>(
     options,
@@ -67,12 +68,17 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
   const edge = new EdgeNeedCoordinator<TMessage, TOptimistic>(
     registry,
     store,
+    projection,
     observerFactory,
     edgeLoadThresholdPx,
     host.getDataSnapshot,
     host.getLastScrollSource,
     host.canEmitEdgeNeeds,
     () => serviceRefs.destinationIntent.get().hasPendingFollowBottom(),
+    () =>
+      host.getState() === 'READY' &&
+      serviceRefs.transactions.get().getPendingCount() === 0 &&
+      store.getSnapshot().bootstrapState === 'READY',
     host.emitEvent,
   )
   const anchorEvents = new RuntimeViewportAnchorEvents({
@@ -107,12 +113,10 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     emitEvent: host.emitEvent,
     emitDiagnostic: host.emitDiagnostic,
     spacerThresholdPx: viewportCompactionSpacerThresholdPx,
+    dataWindowItemThreshold: viewportCompactionDataWindowItemThreshold,
   })
   serviceRefs.destinationIntent.setOnce(destinationIntent)
-  const viewportCompaction = new ViewportCompactionCoordinator<
-    TMessage,
-    TOptimistic
-  >({
+  const viewportCompaction = new ViewportCompactionCoordinator<TMessage, TOptimistic>({
     renderWindow,
     getViewportSnapshot: () => store.getSnapshot(),
     captureViewportAnchor: host.captureViewportAnchor,
@@ -124,6 +128,7 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     emitEvent: host.emitEvent,
     emitDiagnostic: host.emitDiagnostic,
     spacerThresholdPx: viewportCompactionSpacerThresholdPx,
+    dataWindowItemThreshold: viewportCompactionDataWindowItemThreshold,
   })
   const commandRouter = new RuntimeCommandRouter<TMessage, TOptimistic>({
     getState: host.getState,
@@ -133,6 +138,8 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     setPendingBootstrap: host.setPendingBootstrap,
     tryRunPendingBootstrap: host.tryRunPendingBootstrap,
     enqueueResetTransaction: host.enqueueResetTransaction,
+    setEdgeStatus: (viewportEdge, status) =>
+      edge.setEdgeStatus(viewportEdge, status),
     emitDiagnostic: host.emitDiagnostic,
   })
   const motion = new DestinationMotionCoordinator<TMessage, TOptimistic>(
@@ -181,6 +188,7 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
       serviceRefs.transactionDiagnostics.get().handleDrop(kind, id, reason),
     onError: (kind, id, error) =>
       serviceRefs.transactionDiagnostics.get().handleError(kind, id, error),
+    onIdle: () => edge.flushDeferredEdgeState(),
   })
   serviceRefs.transactions.setOnce(transactions)
   const transactionController = new ViewportTransactionController<
@@ -256,6 +264,7 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     commit,
     projection,
     edgeLoadThresholdPx,
+    viewportCompactionDataWindowItemThreshold,
   })
   serviceRefs.scrollFrame.setOnce(viewportServices.scrollFrame)
   serviceRefs.resizeStabilization.setOnce(viewportServices.resizeStabilization)

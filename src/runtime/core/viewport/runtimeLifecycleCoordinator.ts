@@ -21,6 +21,7 @@ import type {
   ContainerSize,
   RuntimeDiagnosticEmitter,
 } from '../state/runtimeTypes'
+import { isStableBootstrapState } from '../state/runtimeTypes'
 import { createEmptySnapshot } from '../state/projectionStore'
 import { getDistanceToBottom } from '../../shared/utils'
 
@@ -99,7 +100,7 @@ export class RuntimeLifecycleCoordinator<TMessage, TOptimistic> {
     this.deps.resizeStabilization.setupContainerObserver(container)
     this.deps.edge.setupIntersectionObserver(container)
     this.deps.setState(
-      this.deps.store.getSnapshot().bootstrapState === 'READY'
+      isStableBootstrapState(this.deps.store.getSnapshot().bootstrapState)
         ? 'READY'
         : 'ATTACHED',
     )
@@ -119,6 +120,7 @@ export class RuntimeLifecycleCoordinator<TMessage, TOptimistic> {
     })
     this.deps.reconcileReadyBottomLockFromViewport('attach')
     this.deps.tryRunPendingBootstrap()
+    this.deps.edge.flushCurrentEdgeState()
   }
 
   detach(): void {

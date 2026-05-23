@@ -35,6 +35,8 @@ export type {
   ScrollMotionOptions,
   ScrollSource,
   TransactionState,
+  ViewportEdge,
+  ViewportEdgeStatus,
   ViewportTransactionKind,
 } from './contracts/commands'
 export type {

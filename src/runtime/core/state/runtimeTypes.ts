@@ -155,6 +155,7 @@ export const BOOTSTRAP_HEIGHT_EPSILON_PX = 1
 export const BOOTSTRAP_SETTLE_TIMEOUT_MS = 300
 export const DEFAULT_EDGE_LOAD_THRESHOLD_PX = 96
 export const DEFAULT_VIEWPORT_COMPACTION_SPACER_THRESHOLD_PX = 6000
+export const DEFAULT_VIEWPORT_COMPACTION_DATA_WINDOW_ITEM_THRESHOLD = 500
 export const VIEWPORT_ANCHOR_IDLE_MS = 180
 export const USER_SCROLL_DIRECTION_EPSILON_PX = 0.5
 
@@ -178,6 +179,10 @@ export function cloneAnchorState(anchor: AnchorState): AnchorState {
     key: { ...anchor.key },
     offsetWithinMessage: anchor.offsetWithinMessage,
   }
+}
+
+export function isStableBootstrapState(state: BootstrapState): boolean {
+  return state === 'READY' || state === 'READY_EMPTY'
 }
 
 export function keepRangeWithinItems<TMessage, TOptimistic>(

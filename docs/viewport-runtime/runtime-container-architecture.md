@@ -546,9 +546,10 @@ pending 期间只有 `change.kind='reset'` 的 around rebuild snapshot 才会继
 target / deleted fallback；普通 append / patch 即使包含 target，也不能消费该
 pending。
 
-当 READY_IDLE 下已有 projection 的单侧 spacer 超过 runtime compaction 阈值时，
-下一次 `prepend` / `append` 数据到达不会继续扩大当前 DataWindow。Runtime 会捕获
-当前 viewport 顶部的 committed anchor，发出
+当 READY_IDLE 下已有 projection 的单侧 spacer 超过 runtime compaction 阈值，
+或完整 DataWindow 的 item 数超过 `viewportCompaction.dataWindowItemThreshold`
+（默认 500）时，下一次 `prepend` / `append` 数据到达不会继续扩大当前
+DataWindow。Runtime 会捕获当前 viewport 顶部的 committed anchor，发出
 `needMessagesAround(reason: 'viewport-compaction', target)`，由接入方围绕该
 anchor 返回短 DataWindow。返回 snapshot 被 `viewportCompaction` transaction 消费，
 commit 后按原 `offsetWithinMessage` 校正 `scrollTop`，释放旧 spacer 且保持可见内容
@@ -556,6 +557,12 @@ commit 后按原 `offsetWithinMessage` 校正 `scrollTop`，释放旧 spacer 且
 compaction pending 只消费 `change.kind='reset'` 且包含 pending target 或 deleted
 fallback 的 around rebuild snapshot；普通 append / prepend / patch 不能因为仍包含
 当前视觉 anchor 就提前完成 compaction。
+
+显式 `jump` / `restore` / `followBottom` 也必须遵守同一个窗口预算：如果目标虽然
+已经落在当前 DataWindow 内，但当前 DataWindow 已经超过 spacer 或 item 数预算，
+runtime 仍然发出 around/latest rebuild 请求，避免用一次局部目的地滚动继续保留
+过大的数据窗口。每个超过 item 数预算的 data snapshot 会在 data diagnostics 中
+记录 `data.windowBudgetExceeded`，用于定位接入层没有返回短窗口的场景。
 
 显式 `followBottom` 的 `bottom-follow` 语义由 runtime pending command 保持。
 在 pending 期间，runtime 不发普通 `near-bottom`，也不把当前 DataWindow 的物理

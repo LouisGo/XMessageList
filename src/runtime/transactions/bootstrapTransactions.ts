@@ -1,44 +1,10 @@
 import type { AnchorState, MessageDataSnapshot, MessageViewportSnapshot } from '../types'
 import type { ViewportTransactionDeps } from './viewportTransactionController'
-import { areRuntimeItemKeysEqual } from '../shared/utils'
-
-/**
- * Bootstrap 阶段许可表：
- * MOUNTING 只允许首次 projection 和 commit wait；
- * MEASURING 只允许读取 DOM/height，不允许 correction、trim、分页触发；
- * STABILIZING 允许首屏必要 correction，但仍禁止 trim 和外部分页触发；
- * READY 才恢复普通 viewport effects。
- */
-const BOOTSTRAP_PHASE_POLICY = {
-  MOUNTING: {
-    projection: true,
-    measurement: false,
-    correction: false,
-    trim: false,
-    edgeNeed: false,
-  },
-  MEASURING: {
-    projection: true,
-    measurement: true,
-    correction: false,
-    trim: false,
-    edgeNeed: false,
-  },
-  STABILIZING: {
-    projection: true,
-    measurement: true,
-    correction: true,
-    trim: false,
-    edgeNeed: false,
-  },
-  READY: {
-    projection: true,
-    measurement: true,
-    correction: true,
-    trim: true,
-    edgeNeed: true,
-  },
-} as const
+import {
+  runRestoredBootstrap,
+  runUnreadBootstrap,
+} from './bootstrapAnchorTransactions'
+import { assertBootstrapPolicy } from './bootstrapPhasePolicy'
 
 export function runBootstrapTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
@@ -88,14 +54,20 @@ export function runBootstrapTransaction<TMessage, TOptimistic>(
       deps,
       data,
       container,
-      target ?? data.anchor,
+      getBootstrapTarget(data, target),
       token,
       previousSnapshot,
     )
   }
 
-  deps.emitError(`bootstrap-${mode}-not-implemented`)
-  return Promise.resolve()
+  return runUnreadBootstrap(
+    deps,
+    data,
+    container,
+    getBootstrapTarget(data, target),
+    token,
+    previousSnapshot,
+  )
 }
 
 async function runLatestBootstrap<TMessage, TOptimistic>(
@@ -173,128 +145,13 @@ async function runLatestBootstrap<TMessage, TOptimistic>(
   }
 }
 
-async function runRestoredBootstrap<TMessage, TOptimistic>(
-  deps: ViewportTransactionDeps<TMessage, TOptimistic>,
+function getBootstrapTarget<TMessage, TOptimistic>(
   data: MessageDataSnapshot<TMessage, TOptimistic>,
-  container: HTMLElement,
   target: AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'],
-  token: { feedId: string; generation: number },
-  previousSnapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
-): Promise<void> {
-  const restoreTarget = deps.anchor.resolveRestoreTarget(data, target)
-
-  if (!restoreTarget) {
-    deps.emitError('bootstrap-restored-target-missing')
-    deps.setState(deps.deriveRuntimeStateFromSnapshot(previousSnapshot))
-    return
+): AnchorState | MessageDataSnapshot<TMessage, TOptimistic>['anchor'] {
+  if (data.anchorStatus === 'deleted' && data.anchor) {
+    return data.anchor
   }
 
-  const renderWindow = deps.renderWindow.computeWindowAroundAnchor({
-    items: data.items,
-    anchorIndex: restoreTarget.index,
-    viewportHeight: container.clientHeight,
-    viewportWidth: container.clientWidth,
-  })
-
-  deps.setState('BOOTSTRAPPING')
-
-  try {
-    const projection = deps.projection.publish({
-      data,
-      renderWindow,
-      bootstrapState: 'MOUNTING',
-      bottomLockState: 'UNLOCKED',
-      viewportPhase: 'PROJECTING',
-    })
-
-    await deps.commit.waitForChanged(projection, 'bootstrap')
-    assertBootstrapPolicy('MEASURING', 'measurement')
-    deps.projection.publish({
-      data,
-      renderWindow,
-      bootstrapState: 'MEASURING',
-      bottomLockState: 'UNLOCKED',
-      viewportPhase: 'MEASURING',
-    })
-
-    const resolvedRestoreTarget =
-      deps.anchor.getDirectMeasurableRow(restoreTarget.key) ??
-      (await deps.anchor.resolveMeasurableRowForTarget({
-        data,
-        targetKey: restoreTarget.key,
-        targetIndex: restoreTarget.index,
-        renderWindow,
-        missingDomErrorCode: 'bootstrap-restored-target-dom-missing',
-      }))
-
-    if (!resolvedRestoreTarget) {
-      deps.recoverAfterCommitFailure({
-        token,
-        nextState: deps.deriveRuntimeStateFromSnapshot(previousSnapshot),
-        restoreBottomLockState: previousSnapshot.bottomLockState,
-        restoreSnapshot: previousSnapshot,
-      })
-      return
-    }
-
-    const settledAnchor = {
-      key: resolvedRestoreTarget.key,
-      offsetWithinMessage: areRuntimeItemKeysEqual(
-        resolvedRestoreTarget.key,
-        restoreTarget.key,
-      )
-        ? restoreTarget.offsetWithinMessage
-        : 0,
-    }
-
-    deps.measureCurrentWindow()
-    // restored bootstrap 对齐的是视觉 anchor + offset，不是简单把目标消息滚到顶部。
-    assertBootstrapPolicy('STABILIZING', 'correction')
-    deps.projection.publish({
-      data,
-      renderWindow,
-      bootstrapState: 'STABILIZING',
-      bottomLockState: 'UNLOCKED',
-      viewportPhase: 'CORRECTING',
-    })
-    deps.anchor.alignToResolvedRestoreTarget(
-      container,
-      restoreTarget,
-      resolvedRestoreTarget,
-    )
-    deps.scrollIntent.setBottomLockState('UNLOCKED')
-    deps.reconcileBottomLockFromViewport(data, 'restored-bootstrap-settle')
-    deps.setViewportPhase('IDLE')
-    deps.setState('READY')
-    deps.projection.publish({
-      data,
-      renderWindow,
-      bootstrapState: 'READY',
-      bottomLockState: deps.scrollIntent.getBottomLockState(),
-      viewportPhase: 'IDLE',
-    })
-    deps.emitViewportAnchorChanged('transaction-settle', settledAnchor)
-    deps.emitEvent({
-      type: 'viewportReady',
-      feedId: data.feedId,
-      generation: data.generation,
-    })
-  } catch (error) {
-    deps.recoverAfterCommitFailure({
-      token,
-      nextState: deps.deriveRuntimeStateFromSnapshot(previousSnapshot),
-      restoreBottomLockState: previousSnapshot.bottomLockState,
-      restoreSnapshot: previousSnapshot,
-    })
-    throw error
-  }
-}
-
-function assertBootstrapPolicy(
-  phase: keyof typeof BOOTSTRAP_PHASE_POLICY,
-  capability: keyof typeof BOOTSTRAP_PHASE_POLICY.READY,
-): void {
-  if (!BOOTSTRAP_PHASE_POLICY[phase][capability]) {
-    throw new Error(`bootstrap-${phase}-forbids-${capability}`)
-  }
+  return target ?? data.anchor
 }

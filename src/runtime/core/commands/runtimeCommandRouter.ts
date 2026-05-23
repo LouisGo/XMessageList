@@ -4,6 +4,8 @@ import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import type {
   MessageRuntimeCommand,
   RuntimeState,
+  ViewportEdge,
+  ViewportEdgeStatus,
 } from '../../types'
 import type { RuntimeDiagnosticEmitter } from '../state/runtimeTypes'
 
@@ -17,6 +19,7 @@ type RuntimeCommandRouterDeps<TMessage, TOptimistic> = {
   ) => void
   tryRunPendingBootstrap: () => boolean
   enqueueResetTransaction: (reason: string) => void
+  setEdgeStatus: (edge: ViewportEdge, status: ViewportEdgeStatus) => void
   emitDiagnostic: RuntimeDiagnosticEmitter
 }
 
@@ -51,6 +54,9 @@ export class RuntimeCommandRouter<TMessage, TOptimistic> {
         this.deps.viewportCompaction.clearPendingViewportCompaction('follow-bottom')
         this.deps.destinationIntent.startFollowBottomCommand()
         break
+      case 'setEdgeStatus':
+        this.deps.setEdgeStatus(command.edge, command.status)
+        break
       case 'jump':
         this.deps.destinationIntent.clearPendingFollowBottom()
         this.deps.destinationIntent.clearActiveFollowBottomIntent('jump')
@@ -81,6 +87,10 @@ export class RuntimeCommandRouter<TMessage, TOptimistic> {
     }
 
     if (command.type === 'reset') {
+      return true
+    }
+
+    if (command.type === 'setEdgeStatus') {
       return true
     }
 

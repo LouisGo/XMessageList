@@ -174,6 +174,7 @@ type MessageRuntimeCommand =
   | { type: 'jump'; target: MessageIdentityAnchor; origin?: MessageIdentityAnchor }
   | { type: 'restore'; target: AnchorState | MessageIdentityAnchor }
   | { type: 'followBottom' }
+  | { type: 'setEdgeStatus'; edge: 'before' | 'after'; status: 'idle' | 'loading' | 'error' }
   | { type: 'reset'; reason: string };
 ```
 
@@ -195,8 +196,13 @@ Supersede 规则：
 
 当前 prototype 状态：
 
-- `bootstrap(latest)`、`bootstrap(restored)`、`restore` 已落地。
-- `bootstrap(unread)` 仍保留在合同中，但当前实现会显式返回 `not-implemented`，不能当作已完成能力依赖。
+- `bootstrap(latest)`、`bootstrap(restored)`、`bootstrap(unread)`、`restore` 已落地。
+- `bootstrap(unread)` 围绕 unread anchor 建窗，并把 unread anchor 对齐到 viewport
+  内部阅读位置；`viewportAnchorChanged(transaction-settle)` 必须记录对齐后的真实
+  viewport top anchor，而不是 unread target 本身。
+- `setEdgeStatus` 只更新 before / after edge 的 loading/error 可视状态。该状态不得
+  在已有 transaction 等待 commit revision 时抢发新 projection；实现必须延迟到
+  transaction/commit wait 空闲，或通过 transaction 串行化路径发布。
 
 ---
 

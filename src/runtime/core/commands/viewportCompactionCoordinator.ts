@@ -16,6 +16,7 @@ import type {
 } from '../state/runtimeTypes'
 import { cloneAnchorState } from '../state/runtimeTypes'
 import { isAroundRebuildSnapshot } from './pendingResponseGuards'
+import { getViewportWindowBudgetState } from './viewportWindowBudget'
 
 type ViewportCompactionDeps<TMessage, TOptimistic> = {
   renderWindow: RenderWindowEngine
@@ -30,6 +31,7 @@ type ViewportCompactionDeps<TMessage, TOptimistic> = {
   emitEvent: (event: MessageViewportRuntimeEvent) => void
   emitDiagnostic: RuntimeDiagnosticEmitter
   spacerThresholdPx: number
+  dataWindowItemThreshold: number
 }
 
 export class ViewportCompactionCoordinator<TMessage, TOptimistic> {
@@ -56,7 +58,7 @@ export class ViewportCompactionCoordinator<TMessage, TOptimistic> {
       return false
     }
 
-    if (!this.canStartCompaction(input)) {
+    if (!this.canStartCompaction(snapshot, input)) {
       return false
     }
 
@@ -170,23 +172,29 @@ export class ViewportCompactionCoordinator<TMessage, TOptimistic> {
     })
   }
 
-  private canStartCompaction(input: {
-    generationChanged: boolean
-    previousBottomLockState: BottomLockState
-  }): boolean {
+  private canStartCompaction(
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+    input: {
+      generationChanged: boolean
+      previousBottomLockState: BottomLockState
+    },
+  ): boolean {
     const viewportSnapshot = this.deps.getViewportSnapshot()
+    const budget = getViewportWindowBudgetState({
+      spacerThresholdPx: this.deps.spacerThresholdPx,
+      dataWindowItemThreshold: this.deps.dataWindowItemThreshold,
+      viewportSnapshot,
+      dataSnapshot: snapshot,
+    })
+
     return (
       !input.generationChanged &&
       this.pendingCompaction === null &&
-      this.deps.spacerThresholdPx > 0 &&
       this.deps.getState() === 'READY' &&
       this.deps.getReadySubstate() === 'READY_IDLE' &&
       viewportSnapshot.bootstrapState === 'READY' &&
       input.previousBottomLockState !== 'LOCKED' &&
-      (
-        viewportSnapshot.topSpacer > this.deps.spacerThresholdPx ||
-        viewportSnapshot.bottomSpacer > this.deps.spacerThresholdPx
-      )
+      (budget.spacerBudgetExceeded || budget.dataWindowItemBudgetExceeded)
     )
   }
 
@@ -231,6 +239,14 @@ export class ViewportCompactionCoordinator<TMessage, TOptimistic> {
         topSpacer: viewportSnapshot.topSpacer,
         bottomSpacer: viewportSnapshot.bottomSpacer,
         spacerThresholdPx: this.deps.spacerThresholdPx,
+        dataWindowItemCount: snapshot.items.length,
+        dataWindowItemThreshold: this.deps.dataWindowItemThreshold,
+        ...getViewportWindowBudgetState({
+          spacerThresholdPx: this.deps.spacerThresholdPx,
+          dataWindowItemThreshold: this.deps.dataWindowItemThreshold,
+          viewportSnapshot,
+          dataSnapshot: snapshot,
+        }),
       }),
     })
   }

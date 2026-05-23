@@ -104,6 +104,44 @@ describe('MessageViewportRuntime lifecycle', () => {
     expect(container.scrollTop).toBeGreaterThan(0)
   })
 
+  it('keeps an empty bootstrapped feed ready after reattach and projects the first append', async () => {
+    const { runtime } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 0,
+      revision: 1,
+      effect: 'reset',
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+
+    expect(runtime.getSnapshot().bootstrapState).toBe('READY_EMPTY')
+    expect(runtime.getDebugSnapshot().state).toBe('READY')
+
+    runtime.detach()
+    runtime.attach(container)
+
+    expect(runtime.getDebugSnapshot().state).toBe('READY')
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 1,
+      revision: 2,
+      effect: 'append',
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+    }))
+    await Promise.resolve()
+
+    const snapshot = runtime.getSnapshot()
+    expect(snapshot.items).toHaveLength(1)
+    expect(snapshot.bootstrapState).toBe('READY')
+    expect(snapshot.bottomLockState).toBe('LOCKED')
+  })
+
   it('exports the current viewport anchor state', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
@@ -200,6 +238,94 @@ describe('MessageViewportRuntime lifecycle', () => {
     expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
     expect(container.scrollTop).toBe(
       getExpectedRestoreScrollTop(snapshot, 'm-20', 18),
+    )
+  })
+
+  it('bootstraps unread data around the unread anchor context', async () => {
+    const { runtime } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 40, revision: 1, effect: 'reset' }))
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'unread',
+      target: { messageId: 'm-20' },
+    })
+    await Promise.resolve()
+
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(runtime.getSnapshot().bootstrapState).toBe('READY')
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+    expect(container.scrollTop).toBe(
+      getExpectedRestoreScrollTop(snapshot, 'm-20', 0) -
+        Math.floor(container.clientHeight * 0.4),
+    )
+    const settledAnchorEvent = events.find((event) =>
+      event.type === 'viewportAnchorChanged' &&
+      event.reason === 'transaction-settle',
+    )
+    expect(settledAnchorEvent).toEqual(
+      expect.objectContaining({
+        anchor: runtime.getViewportAnchorState(),
+      }),
+    )
+    expect(settledAnchorEvent).not.toEqual(
+      expect.objectContaining({
+        anchor: {
+          key: { kind: 'committed', messageId: 'm-20' },
+          offsetWithinMessage: 0,
+        },
+      }),
+    )
+  })
+
+  it('uses the data fallback anchor for unread bootstrap when the requested anchor was deleted', async () => {
+    const { runtime } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 40,
+      revision: 1,
+      effect: 'reset',
+      anchor: { messageId: 'm-21' },
+      anchorStatus: 'deleted',
+    }))
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'unread',
+      target: { messageId: 'm-20' },
+    })
+    await Promise.resolve()
+
+    const snapshot = runtime.getSnapshot()
+    mountProjection(runtime, container, snapshot)
+    runtime.notifyProjectionCommitted({
+      feedId: snapshot.feedId,
+      generation: snapshot.generation,
+      revision: snapshot.revision,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(runtime.getSnapshot().bootstrapState).toBe('READY')
+    expect(container.scrollTop).toBe(
+      getExpectedRestoreScrollTop(snapshot, 'm-21', 0) -
+        Math.floor(container.clientHeight * 0.4),
     )
   })
 

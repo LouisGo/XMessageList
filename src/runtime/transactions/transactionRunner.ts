@@ -17,6 +17,7 @@ type TransactionRunnerCallbacks = {
     reason: 'reset-supersede' | 'key-supersede' | 'clear' | 'stop',
   ) => void
   onError?: (kind: ViewportTransactionKind, id: string, error: unknown) => void
+  onIdle?: () => void
 }
 
 let transactionCounter = 0
@@ -124,6 +125,9 @@ export class TransactionRunner {
       void error
     } finally {
       this.active = false
+      if (this.queue.length === 0) {
+        this.callbacks.onIdle?.()
+      }
       void this.drain()
     }
   }

@@ -16,6 +16,8 @@ import {
 import type { MeasurableRow, RestoreTarget } from '../core/state/runtimeTypes'
 import { isAnchorState } from '../core/state/runtimeTypes'
 
+const ANCHOR_INTERSECTION_EPSILON_PX = 0.5
+
 export class AnchorCoordinator<TMessage, TOptimistic> {
   constructor(
     private readonly registry: DomRegistry,
@@ -82,6 +84,29 @@ export class AnchorCoordinator<TMessage, TOptimistic> {
     }
   }
 
+  alignToResolvedTargetAtViewportOffset(
+    container: HTMLElement,
+    target: {
+      key: MessageRuntimeItemKey
+      offsetWithinMessage: number
+    },
+    resolved: MeasurableRow,
+    viewportOffsetPx: number,
+  ): void {
+    const containerTop = container.getBoundingClientRect().top
+    const targetRect = resolved.element.getBoundingClientRect()
+    const offsetWithinMessage = areRuntimeItemKeysEqual(resolved.key, target.key)
+      ? target.offsetWithinMessage
+      : 0
+    const desiredTop =
+      containerTop + Math.max(0, viewportOffsetPx) - offsetWithinMessage
+    const delta = targetRect.top - desiredTop
+
+    if (Math.abs(delta) > 0.5) {
+      this.writeScrollTop(container.scrollTop + delta, 'programmatic')
+    }
+  }
+
   getDirectMeasurableRow(key: MessageRuntimeItemKey): MeasurableRow | null {
     const element = this.registry.getRow(key)
 
@@ -134,7 +159,9 @@ export class AnchorCoordinator<TMessage, TOptimistic> {
       return null
     }
 
-    const containerTop = container.getBoundingClientRect().top
+    const containerRect = container.getBoundingClientRect()
+    const containerTop = containerRect.top
+    const containerBottom = containerRect.bottom
 
     for (const item of snapshot.items) {
       const key = getRuntimeItemKey(item)
@@ -146,8 +173,12 @@ export class AnchorCoordinator<TMessage, TOptimistic> {
 
       const rect = element.getBoundingClientRect()
 
-      if (rect.bottom >= containerTop) {
-        // 选择第一个触达 viewport 顶边的 row，offset 表示顶边切入消息内部的距离。
+      if (
+        rect.bottom - containerTop > ANCHOR_INTERSECTION_EPSILON_PX &&
+        containerBottom - rect.top > ANCHOR_INTERSECTION_EPSILON_PX
+      ) {
+        // 选择第一个与 viewport 相交的 row；spacer-only 区域没有 DOM anchor，
+        // 必须让调用方回退到 offset -> estimated index 的窗口滑动路径。
         return {
           key,
           offsetWithinMessage: Math.max(0, containerTop - rect.top),

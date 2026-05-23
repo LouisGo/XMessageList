@@ -20,6 +20,7 @@ export function createRuntime(input?: {
   window?: Partial<WindowConfig>
   scrollMotion?: Partial<ScrollMotionOptions>
   debug?: MessageViewportRuntimeOptions['debug']
+  viewportCompaction?: MessageViewportRuntimeOptions['viewportCompaction']
 }) {
   const scheduler = new FakeScheduler()
   const observers = createFakeObservers()
@@ -34,6 +35,7 @@ export function createRuntime(input?: {
     },
     scrollMotion: input?.scrollMotion,
     debug: input?.debug,
+    viewportCompaction: input?.viewportCompaction,
   })
 
   return { runtime, scheduler, observers }

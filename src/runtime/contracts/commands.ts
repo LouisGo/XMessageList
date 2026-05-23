@@ -1,5 +1,9 @@
 import type { AnchorState, MessageIdentityAnchor } from './identity'
 
+export type ViewportEdge = 'before' | 'after'
+
+export type ViewportEdgeStatus = 'idle' | 'loading' | 'error'
+
 export type MessageRuntimeCommand =
   | {
       type: 'bootstrap'
@@ -9,6 +13,7 @@ export type MessageRuntimeCommand =
   | { type: 'jump'; target: MessageIdentityAnchor; origin?: MessageIdentityAnchor }
   | { type: 'restore'; target: AnchorState | MessageIdentityAnchor }
   | { type: 'followBottom' }
+  | { type: 'setEdgeStatus'; edge: ViewportEdge; status: ViewportEdgeStatus }
   | { type: 'reset'; reason: string }
 
 // direct-scroll 只允许表达 runtime 已知的自定义滚动条输入来源。

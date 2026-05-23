@@ -1,14 +1,24 @@
 import type { DomRegistry } from '../dom/domRegistry'
+import type { ProjectionCoordinator } from '../core/projection/projectionCoordinator'
 import type { ProjectionStore } from '../core/state/projectionStore'
 import type {
   ScrollFrameMetrics,
 } from '../core/state/runtimeTypes'
 import type {
   MessageDataSnapshot,
+  MessageViewportSnapshot,
   MessageViewportRuntimeEvent,
   RuntimeObserverFactory,
   ScrollSource,
+  ViewportEdge,
+  ViewportEdgeStatus,
+  ViewportEffect,
+  ViewportModifier,
 } from '../types'
+import {
+  areRuntimeItemKeysEqual,
+  getRuntimeItemKey,
+} from '../shared/utils'
 
 export class EdgeNeedCoordinator<TMessage, TOptimistic> {
   private beforeEdgeRequestRevision: number | null = null
@@ -20,6 +30,7 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
   constructor(
     private readonly registry: DomRegistry,
     private readonly store: ProjectionStore<TMessage, TOptimistic>,
+    private readonly projection: ProjectionCoordinator<TMessage, TOptimistic>,
     private readonly observerFactory: RuntimeObserverFactory,
     private readonly edgeLoadThresholdPx: number,
     private readonly getDataSnapshot: () =>
@@ -28,18 +39,64 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
     private readonly getLastScrollSource: () => ScrollSource | null,
     private readonly canEmitEdgeNeeds: () => boolean,
     private readonly hasPendingFollowBottom: () => boolean,
+    private readonly canPublishEdgeState: () => boolean,
     private readonly emitEvent: (event: MessageViewportRuntimeEvent) => void,
   ) {}
+
+  private edgeProjectionDirty = false
 
   resetLatches(): void {
     this.beforeEdgeRequestRevision = null
     this.afterEdgeRequestRevision = null
+    this.projection.clearEdgeStatuses()
   }
 
   setAfterEdgeLatched(value: boolean): void {
     this.afterEdgeRequestRevision = value
       ? this.store.getSnapshot().revision
       : null
+  }
+
+  setEdgeStatus(edge: ViewportEdge, status: ViewportEdgeStatus): void {
+    if (!this.projection.setEdgeStatus(edge, status)) {
+      return
+    }
+
+    this.requestCurrentEdgeStatePublish()
+  }
+
+  flushDeferredEdgeState(): void {
+    if (!this.edgeProjectionDirty) {
+      return
+    }
+
+    this.publishCurrentEdgeState()
+  }
+
+  flushCurrentEdgeState(): void {
+    if (!this.edgeProjectionDirty && !this.projection.hasEdgeStatusOverrides()) {
+      return
+    }
+
+    this.publishCurrentEdgeState()
+  }
+
+  resolveDataSnapshot(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+    modifier: ViewportModifier | ViewportEffect,
+  ): void {
+    if (!data.hasMoreBefore || modifier === 'prepend' || modifier === 'reset') {
+      this.projection.clearEdgeStatus('before')
+    }
+
+    if (
+      !data.hasMoreAfter ||
+      modifier === 'append' ||
+      modifier === 'auto-scroll-to-bottom' ||
+      modifier === 'reset'
+    ) {
+      this.projection.clearEdgeStatus('after')
+    }
   }
 
   disconnect(): void {
@@ -130,6 +187,7 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
       this.beforeEdgeRequestRevision !== data.revision
     ) {
       this.beforeEdgeRequestRevision = data.revision
+      this.markEdgeLoading('before')
       this.emitEvent({
         type: 'needMoreBefore',
         feedId: data.feedId,
@@ -145,6 +203,7 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
       this.afterEdgeRequestRevision !== data.revision
     ) {
       this.afterEdgeRequestRevision = data.revision
+      this.markEdgeLoading('after')
       this.emitEvent({
         type: 'needMoreAfter',
         feedId: data.feedId,
@@ -174,6 +233,7 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
       this.beforeEdgeRequestRevision !== data.revision
     ) {
       this.beforeEdgeRequestRevision = data.revision
+      this.markEdgeLoading('before')
       this.emitEvent({
         type: 'needMoreBefore',
         feedId: data.feedId,
@@ -189,6 +249,7 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
       this.afterEdgeRequestRevision !== data.revision
     ) {
       this.afterEdgeRequestRevision = data.revision
+      this.markEdgeLoading('after')
       this.emitEvent({
         type: 'needMoreAfter',
         feedId: data.feedId,
@@ -235,6 +296,7 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
         this.beforeEdgeRequestRevision !== data.revision
       ) {
         this.beforeEdgeRequestRevision = data.revision
+        this.markEdgeLoading('before')
         this.emitEvent({
           type: 'needMoreBefore',
           feedId: data.feedId,
@@ -251,6 +313,7 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
         this.afterEdgeRequestRevision !== data.revision
       ) {
         this.afterEdgeRequestRevision = data.revision
+        this.markEdgeLoading('after')
         this.emitEvent({
           type: 'needMoreAfter',
           feedId: data.feedId,
@@ -259,5 +322,69 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
         })
       }
     }
+  }
+
+  private markEdgeLoading(edge: ViewportEdge): void {
+    if (!this.projection.setEdgeStatus(edge, 'loading')) {
+      return
+    }
+
+    this.requestCurrentEdgeStatePublish()
+  }
+
+  private requestCurrentEdgeStatePublish(): void {
+    this.edgeProjectionDirty = true
+    this.publishCurrentEdgeState()
+  }
+
+  private publishCurrentEdgeState(): void {
+    const data = this.getDataSnapshot()
+
+    if (!data || !this.canPublishEdgeState()) {
+      return
+    }
+
+    const snapshot = this.store.getSnapshot()
+
+    if (!this.isCurrentProjectionAligned(data, snapshot)) {
+      return
+    }
+
+    this.projection.publish({
+      data,
+      renderWindow: snapshot.renderWindow,
+      bootstrapState: snapshot.bootstrapState,
+      bottomLockState: snapshot.bottomLockState,
+      viewportPhase: snapshot.viewportPhase,
+      topSpacer: snapshot.topSpacer,
+      bottomSpacer: snapshot.bottomSpacer,
+    })
+    this.edgeProjectionDirty = false
+  }
+
+  private isCurrentProjectionAligned(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+    snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
+  ): boolean {
+    const { renderWindow } = snapshot
+
+    if (renderWindow.itemKeys.length === 0) {
+      return data.items.length === 0
+    }
+
+    if (
+      renderWindow.startIndex < 0 ||
+      renderWindow.endIndex >= data.items.length ||
+      renderWindow.itemKeys.length !==
+        renderWindow.endIndex - renderWindow.startIndex + 1
+    ) {
+      return false
+    }
+
+    return renderWindow.itemKeys.every((key, index) => {
+      const item = data.items[renderWindow.startIndex + index]
+
+      return Boolean(item) && areRuntimeItemKeysEqual(key, getRuntimeItemKey(item))
+    })
   }
 }

@@ -15,6 +15,7 @@ import {
   BOOTSTRAP_HEIGHT_EPSILON_PX,
   BOOTSTRAP_SETTLE_TIMEOUT_MS,
   BOOTSTRAP_STABLE_FRAMES,
+  isStableBootstrapState,
   type CommitRecoveryInput,
   type RuntimeDiagnosticEmitter,
 } from '../state/runtimeTypes'
@@ -86,7 +87,7 @@ export class RuntimeRecoveryAndMeasurement<TMessage, TOptimistic> {
       return 'INITIAL'
     }
 
-    return snapshot.bootstrapState === 'READY' || snapshot.bootstrapState === 'READY_EMPTY'
+    return isStableBootstrapState(snapshot.bootstrapState)
       ? 'READY'
       : 'ATTACHED'
   }

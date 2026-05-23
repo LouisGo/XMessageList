@@ -12,6 +12,7 @@ import type {
 import type { RuntimeDiagnosticEmitter } from '../state/runtimeTypes'
 import { getRuntimeItemKey } from '../../shared/utils'
 import type { ViewportCompactionCoordinator } from '../commands/viewportCompactionCoordinator'
+import { isDataWindowItemBudgetExceeded } from '../commands/viewportWindowBudget'
 
 type RuntimeDataSnapshotDeps<TMessage, TOptimistic> = {
   renderWindow: RenderWindowEngine
@@ -27,6 +28,7 @@ type RuntimeDataSnapshotDeps<TMessage, TOptimistic> = {
   getState: () => RuntimeState
   emitDiagnostic: RuntimeDiagnosticEmitter
   emitError: (code: string) => void
+  dataWindowItemThreshold: number
   tryRunPendingBootstrap: () => boolean
   enqueuePrependTransaction: (
     snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
@@ -53,6 +55,10 @@ type RuntimeDataSnapshotDeps<TMessage, TOptimistic> = {
   enqueueResetTransaction: (
     reason: string,
     snapshot?: MessageDataSnapshot<TMessage, TOptimistic>,
+  ) => void
+  resolveEdgeStatusForSnapshot: (
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+    viewportModifier: ViewportModifier | ViewportEffect,
   ) => void
 }
 
@@ -90,6 +96,7 @@ export class RuntimeDataSnapshotCoordinator<TMessage, TOptimistic> {
 
     this.deps.setDataSnapshot(snapshot)
     this.emitSnapshotDiagnostic(snapshot, generationChanged, viewportModifier)
+    this.emitDataWindowBudgetDiagnostic(snapshot)
 
     if (
       snapshot.hasMoreAfter &&
@@ -97,6 +104,8 @@ export class RuntimeDataSnapshotCoordinator<TMessage, TOptimistic> {
     ) {
       this.deps.scrollIntent.setBottomLockState('UNLOCKED')
     }
+
+    this.deps.resolveEdgeStatusForSnapshot(snapshot, viewportModifier)
 
     if (viewportModifier !== 'none') {
       this.deps.transactions.dropBySupersedeKey('window-slide')
@@ -199,6 +208,32 @@ export class RuntimeDataSnapshotCoordinator<TMessage, TOptimistic> {
           ? getRuntimeItemKey(snapshot.items[snapshot.items.length - 1])
           : null,
         generationChanged,
+      }),
+    })
+  }
+
+  private emitDataWindowBudgetDiagnostic(
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): void {
+    if (
+      !isDataWindowItemBudgetExceeded(
+        this.deps.dataWindowItemThreshold,
+        snapshot.items.length,
+      )
+    ) {
+      return
+    }
+
+    this.deps.emitDiagnostic({
+      channel: 'data',
+      severity: 'warn',
+      name: 'data.windowBudgetExceeded',
+      correlationId:
+        `data:${snapshot.feedId}:${snapshot.generation}:${snapshot.revision}`,
+      details: () => ({
+        revision: snapshot.revision,
+        itemCount: snapshot.items.length,
+        dataWindowItemThreshold: this.deps.dataWindowItemThreshold,
       }),
     })
   }

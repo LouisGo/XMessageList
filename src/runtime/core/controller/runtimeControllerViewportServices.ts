@@ -53,6 +53,7 @@ type RuntimeControllerViewportServicesInput<TMessage, TOptimistic> = {
   commit: CommitCoordinator<TMessage, TOptimistic>
   projection: ProjectionCoordinator<TMessage, TOptimistic>
   edgeLoadThresholdPx: number
+  viewportCompactionDataWindowItemThreshold: number
 }
 
 export function createRuntimeControllerViewportServices<
@@ -213,6 +214,7 @@ export function createRuntimeControllerViewportServices<
     getState: input.host.getState,
     emitDiagnostic: input.host.emitDiagnostic,
     emitError: input.host.emitError,
+    dataWindowItemThreshold: input.viewportCompactionDataWindowItemThreshold,
     tryRunPendingBootstrap: input.host.tryRunPendingBootstrap,
     enqueuePrependTransaction: input.host.enqueuePrependTransaction,
     enqueueAppendTransaction: input.host.enqueueAppendTransaction,
@@ -224,6 +226,8 @@ export function createRuntimeControllerViewportServices<
       input.host.enqueueIdentityRebindTransaction,
     enqueueAnchorRiskTransaction: input.host.enqueueAnchorRiskTransaction,
     enqueueResetTransaction: input.host.enqueueResetTransaction,
+    resolveEdgeStatusForSnapshot: (snapshot, viewportModifier) =>
+      input.edge.resolveDataSnapshot(snapshot, viewportModifier),
   })
 
   return {

@@ -7,7 +7,11 @@ import {
   type MessageDataSnapshot,
   type MessageViewportSnapshot,
 } from '../..'
-import { FakeScheduler, createFakeObservers } from '../../test/fakes'
+import {
+  FakeScheduler,
+  createFakeObservers,
+  setElementMetrics,
+} from '../../test/fakes'
 
 type TestMessage = {
   id: string
@@ -112,6 +116,18 @@ function ViewportOnlyHarness({
       style={{ height: 240 }}
     />
   )
+}
+
+function layoutViewportRows(host: HTMLElement): void {
+  const container = host.querySelector<HTMLElement>('[data-message-scroll-container]')
+
+  if (container) {
+    setElementMetrics(container, { top: 0, height: 240, width: 320 })
+  }
+
+  host.querySelectorAll<HTMLElement>('[data-message-row]').forEach((row, index) => {
+    setElementMetrics(row, { top: index * 48, height: 48, width: 320 })
+  })
 }
 
 async function flushFramesWithMicrotasks(
@@ -800,6 +816,7 @@ describe('React adapter', () => {
     })
 
     expect(host.textContent).toContain('a-')
+    layoutViewportRows(host)
     onViewportAnchorChange.mockClear()
     const detachDomSnapshots: string[] = []
     const originalDetach = runtimeA.detach.bind(runtimeA)
@@ -881,6 +898,7 @@ describe('React adapter', () => {
       await flushFramesWithMicrotasks(scheduler, 4)
     })
 
+    layoutViewportRows(host)
     onViewportAnchorChange.mockClear()
 
     await act(async () => {

@@ -194,6 +194,47 @@ describe('MessageViewportRuntime destination rebuild', () => {
     )
   })
 
+  it('requests an around-target rebuild for local jumps when the data window exceeds the item budget', async () => {
+    const { runtime, scheduler } = createRuntime({
+      viewportCompaction: {
+        spacerThresholdPx: 1_000_000,
+        dataWindowItemThreshold: 50,
+      },
+    })
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 80,
+      revision: 1,
+      effect: 'reset',
+    }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    expect(runtime.getSnapshot().topSpacer).toBeLessThan(1_000_000)
+    events.length = 0
+
+    runtime.dispatch({ type: 'jump', target: { messageId: 'm-30' } })
+    await Promise.resolve()
+
+    expect(runtime.getDebugSnapshot().readySubstate).toBe(
+      'READY_DESTINATION_PENDING',
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'needMessagesAround',
+        reason: 'jump',
+        target: { messageId: 'm-30' },
+      }),
+    )
+  })
+
   it('requests an around-target rebuild for local restores when spacer is too large', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
@@ -255,6 +296,10 @@ describe('MessageViewportRuntime destination rebuild', () => {
     await flushBootstrap(runtime, scheduler, container)
     mountProjection(runtime, container, runtime.getSnapshot(), -container.scrollTop)
 
+    const anchor = runtime.getViewportAnchorState()
+    expect(anchor?.key.kind).toBe('committed')
+    const anchorMessageId =
+      anchor?.key.kind === 'committed' ? anchor.key.messageId : ''
     const beforeRevision = runtime.getSnapshot().revision
     expect(runtime.getSnapshot().topSpacer).toBeGreaterThan(10_000)
     expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
@@ -274,12 +319,109 @@ describe('MessageViewportRuntime destination rebuild', () => {
       expect.objectContaining({
         type: 'needMessagesAround',
         reason: 'viewport-compaction',
-        target: { messageId: 'm-149' },
+        target: { messageId: anchorMessageId },
       }),
     )
     expect(runtime.getSnapshot().revision).toBe(beforeRevision)
     expect(runtime.getDebugSnapshot().readySubstate).toBe(
       'READY_VIEWPORT_COMPACTION_PENDING',
+    )
+  })
+
+  it('requests viewport compaction on data mutation when the data window exceeds the item budget', async () => {
+    const { runtime, scheduler } = createRuntime({
+      viewportCompaction: {
+        spacerThresholdPx: 1_000_000,
+        dataWindowItemThreshold: 50,
+      },
+    })
+    const container = createContainer({ height: 300 })
+    const events: MessageViewportRuntimeEvent[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 80,
+      revision: 1,
+      effect: 'reset',
+      estimatedHeight: 24,
+      hasMoreAfter: true,
+    }))
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'restored',
+      target: { messageId: 'm-40' },
+    })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    mountProjection(runtime, container, runtime.getSnapshot(), -container.scrollTop)
+
+    const anchor = runtime.getViewportAnchorState()
+    expect(anchor?.key.kind).toBe('committed')
+    const anchorMessageId =
+      anchor?.key.kind === 'committed' ? anchor.key.messageId : ''
+    const beforeRevision = runtime.getSnapshot().revision
+    expect(runtime.getSnapshot().topSpacer).toBeLessThan(1_000_000)
+    expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
+    events.length = 0
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 81,
+      revision: 2,
+      effect: 'append',
+      estimatedHeight: 24,
+      hasMoreAfter: true,
+    }))
+    await Promise.resolve()
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'needMessagesAround',
+        reason: 'viewport-compaction',
+        target: { messageId: anchorMessageId },
+      }),
+    )
+    expect(runtime.getSnapshot().revision).toBe(beforeRevision)
+    expect(runtime.getDebugSnapshot().readySubstate).toBe(
+      'READY_VIEWPORT_COMPACTION_PENDING',
+    )
+  })
+
+  it('warns when the data window exceeds the item budget', () => {
+    const { runtime } = createRuntime({
+      debug: {
+        diagnostics: {
+          channels: ['data'],
+          emitEvents: false,
+          minSeverity: 'warn',
+          maxEntries: 10,
+        },
+      },
+      viewportCompaction: {
+        spacerThresholdPx: 1_000_000,
+        dataWindowItemThreshold: 50,
+      },
+    })
+
+    runtime.setDataSnapshot(createSnapshot({
+      count: 80,
+      revision: 1,
+      effect: 'reset',
+    }))
+
+    expect(runtime.getDiagnosticRecords()).toContainEqual(
+      expect.objectContaining({
+        channel: 'data',
+        severity: 'warn',
+        name: 'data.windowBudgetExceeded',
+        details: expect.objectContaining({
+          revision: 1,
+          itemCount: 80,
+          dataWindowItemThreshold: 50,
+        }),
+      }),
     )
   })
 

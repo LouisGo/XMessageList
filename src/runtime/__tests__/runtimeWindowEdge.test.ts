@@ -107,7 +107,9 @@ describe('MessageViewportRuntime window and edge', () => {
     runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
-    container.scrollTop = 100
+    container.scrollTop = runtime.getSnapshot().topSpacer + 100
+    mountProjection(runtime, container, runtime.getSnapshot(), -container.scrollTop)
+    const scrollTopBeforePrepend = container.scrollTop
 
     runtime.setDataSnapshot(createSnapshot({ count: 35, revision: 2, effect: 'prepend', start: 15 }))
     await Promise.resolve()
@@ -121,7 +123,7 @@ describe('MessageViewportRuntime window and edge', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(container.scrollTop).toBeGreaterThan(100)
+    expect(container.scrollTop).toBeGreaterThan(scrollTopBeforePrepend)
   })
 
   it('recovers from prepend commit timeout without staying in projection phase', async () => {
@@ -231,6 +233,39 @@ describe('MessageViewportRuntime window and edge', () => {
     await flushScrollFrames(container, scheduler, 1)
     snapshot = runtime.getSnapshot()
     expect(snapshot.renderWindow.startIndex).toBeGreaterThan(60)
+  })
+
+  it('slides toward earlier items when a fast drag lands in top spacer-only space', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({
+      count: 300,
+      revision: 1,
+      effect: 'reset',
+      hasMoreAfter: true,
+    }))
+    runtime.dispatch({
+      type: 'bootstrap',
+      mode: 'restored',
+      target: { messageId: 'm-150' },
+    })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    let snapshot = runtime.getSnapshot()
+    const previousStart = snapshot.renderWindow.startIndex
+    expect(snapshot.topSpacer).toBeGreaterThan(container.clientHeight * 2)
+
+    markUserScrollIntent(container)
+    container.scrollTop = snapshot.topSpacer - container.clientHeight
+    mountProjection(runtime, container, snapshot, -container.scrollTop)
+    expect(runtime.getViewportAnchorState()).toBeNull()
+    await flushScrollFrames(container, scheduler, 1)
+
+    snapshot = runtime.getSnapshot()
+    expect(snapshot.renderWindow.startIndex).toBeLessThan(previousStart)
   })
 
   it('does not request history from sentinel intersection before user edge intent', async () => {

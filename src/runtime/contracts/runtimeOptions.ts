@@ -46,5 +46,6 @@ export type MessageViewportRuntimeOptions = {
   edgeLoadThresholdPx?: number
   viewportCompaction?: {
     spacerThresholdPx?: number
+    dataWindowItemThreshold?: number
   }
 }

@@ -15,6 +15,72 @@ import {
 } from './runtimeTestUtils'
 
 describe('MessageViewportRuntime direct scroll and measurement', () => {
+  it('defers edge status projection while bootstrap is waiting for its commit revision', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+    const events: string[] = []
+
+    runtime.subscribeEvent((event) => {
+      events.push(event.type === 'viewportError' ? event.code : event.type)
+    })
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+
+    const pending = runtime.getSnapshot()
+    expect(pending.bootstrapState).toBe('MOUNTING')
+
+    runtime.dispatch({
+      type: 'setEdgeStatus',
+      edge: 'before',
+      status: 'error',
+    })
+
+    expect(runtime.getSnapshot()).toBe(pending)
+    expect(runtime.getSnapshot().edgeState.before).toBe('idle')
+
+    mountProjection(runtime, container, pending)
+    runtime.notifyProjectionCommitted({
+      feedId: pending.feedId,
+      generation: pending.generation,
+      revision: pending.revision,
+    })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    expect(events).not.toContain('commit-timeout-bootstrap')
+    expect(runtime.getSnapshot().bootstrapState).toBe('READY')
+    expect(runtime.getSnapshot().edgeState.before).toBe('error')
+  })
+
+  it('flushes deferred edge status when a ready detached runtime reattaches', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+    await Promise.resolve()
+
+    const readySnapshot = runtime.getSnapshot()
+    expect(readySnapshot.bootstrapState).toBe('READY')
+    expect(readySnapshot.edgeState.before).toBe('idle')
+
+    runtime.detach()
+    runtime.dispatch({ type: 'setEdgeStatus', edge: 'before', status: 'error' })
+
+    expect(runtime.getSnapshot()).toBe(readySnapshot)
+    expect(runtime.getSnapshot().edgeState.before).toBe('idle')
+
+    runtime.attach(container)
+
+    expect(runtime.getSnapshot().edgeState.before).toBe('error')
+    expect(runtime.getSnapshot().revision).toBeGreaterThan(readySnapshot.revision)
+  })
+
   it('latches top edge loading until the user leaves the edge', async () => {
     const { runtime, scheduler } = createRuntime()
     const container = createContainer({ height: 300 })
@@ -37,6 +103,7 @@ describe('MessageViewportRuntime direct scroll and measurement', () => {
     await flushScrollFrames(container, scheduler, 1)
 
     expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(1)
+    expect(runtime.getSnapshot().edgeState.before).toBe('loading')
 
     markUserScrollIntent(container)
     container.scrollTop = 400
@@ -46,6 +113,38 @@ describe('MessageViewportRuntime direct scroll and measurement', () => {
     await flushScrollFrames(container, scheduler, 1)
 
     expect(events.filter((event) => event === 'needMoreBefore')).toHaveLength(2)
+  })
+
+  it('projects edge error and clears loading after a successful prepend response', async () => {
+    const { runtime, scheduler } = createRuntime()
+    const container = createContainer({ height: 300 })
+
+    runtime.attach(container)
+    runtime.setDataSnapshot(createSnapshot({ count: 10, revision: 1, effect: 'reset' }))
+    runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    await Promise.resolve()
+    await flushBootstrap(runtime, scheduler, container)
+
+    markUserScrollIntent(container)
+    container.scrollTop = 0
+    await flushScrollFrames(container, scheduler, 1)
+
+    expect(runtime.getSnapshot().edgeState.before).toBe('loading')
+
+    runtime.dispatch({
+      type: 'setEdgeStatus',
+      edge: 'before',
+      status: 'error',
+    })
+
+    expect(runtime.getSnapshot().edgeState.before).toBe('error')
+
+    runtime.setDataSnapshot(
+      createSnapshot({ count: 30, revision: 2, effect: 'prepend', start: -19 }),
+    )
+    await Promise.resolve()
+
+    expect(runtime.getSnapshot().edgeState.before).toBe('idle')
   })
 
   it('treats trusted scrollbar scroll as user edge intent', async () => {
@@ -337,15 +436,17 @@ describe('MessageViewportRuntime direct scroll and measurement', () => {
     runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
     await Promise.resolve()
     await flushBootstrap(runtime, scheduler, container)
-    container.scrollTop = 100
+    container.scrollTop = runtime.getSnapshot().topSpacer + 100
+    mountProjection(runtime, container, runtime.getSnapshot(), -container.scrollTop)
     container.dispatchEvent(new Event('scroll'))
     scheduler.flushFrame()
     await Promise.resolve()
+    const scrollTopBeforeRefresh = container.scrollTop
 
     runtime.setDataSnapshot(createSnapshot({ count: 30, revision: 2, effect: 'items-change' }))
     await Promise.resolve()
     const snapshot = runtime.getSnapshot()
-    mountProjection(runtime, container, snapshot, 40)
+    mountProjection(runtime, container, snapshot, -container.scrollTop + 40)
     runtime.notifyProjectionCommitted({
       feedId: snapshot.feedId,
       generation: snapshot.generation,
@@ -354,7 +455,7 @@ describe('MessageViewportRuntime direct scroll and measurement', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(container.scrollTop).toBe(140)
+    expect(container.scrollTop).toBe(scrollTopBeforeRefresh + 40)
   })
 
   it('treats contentVersion changes as projection changes even when item version is stable', async () => {

@@ -6,7 +6,9 @@ import type {
   MessageDataSnapshot,
   MessageViewportSnapshot,
   RenderWindow,
+  ViewportEdge,
   ViewportEdgeState,
+  ViewportEdgeStatus,
 } from '../../types'
 import {
   areRuntimeItemKeysEqual,
@@ -23,6 +25,10 @@ const MAX_PROJECTED_ITEMS_CACHE_ENTRIES = 48
 
 export class ProjectionCoordinator<TMessage, TOptimistic> {
   private projectedItemsCacheIdentity: string | null = null
+
+  private readonly edgeStatusOverrides: Partial<
+    Record<ViewportEdge, ViewportEdgeStatus>
+  > = {}
 
   private readonly projectedItemsCache = new Map<
     string,
@@ -43,6 +49,7 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
     const width = container?.clientWidth ?? 0
     const cacheIdentity = getDataCacheIdentity(input.data)
 
+    this.reconcileEdgeStatusOverrides(input.data)
     this.spacer.setRangeCacheIdentity(cacheIdentity)
     this.setProjectedItemsCacheIdentity(cacheIdentity)
 
@@ -70,7 +77,7 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
       input.data,
       input.bottomLockState,
     )
-    const edgeState = createEdgeState(input.data)
+    const edgeState = this.createProjectedEdgeState(input.data)
     const viewportPhase = input.viewportPhase ?? current.viewportPhase
     // revision 只在 React 需要重新 commit 时递增；相同 projection 复用快照，避免空事务等待 ack。
     const nextRevision = this.isProjectionEqual(current, {
@@ -132,6 +139,42 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
 
     return left.itemKeys.every((key, index) =>
       areRuntimeItemKeysEqual(key, right.itemKeys[index]),
+    )
+  }
+
+  setEdgeStatus(edge: ViewportEdge, status: ViewportEdgeStatus): boolean {
+    const previous = this.edgeStatusOverrides[edge] ?? 'idle'
+
+    if (previous === status) {
+      return false
+    }
+
+    if (status === 'idle') {
+      delete this.edgeStatusOverrides[edge]
+    } else {
+      this.edgeStatusOverrides[edge] = status
+    }
+
+    return true
+  }
+
+  clearEdgeStatus(edge: ViewportEdge): boolean {
+    return this.setEdgeStatus(edge, 'idle')
+  }
+
+  clearEdgeStatuses(): boolean {
+    const changed = Boolean(
+      this.edgeStatusOverrides.before || this.edgeStatusOverrides.after,
+    )
+
+    delete this.edgeStatusOverrides.before
+    delete this.edgeStatusOverrides.after
+    return changed
+  }
+
+  hasEdgeStatusOverrides(): boolean {
+    return Boolean(
+      this.edgeStatusOverrides.before || this.edgeStatusOverrides.after,
     )
   }
 
@@ -213,6 +256,35 @@ export class ProjectionCoordinator<TMessage, TOptimistic> {
     }
 
     this.projectedItemsCache.set(cacheKey, items)
+  }
+
+  private createProjectedEdgeState(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): ViewportEdgeState {
+    const base = createEdgeState(data)
+
+    return {
+      before:
+        base.before === 'exhausted'
+          ? base.before
+          : this.edgeStatusOverrides.before ?? base.before,
+      after:
+        base.after === 'exhausted'
+          ? base.after
+          : this.edgeStatusOverrides.after ?? base.after,
+    }
+  }
+
+  private reconcileEdgeStatusOverrides(
+    data: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): void {
+    if (!data.hasMoreBefore) {
+      delete this.edgeStatusOverrides.before
+    }
+
+    if (!data.hasMoreAfter) {
+      delete this.edgeStatusOverrides.after
+    }
   }
 
   private emitProjectionDiagnostic(
