@@ -173,6 +173,8 @@ describe('collectE2EState', () => {
       'drag_scrollbar_to_top',
       'drag_scrollbar_to_bottom',
       'reattach_runtime',
+      'toggle_event_storm',
+      'toggle_bot_push',
     ])
     expect(actions.every((action) => action.enabled)).toBe(true)
   })

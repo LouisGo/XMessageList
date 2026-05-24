@@ -332,6 +332,45 @@ export function expectViewportErrorObserved(
       })
 }
 
+export function expectNoWhiteScreen(evidence: E2EEvidence): E2EOracleResult {
+  const failures: string[] = []
+
+  if (evidence.viewport.renderedRows <= 0) {
+    failures.push(`rendered rows is ${evidence.viewport.renderedRows}`)
+  }
+
+  if (evidence.console.errors.length > 0) {
+    failures.push(`console errors is ${evidence.console.errors.length}`)
+  }
+
+  return failures.length === 0
+    ? pass('expectNoWhiteScreen', 'message list has rendered rows')
+    : fail('expectNoWhiteScreen', 'message list is blank or errored', {
+        failures,
+      })
+}
+
+export function expectDestinationOutcomeRecorded(
+  evidence: E2EEvidence,
+): E2EOracleResult {
+  const hasSettled = evidence.events.destinationSettled.length > 0
+  const hasCancelDiagnostic = evidence.diagnostics.recent.some(
+    (record) => record.name.startsWith('destinationMotion.cancel'),
+  )
+  const hasViewportError = evidence.events.viewportErrors.length > 0
+
+  return hasSettled || hasCancelDiagnostic || hasViewportError
+    ? pass('expectDestinationOutcomeRecorded', 'destination outcome is recorded')
+    : fail(
+        'expectDestinationOutcomeRecorded',
+        'destination outcome evidence is missing',
+        {
+          destinationSettled: evidence.events.destinationSettled,
+          viewportErrors: evidence.events.viewportErrors,
+        },
+      )
+}
+
 function pass(oracleId: string, message: string): E2EOracleResult {
   return {
     ok: true,

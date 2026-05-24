@@ -624,6 +624,20 @@ export function listE2EActions(state: E2EState): E2EActionDescriptor[] {
       enabled: pageReady,
       reasonDisabled: pageReady ? undefined : 'scenario is not ready',
     },
+    {
+      id: 'toggle_event_storm',
+      label: 'Toggle event storm',
+      category: 'mock',
+      enabled: pageReady && feedReady,
+      reasonDisabled: pageReady && feedReady ? undefined : 'feed is not ready',
+    },
+    {
+      id: 'toggle_bot_push',
+      label: 'Toggle bot push',
+      category: 'mock',
+      enabled: pageReady && feedReady,
+      reasonDisabled: pageReady && feedReady ? undefined : 'feed is not ready',
+    },
   ]
 }
 
@@ -786,6 +800,22 @@ export async function runE2EAction(input: {
         await waitForCondition(input.readState, isRuntimeIdleForAction, {
           timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
           failureCode: 'reattach_runtime_timeout',
+        })
+        break
+      case 'toggle_event_storm':
+        input.scenario.toggleEventStorm()
+        await waitForActionPublication()
+        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
+          failureCode: 'toggle_event_storm_timeout',
+        })
+        break
+      case 'toggle_bot_push':
+        input.scenario.toggleBotPush()
+        await waitForActionPublication()
+        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
+          failureCode: 'toggle_bot_push_timeout',
         })
         break
     }

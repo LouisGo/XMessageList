@@ -90,6 +90,27 @@ const P0_SCENARIOS: E2EScenarioDefinition[] = [
     seedCount: DEFAULT_FEED.seedCount,
     seedLabel: 'p2-bootstrap-commit-timeout-v1',
   },
+  {
+    id: 'storm.quote-jump-during-event-storm',
+    title: 'Quote jump during event storm',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p3-quote-jump-event-storm-v1',
+  },
+  {
+    id: 'storm.follow-bottom-with-bot-push',
+    title: 'Follow bottom with bot push',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p3-follow-bottom-bot-push-v1',
+  },
+  {
+    id: 'storm.dynamic-height-session-switch',
+    title: 'Dynamic height session switch storm',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p3-dynamic-height-session-switch-v1',
+  },
 ]
 
 export function getE2EScenarioDefinition(

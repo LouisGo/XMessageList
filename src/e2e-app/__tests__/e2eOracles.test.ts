@@ -13,15 +13,21 @@ import {
   getE2EP2ScenarioDefinition,
 } from '../e2eP2Scenarios'
 import {
+  E2E_P3_SCENARIO_DEFINITIONS,
+  getE2EP3ScenarioDefinition,
+} from '../e2eP3Scenarios'
+import {
   expectAnchorPreserved,
   expectBottomLocked,
   expectDestinationSettledOnTarget,
+  expectDestinationOutcomeRecorded,
   expectDiagnosticObserved,
   expectLatestMessageVisible,
   expectNeedMoreAfterWithin,
   expectNeedMoreBeforeWithin,
   expectNoFeedPollution,
   expectNoFollowWhenUserReading,
+  expectNoWhiteScreen,
   expectRuntimeIdle,
   expectRuntimeAttachedOnce,
   expectViewportErrorObserved,
@@ -206,6 +212,22 @@ describe('e2e deterministic oracles', () => {
       ).ok,
     ).toBe(true)
   })
+
+  it('checks P3 stress helpers without promoting them to gates', () => {
+    expect(expectNoWhiteScreen(createEvidence()).ok).toBe(true)
+    expect(
+      expectDestinationOutcomeRecorded(createEvidence({
+        events: {
+          destinationSettled: [{
+            intent: 'jump',
+            targetMessageId: 'feed-runtime-m-80',
+            resolvedMessageId: 'feed-runtime-m-80',
+            resolution: 'target',
+          }],
+        },
+      })).ok,
+    ).toBe(true)
+  })
 })
 
 describe('P0 e2e scenario definitions', () => {
@@ -259,6 +281,24 @@ describe('P2 e2e scenario definitions', () => {
       expect(getE2EScenarioDefinition(scenario.id)).not.toBeNull()
       expect(getE2EP2ScenarioDefinition(scenario.id)).toBe(scenario)
       expect(scenario.priority).toBe('P2')
+      expect(scenario.oracleIds.length).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('P3 e2e scenario definitions', () => {
+  it('defines registered exploratory P3 scenarios', () => {
+    expect(E2E_P3_SCENARIO_DEFINITIONS.map((scenario) => scenario.id)).toEqual([
+      'storm.quote-jump-during-event-storm',
+      'storm.follow-bottom-with-bot-push',
+      'storm.dynamic-height-session-switch',
+    ])
+
+    for (const scenario of E2E_P3_SCENARIO_DEFINITIONS) {
+      expect(getE2EScenarioDefinition(scenario.id)).not.toBeNull()
+      expect(getE2EP3ScenarioDefinition(scenario.id)).toBe(scenario)
+      expect(scenario.priority).toBe('P3')
+      expect(scenario.gate).toBe('exploratory')
       expect(scenario.oracleIds.length).toBeGreaterThan(0)
     }
   })

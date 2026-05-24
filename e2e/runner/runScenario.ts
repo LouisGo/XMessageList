@@ -22,6 +22,11 @@ import {
   type E2EP2ScenarioDefinition,
 } from '../../src/e2e-app/e2eP2Scenarios.ts'
 import {
+  E2E_P3_SCENARIO_DEFINITIONS,
+  getE2EP3ScenarioDefinition,
+  type E2EP3ScenarioDefinition,
+} from '../../src/e2e-app/e2eP3Scenarios.ts'
+import {
   expectAnchorPreserved,
   expectBottomLocked,
   expectDestinationSettledOnTarget,
@@ -31,6 +36,8 @@ import {
   expectNeedMoreBeforeWithin,
   expectNoFeedPollution,
   expectNoFollowWhenUserReading,
+  expectNoWhiteScreen,
+  expectDestinationOutcomeRecorded,
   expectRuntimeIdle,
   expectRuntimeAttachedOnce,
   expectViewportErrorObserved,
@@ -42,7 +49,7 @@ type RunnerOptions = {
   cdpEndpoint: string
   outDir: string
   scenarioId?: string
-  priority: 'P0' | 'P1' | 'P2' | 'all'
+  priority: 'P0' | 'P1' | 'P2' | 'P3' | 'all'
   timeoutMs: number
   help: boolean
 }
@@ -79,6 +86,7 @@ type RunnableScenarioDefinition =
   | E2EP0ScenarioDefinition
   | E2EP1ScenarioDefinition
   | E2EP2ScenarioDefinition
+  | E2EP3ScenarioDefinition
 
 const DEFAULT_OPTIONS: RunnerOptions = {
   baseUrl: 'http://127.0.0.1:5173',
@@ -448,6 +456,41 @@ function evaluateScenarioOracles(
     ]
   }
 
+  if (definition.id === 'storm.quote-jump-during-event-storm') {
+    const after = checkpoints.after ?? finalEvidence
+
+    return [
+      expectNoWhiteScreen(after),
+      expectRuntimeIdle(after),
+      expectDestinationOutcomeRecorded(after),
+    ]
+  }
+
+  if (definition.id === 'storm.follow-bottom-with-bot-push') {
+    const after = checkpoints.after ?? finalEvidence
+
+    return [
+      expectNoWhiteScreen(after),
+      expectRuntimeIdle(after),
+      expectBottomLocked(after, { thresholdPx: 1 }),
+    ]
+  }
+
+  if (definition.id === 'storm.dynamic-height-session-switch') {
+    const before = checkpoints.before
+    const after = checkpoints.after ?? finalEvidence
+
+    if (!before) {
+      return [missingEvidenceOracle('expectNoFeedPollution', 'before')]
+    }
+
+    return [
+      expectNoWhiteScreen(after),
+      expectRuntimeIdle(after),
+      expectNoFeedPollution(before, after),
+    ]
+  }
+
   return [missingEvidenceOracle('unknownScenario', definition.id)]
 }
 
@@ -666,16 +709,22 @@ function resolveScenarioDefinitions(
       return E2E_P2_SCENARIO_DEFINITIONS
     }
 
+    if (options.priority === 'P3') {
+      return E2E_P3_SCENARIO_DEFINITIONS
+    }
+
     return [
       ...E2E_P0_SCENARIO_DEFINITIONS,
       ...E2E_P1_SCENARIO_DEFINITIONS,
       ...E2E_P2_SCENARIO_DEFINITIONS,
+      ...E2E_P3_SCENARIO_DEFINITIONS,
     ]
   }
 
   const definition = getE2EP0ScenarioDefinition(options.scenarioId) ??
     getE2EP1ScenarioDefinition(options.scenarioId) ??
-    getE2EP2ScenarioDefinition(options.scenarioId)
+    getE2EP2ScenarioDefinition(options.scenarioId) ??
+    getE2EP3ScenarioDefinition(options.scenarioId)
 
   if (!definition) {
     throw new Error(`unknown e2e scenario ${options.scenarioId}`)
@@ -742,11 +791,17 @@ function parseArgs(argv: string[]): RunnerOptions {
 }
 
 function parsePriority(value: string): RunnerOptions['priority'] {
-  if (value === 'P0' || value === 'P1' || value === 'P2' || value === 'all') {
+  if (
+    value === 'P0' ||
+    value === 'P1' ||
+    value === 'P2' ||
+    value === 'P3' ||
+    value === 'all'
+  ) {
     return value
   }
 
-  throw new Error('--priority must be P0, P1, P2, or all')
+  throw new Error('--priority must be P0, P1, P2, P3, or all')
 }
 
 function readArgValue(argv: string[], index: number, arg: string): string {
@@ -797,7 +852,7 @@ function helpText(): string {
     '  --base-url <url>      E2E host base URL. Default: http://127.0.0.1:5173',
     '  --cdp <url>           Chrome DevTools endpoint. Default: http://127.0.0.1:9222',
     '  --out <dir>           Artifact directory. Default: .logs/e2e',
-    '  --priority <value>    P0, P1, P2, or all. Default: P0',
+    '  --priority <value>    P0, P1, P2, P3, or all. Default: P0',
     '  --timeout-ms <ms>     Per-step timeout. Default: 30000',
     '',
     'Chrome must be running with --remote-debugging-port=9222, and the Vite dev server must already serve /e2e.',
