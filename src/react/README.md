@@ -16,6 +16,8 @@ Rules:
 - subscribe with `useSyncExternalStore`
 - send `notifyProjectionCommitted` from `useLayoutEffect`
 - register row/spacer/sentinel DOM through ref callbacks
+- invalidate rows by item version/contentVersion or explicit
+  `getRowRenderVersion`
 - do not compute RenderWindow in React
 - do not measure row height in React
 - do not read or write `scrollTop` in React

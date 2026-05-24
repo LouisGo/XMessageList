@@ -1,4 +1,4 @@
-import { StrictMode, act, useEffect } from 'react'
+import { StrictMode, act, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -665,6 +665,164 @@ describe('React adapter', () => {
     })
 
     expect(renderMessage).toHaveBeenCalledTimes(3)
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('uses explicit row render versions instead of volatile render prop identity', async () => {
+    const listeners = new Set<() => void>()
+    const itemA = {
+      kind: 'committed' as const,
+      key: { kind: 'committed' as const, messageId: 'm-1' },
+      message: { id: 'm-1' },
+      version: 1,
+      contentVersion: 1,
+      estimatedHeight: 48,
+    }
+    const itemB = {
+      kind: 'committed' as const,
+      key: { kind: 'committed' as const, messageId: 'm-2' },
+      message: { id: 'm-2' },
+      version: 1,
+      contentVersion: 1,
+      estimatedHeight: 48,
+    }
+    const snapshot: MessageViewportSnapshot<TestMessage> = {
+      feedId: 'feed',
+      generation: 1,
+      revision: 1,
+      items: [itemA, itemB],
+      renderWindow: {
+        startIndex: 0,
+        endIndex: 1,
+        itemKeys: [itemA.key, itemB.key],
+      },
+      topSpacer: 0,
+      bottomSpacer: 0,
+      bottomLockState: 'UNLOCKED',
+      bootstrapState: 'READY',
+      viewportPhase: 'IDLE',
+      edgeState: {
+        before: 'idle',
+        after: 'idle',
+      },
+    }
+    const runtime = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+
+        return () => {
+          listeners.delete(listener)
+        }
+      },
+      attach: vi.fn(),
+      detach: vi.fn(),
+      dispatch: vi.fn(),
+      notifyProjectionCommitted: vi.fn(),
+      registerRow: vi.fn(),
+      registerTopSentinel: vi.fn(),
+      registerBottomSentinel: vi.fn(),
+      registerTopSpacer: vi.fn(),
+      registerBottomSpacer: vi.fn(),
+      subscribeEvent: vi.fn(() => () => {}),
+      beginDirectScroll: vi.fn(),
+      writeDirectScrollTop: vi.fn(),
+      endDirectScroll: vi.fn(),
+      getViewportAnchorState: vi.fn(() => null),
+      getDiagnosticRecords: vi.fn(() => []),
+      getDebugSnapshot: vi.fn(),
+    } as unknown as MessageViewportRuntime<TestMessage>
+    const renderCounts = new Map<string, number>()
+    let rerenderShell: () => void = () => {
+      throw new Error('rerenderShell not wired')
+    }
+    let setHighlightedMessage: (messageId: string | null) => void = () => {
+      throw new Error('setHighlightedMessage not wired')
+    }
+
+    function Harness() {
+      const [, setShellVersion] = useState(0)
+      const [highlightedMessageId, setHighlightedMessageId] = useState<
+        string | null
+      >(null)
+
+      useEffect(() => {
+        rerenderShell = () => setShellVersion((version) => version + 1)
+        setHighlightedMessage = setHighlightedMessageId
+      }, [setHighlightedMessageId, setShellVersion])
+
+      return (
+        <MessageViewport
+          runtime={runtime}
+          renderMessage={(item) => {
+            if (item.kind !== 'committed') {
+              return null
+            }
+
+            renderCounts.set(
+              item.message.id,
+              (renderCounts.get(item.message.id) ?? 0) + 1,
+            )
+            return (
+              <span
+                data-testid={`row-content-${item.message.id}`}
+                data-highlighted={
+                  highlightedMessageId === item.message.id ? 'true' : 'false'
+                }
+              >
+                {item.message.id}
+              </span>
+            )
+          }}
+          getRowRenderVersion={(item) =>
+            item.kind === 'committed' &&
+            item.message.id === highlightedMessageId
+              ? `highlight:${item.message.id}`
+              : 'normal'
+          }
+          customScrollbar={false}
+        />
+      )
+    }
+
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(<Harness />)
+    })
+
+    expect(renderCounts.get('m-1')).toBe(1)
+    expect(renderCounts.get('m-2')).toBe(1)
+
+    await act(async () => {
+      rerenderShell()
+    })
+
+    expect(renderCounts.get('m-1')).toBe(1)
+    expect(renderCounts.get('m-2')).toBe(1)
+
+    await act(async () => {
+      setHighlightedMessage('m-2')
+    })
+
+    expect(renderCounts.get('m-1')).toBe(1)
+    expect(renderCounts.get('m-2')).toBe(2)
+    expect(
+      host
+        .querySelector('[data-testid="row-content-m-2"]')
+        ?.getAttribute('data-highlighted'),
+    ).toBe('true')
+
+    await act(async () => {
+      setHighlightedMessage(null)
+    })
+
+    expect(renderCounts.get('m-1')).toBe(1)
+    expect(renderCounts.get('m-2')).toBe(3)
 
     await act(async () => {
       root.unmount()

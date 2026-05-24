@@ -75,6 +75,8 @@ type MemoizedMessageRowProjectionProps<
   item: MessageDataItem<TMessage, TOptimistic>
   runtime: MessageViewportRuntime<TMessage, TOptimistic>
   renderMessage: (item: MessageDataItem<TMessage, TOptimistic>) => ReactNode
+  rowRenderVersion?: unknown
+  usesExplicitRowRenderVersion: boolean
   testId?: string
 }
 
@@ -103,9 +105,17 @@ function areMessageRowProjectionPropsEqual<TMessage, TOptimistic>(
   previous: MemoizedMessageRowProjectionProps<TMessage, TOptimistic>,
   next: MemoizedMessageRowProjectionProps<TMessage, TOptimistic>,
 ): boolean {
+  const renderMessageEqual =
+    previous.usesExplicitRowRenderVersion && next.usesExplicitRowRenderVersion
+      ? true
+      : previous.renderMessage === next.renderMessage
+
   return (
     previous.runtime === next.runtime &&
-    previous.renderMessage === next.renderMessage &&
+    renderMessageEqual &&
+    previous.usesExplicitRowRenderVersion ===
+      next.usesExplicitRowRenderVersion &&
+    Object.is(previous.rowRenderVersion, next.rowRenderVersion) &&
     previous.testId === next.testId &&
     serializeRuntimeItemKey(getRuntimeItemKey(previous.item)) ===
       serializeRuntimeItemKey(getRuntimeItemKey(next.item)) &&
@@ -120,6 +130,14 @@ export type MessageViewportProps<
 > = {
   runtime: MessageViewportRuntime<TMessage, TOptimistic>
   renderMessage: (item: MessageDataItem<TMessage, TOptimistic>) => ReactNode
+  /**
+   * Optional explicit invalidation for row output that depends on external
+   * UI state outside the MessageDataItem. When provided, row memoization uses
+   * this value instead of renderMessage function identity.
+   */
+  getRowRenderVersion?: (
+    item: MessageDataItem<TMessage, TOptimistic>,
+  ) => unknown
   className?: string
   style?: CSSProperties
   bottomSlot?: ReactNode
@@ -278,6 +296,7 @@ export function MessageViewport<
 >({
   runtime,
   renderMessage,
+  getRowRenderVersion,
   className,
   style,
   bottomSlot,
@@ -376,6 +395,8 @@ export function MessageViewport<
                 item={item}
                 runtime={runtime}
                 renderMessage={renderMessage}
+                rowRenderVersion={getRowRenderVersion?.(item)}
+                usesExplicitRowRenderVersion={Boolean(getRowRenderVersion)}
                 testId={`message-row-${serializedKey}`}
               />
             )

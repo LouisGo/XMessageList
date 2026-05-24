@@ -204,6 +204,24 @@ React projection 禁止：
 - query runtime DOM 结构来持久化 anchor。
 - 注册 raw scroll listener 来重建 scroll-idle / pagination timing。
 
+## 6.1 Row Render Invalidation
+
+Message row 的重新渲染条件必须显式：
+
+- runtime item key 变化。
+- item `version` / `contentVersion` 变化。
+- 接入方通过 `getRowRenderVersion(item)` 暴露的外部行态变化。
+
+`renderMessage` 函数引用本身不应成为行级失效信号。原因是 demo/app 的
+shell 状态，例如 pending operation、日志文案、feed list 选中态，都会导致父
+组件 render；如果把新的 render prop 引用继续传染给每一条 row，单条消息交互
+就会退化成整屏 row renderer 重新执行。
+
+当业务 row JSX 依赖 item 以外的 UI 状态时，必须把该状态压缩成
+`getRowRenderVersion(item)` 的返回值。这个返回值应只在对应 row 需要重算时
+变化。例如 jump highlight 可以只让旧 highlighted row 和新 highlighted row
+的 version 变化，不能让整屏 row 跟随 sidebar 文案或 pending 状态重算。
+
 ## 7. Snapshot Granularity
 
 React 应只订阅一个 projection snapshot。

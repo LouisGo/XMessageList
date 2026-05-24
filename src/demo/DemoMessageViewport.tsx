@@ -2,6 +2,7 @@ import {
   type FormEvent,
   type PointerEvent,
   type MouseEvent,
+  useCallback,
   useState,
 } from 'react'
 import {
@@ -16,6 +17,14 @@ export function DemoMessageViewport() {
   const runtimeCache = useDemoFeedRuntimeCache()
   const scenario = useDemoMessageScenario(runtimeCache)
   const [draft, setDraft] = useState('')
+  const {
+    deleteMessage,
+    editMessage,
+    highlightedMessageId,
+    highlightToken,
+    jumpToQuote,
+    reactToMessage,
+  } = scenario
 
   const sendDraft = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -25,7 +34,7 @@ export function DemoMessageViewport() {
     }
   }
 
-  const renderDemoItem = (item: MessageDataItem<DemoMessage>) => {
+  const renderDemoItem = useCallback((item: MessageDataItem<DemoMessage>) => {
     if (item.kind === 'tombstone') {
       return <article className="message-row system">Message unavailable</article>
     }
@@ -36,13 +45,13 @@ export function DemoMessageViewport() {
 
     const message = item.message
     const quote = message.quote
-    const isHighlighted = scenario.highlightedMessageId === message.id
+    const isHighlighted = highlightedMessageId === message.id
     const jumpToMessageQuote = () => {
       if (!quote) {
         return
       }
 
-      scenario.jumpToQuote({
+      jumpToQuote({
         origin: {
           messageId: message.id,
           position: message.sequence,
@@ -75,7 +84,7 @@ export function DemoMessageViewport() {
 
     return (
       <article
-        key={isHighlighted ? `highlight-${scenario.highlightToken}` : 'normal'}
+        key={isHighlighted ? `highlight-${highlightToken}` : 'normal'}
         className={[
           'message-row',
           message.tone,
@@ -97,7 +106,7 @@ export function DemoMessageViewport() {
                     const nextBody = window.prompt('Edit message', message.body)
 
                     if (typeof nextBody === 'string') {
-                      scenario.editMessage(message.id, nextBody)
+                      editMessage(message.id, nextBody)
                     }
                   }}
                 >
@@ -108,7 +117,7 @@ export function DemoMessageViewport() {
                 type="button"
                 className="message-row-action"
                 data-testid={`react-message-${message.id}`}
-                onClick={() => scenario.reactToMessage(message.id)}
+                onClick={() => reactToMessage(message.id)}
               >
                 React
               </button>
@@ -116,7 +125,7 @@ export function DemoMessageViewport() {
                 type="button"
                 className="message-row-action danger"
                 data-testid={`delete-message-${message.id}`}
-                onClick={() => scenario.deleteMessage(message.id)}
+                onClick={() => deleteMessage(message.id)}
               >
                 Delete
               </button>
@@ -159,7 +168,26 @@ export function DemoMessageViewport() {
         ) : null}
       </article>
     )
-  }
+  }, [
+    deleteMessage,
+    editMessage,
+    highlightedMessageId,
+    highlightToken,
+    jumpToQuote,
+    reactToMessage,
+  ])
+
+  const getDemoRowRenderVersion = useCallback((
+    item: MessageDataItem<DemoMessage>,
+  ) => {
+    if (item.kind !== 'committed') {
+      return item.kind
+    }
+
+    return item.message.id === highlightedMessageId
+      ? `highlight:${highlightToken}`
+      : 'normal'
+  }, [highlightedMessageId, highlightToken])
 
   return (
     <main className="demo-shell">
@@ -309,6 +337,7 @@ export function DemoMessageViewport() {
             runtime={scenario.activeRuntime}
             className="message-viewport"
             renderMessage={renderDemoItem}
+            getRowRenderVersion={getDemoRowRenderVersion}
             renderTopEdge={() =>
               scenario.loadingBefore ? (
                 <div className="history-loading">Loading older messages...</div>
