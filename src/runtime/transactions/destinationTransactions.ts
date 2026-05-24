@@ -6,13 +6,9 @@ import type {
   MessageRuntimeItemKey,
   ViewportTransactionKind,
 } from '../types'
-import type {
-  DestinationMotionForcedStart,
-} from '../core/state/runtimeTypes'
-import {
-  createSettledRestoreAnchor,
-  getJumpResolution,
-} from './transactionShared'
+import type { DestinationMotionForcedStart } from '../core/state/runtimeTypes'
+import { createSettledRestoreAnchor, getJumpResolution } from './transactionShared'
+import { resolveMeasuredTarget } from './measurementReadinessBarrier'
 
 export async function runJumpTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
@@ -68,15 +64,15 @@ export async function runJumpTransaction<TMessage, TOptimistic>(
 
     await deps.commit.waitForChanged(projection, 'jump')
     deps.setDestinationState('resolvingDom')
-    const target =
-      deps.anchor.getDirectMeasurableRow(targetKey) ??
-      (await deps.anchor.resolveMeasurableRowForTarget({
-        data,
-        targetKey,
-        targetIndex,
-        renderWindow,
-        missingDomErrorCode: 'jump-target-dom-missing',
-      }))
+    const targetResult = resolveMeasuredTarget(deps, {
+      data,
+      targetKey,
+      targetIndex,
+      renderWindow,
+      missingDomErrorCode: 'jump-target-dom-missing',
+      transactionKind: 'jump',
+    })
+    const target = targetResult instanceof Promise ? await targetResult : targetResult
 
     if (!target) {
       deps.recoverAfterCommitFailure({
@@ -230,15 +226,16 @@ export async function runAnchorRestoreTransaction<TMessage, TOptimistic>(
       deps.setDestinationState('resolvingDom')
     }
 
+    const resolvedResult = resolveMeasuredTarget(deps, {
+      data,
+      targetKey: restoreTarget.key,
+      targetIndex: restoreTarget.index,
+      renderWindow,
+      missingDomErrorCode: options.missingDomErrorCode,
+      transactionKind: options.transactionKind,
+    })
     const resolvedRestoreTarget =
-      deps.anchor.getDirectMeasurableRow(restoreTarget.key) ??
-      (await deps.anchor.resolveMeasurableRowForTarget({
-        data,
-        targetKey: restoreTarget.key,
-        targetIndex: restoreTarget.index,
-        renderWindow,
-        missingDomErrorCode: options.missingDomErrorCode,
-      }))
+      resolvedResult instanceof Promise ? await resolvedResult : resolvedResult
 
     if (!resolvedRestoreTarget) {
       deps.recoverAfterCommitFailure({
@@ -254,7 +251,6 @@ export async function runAnchorRestoreTransaction<TMessage, TOptimistic>(
       return
     }
 
-    deps.measureCurrentWindow()
     if (options.updateDestinationState) {
       deps.setDestinationState('resolvingDom')
     }

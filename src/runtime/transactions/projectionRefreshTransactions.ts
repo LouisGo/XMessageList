@@ -1,6 +1,10 @@
 import type { AnchorState, MessageDataSnapshot } from '../types'
 import { shouldRunDataMutationTransaction } from './dataMutationTransaction'
 import type { ViewportTransactionDeps } from './viewportTransactionController'
+import {
+  captureAnchorTop,
+  correctPreservedAnchorAfterCommit,
+} from './scrollCorrectionLedger'
 
 export async function runProjectionRefreshTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
@@ -76,8 +80,7 @@ export async function runProjectionRefreshTransaction<TMessage, TOptimistic>(
   }
 
   const anchor = deps.anchor.captureViewportAnchor()
-  const anchorElementBefore = anchor ? deps.registry.getRow(anchor.key) : null
-  const anchorTopBefore = anchorElementBefore?.getBoundingClientRect().top
+  const anchorTopBefore = anchor ? captureAnchorTop(deps, anchor.key) : null
   deps.setTransactionState('active')
   deps.setViewportPhase('PROJECTING')
   const projection = deps.projection.publish({
@@ -92,20 +95,37 @@ export async function runProjectionRefreshTransaction<TMessage, TOptimistic>(
 
   let settledAnchor: AnchorState | null | undefined
 
-  if (anchor && typeof anchorTopBefore === 'number') {
+  if (anchor) {
     // 普通 refresh 不改变用户正在看的 anchor；只在 commit 后 DOM 真正更新时补偿滚动。
-    const anchorElementAfter = deps.registry.getRow(anchor.key)
-    const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
-    deps.measureCurrentWindow()
+    const anchorIndex = deps.renderWindow.findIndexByKey(data.items, anchor.key)
 
-    if (typeof anchorTopAfter === 'number') {
-      const delta = anchorTopAfter - anchorTopBefore
-      deps.setViewportPhase('CORRECTING')
+    if (anchorIndex >= 0) {
+      const correctionResult = correctPreservedAnchorAfterCommit(deps, {
+        data,
+        container,
+        renderWindow,
+        target: {
+          key: anchor.key,
+          offsetWithinMessage: anchor.offsetWithinMessage,
+          index: anchorIndex,
+        },
+        anchorTopBefore,
+        missingDomErrorCode: 'projection-refresh-anchor-after-missing',
+        missingAnchorAfterPolicy: 'measure-only',
+      })
+      const correction =
+        correctionResult instanceof Promise
+          ? await correctionResult
+          : correctionResult
 
-      if (Math.abs(delta) > 0.5) {
-        deps.motion.writeScrollTop(container.scrollTop + delta, 'recovery')
+      if (
+        correction.status === 'applied' ||
+        correction.status === 'within-epsilon'
+      ) {
+        settledAnchor = anchor
       }
-      settledAnchor = anchor
+    } else {
+      deps.measureCurrentWindow()
     }
   } else {
     deps.measureCurrentWindow()

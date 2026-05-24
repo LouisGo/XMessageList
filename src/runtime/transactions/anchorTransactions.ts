@@ -7,6 +7,10 @@ import type {
   RenderWindow,
 } from '../types'
 import { shouldRunDataMutationTransaction } from './dataMutationTransaction'
+import {
+  captureAnchorTop,
+  correctPreservedAnchorAfterCommit,
+} from './scrollCorrectionLedger'
 
 export async function runPrependTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
@@ -25,10 +29,9 @@ export async function runPrependTransaction<TMessage, TOptimistic>(
     return
   }
 
-  const anchorElementBefore = deps.registry.getRow(anchor.key)
-  const anchorTopBefore = anchorElementBefore?.getBoundingClientRect().top
+  const anchorTopBefore = captureAnchorTop(deps, anchor.key)
 
-  if (typeof anchorTopBefore !== 'number') {
+  if (anchorTopBefore === null) {
     deps.emitError('prepend-anchor-dom-missing')
     return
   }
@@ -59,10 +62,23 @@ export async function runPrependTransaction<TMessage, TOptimistic>(
 
     await deps.commit.waitForChanged(projection, 'prepend')
 
-    const anchorElementAfter = deps.registry.getRow(anchor.key)
-    const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
+    const correctionResult = correctPreservedAnchorAfterCommit(deps, {
+      data,
+      container,
+      renderWindow,
+      target: {
+        key: anchor.key,
+        offsetWithinMessage: anchor.offsetWithinMessage,
+        index: safeAnchorIndex,
+      },
+      anchorTopBefore,
+      missingDomErrorCode: 'prepend-anchor-after-missing',
+      missingAnchorAfterPolicy: 'return',
+    })
+    const correction =
+      correctionResult instanceof Promise ? await correctionResult : correctionResult
 
-    if (typeof anchorTopAfter !== 'number') {
+    if (correction.status === 'missing') {
       deps.emitError('prepend-anchor-after-missing')
       deps.recoverAfterCommitFailure({
         token,
@@ -73,15 +89,7 @@ export async function runPrependTransaction<TMessage, TOptimistic>(
       return
     }
 
-    const delta = anchorTopAfter - anchorTopBefore
-    deps.measureCurrentWindow()
     deps.setTransactionState('settling')
-    deps.setViewportPhase('CORRECTING')
-
-    if (Math.abs(delta) > 0.5) {
-      deps.motion.writeScrollTop(container.scrollTop + delta, 'recovery')
-    }
-
     deps.scrollIntent.setBottomLockState('UNLOCKED')
     deps.setViewportPhase('IDLE')
     deps.setTransactionState('idle')
@@ -132,10 +140,15 @@ export async function runWindowSlideTransaction<TMessage, TOptimistic>(
     return
   }
 
-  const anchorElementBefore = deps.registry.getRow(anchor.key)
-  const anchorTopBefore = anchorElementBefore?.getBoundingClientRect().top
+  const anchorTopBefore = captureAnchorTop(deps, anchor.key)
 
-  if (typeof anchorTopBefore !== 'number') {
+  if (anchorTopBefore === null) {
+    return
+  }
+
+  const anchorIndex = deps.renderWindow.findIndexByKey(data.items, anchor.key)
+
+  if (anchorIndex < 0) {
     return
   }
 
@@ -185,20 +198,21 @@ export async function runWindowSlideTransaction<TMessage, TOptimistic>(
     })
 
     await deps.commit.waitForChanged(projection, 'resize')
-
-    const anchorElementAfter = deps.registry.getRow(anchor.key)
-    const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
-
-    if (typeof anchorTopAfter === 'number') {
-      const delta = anchorTopAfter - anchorTopBefore
-      deps.measureCurrentWindow()
-      deps.setViewportPhase('CORRECTING')
-
-      if (Math.abs(delta) > 0.5) {
-        deps.motion.writeScrollTop(container.scrollTop + delta, 'recovery')
-      }
-    } else {
-      deps.measureCurrentWindow()
+    const correction = correctPreservedAnchorAfterCommit(deps, {
+      data,
+      container,
+      renderWindow: nextWindow,
+      target: {
+        key: anchor.key,
+        offsetWithinMessage: anchor.offsetWithinMessage,
+        index: anchorIndex,
+      },
+      anchorTopBefore,
+      missingDomErrorCode: 'window-slide-anchor-after-missing',
+      missingAnchorAfterPolicy: 'measure-only',
+    })
+    if (correction instanceof Promise) {
+      await correction
     }
 
     deps.setViewportPhase('IDLE')

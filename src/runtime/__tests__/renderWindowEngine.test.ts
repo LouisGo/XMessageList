@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { RenderWindowEngine } from '../window/renderWindowEngine'
-import type { SpacerEngine } from '../window/spacerEngine'
+import { SpacerEngine } from '../window/spacerEngine'
 import type { MessageDataItem } from '..'
 
 function createItems(count: number): MessageDataItem[] {
@@ -14,24 +14,13 @@ function createItems(count: number): MessageDataItem[] {
 }
 
 describe('RenderWindowEngine', () => {
-  it('reuses a prefix height index for repeated offset lookups', () => {
+  it('delegates spacer-only offset lookup to the spacer range index', () => {
     const items = createItems(5_000)
-    let estimateCalls = 0
-    let estimateRevision = 0
     const spacer = {
-      estimateItemHeight() {
-        estimateCalls += 1
-        return 10
-      },
-      getEstimateRevision() {
-        return estimateRevision
-      },
-      invalidateEstimateCache() {
-        estimateRevision += 1
-      },
+      findEstimatedIndexAtOffset: vi.fn(() => 122),
     } as Pick<
       SpacerEngine,
-      'estimateItemHeight' | 'getEstimateRevision' | 'invalidateEstimateCache'
+      'findEstimatedIndexAtOffset'
     > as SpacerEngine
     const engine = new RenderWindowEngine(
       { overscan: 3, maxMountedItems: 200 },
@@ -39,44 +28,45 @@ describe('RenderWindowEngine', () => {
     )
 
     expect(engine.findEstimatedIndexAtOffset(items, 1_230, 320)).toBe(122)
-    expect(estimateCalls).toBe(items.length)
-
-    expect(engine.findEstimatedIndexAtOffset(items, 8_880, 320)).toBe(887)
-    expect(estimateCalls).toBe(items.length)
+    expect(spacer.findEstimatedIndexAtOffset).toHaveBeenCalledWith(
+      items,
+      1_230,
+      320,
+    )
   })
 
-  it('rebuilds the prefix height index when spacer estimates change', () => {
-    const items = createItems(100)
-    let estimateCalls = 0
-    let estimateRevision = 0
-    let itemHeight = 10
+  it('does not query spacer indexes for an empty item set', () => {
     const spacer = {
-      estimateItemHeight() {
-        estimateCalls += 1
-        return itemHeight
-      },
-      getEstimateRevision() {
-        return estimateRevision
-      },
-      invalidateEstimateCache() {
-        estimateRevision += 1
-      },
+      findEstimatedIndexAtOffset: vi.fn(() => 0),
     } as Pick<
       SpacerEngine,
-      'estimateItemHeight' | 'getEstimateRevision' | 'invalidateEstimateCache'
+      'findEstimatedIndexAtOffset'
     > as SpacerEngine
     const engine = new RenderWindowEngine(
       { overscan: 3, maxMountedItems: 200 },
       spacer,
     )
 
-    expect(engine.findEstimatedIndexAtOffset(items, 250, 320)).toBe(24)
-    expect(estimateCalls).toBe(items.length)
+    expect(engine.findEstimatedIndexAtOffset([], 250, 320)).toBe(-1)
+    expect(spacer.findEstimatedIndexAtOffset).not.toHaveBeenCalled()
+  })
 
-    itemHeight = 50
-    spacer.invalidateEstimateCache()
+  it('reuses the spacer range index for spacer and offset queries in one revision', () => {
+    const items = createItems(20_000)
+    const spacer = new SpacerEngine(new Map())
+    const engine = new RenderWindowEngine(
+      { overscan: 3, maxMountedItems: 200 },
+      spacer,
+    )
+    const estimateItemHeight = vi.spyOn(spacer, 'estimateItemHeight')
 
-    expect(engine.findEstimatedIndexAtOffset(items, 250, 320)).toBe(4)
-    expect(estimateCalls).toBe(items.length * 2)
+    spacer.setRangeCacheIdentity('feed:1:1')
+    spacer.estimateRangeHeight(items, 0, 5_000, 320)
+    expect(estimateItemHeight).toHaveBeenCalledTimes(items.length)
+
+    engine.findEstimatedIndexAtOffset(items, 50_000, 320)
+    spacer.estimateRangeHeight(items, 5_000, 10_000, 320)
+
+    expect(estimateItemHeight).toHaveBeenCalledTimes(items.length)
   })
 })

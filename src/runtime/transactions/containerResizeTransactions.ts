@@ -1,5 +1,9 @@
 import type { ContainerSize } from '../core/state/runtimeTypes'
 import type { ViewportTransactionDeps } from './viewportTransactionController'
+import {
+  captureAnchorTop,
+  correctPreservedAnchorAfterCommit,
+} from './scrollCorrectionLedger'
 
 export async function runContainerResizeTransaction<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
@@ -17,8 +21,7 @@ export async function runContainerResizeTransaction<TMessage, TOptimistic>(
   const previousBottomLockState = deps.scrollIntent.getBottomLockState()
   const previousSnapshot = deps.store.getSnapshot()
   const anchor = deps.anchor.captureViewportAnchor()
-  const anchorElementBefore = anchor ? deps.registry.getRow(anchor.key) : null
-  const anchorTopBefore = anchorElementBefore?.getBoundingClientRect().top
+  const anchorTopBefore = anchor ? captureAnchorTop(deps, anchor.key) : null
   const widthInvalidated = deps.measurement.invalidateForWidth(nextSize.width)
   if (widthInvalidated) {
     deps.invalidateSpacerCache()
@@ -71,12 +74,9 @@ export async function runContainerResizeTransaction<TMessage, TOptimistic>(
     })
 
     await deps.commit.waitForChanged(projection, 'resize')
-    const anchorElementAfter =
-      !shouldFollowBottom && anchor ? deps.registry.getRow(anchor.key) : null
-    const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
-    deps.measureCurrentWindow()
 
     if (shouldFollowBottom) {
+      deps.measureCurrentWindow()
       if (hasActiveFollowBottomIntent) {
         deps.setDestinationState('resolvingDom')
         deps.motion.start({
@@ -100,16 +100,33 @@ export async function runContainerResizeTransaction<TMessage, TOptimistic>(
         bottomLockState: 'LOCKED',
         viewportPhase: 'IDLE',
       })
-    } else if (anchor && typeof anchorTopBefore === 'number') {
-      if (typeof anchorTopAfter === 'number') {
-        const delta = anchorTopAfter - anchorTopBefore
-        deps.setTransactionState('settling')
-        deps.setViewportPhase('CORRECTING')
+    } else if (anchor && anchorIndex >= 0) {
+      const correctionResult = correctPreservedAnchorAfterCommit(deps, {
+        data,
+        container,
+        renderWindow,
+        target: {
+          key: anchor.key,
+          offsetWithinMessage: anchor.offsetWithinMessage,
+          index: anchorIndex,
+        },
+        anchorTopBefore,
+        missingDomErrorCode: 'resize-anchor-after-missing',
+        missingAnchorAfterPolicy: 'measure-only',
+      })
+      const correction =
+        correctionResult instanceof Promise
+          ? await correctionResult
+          : correctionResult
 
-        if (Math.abs(delta) > 0.5) {
-          deps.motion.writeScrollTop(container.scrollTop + delta, 'recovery')
-        }
+      if (
+        correction.status === 'applied' ||
+        correction.status === 'within-epsilon'
+      ) {
+        deps.setTransactionState('settling')
       }
+    } else {
+      deps.measureCurrentWindow()
     }
 
     deps.setViewportPhase('IDLE')

@@ -45,6 +45,20 @@ describe('HeightRangeIndex', () => {
     expect(spacer.estimateRangeHeight(items, 0, 2, 320)).toBe(111)
   })
 
+  it('rebuilds derived ranges when the data revision identity changes', () => {
+    const items = createItems(100)
+    const spacer = new SpacerEngine(new Map())
+    const estimateItemHeight = vi.spyOn(spacer, 'estimateItemHeight')
+
+    spacer.setRangeCacheIdentity('feed:1:1')
+    spacer.estimateRangeHeight(items, 0, 20, 320)
+    expect(estimateItemHeight).toHaveBeenCalledTimes(items.length)
+
+    spacer.setRangeCacheIdentity('feed:1:2')
+    spacer.estimateRangeHeight(items, 0, 20, 320)
+    expect(estimateItemHeight).toHaveBeenCalledTimes(items.length * 2)
+  })
+
   it('keeps repeated 20k item range and offset queries to one index build', () => {
     const items = createItems(20_000)
     const spacer = new SpacerEngine(new Map())

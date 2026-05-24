@@ -6,6 +6,9 @@ import type {
 } from '../types'
 import type { RestoreTarget } from '../core/state/runtimeTypes'
 import type { ViewportTransactionDeps } from './viewportTransactionController'
+import {
+  correctPreservedAnchorAfterCommit as applyPreservedAnchorCorrection,
+} from './scrollCorrectionLedger'
 
 export async function correctPreservedAnchorAfterCommit<
   TMessage,
@@ -21,44 +24,10 @@ export async function correctPreservedAnchorAfterCommit<
     missingDomErrorCode: string
   },
 ): Promise<void> {
-  const anchorElementAfter = deps.registry.getRow(input.target.key)
-  const anchorTopAfter = anchorElementAfter?.getBoundingClientRect().top
-
-  deps.measureCurrentWindow()
-
-  if (
-    typeof input.anchorTopBefore === 'number' &&
-    typeof anchorTopAfter === 'number'
-  ) {
-    const delta = anchorTopAfter - input.anchorTopBefore
-    deps.setViewportPhase('CORRECTING')
-
-    if (Math.abs(delta) > 0.5) {
-      deps.motion.writeScrollTop(input.container.scrollTop + delta, 'recovery')
-    }
-    return
-  }
-
-  const resolved =
-    deps.anchor.getDirectMeasurableRow(input.target.key) ??
-    (await deps.anchor.resolveMeasurableRowForTarget({
-      data: input.data,
-      targetKey: input.target.key,
-      targetIndex: input.target.index,
-      renderWindow: input.renderWindow,
-      missingDomErrorCode: input.missingDomErrorCode,
-    }))
-
-  if (!resolved) {
-    return
-  }
-
-  deps.setViewportPhase('CORRECTING')
-  deps.anchor.alignToResolvedRestoreTarget(
-    input.container,
-    input.target,
-    resolved,
-  )
+  await applyPreservedAnchorCorrection(deps, {
+    ...input,
+    missingAnchorAfterPolicy: 'fallback-align',
+  })
 }
 
 export async function runAnchorlessReservedRefresh<TMessage, TOptimistic>(

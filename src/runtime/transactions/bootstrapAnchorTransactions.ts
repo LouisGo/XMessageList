@@ -2,6 +2,9 @@ import type { AnchorState, MessageDataSnapshot, MessageViewportSnapshot } from '
 import { areRuntimeItemKeysEqual } from '../shared/utils'
 import type { ViewportTransactionDeps } from './viewportTransactionController'
 import { assertBootstrapPolicy } from './bootstrapPhasePolicy'
+import {
+  resolveMeasuredTarget,
+} from './measurementReadinessBarrier'
 
 export async function runRestoredBootstrap<TMessage, TOptimistic>(
   deps: ViewportTransactionDeps<TMessage, TOptimistic>,
@@ -47,15 +50,16 @@ export async function runRestoredBootstrap<TMessage, TOptimistic>(
       viewportPhase: 'MEASURING',
     })
 
+    const restoredResult = resolveMeasuredTarget(deps, {
+      data,
+      targetKey: restoreTarget.key,
+      targetIndex: restoreTarget.index,
+      renderWindow,
+      missingDomErrorCode: 'bootstrap-restored-target-dom-missing',
+      transactionKind: 'bootstrap',
+    })
     const resolvedRestoreTarget =
-      deps.anchor.getDirectMeasurableRow(restoreTarget.key) ??
-      (await deps.anchor.resolveMeasurableRowForTarget({
-        data,
-        targetKey: restoreTarget.key,
-        targetIndex: restoreTarget.index,
-        renderWindow,
-        missingDomErrorCode: 'bootstrap-restored-target-dom-missing',
-      }))
+      restoredResult instanceof Promise ? await restoredResult : restoredResult
 
     if (!resolvedRestoreTarget) {
       deps.recoverAfterCommitFailure({
@@ -77,7 +81,6 @@ export async function runRestoredBootstrap<TMessage, TOptimistic>(
         : 0,
     }
 
-    deps.measureCurrentWindow()
     // restored bootstrap 对齐的是视觉 anchor + offset，不是简单把目标消息滚到顶部。
     assertBootstrapPolicy('STABILIZING', 'correction')
     deps.projection.publish({
@@ -164,15 +167,16 @@ export async function runUnreadBootstrap<TMessage, TOptimistic>(
       viewportPhase: 'MEASURING',
     })
 
+    const unreadResult = resolveMeasuredTarget(deps, {
+      data,
+      targetKey: unreadTarget.key,
+      targetIndex: unreadTarget.index,
+      renderWindow,
+      missingDomErrorCode: 'bootstrap-unread-target-dom-missing',
+      transactionKind: 'bootstrap',
+    })
     const resolvedUnreadTarget =
-      deps.anchor.getDirectMeasurableRow(unreadTarget.key) ??
-      (await deps.anchor.resolveMeasurableRowForTarget({
-        data,
-        targetKey: unreadTarget.key,
-        targetIndex: unreadTarget.index,
-        renderWindow,
-        missingDomErrorCode: 'bootstrap-unread-target-dom-missing',
-      }))
+      unreadResult instanceof Promise ? await unreadResult : unreadResult
 
     if (!resolvedUnreadTarget) {
       deps.recoverAfterCommitFailure({
@@ -184,7 +188,6 @@ export async function runUnreadBootstrap<TMessage, TOptimistic>(
       return
     }
 
-    deps.measureCurrentWindow()
     assertBootstrapPolicy('STABILIZING', 'correction')
     deps.projection.publish({
       data,

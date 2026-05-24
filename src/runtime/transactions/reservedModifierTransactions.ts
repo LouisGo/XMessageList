@@ -15,6 +15,7 @@ import {
   getValidIdentityRemaps,
   migrateAnchorState,
 } from './identityRemapUtils'
+import { captureAnchorTop } from './scrollCorrectionLedger'
 
 type AnchorPreservingKind = Extract<
   ViewportTransactionKind,
@@ -90,8 +91,7 @@ export async function runIdentityRebindTransaction<TMessage, TOptimistic>(
   const anchorBefore = capturedAnchor
     ? {
         anchor: migrateAnchorState(capturedAnchor, remaps),
-        top: deps.registry.getRow(capturedAnchor.key)?.getBoundingClientRect()
-          .top,
+        top: captureAnchorTop(deps, capturedAnchor.key),
       }
     : null
 
@@ -208,8 +208,7 @@ async function runAnchorPreservingMutationTransaction<TMessage, TOptimistic>(
     return
   }
 
-  const anchorTopBefore = deps.registry.getRow(anchor.key)?.getBoundingClientRect()
-    .top
+  const anchorTopBefore = captureAnchorTop(deps, anchor.key)
   const previousBottomLockState = deps.scrollIntent.getBottomLockState()
   const previousSnapshot = deps.store.getSnapshot()
   const token = deps.lifecycle.getCurrent()
@@ -233,14 +232,14 @@ async function runAnchorPreservingMutationTransaction<TMessage, TOptimistic>(
     })
 
     await deps.commit.waitForChanged(projection, transactionKind)
-    await correctPreservedAnchorAfterCommit(deps, {
-      data,
-      container,
-      renderWindow,
-      target,
-      anchorTopBefore: typeof anchorTopBefore === 'number' ? anchorTopBefore : null,
-      missingDomErrorCode: `${errorPrefix}-dom-missing`,
-    })
+      await correctPreservedAnchorAfterCommit(deps, {
+        data,
+        container,
+        renderWindow,
+        target,
+        anchorTopBefore,
+        missingDomErrorCode: `${errorPrefix}-dom-missing`,
+      })
     settleReservedTransaction(
       deps,
       data,
