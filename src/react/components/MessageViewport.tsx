@@ -6,8 +6,6 @@ import {
   useCallback,
   useLayoutEffect,
   useMemo,
-  useState,
-  useRef,
 } from 'react'
 import {
   getItemContentVersion,
@@ -21,7 +19,12 @@ import type {
   ViewportAnchorChangedEvent,
   MessageViewportSnapshot,
 } from '../../runtime'
-import { useMessageViewportRuntime } from '../hooks/useMessageViewportRuntime'
+import { useMessageViewportRuntimeSelector } from '../hooks/useMessageViewportRuntime'
+import {
+  useElementRef,
+  useStableCallback,
+  useStableOptionalCallback,
+} from '../hooks/stableState'
 import { CustomScrollbar } from '../scrollbar/CustomScrollbar'
 
 export type MessageRowProjectionProps<
@@ -166,37 +169,9 @@ type RuntimeScrollContainerProps<TMessage, TOptimistic> = {
 }
 
 type FollowBottomProjectionProps<TMessage, TOptimistic> = {
-  snapshot: MessageViewportSnapshot<TMessage, TOptimistic>
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
   renderFollowBottom?: MessageViewportProps<TMessage, TOptimistic>['renderFollowBottom']
   followBottom: () => void
-}
-
-class FollowBottomProjection<
-  TMessage = unknown,
-  TOptimistic = unknown,
-> extends Component<FollowBottomProjectionProps<TMessage, TOptimistic>> {
-  render() {
-    const { snapshot, renderFollowBottom, followBottom } = this.props
-
-    const nextNode =
-      snapshot.bottomLockState === 'UNLOCKED'
-        ? renderFollowBottom
-          ? renderFollowBottom({ snapshot, followBottom })
-          : (
-              <button
-                type="button"
-                className="follow-bottom-button"
-                data-message-follow-bottom
-                data-testid="follow-bottom-button"
-                onClick={followBottom}
-              >
-                Bottom
-              </button>
-            )
-        : null
-
-    return nextNode
-  }
 }
 
 class RuntimeScrollContainer<
@@ -285,6 +260,456 @@ class RuntimeScrollContainer<
   }
 }
 
+type ProjectionCommitSlice = Pick<
+  MessageViewportSnapshot,
+  'feedId' | 'generation' | 'revision'
+>
+
+function selectProjectionCommit(
+  snapshot: MessageViewportSnapshot,
+): ProjectionCommitSlice {
+  return {
+    feedId: snapshot.feedId,
+    generation: snapshot.generation,
+    revision: snapshot.revision,
+  }
+}
+
+function areProjectionCommitSlicesEqual(
+  previous: ProjectionCommitSlice,
+  next: ProjectionCommitSlice,
+): boolean {
+  return (
+    previous.feedId === next.feedId &&
+    previous.generation === next.generation &&
+    previous.revision === next.revision
+  )
+}
+
+const ProjectionCommitAck = memo(function ProjectionCommitAck<
+  TMessage = unknown,
+  TOptimistic = unknown,
+>({
+  runtime,
+}: {
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
+}) {
+  const commit = useMessageViewportRuntimeSelector(
+    runtime,
+    selectProjectionCommit,
+    areProjectionCommitSlicesEqual,
+  )
+
+  useLayoutEffect(() => {
+    runtime.notifyProjectionCommitted(commit)
+  }, [commit, runtime])
+
+  return null
+}) as <TMessage = unknown, TOptimistic = unknown>(props: {
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
+}) => ReactNode
+
+type MessageWindowProjectionSlice<TMessage, TOptimistic> = Pick<
+  MessageViewportSnapshot<TMessage, TOptimistic>,
+  | 'feedId'
+  | 'generation'
+  | 'items'
+  | 'renderWindow'
+  | 'topSpacer'
+  | 'bottomSpacer'
+>
+
+function selectMessageWindowProjection<TMessage, TOptimistic>(
+  snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
+): MessageWindowProjectionSlice<TMessage, TOptimistic> {
+  return {
+    feedId: snapshot.feedId,
+    generation: snapshot.generation,
+    items: snapshot.items,
+    renderWindow: snapshot.renderWindow,
+    topSpacer: snapshot.topSpacer,
+    bottomSpacer: snapshot.bottomSpacer,
+  }
+}
+
+function areMessageWindowSlicesEqual<TMessage, TOptimistic>(
+  previous: MessageWindowProjectionSlice<TMessage, TOptimistic>,
+  next: MessageWindowProjectionSlice<TMessage, TOptimistic>,
+): boolean {
+  return (
+    previous.feedId === next.feedId &&
+    previous.generation === next.generation &&
+    previous.items === next.items &&
+    previous.renderWindow === next.renderWindow &&
+    Object.is(previous.topSpacer, next.topSpacer) &&
+    Object.is(previous.bottomSpacer, next.bottomSpacer)
+  )
+}
+
+type MessageWindowProjectionProps<TMessage, TOptimistic> = {
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
+  renderMessage: (item: MessageDataItem<TMessage, TOptimistic>) => ReactNode
+  getRowRenderVersion?: MessageViewportProps<
+    TMessage,
+    TOptimistic
+  >['getRowRenderVersion']
+}
+
+type MessageRowsProjectionProps<TMessage, TOptimistic> =
+  MessageWindowProjectionProps<TMessage, TOptimistic> & {
+    items: Array<MessageDataItem<TMessage, TOptimistic>>
+  }
+
+const MessageRowsProjection = memo(
+  function MessageRowsProjection<TMessage = unknown, TOptimistic = unknown>({
+    items,
+    runtime,
+    renderMessage,
+    getRowRenderVersion,
+  }: MessageRowsProjectionProps<TMessage, TOptimistic>) {
+    const rows = items.map((item) => {
+      const key: MessageRuntimeItemKey = getRuntimeItemKey(item)
+      const serializedKey = serializeRuntimeItemKey(key)
+
+      return (
+        <MemoizedMessageRowProjection
+          key={serializedKey}
+          item={item}
+          runtime={runtime}
+          renderMessage={renderMessage}
+          rowRenderVersion={getRowRenderVersion?.(item)}
+          usesExplicitRowRenderVersion={Boolean(getRowRenderVersion)}
+          testId={`message-row-${serializedKey}`}
+        />
+      )
+    })
+
+    return (
+      <div data-message-window style={messageWindowStyle}>
+        {rows}
+      </div>
+    )
+  },
+  areMessageRowsProjectionPropsEqual,
+) as <TMessage = unknown, TOptimistic = unknown>(
+  props: MessageRowsProjectionProps<TMessage, TOptimistic>,
+) => ReactNode
+
+function areMessageRowsProjectionPropsEqual<TMessage, TOptimistic>(
+  previous: MessageRowsProjectionProps<TMessage, TOptimistic>,
+  next: MessageRowsProjectionProps<TMessage, TOptimistic>,
+): boolean {
+  return (
+    previous.items === next.items &&
+    areMessageWindowProjectionPropsEqual(previous, next)
+  )
+}
+
+const MessageWindowProjection = memo(
+  function MessageWindowProjection<TMessage = unknown, TOptimistic = unknown>({
+    runtime,
+    renderMessage,
+    getRowRenderVersion,
+  }: MessageWindowProjectionProps<TMessage, TOptimistic>) {
+    const windowProjection = useMessageViewportRuntimeSelector(
+      runtime,
+      selectMessageWindowProjection,
+      areMessageWindowSlicesEqual,
+    )
+    const setTopSentinel = useCallback(
+      (element: HTMLDivElement | null) => {
+        runtime.registerTopSentinel(element)
+      },
+      [runtime],
+    )
+    const setBottomSentinel = useCallback(
+      (element: HTMLDivElement | null) => {
+        runtime.registerBottomSentinel(element)
+      },
+      [runtime],
+    )
+    const setTopSpacer = useCallback(
+      (element: HTMLDivElement | null) => {
+        runtime.registerTopSpacer(element)
+      },
+      [runtime],
+    )
+    const setBottomSpacer = useCallback(
+      (element: HTMLDivElement | null) => {
+        runtime.registerBottomSpacer(element)
+      },
+      [runtime],
+    )
+
+    return (
+      <>
+        <div ref={setTopSentinel} data-top-sentinel />
+        <div
+          ref={setTopSpacer}
+          data-top-spacer
+          style={{ height: windowProjection.topSpacer }}
+        />
+        <MessageRowsProjection
+          items={windowProjection.items}
+          runtime={runtime}
+          renderMessage={renderMessage}
+          getRowRenderVersion={getRowRenderVersion}
+        />
+        <div
+          ref={setBottomSpacer}
+          data-bottom-spacer
+          style={{ height: windowProjection.bottomSpacer }}
+        />
+        <div ref={setBottomSentinel} data-bottom-sentinel />
+      </>
+    )
+  },
+  areMessageWindowProjectionPropsEqual,
+) as <TMessage = unknown, TOptimistic = unknown>(
+  props: MessageWindowProjectionProps<TMessage, TOptimistic>,
+) => ReactNode
+
+function areMessageWindowProjectionPropsEqual<TMessage, TOptimistic>(
+  previous: MessageWindowProjectionProps<TMessage, TOptimistic>,
+  next: MessageWindowProjectionProps<TMessage, TOptimistic>,
+): boolean {
+  const previousUsesExplicitVersion = Boolean(previous.getRowRenderVersion)
+  const nextUsesExplicitVersion = Boolean(next.getRowRenderVersion)
+
+  if (
+    previous.runtime !== next.runtime ||
+    previousUsesExplicitVersion !== nextUsesExplicitVersion
+  ) {
+    return false
+  }
+
+  if (previousUsesExplicitVersion) {
+    return false
+  }
+
+  return previous.renderMessage === next.renderMessage
+}
+
+function selectBottomLockState(
+  snapshot: MessageViewportSnapshot,
+): MessageViewportSnapshot['bottomLockState'] {
+  return snapshot.bottomLockState
+}
+
+type ScrollbarProjectionSyncSlice = Pick<
+  MessageViewportSnapshot,
+  'feedId' | 'generation' | 'revision'
+>
+
+function selectScrollbarProjectionSync(
+  snapshot: MessageViewportSnapshot,
+): ScrollbarProjectionSyncSlice {
+  return {
+    feedId: snapshot.feedId,
+    generation: snapshot.generation,
+    revision: snapshot.revision,
+  }
+}
+
+function areScrollbarProjectionSyncSlicesEqual(
+  previous: ScrollbarProjectionSyncSlice,
+  next: ScrollbarProjectionSyncSlice,
+): boolean {
+  return (
+    previous.feedId === next.feedId &&
+    previous.generation === next.generation &&
+    previous.revision === next.revision
+  )
+}
+
+const CustomScrollbarBridge = memo(function CustomScrollbarBridge<
+  TMessage = unknown,
+  TOptimistic = unknown,
+>({
+  container,
+  runtime,
+  enabled,
+}: {
+  container: HTMLElement | null
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
+  enabled: boolean
+}) {
+  const syncProjection = useMessageViewportRuntimeSelector(
+    runtime,
+    selectScrollbarProjectionSync,
+    areScrollbarProjectionSyncSlicesEqual,
+  )
+
+  return (
+    <CustomScrollbar
+      container={container}
+      runtime={runtime}
+      enabled={enabled}
+      geometryVersion={syncProjection.revision}
+    />
+  )
+}) as <TMessage = unknown, TOptimistic = unknown>(props: {
+  container: HTMLElement | null
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
+  enabled: boolean
+}) => ReactNode
+
+function selectFullSnapshot<TMessage, TOptimistic>(
+  snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
+): MessageViewportSnapshot<TMessage, TOptimistic> {
+  return snapshot
+}
+
+const DefaultFollowBottomProjection = memo(
+  function DefaultFollowBottomProjection<
+    TMessage = unknown,
+    TOptimistic = unknown,
+  >({
+    runtime,
+    followBottom,
+  }: Omit<
+    FollowBottomProjectionProps<TMessage, TOptimistic>,
+    'renderFollowBottom'
+  >) {
+    const bottomLockState = useMessageViewportRuntimeSelector(
+      runtime,
+      selectBottomLockState,
+      Object.is,
+    )
+
+    if (bottomLockState !== 'UNLOCKED') {
+      return null
+    }
+
+    return (
+      <button
+        type="button"
+        className="follow-bottom-button"
+        data-message-follow-bottom
+        data-testid="follow-bottom-button"
+        onClick={followBottom}
+      >
+        Bottom
+      </button>
+    )
+  },
+) as <TMessage = unknown, TOptimistic = unknown>(
+  props: Omit<
+    FollowBottomProjectionProps<TMessage, TOptimistic>,
+    'renderFollowBottom'
+  >,
+) => ReactNode
+
+const CustomFollowBottomProjection = memo(
+  function CustomFollowBottomProjection<
+    TMessage = unknown,
+    TOptimistic = unknown,
+  >({
+    runtime,
+    renderFollowBottom,
+    followBottom,
+  }: Required<FollowBottomProjectionProps<TMessage, TOptimistic>>) {
+    const snapshot = useMessageViewportRuntimeSelector(
+      runtime,
+      selectFullSnapshot,
+      Object.is,
+    )
+
+    if (snapshot.bottomLockState !== 'UNLOCKED') {
+      return null
+    }
+
+    return <>{renderFollowBottom({ snapshot, followBottom })}</>
+  },
+) as <TMessage = unknown, TOptimistic = unknown>(
+  props: Required<FollowBottomProjectionProps<TMessage, TOptimistic>>,
+) => ReactNode
+
+const FollowBottomProjection = memo(
+  function FollowBottomProjection<TMessage = unknown, TOptimistic = unknown>({
+    runtime,
+    renderFollowBottom,
+    followBottom,
+  }: FollowBottomProjectionProps<TMessage, TOptimistic>) {
+    if (renderFollowBottom) {
+      return (
+        <CustomFollowBottomProjection
+          runtime={runtime}
+          renderFollowBottom={renderFollowBottom}
+          followBottom={followBottom}
+        />
+      )
+    }
+
+    return (
+      <DefaultFollowBottomProjection
+        runtime={runtime}
+        followBottom={followBottom}
+      />
+    )
+  },
+) as <TMessage = unknown, TOptimistic = unknown>(
+  props: FollowBottomProjectionProps<TMessage, TOptimistic>,
+) => ReactNode
+
+const CustomEdgeProjection = memo(function CustomEdgeProjection<
+  TMessage = unknown,
+  TOptimistic = unknown,
+>({
+  runtime,
+  renderTopEdge,
+  renderBottomEdge,
+}: {
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
+  renderTopEdge?: MessageViewportProps<TMessage, TOptimistic>['renderTopEdge']
+  renderBottomEdge?: MessageViewportProps<
+    TMessage,
+    TOptimistic
+  >['renderBottomEdge']
+}) {
+  const snapshot = useMessageViewportRuntimeSelector(
+    runtime,
+    selectFullSnapshot,
+    Object.is,
+  )
+
+  return (
+    <>
+      {renderTopEdge?.(snapshot)}
+      {renderBottomEdge?.(snapshot)}
+    </>
+  )
+}) as <TMessage = unknown, TOptimistic = unknown>(props: {
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
+  renderTopEdge?: MessageViewportProps<TMessage, TOptimistic>['renderTopEdge']
+  renderBottomEdge?: MessageViewportProps<
+    TMessage,
+    TOptimistic
+  >['renderBottomEdge']
+}) => ReactNode
+
+const CustomOverlayProjection = memo(function CustomOverlayProjection<
+  TMessage = unknown,
+  TOptimistic = unknown,
+>({
+  runtime,
+  renderOverlay,
+}: {
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
+  renderOverlay: MessageViewportProps<TMessage, TOptimistic>['renderOverlay']
+}) {
+  const snapshot = useMessageViewportRuntimeSelector(
+    runtime,
+    selectFullSnapshot,
+    Object.is,
+  )
+
+  return <>{renderOverlay?.(snapshot)}</>
+}) as <TMessage = unknown, TOptimistic = unknown>(props: {
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>
+  renderOverlay: MessageViewportProps<TMessage, TOptimistic>['renderOverlay']
+}) => ReactNode
+
 /**
  * MessageViewport 是 runtime projection shell。
  * DOM 顺序固定为 sentinel -> spacer -> flow rows -> spacer -> sentinel，
@@ -307,11 +732,13 @@ export function MessageViewport<
   renderOverlay,
   customScrollbar = true,
 }: MessageViewportProps<TMessage, TOptimistic>) {
-  const snapshot = useMessageViewportRuntime(runtime)
-  const containerRef = useRef<HTMLDivElement | null>(null)
-  const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(
-    null,
+  const bottomLockState = useMessageViewportRuntimeSelector(
+    runtime,
+    selectBottomLockState,
+    Object.is,
   )
+  const [containerRef, containerElement, setContainerRef] =
+    useElementRef<HTMLDivElement>()
   const viewportStyle = useMemo<CSSProperties>(
     () => ({
       ...baseViewportStyle,
@@ -319,12 +746,8 @@ export function MessageViewport<
     }),
     [style],
   )
-  const setContainerRef = useCallback(
-    (element: HTMLDivElement | null) => {
-      containerRef.current = element
-      setContainerElement(element)
-    },
-    [],
+  const stableOnViewportAnchorChange = useStableOptionalCallback(
+    onViewportAnchorChange,
   )
 
   useLayoutEffect(() => {
@@ -335,95 +758,58 @@ export function MessageViewport<
     }
 
     runtime.attach(container)
-  }, [runtime])
-  const followBottom = useCallback(() => {
+  }, [containerRef, runtime])
+  const followBottom = useStableCallback(() => {
     runtime.dispatch({ type: 'followBottom' })
-  }, [runtime])
-  const setTopSentinel = useCallback(
-    (element: HTMLDivElement | null) => {
-      runtime.registerTopSentinel(element)
-    },
-    [runtime],
-  )
-  const setBottomSentinel = useCallback(
-    (element: HTMLDivElement | null) => {
-      runtime.registerBottomSentinel(element)
-    },
-    [runtime],
-  )
-  const setTopSpacer = useCallback(
-    (element: HTMLDivElement | null) => {
-      runtime.registerTopSpacer(element)
-    },
-    [runtime],
-  )
-  const setBottomSpacer = useCallback(
-    (element: HTMLDivElement | null) => {
-      runtime.registerBottomSpacer(element)
-    },
-    [runtime],
-  )
+  })
 
   return (
     <div
       className={className}
       data-message-viewport
       data-testid="message-viewport"
-      data-bottom-lock-state={snapshot.bottomLockState}
+      data-bottom-lock-state={bottomLockState}
       data-custom-scrollbar={customScrollbar ? 'true' : 'false'}
       style={viewportStyle}
     >
+      <ProjectionCommitAck runtime={runtime} />
       <RuntimeScrollContainer
         runtime={runtime}
-        onViewportAnchorChange={onViewportAnchorChange}
+        onViewportAnchorChange={stableOnViewportAnchorChange}
         setContainerRef={setContainerRef}
       >
-        <div ref={setTopSentinel} data-top-sentinel />
-        <div
-          ref={setTopSpacer}
-          data-top-spacer
-          style={{ height: snapshot.topSpacer }}
+        <MessageWindowProjection
+          runtime={runtime}
+          renderMessage={renderMessage}
+          getRowRenderVersion={getRowRenderVersion}
         />
-        <div data-message-window style={messageWindowStyle}>
-          {snapshot.items.map((item) => {
-            const key: MessageRuntimeItemKey = getRuntimeItemKey(item)
-            const serializedKey = serializeRuntimeItemKey(key)
-
-            return (
-              <MemoizedMessageRowProjection
-                key={serializedKey}
-                item={item}
-                runtime={runtime}
-                renderMessage={renderMessage}
-                rowRenderVersion={getRowRenderVersion?.(item)}
-                usesExplicitRowRenderVersion={Boolean(getRowRenderVersion)}
-                testId={`message-row-${serializedKey}`}
-              />
-            )
-          })}
-        </div>
-        <div
-          ref={setBottomSpacer}
-          data-bottom-spacer
-          style={{ height: snapshot.bottomSpacer }}
-        />
-        <div ref={setBottomSentinel} data-bottom-sentinel />
       </RuntimeScrollContainer>
-      <CustomScrollbar
-        container={containerElement}
-        runtime={runtime}
-        enabled={customScrollbar}
-        geometryVersion={snapshot.revision}
-      />
+      {customScrollbar && (
+        <CustomScrollbarBridge
+          container={containerElement}
+          runtime={runtime}
+          enabled
+        />
+      )}
       {bottomSlot}
-      {renderTopEdge?.(snapshot)}
-      {renderBottomEdge?.(snapshot)}
+      {(renderTopEdge || renderBottomEdge) && (
+        <CustomEdgeProjection
+          runtime={runtime}
+          renderTopEdge={renderTopEdge}
+          renderBottomEdge={renderBottomEdge}
+        />
+      )}
       <FollowBottomProjection
-        snapshot={snapshot}
+        runtime={runtime}
         renderFollowBottom={renderFollowBottom}
         followBottom={followBottom}
       />
-      {renderOverlay?.(snapshot)}
+      {renderOverlay && (
+        <CustomOverlayProjection
+          runtime={runtime}
+          renderOverlay={renderOverlay}
+        />
+      )}
     </div>
   )
 }

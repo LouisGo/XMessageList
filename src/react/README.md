@@ -6,7 +6,8 @@ React 18 projection layer for the framework-independent runtime.
 
 - `index.ts` is the public adapter entry.
 - `components/` owns the projection DOM shell.
-- `hooks/` owns React subscription / commit-ack wiring.
+- `hooks/` owns React subscription / commit-ack wiring and stable adapter-state
+  helpers.
 - `scrollbar/` owns the custom scrollbar React shell, DOM controller,
   observer wiring, styles, and pure geometry helpers.
 - `__tests__/` keeps adapter and geometry regression tests.
@@ -15,6 +16,8 @@ Rules:
 
 - subscribe with `useSyncExternalStore`
 - send `notifyProjectionCommitted` from `useLayoutEffect`
+- keep event callbacks and element refs stable when React render identity is not
+  part of the runtime contract
 - register row/spacer/sentinel DOM through ref callbacks
 - invalidate rows by item version/contentVersion or explicit
   `getRowRenderVersion`

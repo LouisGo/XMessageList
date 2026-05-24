@@ -7,6 +7,7 @@ import {
   type MessageDataSnapshot,
   type MessageViewportSnapshot,
 } from '../..'
+import { useStableCallback } from '../hooks/stableState'
 import {
   FakeScheduler,
   createFakeObservers,
@@ -753,6 +754,13 @@ describe('React adapter', () => {
         rerenderShell = () => setShellVersion((version) => version + 1)
         setHighlightedMessage = setHighlightedMessageId
       }, [setHighlightedMessageId, setShellVersion])
+      const getRowRenderVersion = useStableCallback(
+        (item: MessageDataSnapshot<TestMessage>['items'][number]) =>
+          item.kind === 'committed' &&
+          item.message.id === highlightedMessageId
+            ? `highlight:${item.message.id}`
+            : 'normal',
+      )
 
       return (
         <MessageViewport
@@ -777,12 +785,7 @@ describe('React adapter', () => {
               </span>
             )
           }}
-          getRowRenderVersion={(item) =>
-            item.kind === 'committed' &&
-            item.message.id === highlightedMessageId
-              ? `highlight:${item.message.id}`
-              : 'normal'
-          }
+          getRowRenderVersion={getRowRenderVersion}
           customScrollbar={false}
         />
       )
