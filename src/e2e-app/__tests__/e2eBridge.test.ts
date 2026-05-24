@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DemoMessageScenario } from '../../demo/useDemoMessageScenario'
+import type { ViewportDiagnosticRecord } from '../../runtime'
 import {
   collectE2EEvidence,
   collectE2EState,
   createE2EConsoleBuffer,
   createE2EEventBuffer,
   listE2EActions,
+  recordE2ERuntimeEvent,
   runE2EAction,
 } from '../e2eBridge'
 
@@ -204,6 +206,68 @@ describe('collectE2EState', () => {
     expect(result.ok).toBe(true)
     expect(result.before?.checkpointId).toBe('before:collect_evidence')
     expect(result.after?.checkpointId).toBe('manual_checkpoint')
+  })
+
+  it('keeps viewport event evidence bounded', () => {
+    const buffer = createE2EEventBuffer()
+
+    for (let index = 0; index < 85; index += 1) {
+      recordE2ERuntimeEvent(buffer, {
+        type: 'viewportAnchorChanged',
+        feedId: 'feed-runtime',
+        generation: 1,
+        reason: 'scroll-idle',
+        anchor: {
+          key: { kind: 'committed', messageId: `m-${index}` },
+          offsetWithinMessage: index,
+        },
+      })
+    }
+
+    expect(buffer.viewportAnchorChanged).toHaveLength(80)
+    expect(buffer.viewportAnchorChanged[0]?.messageId).toBe('m-5')
+    expect(buffer.viewportAnchorChanged.at(-1)?.messageId).toBe('m-84')
+  })
+
+  it('keeps priority diagnostics when the runtime diagnostic buffer is noisy', () => {
+    const root = document.createElement('main')
+    const scenario = createScenarioStub()
+    const records: ViewportDiagnosticRecord[] = Array.from(
+      { length: 90 },
+      (_, index) => ({
+        feedId: 'feed-runtime',
+        generation: 1,
+        channel: 'scroll',
+        severity: 'debug',
+        name: `scroll.noise.${index}`,
+        timestamp: index,
+        details: {},
+      }),
+    )
+    records.unshift({
+      feedId: 'feed-runtime',
+      generation: 1,
+      channel: 'projection',
+      severity: 'debug',
+      name: 'projection.publish',
+      timestamp: -1,
+      details: {},
+    })
+    vi.mocked(scenario.activeRuntime.getDiagnosticRecords).mockReturnValue(records)
+
+    const evidence = collectE2EEvidence({
+      scenarioId: 'bootstrap.latest-bottom-lock',
+      checkpointId: 'manual',
+      scenario,
+      consoleBuffer: createE2EConsoleBuffer(),
+      eventBuffer: createE2EEventBuffer(),
+      root,
+    })
+
+    expect(evidence.diagnostics.recent).toHaveLength(80)
+    expect(evidence.diagnostics.recent.map((record) => record.name)).toContain(
+      'projection.publish',
+    )
   })
 
   it('rejects disabled actions before mutating the scenario', async () => {

@@ -184,6 +184,23 @@ export type E2EConsoleBuffer = {
 
 export type E2EEventBuffer = E2EEventEvidence
 
+const E2E_CONSOLE_BUFFER_LIMIT = 80
+const E2E_EVENT_BUFFER_LIMIT = 80
+const E2E_DIAGNOSTIC_BUFFER_LIMIT = 80
+
+const PRIORITY_DIAGNOSTIC_NAMES = new Set([
+  'projection.publish',
+  'transaction',
+  'correction.anchorPreserved',
+  'measurement.readiness',
+  'destinationMotion.start',
+  'destinationMotion.settle',
+  'destinationMotion.cancel',
+  'data.setSnapshot',
+  'data.windowBudgetExceeded',
+])
+const PRIORITY_DIAGNOSTIC_PREFIXES = Array.from(PRIORITY_DIAGNOSTIC_NAMES)
+
 declare global {
   interface Window {
     __X_MESSAGE_LIST_E2E__?: XMessageListE2EBridge
@@ -226,11 +243,15 @@ export function recordE2ERuntimeEvent(
 ): void {
   if (event.type === 'viewportAnchorChanged') {
     const key = event.anchor?.key
-    buffer.viewportAnchorChanged.push({
-      reason: event.reason,
-      messageId: key?.kind === 'committed' ? key.messageId : null,
-      offsetWithinMessage: event.anchor?.offsetWithinMessage ?? null,
-    })
+    pushBounded(
+      buffer.viewportAnchorChanged,
+      {
+        reason: event.reason,
+        messageId: key?.kind === 'committed' ? key.messageId : null,
+        offsetWithinMessage: event.anchor?.offsetWithinMessage ?? null,
+      },
+      E2E_EVENT_BUFFER_LIMIT,
+    )
     return
   }
 
@@ -245,16 +266,20 @@ export function recordE2ERuntimeEvent(
   }
 
   if (event.type === 'destinationSettled') {
-    buffer.destinationSettled.push({
-      intent: event.intent,
-      targetMessageId: event.target.messageId,
-      resolvedMessageId: event.resolvedTarget?.messageId,
-    })
+    pushBounded(
+      buffer.destinationSettled,
+      {
+        intent: event.intent,
+        targetMessageId: event.target.messageId,
+        resolvedMessageId: event.resolvedTarget?.messageId,
+      },
+      E2E_EVENT_BUFFER_LIMIT,
+    )
     return
   }
 
   if (event.type === 'viewportError') {
-    buffer.viewportErrors.push(event.code)
+    pushBounded(buffer.viewportErrors, event.code, E2E_EVENT_BUFFER_LIMIT)
   }
 }
 
@@ -263,12 +288,20 @@ export function installE2EConsoleCapture(buffer: E2EConsoleBuffer): () => void {
   const originalWarn = window.console.warn
 
   const captureError = (...args: unknown[]) => {
-    buffer.errors.push({ text: formatConsoleArgs(args) })
+    pushBounded(
+      buffer.errors,
+      { text: formatConsoleArgs(args) },
+      E2E_CONSOLE_BUFFER_LIMIT,
+    )
     originalError.apply(window.console, args)
   }
 
   const captureWarn = (...args: unknown[]) => {
-    buffer.warnings.push({ text: formatConsoleArgs(args) })
+    pushBounded(
+      buffer.warnings,
+      { text: formatConsoleArgs(args) },
+      E2E_CONSOLE_BUFFER_LIMIT,
+    )
     originalWarn.apply(window.console, args)
   }
 
@@ -969,13 +1002,56 @@ function findMessageRowBySerializedKey(
 function normalizeDiagnosticRecords(
   records: ViewportDiagnosticRecord[],
 ): E2EEvidence['diagnostics']['recent'] {
-  return records.slice(-80).map((record) => ({
-    channel: record.channel,
-    severity: record.severity,
-    name: record.name,
-    correlationId: record.correlationId,
-    details: record.details,
-  }))
+  const selectedIndexes = new Set<number>()
+
+  for (
+    let index = records.length - 1;
+    index >= 0 && selectedIndexes.size < E2E_DIAGNOSTIC_BUFFER_LIMIT;
+    index -= 1
+  ) {
+    const record = records[index]
+
+    if (record && isPriorityDiagnostic(record)) {
+      selectedIndexes.add(index)
+    }
+  }
+
+  for (
+    let index = records.length - 1;
+    index >= 0 && selectedIndexes.size < E2E_DIAGNOSTIC_BUFFER_LIMIT;
+    index -= 1
+  ) {
+    selectedIndexes.add(index)
+  }
+
+  return Array.from(selectedIndexes)
+    .sort((left, right) => left - right)
+    .map((index) => records[index])
+    .filter((record): record is ViewportDiagnosticRecord => Boolean(record))
+    .map((record) => ({
+      channel: record.channel,
+      severity: record.severity,
+      name: record.name,
+      correlationId: record.correlationId,
+      details: record.details,
+    }))
+}
+
+function isPriorityDiagnostic(record: ViewportDiagnosticRecord): boolean {
+  return (
+    PRIORITY_DIAGNOSTIC_NAMES.has(record.name) ||
+    PRIORITY_DIAGNOSTIC_PREFIXES.some((name) =>
+      record.name.startsWith(`${name}.`),
+    )
+  )
+}
+
+function pushBounded<T>(target: T[], value: T, limit: number): void {
+  target.push(value)
+
+  if (target.length > limit) {
+    target.splice(0, target.length - limit)
+  }
 }
 
 function parseCommittedMessageId(row: HTMLElement): string | null {
