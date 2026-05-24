@@ -13,13 +13,20 @@ import {
 } from '../demo/useDemoMessageScenario'
 import {
   clearE2EConsoleBuffer,
+  collectE2EEvidence,
   collectE2EState,
   createBootingE2EState,
   createE2EConsoleBuffer,
+  createE2EEventBuffer,
   type E2EActionResult,
   type E2EConsoleBuffer,
+  type E2EEvidence,
+  type E2EEventBuffer,
   type E2EState,
   installE2EConsoleCapture,
+  listE2EActions,
+  recordE2ERuntimeEvent,
+  runE2EAction,
   type XMessageListE2EBridge,
 } from './e2eBridge'
 import { createE2EDemoStore, type E2EDemoStore } from './e2eDemoStore'
@@ -30,7 +37,10 @@ import {
   type E2EScenarioDefinition,
 } from './e2eScenarioRegistry'
 
-type StateReader = () => E2EState
+type BridgeRuntime = Pick<
+  XMessageListE2EBridge,
+  'getState' | 'listActions' | 'runAction' | 'getEvidence'
+>
 
 export function E2EMessageViewportApp() {
   const initialScenario = useMemo(() => {
@@ -41,8 +51,8 @@ export function E2EMessageViewportApp() {
     initialScenario,
   ])
   const consoleBuffer = useMemo(() => createE2EConsoleBuffer(), [])
-  const stateReaderRef = useRef<StateReader>(() =>
-    createBootingE2EState(initialScenario.id),
+  const bridgeRuntimeRef = useRef<BridgeRuntime>(
+    createBootingBridgeRuntime(initialScenario.id),
   )
   const [scenario, setScenario] = useState(initialScenario)
   const [resetToken, setResetToken] = useState(0)
@@ -66,7 +76,7 @@ export function E2EMessageViewportApp() {
 
     store.resetScenario(nextScenario)
     clearE2EConsoleBuffer(consoleBuffer)
-    stateReaderRef.current = () => createBootingE2EState(nextScenario.id)
+    bridgeRuntimeRef.current = createBootingBridgeRuntime(nextScenario.id)
     setScenario(nextScenario)
     setResetToken((token) => token + 1)
     window.history.replaceState(null, '', `/e2e?scenario=${nextScenario.id}`)
@@ -79,12 +89,12 @@ export function E2EMessageViewportApp() {
     }
   }, [consoleBuffer, store])
 
-  const registerStateReader = useCallback((reader: StateReader) => {
-    stateReaderRef.current = reader
+  const registerBridgeRuntime = useCallback((runtime: BridgeRuntime) => {
+    bridgeRuntimeRef.current = runtime
 
     return () => {
-      if (stateReaderRef.current === reader) {
-        stateReaderRef.current = () => createBootingE2EState(scenario.id)
+      if (bridgeRuntimeRef.current === runtime) {
+        bridgeRuntimeRef.current = createBootingBridgeRuntime(scenario.id)
       }
     }
   }, [scenario.id])
@@ -94,19 +104,11 @@ export function E2EMessageViewportApp() {
   useEffect(() => {
     const bridge: XMessageListE2EBridge = {
       version: 1,
-      getState: () => stateReaderRef.current(),
-      listActions: () => [],
-      runAction: async (actionId) => ({
-        ok: false,
-        actionId,
-        message: 'Phase 1 exposes the e2e host, getState, and resetScenario only.',
-        error: {
-          code: 'phase_2a_not_implemented',
-        },
-      }),
-      getEvidence: () => {
-        throw new Error('getEvidence is Phase 2A scope; use getState in Phase 1.')
-      },
+      getState: () => bridgeRuntimeRef.current.getState(),
+      listActions: () => bridgeRuntimeRef.current.listActions(),
+      runAction: (actionId, payload) =>
+        bridgeRuntimeRef.current.runAction(actionId, payload),
+      getEvidence: () => bridgeRuntimeRef.current.getEvidence(),
       resetScenario,
     }
 
@@ -125,7 +127,7 @@ export function E2EMessageViewportApp() {
       scenarioDefinition={scenario}
       store={store}
       consoleBuffer={consoleBuffer}
-      registerStateReader={registerStateReader}
+      registerBridgeRuntime={registerBridgeRuntime}
       resetScenario={resetScenario}
     />
   )
@@ -135,13 +137,13 @@ function E2EScenarioHost({
   scenarioDefinition,
   store,
   consoleBuffer,
-  registerStateReader,
+  registerBridgeRuntime,
   resetScenario,
 }: {
   scenarioDefinition: E2EScenarioDefinition
   store: E2EDemoStore
   consoleBuffer: E2EConsoleBuffer
-  registerStateReader: (reader: StateReader) => () => void
+  registerBridgeRuntime: (runtime: BridgeRuntime) => () => void
   resetScenario: (scenarioId: string) => Promise<E2EActionResult>
 }) {
   const runtimeCache = useDemoFeedRuntimeCache()
@@ -151,6 +153,7 @@ function E2EScenarioHost({
   })
   const rootRef = useRef<HTMLElement | null>(null)
   const scenarioRef = useRef<DemoMessageScenario>(scenario)
+  const eventBuffer = useMemo<E2EEventBuffer>(() => createE2EEventBuffer(), [])
   const [state, setState] = useState<E2EState>(() =>
     createBootingE2EState(scenarioDefinition.id),
   )
@@ -168,9 +171,40 @@ function E2EScenarioHost({
     })
   ), [consoleBuffer, scenarioDefinition.id])
 
-  useEffect(() => registerStateReader(readState), [
+  const readEvidence = useCallback((checkpointId = 'manual') => (
+    collectE2EEvidence({
+      scenarioId: scenarioDefinition.id,
+      checkpointId,
+      scenario: scenarioRef.current,
+      consoleBuffer,
+      eventBuffer,
+      root: rootRef.current ?? document,
+    })
+  ), [consoleBuffer, eventBuffer, scenarioDefinition.id])
+
+  useEffect(() => registerBridgeRuntime({
+    getState: readState,
+    listActions: () => listE2EActions(readState()),
+    getEvidence: () => readEvidence('manual'),
+    runAction: (actionId, payload) =>
+      runE2EAction({
+        actionId,
+        payload,
+        scenarioId: scenarioDefinition.id,
+        scenario: scenarioRef.current,
+        consoleBuffer,
+        eventBuffer,
+        root: rootRef.current ?? document,
+        readState,
+        readEvidence,
+      }),
+  }), [
+    consoleBuffer,
+    eventBuffer,
+    readEvidence,
     readState,
-    registerStateReader,
+    registerBridgeRuntime,
+    scenarioDefinition.id,
   ])
 
   useEffect(() => {
@@ -187,6 +221,10 @@ function E2EScenarioHost({
       window.clearInterval(intervalId)
     }
   }, [readState, scenario.activeRuntime])
+
+  useEffect(() => scenario.activeRuntime.subscribeEvent((event) => {
+    recordE2ERuntimeEvent(eventBuffer, event)
+  }), [eventBuffer, scenario.activeRuntime])
 
   const resetCurrentScenario = useCallback(() => {
     void resetScenario(scenarioDefinition.id)
@@ -248,4 +286,22 @@ function waitForNextPaint(): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, 0)
   })
+}
+
+function createBootingBridgeRuntime(scenarioId: string): BridgeRuntime {
+  return {
+    getState: () => createBootingE2EState(scenarioId),
+    listActions: () => [],
+    runAction: async (actionId) => ({
+      ok: false,
+      actionId,
+      message: 'e2e scenario host is still booting',
+      error: {
+        code: 'scenario_host_booting',
+      },
+    }),
+    getEvidence: (): E2EEvidence => {
+      throw new Error('e2e scenario host is still booting')
+    },
+  }
 }

@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DemoMessageScenario } from '../../demo/useDemoMessageScenario'
-import { collectE2EState, createE2EConsoleBuffer } from '../e2eBridge'
+import {
+  collectE2EEvidence,
+  collectE2EState,
+  createE2EConsoleBuffer,
+  createE2EEventBuffer,
+  listE2EActions,
+  runE2EAction,
+} from '../e2eBridge'
 
 describe('collectE2EState', () => {
   it('summarizes runtime, viewport, UI, and safety fields for the AI bridge', () => {
@@ -65,9 +72,183 @@ describe('collectE2EState', () => {
     expect(state.ui.pendingOperation).toBe('idle')
     expect(state.safety.consoleErrors).toBe(0)
   })
+
+  it('collects visible row geometry and feed evidence for deterministic oracles', () => {
+    const root = document.createElement('main')
+    const container = document.createElement('div')
+    const row = document.createElement('div')
+
+    container.dataset.testid = 'message-scroll-container'
+    Object.defineProperties(container, {
+      scrollTop: { value: 24, configurable: true },
+      scrollHeight: { value: 240, configurable: true },
+      clientHeight: { value: 120, configurable: true },
+    })
+    container.getBoundingClientRect = () => ({
+      top: 10,
+      bottom: 130,
+      left: 0,
+      right: 320,
+      width: 320,
+      height: 120,
+      x: 0,
+      y: 10,
+      toJSON: () => ({}),
+    })
+
+    row.dataset.messageRow = 'committed:feed-runtime-m-80'
+    row.dataset.messageId = 'feed-runtime-m-80'
+    row.getBoundingClientRect = () => ({
+      top: 22,
+      bottom: 62,
+      left: 0,
+      right: 320,
+      width: 320,
+      height: 40,
+      x: 0,
+      y: 22,
+      toJSON: () => ({}),
+    })
+
+    container.append(row)
+    root.append(container)
+
+    const evidence = collectE2EEvidence({
+      scenarioId: 'bootstrap.latest-bottom-lock',
+      checkpointId: 'after_ready',
+      scenario: createScenarioStub(),
+      consoleBuffer: createE2EConsoleBuffer(),
+      eventBuffer: createE2EEventBuffer(),
+      root,
+    })
+
+    expect(evidence.schemaVersion).toBe(1)
+    expect(evidence.feed).toMatchObject({
+      activeFeedId: 'feed-runtime',
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+      loadedMessageCount: 20,
+      messageCount: 80,
+    })
+    expect(evidence.viewport.visibleRows).toEqual([
+      {
+        messageId: 'feed-runtime-m-80',
+        serializedKey: 'committed:feed-runtime-m-80',
+        top: 12,
+        bottom: 52,
+        height: 40,
+      },
+    ])
+    expect(evidence.anchors.current).toMatchObject({
+      messageId: 'feed-runtime-m-80',
+      top: 12,
+    })
+  })
+
+  it('lists enabled Phase 2A actions when the scenario is ready', () => {
+    const actions = listE2EActions(
+      collectE2EState({
+        scenarioId: 'bootstrap.latest-bottom-lock',
+        scenario: createScenarioStub(),
+        consoleBuffer: createE2EConsoleBuffer(),
+        root: document.createElement('main'),
+      }),
+    )
+
+    expect(actions.map((action) => action.id)).toEqual([
+      'wait_for_ready',
+      'wait_for_idle',
+      'collect_evidence',
+      'scroll_to_middle',
+      'scroll_to_history_top',
+      'scroll_to_bottom',
+      'append_message',
+      'prepend_history',
+      'follow_bottom',
+    ])
+    expect(actions.every((action) => action.enabled)).toBe(true)
+  })
+
+  it('runs collect_evidence with structured before and after evidence', async () => {
+    const root = document.createElement('main')
+    const scenario = createScenarioStub()
+    const consoleBuffer = createE2EConsoleBuffer()
+    const eventBuffer = createE2EEventBuffer()
+    const readEvidence = (checkpointId: string) =>
+      collectE2EEvidence({
+        scenarioId: 'bootstrap.latest-bottom-lock',
+        checkpointId,
+        scenario,
+        consoleBuffer,
+        eventBuffer,
+        root,
+      })
+    const result = await runE2EAction({
+      actionId: 'collect_evidence',
+      payload: { checkpointId: 'manual_checkpoint' },
+      scenarioId: 'bootstrap.latest-bottom-lock',
+      scenario,
+      consoleBuffer,
+      eventBuffer,
+      root,
+      readState: () =>
+        collectE2EState({
+          scenarioId: 'bootstrap.latest-bottom-lock',
+          scenario,
+          consoleBuffer,
+          root,
+        }),
+      readEvidence,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.before?.checkpointId).toBe('before:collect_evidence')
+    expect(result.after?.checkpointId).toBe('manual_checkpoint')
+  })
+
+  it('rejects disabled actions before mutating the scenario', async () => {
+    const root = document.createElement('main')
+    const scenario = createScenarioStub({ feedLoading: true })
+    const consoleBuffer = createE2EConsoleBuffer()
+    const eventBuffer = createE2EEventBuffer()
+    const readEvidence = (checkpointId: string) =>
+      collectE2EEvidence({
+        scenarioId: 'bootstrap.latest-bottom-lock',
+        checkpointId,
+        scenario,
+        consoleBuffer,
+        eventBuffer,
+        root,
+      })
+    const result = await runE2EAction({
+      actionId: 'append_message',
+      scenarioId: 'bootstrap.latest-bottom-lock',
+      scenario,
+      consoleBuffer,
+      eventBuffer,
+      root,
+      readState: () =>
+        collectE2EState({
+          scenarioId: 'bootstrap.latest-bottom-lock',
+          scenario,
+          consoleBuffer,
+          root,
+        }),
+      readEvidence,
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      actionId: 'append_message',
+      error: { code: 'action_disabled' },
+    })
+    expect(scenario.appendMessage).not.toHaveBeenCalled()
+  })
 })
 
-function createScenarioStub(): DemoMessageScenario {
+function createScenarioStub(
+  overrides: Partial<DemoMessageScenario> = {},
+): DemoMessageScenario {
   return {
     feeds: [],
     activeFeedId: 'feed-runtime',
@@ -106,10 +287,16 @@ function createScenarioStub(): DemoMessageScenario {
         heightCacheSize: 1,
         lastScrollSource: null,
       })),
+      getViewportAnchorState: vi.fn(() => ({
+        key: { kind: 'committed', messageId: 'feed-runtime-m-80' },
+        offsetWithinMessage: 4,
+      })),
       getDiagnosticRecords: vi.fn(() => []),
     } as unknown as DemoMessageScenario['activeRuntime'],
     messageCount: 80,
     loadedMessageCount: 20,
+    hasMoreBefore: true,
+    hasMoreAfter: false,
     loadingBefore: false,
     loadingAfter: false,
     feedLoading: false,
@@ -134,5 +321,6 @@ function createScenarioStub(): DemoMessageScenario {
     jumpToQuote: vi.fn(),
     clearFeed: vi.fn(),
     rememberRuntimeViewportAnchor: vi.fn(),
+    ...overrides,
   }
 }

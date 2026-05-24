@@ -12,20 +12,34 @@ export type E2EScenarioDefinition = {
 
 const DEFAULT_FEED = getDemoFeedDefinition(DEMO_FEEDS[0]?.id ?? 'feed-runtime')
 
-const PHASE_1_SCENARIOS: E2EScenarioDefinition[] = [
+const P0_SCENARIOS: E2EScenarioDefinition[] = [
   {
     id: DEFAULT_E2E_SCENARIO_ID,
     title: 'Bootstrap latest bottom lock',
     feedId: DEFAULT_FEED.id,
     seedCount: DEFAULT_FEED.seedCount,
-    seedLabel: 'phase1-bootstrap-latest-bottom-lock-v1',
+    seedLabel: 'p0-bootstrap-latest-bottom-lock-v1',
+  },
+  {
+    id: 'paging.prepend-anchor-preservation',
+    title: 'Prepend anchor preservation',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p0-prepend-anchor-preservation-v1',
+  },
+  {
+    id: 'bottom.user-scroll-up-append-no-follow',
+    title: 'User scroll up append no follow',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p0-user-scroll-up-append-no-follow-v1',
   },
 ]
 
 export function getE2EScenarioDefinition(
   scenarioId: string,
 ): E2EScenarioDefinition | null {
-  return PHASE_1_SCENARIOS.find((scenario) => scenario.id === scenarioId) ?? null
+  return P0_SCENARIOS.find((scenario) => scenario.id === scenarioId) ?? null
 }
 
 export function getDefaultE2EScenarioDefinition(): E2EScenarioDefinition {

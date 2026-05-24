@@ -206,6 +206,8 @@ export type DemoMessageScenario = {
   messageCount: number
   // 当前已经加载进 runtime data snapshot 的消息数。
   loadedMessageCount: number
+  hasMoreBefore: boolean
+  hasMoreAfter: boolean
   loadingBefore: boolean
   loadingAfter: boolean
   feedLoading: boolean
@@ -251,6 +253,8 @@ export function useDemoMessageScenario(
   const [pendingFeedId, setPendingFeedId] = useState<string | null>(null)
   const [messageCount, setMessageCount] = useState(0)
   const [loadedMessageCount, setLoadedMessageCount] = useState(0)
+  const [hasMoreBefore, setHasMoreBefore] = useState(false)
+  const [hasMoreAfter, setHasMoreAfter] = useState(false)
   const [loadingBefore, setLoadingBefore] = useState(false)
   const [loadingAfter, setLoadingAfter] = useState(false)
   const [feedLoading, setFeedLoading] = useState(true)
@@ -330,6 +334,8 @@ export function useDemoMessageScenario(
   const syncDisplayedCounts = useCallback(() => {
     setMessageCount(feedMessagesRef.current.length)
     setLoadedMessageCount(messagesRef.current.length)
+    setHasMoreBefore(hasMoreBeforeRef.current)
+    setHasMoreAfter(hasMoreAfterRef.current)
   }, [])
 
   const saveCurrentFeedSessionState = useCallback((feedId = activeFeedIdRef.current) => {
@@ -2422,6 +2428,8 @@ export function useDemoMessageScenario(
     activeRuntime,
     messageCount,
     loadedMessageCount,
+    hasMoreBefore,
+    hasMoreAfter,
     loadingBefore,
     loadingAfter,
     feedLoading,
