@@ -157,7 +157,7 @@ type ReadySubstate =
 - `READY_IDLE`：没有 pending command，也没有 active motion。
 - `READY_FOLLOW_BOTTOM_PENDING`：显式 `followBottom` 正在等待 latest DataWindow 到达。
 - `READY_DESTINATION_PENDING`：显式 `jump` / `restore` 目标不在当前 DataWindow，
-  runtime 正在等待 around-target DataWindow。
+  runtime 正在等待当前 active feed 的 around-target DataWindow。
 - `READY_VIEWPORT_COMPACTION_PENDING`：runtime 已把下一次 prepend / append 升级为
   围绕当前视觉 anchor 的短 DataWindow 重建请求。
 - `READY_MOTION_ACTIVE`：`ScrollMotionEngine` 拥有 `scrollTop` 写入权。
@@ -406,6 +406,10 @@ runtime 还必须在生命周期恢复和事务追底判断前，用真实
 
 `jump` / quote 定位可能跨很远的消息区间。
 
+`jump` 是当前 active feed 内的一次性目的地命令。跨 feed 的 mention / search /
+navigation 入口必须先由 conversation / session host 选择目标 feed 和 runtime；
+viewport runtime 不在 `jump` / `restore` command 内承载 feed routing。
+
 流程：
 
 ```text
@@ -464,6 +468,14 @@ command jump(target identity, optional origin identity)
 - restore 是生命周期恢复，不是用户即时视觉命令。
 - 用户期望打开会话后直接回到保存位置。
 - 动画会延迟可交互状态，并且容易暴露中间错误位置。
+
+规则：
+
+- `restore` 只恢复当前 active feed 的历史位置，不负责跨 feed 选择。
+- 目标缺失时等待 around-target rebuild；普通 patch / append snapshot 即使刚好包含
+  target，也不能提前消费 pending restore。
+- 目标可用后进入同步 anchor correction，destination state 使用 resolving /
+  settled 路径，不进入 `motionActive`，也不发起 `destinationMotion.start`。
 
 ### 6.5 Prepend / Window Slide
 

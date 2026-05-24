@@ -1,4 +1,4 @@
-基准：当前 `HEAD f8199c6`。本文件按最新 `src/runtime` 刷新，旧基准 `226231d` 的图已不再准确；`04d3f51` 之后新增的 ready reattach edge flush 也已纳入。
+基准：当前 `HEAD 51098e4`。本文件按最新 `src/runtime` 刷新，旧基准 `226231d` 的图已不再准确；`04d3f51` 之后新增的 ready reattach edge flush 也已纳入。
 
 **1. 总体架构图**
 
@@ -99,7 +99,7 @@ flowchart TD
   Mod -- none/items-change/default --> Refresh["enqueue projection refresh tx"]
 ```
 
-关键点：当前路由优先级本身就是架构规则。bootstrap、pending followBottom、pending jump/restore、pending compaction 都会优先于普通 modifier。DataWindow item budget 已经和 spacer budget 一起参与 destination rebuild 与 compaction 判断；但 compaction 真正启动还要求 READY_IDLE、bottom 未锁定、非 generation change，并且能捕获 committed viewport anchor。
+关键点：当前路由优先级本身就是架构规则，不是可随意重排的 if/else。snapshot 接收、generation reset、edge resolve 之后，必须先处理 pending bootstrap，再处理 pending followBottom，再处理 pending jump/restore，再处理 pending compaction，最后才进入普通 modifier。DataWindow item budget 已经和 spacer budget 一起参与 destination rebuild 与 compaction 判断；但 compaction 真正启动还要求 READY_IDLE、bottom 未锁定、非 generation change，并且能捕获 committed viewport anchor。
 
 **3. 事务与 projection commit 时序**
 
@@ -214,7 +214,13 @@ flowchart LR
   PendingDest --> RestoreTx["restore tx<br/>同步 anchor correction"]
 ```
 
-这里仍是最容易发生 semantic drift 的位置：followBottom、jump、restore 被同一个 `DestinationIntentCoordinator` 管理，但产品语义不同。现在代码有 tracker 分层，但 `jump/restore` 仍共享 pending destination 通道，restore 也仍复用部分 destination/motion 状态词。
+这里仍是最容易发生 semantic drift 的位置：followBottom、jump、restore 被同一个 `DestinationIntentCoordinator` 管理，但产品语义不同。现在代码有 tracker 分层，`jump/restore` 仍共享 pending destination 通道，但消费分支必须显式分开：
+
+- `followBottom` 是持续约束，绑定当前 `feedId + generation`，在用户仍要求追底时跨 append / resize / refresh 继续追到 latest bottom。
+- `jump` 是当前 active feed 内的一次性目的地命令。目标不在 DataWindow 时只请求 around-target rebuild，目标到达后可按 origin 执行 bounded motion，也可以直接落位。
+- `restore` 是当前 active feed 内的历史位置恢复。它不启动 motion，不进入 `motionActive`，只做同步 anchor correction。
+
+跨 feed 的 mention / search / navigation 入口不属于 viewport runtime 判定范围。外层 conversation / session host 必须先选择目标 feed/runtime，再决定向该 active runtime 派发 `restore` 还是 `jump`；runtime command 本身不携带 feed 切换语义。
 
 **7. 当前架构判断**
 
@@ -225,6 +231,7 @@ flowchart LR
 3. 仍然需要关注三件事：
    - DestinationIntent 的产品语义合同：followBottom 是持续约束，jump 是一次性目标，restore 是历史状态恢复。
    - RuntimeDataSnapshotCoordinator 的路由顺序：它是 load-bearing 策略，不是普通 if/else。
+   - current-feed runtime 边界：跨 feed 导航必须由外层 host 在进入 runtime 前完成判定，不能把 feed routing 混入 jump / restore command。
    - composition root 的依赖增长：service ref 循环依赖目前可控，但新增 projection writer 时必须明确写入权限和 flush 时机。
 
 4. 不建议大重构。下一步最有价值的是补充行为合同和场景测试，尤其是“滚动中加载更多”“跳转中来新消息”“detach 后 edge error 再 attach”“大 DataWindow compaction”这些用户能感知的链路。

@@ -4,6 +4,7 @@ import type { RuntimeLifecycleCoordinator } from '../viewport/runtimeLifecycleCo
 import type { ScrollIntentEngine } from '../../scroll/scrollIntentEngine'
 import type { TransactionRunner } from '../../transactions/transactionRunner'
 import type {
+  BottomLockState,
   MessageDataSnapshot,
   RuntimeState,
   ViewportEffect,
@@ -84,18 +85,55 @@ export class RuntimeDataSnapshotCoordinator<TMessage, TOptimistic> {
     const viewportModifier = getViewportModifier(snapshot.change)
     const previousBottomLockState = this.deps.scrollIntent.getBottomLockState()
 
-    if (generationChanged) {
+    this.acceptSnapshot(snapshot, previous, {
+      generationChanged,
+      dataIdentityChanged,
+      viewportModifier,
+    })
+
+    if (this.drivePriorityRoutes(snapshot)) {
+      return
+    }
+
+    if (
+      this.deps.getState() === 'INITIAL' ||
+      this.deps.getState() === 'ATTACHED'
+    ) {
+      return
+    }
+
+    this.driveReadyDataMutation(snapshot, {
+      generationChanged,
+      viewportModifier,
+      previousBottomLockState,
+    })
+  }
+
+  private acceptSnapshot(
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+    previous: MessageDataSnapshot<TMessage, TOptimistic> | null,
+    input: {
+      generationChanged: boolean
+      dataIdentityChanged: boolean
+      viewportModifier: ViewportModifier | ViewportEffect
+    },
+  ): void {
+    if (input.generationChanged) {
       this.deps.runtimeLifecycle.resetForGeneration(
         snapshot.feedId,
         snapshot.generation,
       )
       this.emitGenerationResetDiagnostic(snapshot, previous)
-    } else if (dataIdentityChanged) {
+    } else if (input.dataIdentityChanged) {
       this.deps.renderWindow.invalidateIndexCache()
     }
 
     this.deps.setDataSnapshot(snapshot)
-    this.emitSnapshotDiagnostic(snapshot, generationChanged, viewportModifier)
+    this.emitSnapshotDiagnostic(
+      snapshot,
+      input.generationChanged,
+      input.viewportModifier,
+    )
     this.emitDataWindowBudgetDiagnostic(snapshot)
 
     if (
@@ -105,52 +143,74 @@ export class RuntimeDataSnapshotCoordinator<TMessage, TOptimistic> {
       this.deps.scrollIntent.setBottomLockState('UNLOCKED')
     }
 
-    this.deps.resolveEdgeStatusForSnapshot(snapshot, viewportModifier)
+    this.deps.resolveEdgeStatusForSnapshot(snapshot, input.viewportModifier)
 
-    if (viewportModifier !== 'none') {
+    if (input.viewportModifier !== 'none') {
       this.deps.transactions.dropBySupersedeKey('window-slide')
     }
 
-    if (isReservedViewportModifier(viewportModifier)) {
+    if (isReservedViewportModifier(input.viewportModifier)) {
       this.deps.transactions.dropBySupersedeKey('data-refresh')
     }
+  }
 
+  private drivePriorityRoutes(
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): boolean {
     if (this.deps.tryRunPendingBootstrap()) {
-      return
+      return true
     }
 
     if (this.deps.destinationIntent.drivePendingFollowBottom(snapshot)) {
-      return
+      return true
     }
 
     if (this.deps.destinationIntent.drivePendingDestinationRequest(snapshot)) {
-      return
+      return true
     }
 
     if (this.deps.viewportCompaction.drivePendingViewportCompaction(snapshot)) {
-      return
+      return true
     }
 
-    if (this.deps.getState() === 'INITIAL' || this.deps.getState() === 'ATTACHED') {
-      return
-    }
+    return false
+  }
 
-    if (viewportModifier === 'auto-scroll-to-bottom') {
+  private driveReadyDataMutation(
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+    input: {
+      generationChanged: boolean
+      viewportModifier: ViewportModifier | ViewportEffect
+      previousBottomLockState: BottomLockState
+    },
+  ): void {
+    if (input.viewportModifier === 'auto-scroll-to-bottom') {
       this.deps.destinationIntent.ensureActiveFollowBottomIntentForCurrentScroll(
         snapshot,
       )
     }
 
     if (
-      !isReservedViewportModifier(viewportModifier) &&
-      this.deps.viewportCompaction.tryStartForDataMutation(snapshot, viewportModifier, {
-        generationChanged,
-        previousBottomLockState,
-      })
+      !isReservedViewportModifier(input.viewportModifier) &&
+      this.deps.viewportCompaction.tryStartForDataMutation(
+        snapshot,
+        input.viewportModifier,
+        {
+          generationChanged: input.generationChanged,
+          previousBottomLockState: input.previousBottomLockState,
+        },
+      )
     ) {
       return
     }
 
+    this.enqueueModifierTransaction(snapshot, input.viewportModifier)
+  }
+
+  private enqueueModifierTransaction(
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+    viewportModifier: ViewportModifier | ViewportEffect,
+  ): void {
     switch (viewportModifier) {
       case 'prepend':
         this.deps.enqueuePrependTransaction(snapshot)

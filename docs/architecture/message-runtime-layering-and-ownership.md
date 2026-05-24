@@ -82,6 +82,8 @@ conversation / session host 负责 app policy：
 
 - 按 `feedId` 创建或复用 `MessageViewportRuntime`。
 - 将 active runtime 传给 React projection。
+- 在跨 feed 的 mention / search / navigation 入口中，先选择目标
+  feed/runtime，再决定对该 active runtime 派发 `jump` 或 `restore`。
 - 在 LRU 淘汰或关闭会话时调用 `runtime.destroy()`。
 - 保留每个 feed 的本地 data-window / session state，避免缓存命中后再次强制
   bootstrap 把稳定 viewport 打回初始态。
@@ -94,6 +96,7 @@ conversation / session host 负责 app policy：
 - 监听 raw scroll 代替 runtime edge event。
 - query projection DOM 结构持久化 anchor。
 - 把 demo / app 的 cache policy 下沉进 runtime core。
+- 把 feed 切换语义塞进 viewport runtime 的 `jump` / `restore` command。
 
 feed 切走但仍在 cache 内时，应让 React projection 对旧 runtime `detach()`，
 不应立即 `destroy()`。切回同一 feed 且 runtime 命中时，应恢复该 feed 的 session
@@ -298,6 +301,15 @@ type MessageRuntimeCommand =
 
 其中 `restore` 更常见的输入是 renderer 本地保存的 `AnchorState`；
 如果只拿到 `MessageIdentityAnchor`，则说明数据层已经先完成了 around-anchor 读取与 fallback。
+
+`jump` / `restore` 都是当前 active feed 的 viewport command，不负责选择 feed。
+跨 feed 的 mention 聚合列表、搜索结果或会话导航应先由 action / host 完成 feed
+routing 和 runtime 激活，再按产品语义决定：
+
+- 同一 feed 内点击 pinned / quote / located message，通常是 `jump`。
+- 切回已有 session 的历史位置，通常是 `restore`。
+- 跨 feed 入口是否最终表现为 `jump` 还是 `restore`，由外层导航语义决定，
+  runtime 不根据来源列表类型自行推断。
 
 action 禁止：
 

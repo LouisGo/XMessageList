@@ -210,10 +210,7 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
       return false
     }
 
-    if (
-      pending.feedId !== snapshot.feedId ||
-      pending.generation !== snapshot.generation
-    ) {
+    if (!this.isPendingDestinationCurrent(pending, snapshot)) {
       this.clearPendingDestinationRequest()
       return false
     }
@@ -226,26 +223,50 @@ export class DestinationIntentCoordinator<TMessage, TOptimistic> {
     }
 
     if (pending.intent === 'jump') {
-      const resolvedJumpTarget = resolvePendingJumpTarget(
-        this.deps.renderWindow,
-        snapshot,
-        pending.target,
-      )
+      return this.drivePendingJumpRequest(snapshot, pending)
+    }
 
-      if (!resolvedJumpTarget) {
-        this.emitPendingDestinationNeed(snapshot)
-        return true
-      }
+    return this.drivePendingRestoreRequest(snapshot, pending)
+  }
 
-      this.clearPendingDestinationRequest()
-      this.deps.enqueueJumpTransaction(resolvedJumpTarget, {
-        forceAnimateFrom: pending.forceAnimateFrom,
-        animate: pending.animateOnResolve,
-        originalTarget: pending.target,
-      })
+  private isPendingDestinationCurrent(
+    pending: PendingDestinationRequest,
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+  ): boolean {
+    return (
+      pending.feedId === snapshot.feedId &&
+      pending.generation === snapshot.generation
+    )
+  }
+
+  private drivePendingJumpRequest(
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+    pending: PendingDestinationRequest,
+  ): boolean {
+    const resolvedJumpTarget = resolvePendingJumpTarget(
+      this.deps.renderWindow,
+      snapshot,
+      pending.target,
+    )
+
+    if (!resolvedJumpTarget) {
+      this.emitPendingDestinationNeed(snapshot)
       return true
     }
 
+    this.clearPendingDestinationRequest()
+    this.deps.enqueueJumpTransaction(resolvedJumpTarget, {
+      forceAnimateFrom: pending.forceAnimateFrom,
+      animate: pending.animateOnResolve,
+      originalTarget: pending.target,
+    })
+    return true
+  }
+
+  private drivePendingRestoreRequest(
+    snapshot: MessageDataSnapshot<TMessage, TOptimistic>,
+    pending: PendingDestinationRequest,
+  ): boolean {
     if (
       snapshot.anchorStatus === 'deleted' &&
       snapshot.anchor

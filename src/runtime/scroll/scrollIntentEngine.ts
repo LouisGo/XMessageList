@@ -41,7 +41,6 @@ export class ScrollIntentEngine {
       source,
       expiresAtFrame: currentFrame + 2,
     }
-    this.userIntentExpiresAtFrame = -1
   }
 
   hasActiveScrollWrite(currentFrame: number): boolean {
@@ -83,12 +82,17 @@ export class ScrollIntentEngine {
     currentFrame: number,
     source = this.classifyScroll(currentFrame),
   ): boolean {
-    if (source !== 'user' && source !== 'momentum') {
-      return false
+    if (
+      distanceToBottom <= this.lockThresholdPx &&
+      (source === 'user' ||
+        source === 'momentum' ||
+        this.hasActiveUserIntent(currentFrame))
+    ) {
+      return this.setBottomLockState('LOCKED')
     }
 
-    if (distanceToBottom <= this.lockThresholdPx) {
-      return this.setBottomLockState('LOCKED')
+    if (source !== 'user' && source !== 'momentum') {
+      return false
     }
 
     if (distanceToBottom > this.unlockThresholdPx) {
@@ -104,5 +108,9 @@ export class ScrollIntentEngine {
     }
 
     return false
+  }
+
+  private hasActiveUserIntent(currentFrame: number): boolean {
+    return this.userIntentExpiresAtFrame >= currentFrame
   }
 }

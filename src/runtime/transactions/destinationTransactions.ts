@@ -256,7 +256,7 @@ export async function runAnchorRestoreTransaction<TMessage, TOptimistic>(
 
     deps.measureCurrentWindow()
     if (options.updateDestinationState) {
-      deps.setDestinationState('motionActive')
+      deps.setDestinationState('resolvingDom')
     }
     deps.setViewportPhase('CORRECTING')
     deps.anchor.alignToResolvedRestoreTarget(
