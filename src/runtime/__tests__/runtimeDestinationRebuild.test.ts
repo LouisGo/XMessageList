@@ -35,7 +35,7 @@ describe('MessageViewportRuntime destination rebuild', () => {
     expect(runtime.getDebugSnapshot().readySubstate).toBe(
       'READY_DESTINATION_PENDING',
     )
-    expect(runtime.getDebugSnapshot().transactionState).toBe('queued')
+    expect(runtime.getDebugSnapshot().transactionState).toBe('idle')
     expect(runtime.getDebugSnapshot().destinationState).toBe('pendingData')
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -69,7 +69,7 @@ describe('MessageViewportRuntime destination rebuild', () => {
     await flushMotion(scheduler)
 
     expect(runtime.getDebugSnapshot().readySubstate).toBe('READY_IDLE')
-    expect(runtime.getDebugSnapshot().transactionState).toBe('queued')
+    expect(runtime.getDebugSnapshot().transactionState).toBe('idle')
     expect(runtime.getDebugSnapshot().destinationState).toBe('settled')
     expect(runtime.getSnapshot().bottomLockState).toBe('UNLOCKED')
   })

@@ -29,6 +29,8 @@ let transactionCounter = 0
 export class TransactionRunner {
   private active = false
 
+  private draining = false
+
   private readonly queue: TransactionTask[] = []
 
   private stopped = false
@@ -104,7 +106,7 @@ export class TransactionRunner {
   }
 
   private async drain(): Promise<void> {
-    if (this.active || this.stopped) {
+    if (this.active || this.draining || this.stopped) {
       return
     }
 
@@ -114,20 +116,23 @@ export class TransactionRunner {
       return
     }
 
+    this.draining = true
     this.active = true
 
     try {
       this.callbacks.onStart?.(task.kind, task.id)
       await task.run()
+      this.active = false
       this.callbacks.onComplete?.(task.kind, task.id)
     } catch (error) {
+      this.active = false
       this.callbacks.onError?.(task.kind, task.id, error)
       void error
     } finally {
-      this.active = false
-      if (this.queue.length === 0) {
+      if (this.getPendingCount() === 0) {
         this.callbacks.onIdle?.()
       }
+      this.draining = false
       void this.drain()
     }
   }
