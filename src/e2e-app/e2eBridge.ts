@@ -49,6 +49,7 @@ export type E2EState = {
     dynamicHeightEnabled: boolean
     pendingOperation: string
     lastEvent: string
+    followBottomVisible: boolean
   }
   safety: {
     consoleErrors: number
@@ -370,6 +371,7 @@ export function collectE2EState(input: {
       dynamicHeightEnabled: isDynamicHeightEnabled(input.root ?? document),
       pendingOperation: input.scenario.pendingOperation,
       lastEvent: input.scenario.lastEvent,
+      followBottomVisible: isFollowBottomVisible(input.root ?? document),
     },
     safety: {
       consoleErrors: input.consoleBuffer.errors.length,
@@ -496,6 +498,7 @@ export function createBootingE2EState(scenarioId: string): E2EState {
       dynamicHeightEnabled: false,
       pendingOperation: 'booting',
       lastEvent: 'booting e2e host',
+      followBottomVisible: false,
     },
     safety: {
       consoleErrors: 0,
@@ -1067,6 +1070,36 @@ function parseCommittedMessageId(row: HTMLElement): string | null {
 
 function isDynamicHeightEnabled(root: ParentNode): boolean {
   return root.querySelector('.message-attachment') !== null
+}
+
+function isFollowBottomVisible(root: ParentNode): boolean {
+  const button = root.querySelector<HTMLElement>(
+    '[data-ai-action="follow-bottom"], [aria-label="Follow latest messages"]',
+  )
+
+  if (!button) {
+    return false
+  }
+
+  const ownerWindow = button.ownerDocument.defaultView
+  const style = ownerWindow?.getComputedStyle(button)
+
+  if (
+    style &&
+    (style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      style.opacity === '0')
+  ) {
+    return false
+  }
+
+  const rects = Array.from(button.getClientRects())
+
+  if (rects.length === 0) {
+    return button.offsetParent !== null
+  }
+
+  return rects.some((rect) => rect.width > 0 && rect.height > 0)
 }
 
 function formatConsoleArgs(args: unknown[]): string {

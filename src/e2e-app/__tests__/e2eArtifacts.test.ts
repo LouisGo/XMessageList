@@ -131,6 +131,7 @@ function createEvidence(overrides: EvidenceOverrides = {}): E2EEvidence {
       dynamicHeightEnabled: false,
       pendingOperation: 'idle',
       lastEvent: 'idle',
+      followBottomVisible: false,
     },
     events: {
       viewportAnchorChanged: [],
