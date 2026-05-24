@@ -34,6 +34,7 @@ export type MessageRowProjectionProps<
   item: MessageDataItem<TMessage, TOptimistic>
   runtime: MessageViewportRuntime<TMessage, TOptimistic>
   children: ReactNode
+  enableAiDomAttributes?: boolean
   testId?: string
 }
 
@@ -48,10 +49,15 @@ export function MessageRowProjection<
   item,
   runtime,
   children,
+  enableAiDomAttributes = false,
   testId,
 }: MessageRowProjectionProps<TMessage, TOptimistic>) {
   const key = getRuntimeItemKey(item)
   const serializedKey = serializeRuntimeItemKey(key)
+  const messageId =
+    enableAiDomAttributes && key.kind === 'committed'
+      ? key.messageId
+      : undefined
   const setRef = useCallback(
     (element: HTMLDivElement | null) => {
       runtime.registerRow(key, element)
@@ -63,6 +69,8 @@ export function MessageRowProjection<
     <div
       ref={setRef}
       data-message-row={serializedKey}
+      data-message-id={messageId}
+      data-ai-role={enableAiDomAttributes ? 'message-row' : undefined}
       data-testid={testId}
       style={normalFlowRowStyle}
     >
@@ -80,6 +88,7 @@ type MemoizedMessageRowProjectionProps<
   renderMessage: (item: MessageDataItem<TMessage, TOptimistic>) => ReactNode
   rowRenderVersion?: unknown
   usesExplicitRowRenderVersion: boolean
+  enableAiDomAttributes?: boolean
   testId?: string
 }
 
@@ -91,10 +100,16 @@ const MemoizedMessageRowProjection = memo(
     item,
     runtime,
     renderMessage,
+    enableAiDomAttributes,
     testId,
   }: MemoizedMessageRowProjectionProps<TMessage, TOptimistic>) {
     return (
-      <MessageRowProjection item={item} runtime={runtime} testId={testId}>
+      <MessageRowProjection
+        item={item}
+        runtime={runtime}
+        enableAiDomAttributes={enableAiDomAttributes}
+        testId={testId}
+      >
         {renderMessage(item)}
       </MessageRowProjection>
     )
@@ -118,6 +133,7 @@ function areMessageRowProjectionPropsEqual<TMessage, TOptimistic>(
     renderMessageEqual &&
     previous.usesExplicitRowRenderVersion ===
       next.usesExplicitRowRenderVersion &&
+    previous.enableAiDomAttributes === next.enableAiDomAttributes &&
     Object.is(previous.rowRenderVersion, next.rowRenderVersion) &&
     previous.testId === next.testId &&
     serializeRuntimeItemKey(getRuntimeItemKey(previous.item)) ===
@@ -142,6 +158,8 @@ export type MessageViewportProps<
     item: MessageDataItem<TMessage, TOptimistic>,
   ) => unknown
   className?: string
+  aiRegion?: string
+  enableAiDomAttributes?: boolean
   style?: CSSProperties
   bottomSlot?: ReactNode
   renderTopEdge?: (
@@ -353,6 +371,7 @@ type MessageWindowProjectionProps<TMessage, TOptimistic> = {
     TMessage,
     TOptimistic
   >['getRowRenderVersion']
+  enableAiDomAttributes?: boolean
 }
 
 type MessageRowsProjectionProps<TMessage, TOptimistic> =
@@ -366,6 +385,7 @@ const MessageRowsProjection = memo(
     runtime,
     renderMessage,
     getRowRenderVersion,
+    enableAiDomAttributes = false,
   }: MessageRowsProjectionProps<TMessage, TOptimistic>) {
     const rows = items.map((item) => {
       const key: MessageRuntimeItemKey = getRuntimeItemKey(item)
@@ -379,6 +399,7 @@ const MessageRowsProjection = memo(
           renderMessage={renderMessage}
           rowRenderVersion={getRowRenderVersion?.(item)}
           usesExplicitRowRenderVersion={Boolean(getRowRenderVersion)}
+          enableAiDomAttributes={enableAiDomAttributes}
           testId={`message-row-${serializedKey}`}
         />
       )
@@ -410,6 +431,7 @@ const MessageWindowProjection = memo(
     runtime,
     renderMessage,
     getRowRenderVersion,
+    enableAiDomAttributes = false,
   }: MessageWindowProjectionProps<TMessage, TOptimistic>) {
     const windowProjection = useMessageViewportRuntimeSelector(
       runtime,
@@ -454,6 +476,7 @@ const MessageWindowProjection = memo(
           runtime={runtime}
           renderMessage={renderMessage}
           getRowRenderVersion={getRowRenderVersion}
+          enableAiDomAttributes={enableAiDomAttributes}
         />
         <div
           ref={setBottomSpacer}
@@ -478,7 +501,8 @@ function areMessageWindowProjectionPropsEqual<TMessage, TOptimistic>(
 
   if (
     previous.runtime !== next.runtime ||
-    previousUsesExplicitVersion !== nextUsesExplicitVersion
+    previousUsesExplicitVersion !== nextUsesExplicitVersion ||
+    previous.enableAiDomAttributes !== next.enableAiDomAttributes
   ) {
     return false
   }
@@ -723,6 +747,8 @@ export function MessageViewport<
   renderMessage,
   getRowRenderVersion,
   className,
+  aiRegion,
+  enableAiDomAttributes = false,
   style,
   bottomSlot,
   renderTopEdge,
@@ -768,6 +794,7 @@ export function MessageViewport<
       className={className}
       data-message-viewport
       data-testid="message-viewport"
+      data-ai-region={aiRegion}
       data-bottom-lock-state={bottomLockState}
       data-custom-scrollbar={customScrollbar ? 'true' : 'false'}
       style={viewportStyle}
@@ -782,6 +809,7 @@ export function MessageViewport<
           runtime={runtime}
           renderMessage={renderMessage}
           getRowRenderVersion={getRowRenderVersion}
+          enableAiDomAttributes={enableAiDomAttributes}
         />
       </RuntimeScrollContainer>
       {customScrollbar && (

@@ -96,6 +96,19 @@ h1 {
   color: #ffffff;
 }
 
+.e2e-ai-status {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #c8d6d9;
+  border-radius: 8px;
+  background: #f7fbfb;
+  color: #33454c;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .demo-actions button:disabled,
 .message-composer button:disabled {
   cursor: not-allowed;

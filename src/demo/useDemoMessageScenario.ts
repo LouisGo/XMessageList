@@ -50,6 +50,7 @@ import {
   type DemoLogEntry,
   type DemoOperationName,
   loadPersistedDemoFeed,
+  type PersistedDemoFeed,
   type PersistedViewportAnchor,
   savePersistedDemoFeed,
   writeDemoLog,
@@ -167,6 +168,33 @@ type LoadedFeedWindow = {
   persistedFeed: NonNullable<Awaited<ReturnType<typeof loadPersistedDemoFeed>>>
 }
 
+export type DemoMessageScenarioStorage = {
+  loadPersistedDemoFeed: (feedId: string) => Promise<PersistedDemoFeed | null>
+  savePersistedDemoFeed: (feed: PersistedDemoFeed) => Promise<void>
+  writeDemoLog: (entry: DemoLogEntry) => Promise<void>
+}
+
+export type DemoMessageScenarioApi = {
+  getLatestMessages: typeof getLatestMessages
+  getMessagesAround: typeof getMessagesAround
+}
+
+export type DemoMessageScenarioOptions = {
+  api?: DemoMessageScenarioApi
+  storage?: DemoMessageScenarioStorage
+}
+
+const DEFAULT_DEMO_MESSAGE_SCENARIO_API: DemoMessageScenarioApi = {
+  getLatestMessages,
+  getMessagesAround,
+}
+
+const DEFAULT_DEMO_MESSAGE_SCENARIO_STORAGE: DemoMessageScenarioStorage = {
+  loadPersistedDemoFeed,
+  savePersistedDemoFeed,
+  writeDemoLog,
+}
+
 export type DemoMessageScenario = {
   feeds: DemoFeedDefinition[]
   activeFeedId: string
@@ -213,7 +241,10 @@ export type DemoMessageScenario = {
  */
 export function useDemoMessageScenario(
   runtimeCache: DemoFeedRuntimeCache,
+  options: DemoMessageScenarioOptions = {},
 ): DemoMessageScenario {
+  const api = options.api ?? DEFAULT_DEMO_MESSAGE_SCENARIO_API
+  const storage = options.storage ?? DEFAULT_DEMO_MESSAGE_SCENARIO_STORAGE
   const initialFeedId = DEMO_FEEDS[0]?.id ?? 'feed-runtime'
   const [activeFeedId, setActiveFeedId] = useState(initialFeedId)
   const [selectedFeedId, setSelectedFeedId] = useState(initialFeedId)
@@ -291,7 +322,10 @@ export function useDemoMessageScenario(
     }
   }, [])
 
-  const log = useCallback((entry: DemoLogEntry) => writeDemoLog(entry), [])
+  const log = useCallback(
+    (entry: DemoLogEntry) => storage.writeDemoLog(entry),
+    [storage],
+  )
 
   const syncDisplayedCounts = useCallback(() => {
     setMessageCount(feedMessagesRef.current.length)
@@ -339,7 +373,7 @@ export function useDemoMessageScenario(
 
     await sleep(FEED_LOAD_DELAY_MS)
 
-    let persistedFeed = await loadPersistedDemoFeed(feedId)
+    let persistedFeed = await storage.loadPersistedDemoFeed(feedId)
 
     if (!persistedFeed) {
       const seedMessages = createDemoMessages(feed.seedCount, feedId)
@@ -352,7 +386,7 @@ export function useDemoMessageScenario(
         messages: seedMessages,
         updatedAt: new Date().toISOString(),
       }
-      await savePersistedDemoFeed(persistedFeed)
+      await storage.savePersistedDemoFeed(persistedFeed)
       void log({
         requestId: createDemoRequestId('feed.seed'),
         operation: 'feed.seed',
@@ -375,7 +409,7 @@ export function useDemoMessageScenario(
     let resp: GetLatestMessagesResp<DemoMessage> | GetMessagesAroundResp<DemoMessage>
 
     if (persistedViewportAnchor) {
-      restoreResp = await getMessagesAround({
+      restoreResp = await api.getMessagesAround({
         feedId,
         anchor: {
           messageId: persistedViewportAnchor.messageId,
@@ -387,14 +421,14 @@ export function useDemoMessageScenario(
       resp = restoreResp
       usedPersistedViewportAnchor = restoreResp.ok
     } else {
-      resp = await getLatestMessages({
+      resp = await api.getLatestMessages({
         feedId,
         count: PAGE_SIZE,
       })
     }
 
     if (persistedViewportAnchor && isErrorResponse(resp)) {
-      resp = await getLatestMessages({
+      resp = await api.getLatestMessages({
         feedId,
         count: PAGE_SIZE,
       })
@@ -424,7 +458,7 @@ export function useDemoMessageScenario(
       resp,
       persistedFeed,
     }
-  }, [log])
+  }, [api, log, storage])
 
   const commitLoadedFeedWindow = useCallback(async ({
     feedId,
@@ -476,7 +510,7 @@ export function useDemoMessageScenario(
       loaded.persistedViewportAnchor &&
       !loaded.usedPersistedViewportAnchor
     ) {
-      await savePersistedDemoFeed({
+      await storage.savePersistedDemoFeed({
         ...loaded.persistedFeed,
         messages: loaded.normalizedFeedMessages,
         lastViewportAnchor: undefined,
@@ -544,7 +578,7 @@ export function useDemoMessageScenario(
     })
 
     return true
-  }, [log, saveCurrentFeedSessionState, syncDisplayedCounts])
+  }, [log, saveCurrentFeedSessionState, storage, syncDisplayedCounts])
 
   const beginPendingOperation = useCallback((operation: string) => {
     pendingOperationCountRef.current += 1
@@ -614,7 +648,7 @@ export function useDemoMessageScenario(
   }, [saveCurrentFeedSessionState, syncDisplayedCounts])
 
   const persistCurrentFeed = useCallback(async () => {
-    await savePersistedDemoFeed({
+    await storage.savePersistedDemoFeed({
       version: 1,
       feedId: activeFeedIdRef.current,
       revision: revisionRef.current,
@@ -623,7 +657,7 @@ export function useDemoMessageScenario(
       messages: feedMessagesRef.current,
       updatedAt: new Date().toISOString(),
     })
-  }, [])
+  }, [storage])
 
   const persistViewportAnchor = useCallback((
     event: ViewportAnchorChangedEvent,
@@ -702,7 +736,7 @@ export function useDemoMessageScenario(
       })
     }
 
-    void savePersistedDemoFeed({
+    void storage.savePersistedDemoFeed({
       version: 1,
       feedId,
       revision,
@@ -725,7 +759,7 @@ export function useDemoMessageScenario(
         anchor: nextAnchor,
       },
     })
-  }, [log, saveCurrentFeedSessionState])
+  }, [log, saveCurrentFeedSessionState, storage])
 
   const rememberRuntimeViewportAnchor = useCallback((
     event: ViewportAnchorChangedEvent,
@@ -1285,7 +1319,7 @@ export function useDemoMessageScenario(
       apply: async (feedId) => {
         // 先同步完整持久化 feed。分页边界必须由 BFF + 持久化数据共同决定，
         // demo 不能在触顶后私自再造更老消息，否则会把一个有限 feed 伪装成无限历史。
-        const storeFeed = await loadPersistedDemoFeed(feedId)
+        const storeFeed = await storage.loadPersistedDemoFeed(feedId)
         feedMessagesRef.current = storeFeed
           ? normalizeDemoMessages(feedId, storeFeed.messages)
           : []
@@ -1299,7 +1333,7 @@ export function useDemoMessageScenario(
           }
         }
 
-        const resp = await getMessagesAround({
+        const resp = await api.getMessagesAround({
           feedId,
           anchor: { messageId: oldestViewportMsg.id },
           before: PAGE_SIZE,
@@ -1336,7 +1370,7 @@ export function useDemoMessageScenario(
       },
       skipPersist: true, // prepend 只改变 loaded window，不应覆写完整持久化 feed
     })
-  }, [log, runLoggedOperation])
+  }, [api, log, runLoggedOperation, storage])
 
   const finishAfterDataRequest = useCallback((requestFeedId: string) => {
     loadingAfterRef.current = false
@@ -1407,7 +1441,7 @@ export function useDemoMessageScenario(
       startEvent: 'loading newer messages...',
       details: { batchSize: PAGE_SIZE, source },
       apply: async (feedId) => {
-        const storeFeed = await loadPersistedDemoFeed(feedId)
+        const storeFeed = await storage.loadPersistedDemoFeed(feedId)
         feedMessagesRef.current = storeFeed
           ? normalizeDemoMessages(feedId, storeFeed.messages)
           : []
@@ -1421,7 +1455,7 @@ export function useDemoMessageScenario(
           }
         }
 
-        const resp = await getMessagesAround({
+        const resp = await api.getMessagesAround({
           feedId,
           anchor: { messageId: newestViewportMsg.id },
           before: 0,
@@ -1459,7 +1493,7 @@ export function useDemoMessageScenario(
       },
       skipPersist: true,
     })
-  }, [finishAfterDataRequest, log, runLoggedOperation])
+  }, [api, finishAfterDataRequest, log, runLoggedOperation, storage])
 
   const loadLatestWindow = useCallback((source: 'follow-bottom') => {
     if (loadingAfterRef.current) {
@@ -1483,12 +1517,12 @@ export function useDemoMessageScenario(
       startEvent: 'loading latest messages...',
       details: { batchSize: PAGE_SIZE, source },
       apply: async (feedId) => {
-        const storeFeed = await loadPersistedDemoFeed(feedId)
+        const storeFeed = await storage.loadPersistedDemoFeed(feedId)
         feedMessagesRef.current = storeFeed
           ? normalizeDemoMessages(feedId, storeFeed.messages)
           : []
 
-        const resp = await getLatestMessages({
+        const resp = await api.getLatestMessages({
           feedId,
           count: PAGE_SIZE,
         })
@@ -1520,7 +1554,7 @@ export function useDemoMessageScenario(
         finishAfterDataRequest(requestFeedId)
       },
     })
-  }, [finishAfterDataRequest, log, runLoggedOperation])
+  }, [api, finishAfterDataRequest, log, runLoggedOperation, storage])
 
   const loadAroundTargetWindow = useCallback((
     target: { messageId: string; position?: number },
@@ -1570,12 +1604,12 @@ export function useDemoMessageScenario(
         after,
       },
       apply: async (feedId) => {
-        const storeFeed = await loadPersistedDemoFeed(feedId)
+        const storeFeed = await storage.loadPersistedDemoFeed(feedId)
         feedMessagesRef.current = storeFeed
           ? normalizeDemoMessages(feedId, storeFeed.messages)
           : []
 
-        const resp = await getMessagesAround({
+        const resp = await api.getMessagesAround({
           feedId,
           anchor: target,
           before,
@@ -1613,7 +1647,7 @@ export function useDemoMessageScenario(
       },
       skipPersist: true,
     })
-  }, [finishAfterDataRequest, log, runLoggedOperation])
+  }, [api, finishAfterDataRequest, log, runLoggedOperation, storage])
 
   useEffect(() => {
     loadAroundTargetWindowRef.current = loadAroundTargetWindow
@@ -1866,7 +1900,7 @@ export function useDemoMessageScenario(
 
         // 当前窗口不是 latest 时，send 需要模拟真实 IM：写入后重新请求 latest page，
         // 让 runtime 从底部重建 projection，而不是把自发消息排在不可见窗口外。
-        await savePersistedDemoFeed({
+        await storage.savePersistedDemoFeed({
           version: 1,
           feedId,
           revision: revisionRef.current,
@@ -1876,7 +1910,7 @@ export function useDemoMessageScenario(
           updatedAt: new Date().toISOString(),
         })
 
-        const latestResp = await getLatestMessages({
+        const latestResp = await api.getLatestMessages({
           feedId,
           count: PAGE_SIZE,
         })
@@ -1908,7 +1942,7 @@ export function useDemoMessageScenario(
     })
 
     return true
-  }, [runLoggedOperation])
+  }, [api, runLoggedOperation, storage])
 
   const followBottom = useCallback((source: 'sidebar' | 'floating') => {
     void log({
@@ -2095,14 +2129,14 @@ export function useDemoMessageScenario(
       try {
         await sleep(OPERATION_DELAYS['feed.clear'])
 
-        const persisted = await loadPersistedDemoFeed(feedId)
+        const persisted = await storage.loadPersistedDemoFeed(feedId)
         const isActiveAfterDelay = activeFeedIdRef.current === feedId
         const nextRevision = Math.max(
           1,
           (isActiveAfterDelay ? revisionRef.current : persisted?.revision ?? 1) + 1,
         )
 
-        await savePersistedDemoFeed({
+        await storage.savePersistedDemoFeed({
           version: 1,
           feedId,
           revision: nextRevision,
@@ -2177,6 +2211,7 @@ export function useDemoMessageScenario(
     log,
     runtimeCache,
     saveCurrentFeedSessionState,
+    storage,
     syncDisplayedCounts,
   ])
 

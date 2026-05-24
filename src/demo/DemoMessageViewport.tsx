@@ -1,7 +1,9 @@
 import {
   type FormEvent,
-  type PointerEvent,
   type MouseEvent,
+  type PointerEvent,
+  type ReactNode,
+  type Ref,
   useCallback,
   useState,
 } from 'react'
@@ -11,12 +13,34 @@ import {
 } from '../index'
 import { type DemoMessage } from './demoData'
 import { useDemoFeedRuntimeCache } from './useDemoFeedRuntimeCache'
-import { useDemoMessageScenario } from './useDemoMessageScenario'
+import {
+  type DemoMessageScenario,
+  useDemoMessageScenario,
+} from './useDemoMessageScenario'
 
 export function DemoMessageViewport() {
   const runtimeCache = useDemoFeedRuntimeCache()
   const scenario = useDemoMessageScenario(runtimeCache)
+
+  return <DemoMessageViewportContent scenario={scenario} />
+}
+
+export type DemoMessageViewportContentProps = {
+  scenario: DemoMessageScenario
+  rootRef?: Ref<HTMLElement>
+  e2e?: {
+    statusRegion: ReactNode
+    onResetScenario: () => void
+  }
+}
+
+export function DemoMessageViewportContent({
+  scenario,
+  rootRef,
+  e2e,
+}: DemoMessageViewportContentProps) {
   const [draft, setDraft] = useState('')
+  const e2eEnabled = Boolean(e2e)
   const {
     deleteMessage,
     editMessage,
@@ -137,6 +161,7 @@ export function DemoMessageViewport() {
             type="button"
             className="message-quote"
             data-testid={`quote-jump-${message.id}`}
+            data-ai-action={e2eEnabled ? 'jump-to-quote' : undefined}
             onPointerDown={handleQuotePointerDown}
             onClick={handleQuoteClick}
           >
@@ -171,6 +196,7 @@ export function DemoMessageViewport() {
   }, [
     deleteMessage,
     editMessage,
+    e2eEnabled,
     highlightedMessageId,
     highlightToken,
     jumpToQuote,
@@ -190,14 +216,31 @@ export function DemoMessageViewport() {
   }, [highlightedMessageId, highlightToken])
 
   return (
-    <main className="demo-shell">
+    <main
+      ref={rootRef}
+      className={['demo-shell', e2eEnabled ? 'e2e-shell' : '']
+        .filter(Boolean)
+        .join(' ')}
+      data-testid={e2eEnabled ? 'e2e-scenario-host' : undefined}
+    >
       <aside className="demo-sidebar" aria-label="Runtime controls">
         <div>
           <p className="eyebrow">XMessageList</p>
           <h1>IM Runtime Demo</h1>
           <p className="active-feed-title">{scenario.activeFeed.title}</p>
         </div>
+        {e2e?.statusRegion}
         <div className="demo-actions">
+          {e2e ? (
+            <button
+              type="button"
+              data-testid="e2e-reset-button"
+              data-ai-action="reset-scenario"
+              onClick={e2e.onResetScenario}
+            >
+              Reset
+            </button>
+          ) : null}
           <button
             type="button"
             data-testid="load-history-button"
@@ -310,6 +353,8 @@ export function DemoMessageViewport() {
                 aria-current={feed.id === scenario.activeFeedId ? 'true' : undefined}
                 aria-busy={feed.id === scenario.pendingFeedId ? true : undefined}
                 data-testid={`feed-button-${feed.id}`}
+                data-feed-id={e2eEnabled ? feed.id : undefined}
+                data-ai-action={e2eEnabled ? 'switch-feed' : undefined}
                 onClick={() => scenario.selectFeed(feed.id)}
               >
                 <span>
@@ -332,37 +377,40 @@ export function DemoMessageViewport() {
           ))}
         </section>
       </aside>
-        <section className="chat-surface" aria-label="Message runtime demo">
-          <MessageViewport
-            runtime={scenario.activeRuntime}
-            className="message-viewport"
-            renderMessage={renderDemoItem}
-            getRowRenderVersion={getDemoRowRenderVersion}
-            renderTopEdge={() =>
-              scenario.loadingBefore ? (
-                <div className="history-loading">Loading older messages...</div>
-              ) : null
-            }
-            renderBottomEdge={() =>
-              scenario.loadingAfter ? (
-                <div className="history-loading history-loading-bottom">
-                  Loading newer messages...
-                </div>
-              ) : null
-            }
-            renderFollowBottom={() => (
-              <button
-                type="button"
-                className="follow-bottom-button"
-                aria-label="Follow latest messages"
-                data-testid="follow-bottom-button"
-                onClick={() => scenario.followBottom('floating')}
-              >
-                Bottom
-              </button>
-            )}
-            onViewportAnchorChange={scenario.rememberRuntimeViewportAnchor}
-          />
+      <section className="chat-surface" aria-label="Message runtime demo">
+        <MessageViewport
+          runtime={scenario.activeRuntime}
+          className="message-viewport"
+          aiRegion={e2eEnabled ? 'message-list' : undefined}
+          enableAiDomAttributes={e2eEnabled}
+          renderMessage={renderDemoItem}
+          getRowRenderVersion={getDemoRowRenderVersion}
+          renderTopEdge={() =>
+            scenario.loadingBefore ? (
+              <div className="history-loading">Loading older messages...</div>
+            ) : null
+          }
+          renderBottomEdge={() =>
+            scenario.loadingAfter ? (
+              <div className="history-loading history-loading-bottom">
+                Loading newer messages...
+              </div>
+            ) : null
+          }
+          renderFollowBottom={() => (
+            <button
+              type="button"
+              className="follow-bottom-button"
+              aria-label="Follow latest messages"
+              data-testid="follow-bottom-button"
+              data-ai-action={e2eEnabled ? 'follow-bottom' : undefined}
+              onClick={() => scenario.followBottom('floating')}
+            >
+              Bottom
+            </button>
+          )}
+          onViewportAnchorChange={scenario.rememberRuntimeViewportAnchor}
+        />
         <form className="message-composer" onSubmit={sendDraft}>
           <textarea
             aria-label="Message input"
