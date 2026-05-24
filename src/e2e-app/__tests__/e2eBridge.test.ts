@@ -170,6 +170,9 @@ describe('collectE2EState', () => {
       'jump_to_quoted_message',
       'switch_feed',
       'toggle_dynamic_height',
+      'drag_scrollbar_to_top',
+      'drag_scrollbar_to_bottom',
+      'reattach_runtime',
     ])
     expect(actions.every((action) => action.enabled)).toBe(true)
   })

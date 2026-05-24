@@ -274,6 +274,64 @@ export function expectNoFeedPollution(
       })
 }
 
+export function expectNeedMoreBeforeWithin(
+  evidence: E2EEvidence,
+  maxCount: number,
+): E2EOracleResult {
+  return evidence.events.needMoreBefore <= maxCount
+    ? pass('expectNeedMoreBeforeWithin', 'needMoreBefore count is bounded')
+    : fail('expectNeedMoreBeforeWithin', 'needMoreBefore repeated unexpectedly', {
+        actual: evidence.events.needMoreBefore,
+        maxCount,
+      })
+}
+
+export function expectNeedMoreAfterWithin(
+  evidence: E2EEvidence,
+  maxCount: number,
+): E2EOracleResult {
+  return evidence.events.needMoreAfter <= maxCount
+    ? pass('expectNeedMoreAfterWithin', 'needMoreAfter count is bounded')
+    : fail('expectNeedMoreAfterWithin', 'needMoreAfter repeated unexpectedly', {
+        actual: evidence.events.needMoreAfter,
+        maxCount,
+      })
+}
+
+export function expectRuntimeAttachedOnce(evidence: E2EEvidence): E2EOracleResult {
+  const failures: string[] = []
+
+  if (evidence.runtime.observedRows <= 0) {
+    failures.push(`observed rows is ${evidence.runtime.observedRows}`)
+  }
+
+  if (evidence.console.errors.length > 0) {
+    failures.push(`console errors is ${evidence.console.errors.length}`)
+  }
+
+  if (evidence.events.viewportErrors.length > 0) {
+    failures.push(`viewport errors: ${evidence.events.viewportErrors.join(', ')}`)
+  }
+
+  return failures.length === 0
+    ? pass('expectRuntimeAttachedOnce', 'runtime is attached with observed rows')
+    : fail('expectRuntimeAttachedOnce', 'runtime attach state is unhealthy', {
+        failures,
+      })
+}
+
+export function expectViewportErrorObserved(
+  evidence: E2EEvidence,
+  code: string,
+): E2EOracleResult {
+  return evidence.events.viewportErrors.includes(code)
+    ? pass('expectViewportErrorObserved', `viewport error ${code} observed`)
+    : fail('expectViewportErrorObserved', `viewport error ${code} missing`, {
+        code,
+        viewportErrors: evidence.events.viewportErrors,
+      })
+}
+
 function pass(oracleId: string, message: string): E2EOracleResult {
   return {
     ok: true,

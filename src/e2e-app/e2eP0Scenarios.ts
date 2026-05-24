@@ -16,6 +16,9 @@ export type E2EScenarioActionId =
   | 'jump_to_quoted_message'
   | 'switch_feed'
   | 'toggle_dynamic_height'
+  | 'drag_scrollbar_to_top'
+  | 'drag_scrollbar_to_bottom'
+  | 'reattach_runtime'
 
 export type E2EActionStep =
   | {

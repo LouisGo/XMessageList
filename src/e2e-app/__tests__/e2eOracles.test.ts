@@ -9,14 +9,22 @@ import {
   getE2EP1ScenarioDefinition,
 } from '../e2eP1Scenarios'
 import {
+  E2E_P2_SCENARIO_DEFINITIONS,
+  getE2EP2ScenarioDefinition,
+} from '../e2eP2Scenarios'
+import {
   expectAnchorPreserved,
   expectBottomLocked,
   expectDestinationSettledOnTarget,
   expectDiagnosticObserved,
   expectLatestMessageVisible,
+  expectNeedMoreAfterWithin,
+  expectNeedMoreBeforeWithin,
   expectNoFeedPollution,
   expectNoFollowWhenUserReading,
   expectRuntimeIdle,
+  expectRuntimeAttachedOnce,
+  expectViewportErrorObserved,
 } from '../e2eOracles'
 import { getE2EScenarioDefinition } from '../e2eScenarioRegistry'
 
@@ -174,6 +182,30 @@ describe('e2e deterministic oracles', () => {
       ).ok,
     ).toBe(true)
   })
+
+  it('checks P2 edge and lifecycle helpers', () => {
+    expect(
+      expectNeedMoreBeforeWithin(createEvidence({
+        events: { needMoreBefore: 1 },
+      }), 1).ok,
+    ).toBe(true)
+    expect(
+      expectNeedMoreAfterWithin(createEvidence({
+        events: { needMoreAfter: 2 },
+      }), 1).ok,
+    ).toBe(false)
+    expect(expectRuntimeAttachedOnce(createEvidence()).ok).toBe(true)
+    expect(
+      expectViewportErrorObserved(
+        createEvidence({
+          events: {
+            viewportErrors: ['commit-timeout-bootstrap'],
+          },
+        }),
+        'commit-timeout-bootstrap',
+      ).ok,
+    ).toBe(true)
+  })
 })
 
 describe('P0 e2e scenario definitions', () => {
@@ -209,6 +241,24 @@ describe('P1 e2e scenario definitions', () => {
       expect(getE2EScenarioDefinition(scenario.id)).not.toBeNull()
       expect(getE2EP1ScenarioDefinition(scenario.id)).toBe(scenario)
       expect(scenario.priority).toBe('P1')
+      expect(scenario.oracleIds.length).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('P2 e2e scenario definitions', () => {
+  it('defines registered P2 host scenarios with oracle coverage', () => {
+    expect(E2E_P2_SCENARIO_DEFINITIONS.map((scenario) => scenario.id)).toEqual([
+      'edge.custom-scrollbar-drag-top',
+      'edge.custom-scrollbar-drag-bottom',
+      'lifecycle.strictmode-attach-detach-attach',
+      'recovery.bootstrap-commit-timeout',
+    ])
+
+    for (const scenario of E2E_P2_SCENARIO_DEFINITIONS) {
+      expect(getE2EScenarioDefinition(scenario.id)).not.toBeNull()
+      expect(getE2EP2ScenarioDefinition(scenario.id)).toBe(scenario)
+      expect(scenario.priority).toBe('P2')
       expect(scenario.oracleIds.length).toBeGreaterThan(0)
     }
   })

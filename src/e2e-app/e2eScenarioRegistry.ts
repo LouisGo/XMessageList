@@ -62,6 +62,34 @@ const P0_SCENARIOS: E2EScenarioDefinition[] = [
     seedCount: DEFAULT_FEED.seedCount,
     seedLabel: 'p1-session-switch-restore-v1',
   },
+  {
+    id: 'edge.custom-scrollbar-drag-top',
+    title: 'Custom scrollbar drag top edge',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p2-scrollbar-drag-top-v1',
+  },
+  {
+    id: 'edge.custom-scrollbar-drag-bottom',
+    title: 'Custom scrollbar drag bottom edge',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p2-scrollbar-drag-bottom-v1',
+  },
+  {
+    id: 'lifecycle.strictmode-attach-detach-attach',
+    title: 'StrictMode attach detach attach',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p2-strictmode-attach-detach-v1',
+  },
+  {
+    id: 'recovery.bootstrap-commit-timeout',
+    title: 'Bootstrap commit timeout recovery',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p2-bootstrap-commit-timeout-v1',
+  },
 ]
 
 export function getE2EScenarioDefinition(

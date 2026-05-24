@@ -17,14 +17,23 @@ import {
   type E2EP1ScenarioDefinition,
 } from '../../src/e2e-app/e2eP1Scenarios.ts'
 import {
+  E2E_P2_SCENARIO_DEFINITIONS,
+  getE2EP2ScenarioDefinition,
+  type E2EP2ScenarioDefinition,
+} from '../../src/e2e-app/e2eP2Scenarios.ts'
+import {
   expectAnchorPreserved,
   expectBottomLocked,
   expectDestinationSettledOnTarget,
   expectDiagnosticObserved,
   expectLatestMessageVisible,
+  expectNeedMoreAfterWithin,
+  expectNeedMoreBeforeWithin,
   expectNoFeedPollution,
   expectNoFollowWhenUserReading,
   expectRuntimeIdle,
+  expectRuntimeAttachedOnce,
+  expectViewportErrorObserved,
   type E2EOracleResult,
 } from '../../src/e2e-app/e2eOracles.ts'
 
@@ -33,7 +42,7 @@ type RunnerOptions = {
   cdpEndpoint: string
   outDir: string
   scenarioId?: string
-  priority: 'P0' | 'P1' | 'all'
+  priority: 'P0' | 'P1' | 'P2' | 'all'
   timeoutMs: number
   help: boolean
 }
@@ -69,6 +78,7 @@ type EvidenceCheckpoints = Partial<Record<'before' | 'after' | 'final', E2EEvide
 type RunnableScenarioDefinition =
   | E2EP0ScenarioDefinition
   | E2EP1ScenarioDefinition
+  | E2EP2ScenarioDefinition
 
 const DEFAULT_OPTIONS: RunnerOptions = {
   baseUrl: 'http://127.0.0.1:5173',
@@ -402,6 +412,42 @@ function evaluateScenarioOracles(
     ]
   }
 
+  if (definition.id === 'edge.custom-scrollbar-drag-top') {
+    const after = checkpoints.after ?? finalEvidence
+
+    return [
+      expectRuntimeIdle(after),
+      expectNeedMoreBeforeWithin(after, 1),
+    ]
+  }
+
+  if (definition.id === 'edge.custom-scrollbar-drag-bottom') {
+    const after = checkpoints.after ?? finalEvidence
+
+    return [
+      expectRuntimeIdle(after),
+      expectNeedMoreAfterWithin(after, 1),
+    ]
+  }
+
+  if (definition.id === 'lifecycle.strictmode-attach-detach-attach') {
+    const after = checkpoints.after ?? finalEvidence
+
+    return [
+      expectRuntimeIdle(after),
+      expectRuntimeAttachedOnce(after),
+    ]
+  }
+
+  if (definition.id === 'recovery.bootstrap-commit-timeout') {
+    const after = checkpoints.after ?? finalEvidence
+
+    return [
+      expectRuntimeIdle(after),
+      expectViewportErrorObserved(after, 'commit-timeout-bootstrap'),
+    ]
+  }
+
   return [missingEvidenceOracle('unknownScenario', definition.id)]
 }
 
@@ -616,14 +662,20 @@ function resolveScenarioDefinitions(
       return E2E_P1_SCENARIO_DEFINITIONS
     }
 
+    if (options.priority === 'P2') {
+      return E2E_P2_SCENARIO_DEFINITIONS
+    }
+
     return [
       ...E2E_P0_SCENARIO_DEFINITIONS,
       ...E2E_P1_SCENARIO_DEFINITIONS,
+      ...E2E_P2_SCENARIO_DEFINITIONS,
     ]
   }
 
   const definition = getE2EP0ScenarioDefinition(options.scenarioId) ??
-    getE2EP1ScenarioDefinition(options.scenarioId)
+    getE2EP1ScenarioDefinition(options.scenarioId) ??
+    getE2EP2ScenarioDefinition(options.scenarioId)
 
   if (!definition) {
     throw new Error(`unknown e2e scenario ${options.scenarioId}`)
@@ -690,11 +742,11 @@ function parseArgs(argv: string[]): RunnerOptions {
 }
 
 function parsePriority(value: string): RunnerOptions['priority'] {
-  if (value === 'P0' || value === 'P1' || value === 'all') {
+  if (value === 'P0' || value === 'P1' || value === 'P2' || value === 'all') {
     return value
   }
 
-  throw new Error('--priority must be P0, P1, or all')
+  throw new Error('--priority must be P0, P1, P2, or all')
 }
 
 function readArgValue(argv: string[], index: number, arg: string): string {
@@ -745,7 +797,7 @@ function helpText(): string {
     '  --base-url <url>      E2E host base URL. Default: http://127.0.0.1:5173',
     '  --cdp <url>           Chrome DevTools endpoint. Default: http://127.0.0.1:9222',
     '  --out <dir>           Artifact directory. Default: .logs/e2e',
-    '  --priority <value>    P0, P1, or all. Default: P0',
+    '  --priority <value>    P0, P1, P2, or all. Default: P0',
     '  --timeout-ms <ms>     Per-step timeout. Default: 30000',
     '',
     'Chrome must be running with --remote-debugging-port=9222, and the Vite dev server must already serve /e2e.',

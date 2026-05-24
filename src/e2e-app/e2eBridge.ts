@@ -603,6 +603,27 @@ export function listE2EActions(state: E2EState): E2EActionDescriptor[] {
       enabled: pageReady && feedReady,
       reasonDisabled: pageReady && feedReady ? undefined : 'feed is not ready',
     },
+    {
+      id: 'drag_scrollbar_to_top',
+      label: 'Drag scrollbar to top',
+      category: 'scroll',
+      enabled: pageReady,
+      reasonDisabled: pageReady ? undefined : 'scenario is not ready',
+    },
+    {
+      id: 'drag_scrollbar_to_bottom',
+      label: 'Drag scrollbar to bottom',
+      category: 'scroll',
+      enabled: pageReady,
+      reasonDisabled: pageReady ? undefined : 'scenario is not ready',
+    },
+    {
+      id: 'reattach_runtime',
+      label: 'Detach and attach runtime',
+      category: 'mock',
+      enabled: pageReady,
+      reasonDisabled: pageReady ? undefined : 'scenario is not ready',
+    },
   ]
 }
 
@@ -741,6 +762,30 @@ export async function runE2EAction(input: {
         await waitForCondition(input.readState, isRuntimeIdleForAction, {
           timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
           failureCode: 'toggle_dynamic_height_timeout',
+        })
+        break
+      case 'drag_scrollbar_to_top':
+        dragScrollbarToTop(input.scenario, input.root ?? document)
+        await waitForActionPublication()
+        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
+          failureCode: 'drag_scrollbar_to_top_timeout',
+        })
+        break
+      case 'drag_scrollbar_to_bottom':
+        dragScrollbarToBottom(input.scenario, input.root ?? document)
+        await waitForActionPublication()
+        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
+          failureCode: 'drag_scrollbar_to_bottom_timeout',
+        })
+        break
+      case 'reattach_runtime':
+        reattachRuntime(input.scenario, input.root ?? document)
+        await waitForActionPublication()
+        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
+          failureCode: 'reattach_runtime_timeout',
         })
         break
     }
@@ -899,6 +944,36 @@ function scrollToViewportBottom(
   writeScrollTop(scenario, container.scrollHeight - container.clientHeight)
 }
 
+function dragScrollbarToTop(
+  scenario: DemoMessageScenario,
+  root: ParentNode,
+): void {
+  assertScrollContainer(root)
+  writeScrollTop(scenario, 0, 'custom-scrollbar-drag')
+}
+
+function dragScrollbarToBottom(
+  scenario: DemoMessageScenario,
+  root: ParentNode,
+): void {
+  const container = assertScrollContainer(root)
+  writeScrollTop(
+    scenario,
+    container.scrollHeight - container.clientHeight,
+    'custom-scrollbar-drag',
+  )
+}
+
+function reattachRuntime(
+  scenario: DemoMessageScenario,
+  root: ParentNode,
+): void {
+  const container = assertScrollContainer(root)
+
+  scenario.activeRuntime.detach()
+  scenario.activeRuntime.attach(container)
+}
+
 function assertScrollContainer(root: ParentNode): HTMLElement {
   const container = getScrollContainer(root)
 
@@ -915,9 +990,11 @@ function assertScrollContainer(root: ParentNode): HTMLElement {
 function writeScrollTop(
   scenario: DemoMessageScenario,
   scrollTop: number,
+  source: 'custom-scrollbar-track' | 'custom-scrollbar-drag' =
+    'custom-scrollbar-track',
 ): void {
   const nextScrollTop = Math.max(0, scrollTop)
-  const input = { source: 'custom-scrollbar-track' as const }
+  const input = { source }
 
   scenario.activeRuntime.beginDirectScroll(input)
   const committed = scenario.activeRuntime.writeDirectScrollTop(nextScrollTop, input)
