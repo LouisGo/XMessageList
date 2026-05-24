@@ -5,8 +5,16 @@ import {
   getE2EP0ScenarioDefinition,
 } from '../e2eP0Scenarios'
 import {
+  E2E_P1_SCENARIO_DEFINITIONS,
+  getE2EP1ScenarioDefinition,
+} from '../e2eP1Scenarios'
+import {
   expectAnchorPreserved,
   expectBottomLocked,
+  expectDestinationSettledOnTarget,
+  expectDiagnosticObserved,
+  expectLatestMessageVisible,
+  expectNoFeedPollution,
   expectNoFollowWhenUserReading,
   expectRuntimeIdle,
 } from '../e2eOracles'
@@ -119,6 +127,53 @@ describe('e2e deterministic oracles', () => {
     expect(failed.ok).toBe(false)
     expect(failed.details?.failures).toContain('bottom lock is LOCKED')
   })
+
+  it('checks P1 destination and feed-pollution helpers', () => {
+    const destinationEvidence = createEvidence({
+      runtime: {
+        destinationState: 'settled',
+      },
+      ui: {
+        highlightedMessageId: 'feed-runtime-m-80',
+      },
+      events: {
+        destinationSettled: [{
+          intent: 'jump',
+          targetMessageId: 'feed-runtime-m-80',
+          resolvedMessageId: 'feed-runtime-m-80',
+          resolution: 'target',
+        }],
+      },
+    })
+
+    expect(expectLatestMessageVisible(createEvidence()).ok).toBe(true)
+    expect(expectDestinationSettledOnTarget(destinationEvidence).ok).toBe(true)
+    expect(
+      expectDiagnosticObserved(
+        createEvidence({
+          diagnostics: {
+            recent: [{
+              channel: 'measurement',
+              severity: 'debug',
+              name: 'correction.anchorPreserved',
+              details: {},
+            }],
+          },
+        }),
+        'correction.anchorPreserved',
+      ).ok,
+    ).toBe(true)
+    expect(
+      expectNoFeedPollution(
+        createEvidence(),
+        createEvidence({
+          viewport: {
+            visibleRows: [createVisibleRow('feed-runtime-m-80')],
+          },
+        }),
+      ).ok,
+    ).toBe(true)
+  })
 })
 
 describe('P0 e2e scenario definitions', () => {
@@ -141,9 +196,28 @@ describe('P0 e2e scenario definitions', () => {
   })
 })
 
+describe('P1 e2e scenario definitions', () => {
+  it('defines registered P1 host scenarios with oracle coverage', () => {
+    expect(E2E_P1_SCENARIO_DEFINITIONS.map((scenario) => scenario.id)).toEqual([
+      'bottom.locked-append-follow',
+      'destination.quote-jump-visible-target',
+      'dynamic-height.anchor-above-growth',
+      'session.switch-restore-runtime-cache',
+    ])
+
+    for (const scenario of E2E_P1_SCENARIO_DEFINITIONS) {
+      expect(getE2EScenarioDefinition(scenario.id)).not.toBeNull()
+      expect(getE2EP1ScenarioDefinition(scenario.id)).toBe(scenario)
+      expect(scenario.priority).toBe('P1')
+      expect(scenario.oracleIds.length).toBeGreaterThan(0)
+    }
+  })
+})
+
 type EvidenceOverrides = Partial<
-  Omit<E2EEvidence, 'runtime' | 'viewport' | 'ui' | 'events' | 'anchors'>
+  Omit<E2EEvidence, 'feed' | 'runtime' | 'viewport' | 'ui' | 'events' | 'anchors'>
 > & {
+  feed?: Partial<E2EEvidence['feed']>
   runtime?: Partial<E2EEvidence['runtime']>
   viewport?: Partial<E2EEvidence['viewport']>
   ui?: Partial<E2EEvidence['ui']>
@@ -203,6 +277,7 @@ function createEvidence(overrides: EvidenceOverrides = {}): E2EEvidence {
       pendingOperation: 'idle',
       lastEvent: 'idle',
       followBottomVisible: false,
+      highlightedMessageId: null,
     },
     events: {
       viewportAnchorChanged: [],
@@ -223,6 +298,10 @@ function createEvidence(overrides: EvidenceOverrides = {}): E2EEvidence {
   return {
     ...base,
     ...overrides,
+    feed: {
+      ...base.feed,
+      ...overrides.feed,
+    },
     runtime: {
       ...base.runtime,
       ...overrides.runtime,

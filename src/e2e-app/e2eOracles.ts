@@ -170,6 +170,110 @@ export function expectNoFollowWhenUserReading(
       )
 }
 
+export function expectLatestMessageVisible(
+  evidence: E2EEvidence,
+): E2EOracleResult {
+  const latestMessageId = `${evidence.feed.activeFeedId}-m-${evidence.feed.messageCount}`
+  const visibleIds = evidence.viewport.visibleRows.map((row) => row.messageId)
+
+  return visibleIds.includes(latestMessageId)
+    ? pass('expectLatestMessageVisible', 'latest message is visible')
+    : fail('expectLatestMessageVisible', 'latest message is not visible', {
+        latestMessageId,
+        visibleIds,
+      })
+}
+
+export function expectDestinationSettledOnTarget(
+  evidence: E2EEvidence,
+): E2EOracleResult {
+  const settled = evidence.events.destinationSettled.at(-1)
+  const failures: string[] = []
+
+  if (!settled) {
+    failures.push('destinationSettled event is missing')
+  }
+
+  const resolvedMessageId = settled?.resolvedMessageId ?? settled?.targetMessageId
+  const visibleIds = evidence.viewport.visibleRows.map((row) => row.messageId)
+
+  if (resolvedMessageId && !visibleIds.includes(resolvedMessageId)) {
+    failures.push(`resolved target ${resolvedMessageId} is not visible`)
+  }
+
+  if (
+    resolvedMessageId &&
+    settled?.resolution !== 'fallback-deleted' &&
+    evidence.ui.highlightedMessageId !== resolvedMessageId
+  ) {
+    failures.push(
+      `highlight ${evidence.ui.highlightedMessageId ?? 'none'} does not match ${resolvedMessageId}`,
+    )
+  }
+
+  if (evidence.runtime.destinationState !== 'settled') {
+    failures.push(`destination state is ${evidence.runtime.destinationState}`)
+  }
+
+  return failures.length === 0
+    ? pass('expectDestinationSettledOnTarget', 'destination settled on target')
+    : fail(
+        'expectDestinationSettledOnTarget',
+        'destination did not settle on target',
+        {
+          failures,
+          settled,
+          visibleIds,
+          highlightedMessageId: evidence.ui.highlightedMessageId,
+        },
+      )
+}
+
+export function expectDiagnosticObserved(
+  evidence: E2EEvidence,
+  diagnosticName: string,
+): E2EOracleResult {
+  const matched = evidence.diagnostics.recent.some((record) =>
+    record.name === diagnosticName || record.name.startsWith(`${diagnosticName}.`),
+  )
+
+  return matched
+    ? pass('expectDiagnosticObserved', `diagnostic ${diagnosticName} observed`)
+    : fail('expectDiagnosticObserved', `diagnostic ${diagnosticName} missing`, {
+        diagnosticName,
+        recentNames: evidence.diagnostics.recent.map((record) => record.name),
+      })
+}
+
+export function expectNoFeedPollution(
+  before: E2EEvidence,
+  after: E2EEvidence,
+): E2EOracleResult {
+  const failures: string[] = []
+  const activeFeedId = after.feed.activeFeedId
+  const pollutedVisibleIds = after.viewport.visibleRows
+    .map((row) => row.messageId)
+    .filter((messageId) => !messageId.startsWith(`${activeFeedId}-`))
+
+  if (before.feed.activeFeedId !== after.feed.activeFeedId) {
+    failures.push(
+      `active feed changed from ${before.feed.activeFeedId} to ${after.feed.activeFeedId}`,
+    )
+  }
+
+  if (pollutedVisibleIds.length > 0) {
+    failures.push(`visible rows include foreign feed ids: ${pollutedVisibleIds.join(', ')}`)
+  }
+
+  return failures.length === 0
+    ? pass('expectNoFeedPollution', 'visible rows belong to the restored feed')
+    : fail('expectNoFeedPollution', 'feed pollution detected', {
+        failures,
+        activeFeedId,
+        pollutedVisibleIds,
+      })
+}
+
 function pass(oracleId: string, message: string): E2EOracleResult {
   return {
     ok: true,

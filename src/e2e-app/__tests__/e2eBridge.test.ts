@@ -167,6 +167,9 @@ describe('collectE2EState', () => {
       'append_message',
       'prepend_history',
       'follow_bottom',
+      'jump_to_quoted_message',
+      'switch_feed',
+      'toggle_dynamic_height',
     ])
     expect(actions.every((action) => action.enabled)).toBe(true)
   })

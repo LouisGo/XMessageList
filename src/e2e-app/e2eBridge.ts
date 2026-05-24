@@ -50,6 +50,7 @@ export type E2EState = {
     pendingOperation: string
     lastEvent: string
     followBottomVisible: boolean
+    highlightedMessageId: string | null
   }
   safety: {
     consoleErrors: number
@@ -168,6 +169,7 @@ export type E2EEventEvidence = {
   needMoreAfter: number
   destinationSettled: Array<{
     intent: string
+    resolution?: string
     targetMessageId?: string
     resolvedMessageId?: string
   }>
@@ -271,6 +273,7 @@ export function recordE2ERuntimeEvent(
       buffer.destinationSettled,
       {
         intent: event.intent,
+        resolution: event.resolution,
         targetMessageId: event.target.messageId,
         resolvedMessageId: event.resolvedTarget?.messageId,
       },
@@ -372,6 +375,7 @@ export function collectE2EState(input: {
       pendingOperation: input.scenario.pendingOperation,
       lastEvent: input.scenario.lastEvent,
       followBottomVisible: isFollowBottomVisible(input.root ?? document),
+      highlightedMessageId: input.scenario.highlightedMessageId,
     },
     safety: {
       consoleErrors: input.consoleBuffer.errors.length,
@@ -499,6 +503,7 @@ export function createBootingE2EState(scenarioId: string): E2EState {
       pendingOperation: 'booting',
       lastEvent: 'booting e2e host',
       followBottomVisible: false,
+      highlightedMessageId: null,
     },
     safety: {
       consoleErrors: 0,
@@ -571,6 +576,30 @@ export function listE2EActions(state: E2EState): E2EActionDescriptor[] {
       id: 'follow_bottom',
       label: 'Follow bottom',
       category: 'destination',
+      enabled: pageReady && feedReady,
+      reasonDisabled: pageReady && feedReady ? undefined : 'feed is not ready',
+    },
+    {
+      id: 'jump_to_quoted_message',
+      label: 'Jump to quoted message',
+      category: 'destination',
+      enabled: pageReady && feedReady,
+      reasonDisabled: pageReady && feedReady ? undefined : 'feed is not ready',
+    },
+    {
+      id: 'switch_feed',
+      label: 'Switch feed',
+      category: 'feed',
+      enabled: pageReady,
+      reasonDisabled: pageReady ? undefined : 'scenario is not ready',
+      payloadSchema: {
+        feedId: 'string',
+      },
+    },
+    {
+      id: 'toggle_dynamic_height',
+      label: 'Toggle dynamic height',
+      category: 'mock',
       enabled: pageReady && feedReady,
       reasonDisabled: pageReady && feedReady ? undefined : 'feed is not ready',
     },
@@ -685,6 +714,33 @@ export async function runE2EAction(input: {
         await waitForCondition(input.readState, isRuntimeIdleForAction, {
           timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
           failureCode: 'follow_bottom_timeout',
+        })
+        break
+      case 'jump_to_quoted_message':
+        clickVisibleQuote(input.root ?? document)
+        await waitForActionPublication()
+        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
+          failureCode: 'jump_to_quoted_message_timeout',
+        })
+        break
+      case 'switch_feed':
+        input.scenario.selectFeed(
+          getPayloadString(input.payload, 'feedId') ??
+            getNextFeedId(input.scenario),
+        )
+        await waitForActionPublication()
+        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 10_000,
+          failureCode: 'switch_feed_timeout',
+        })
+        break
+      case 'toggle_dynamic_height':
+        input.scenario.toggleDynamicHeight()
+        await waitForActionPublication()
+        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
+          failureCode: 'toggle_dynamic_height_timeout',
         })
         break
     }
@@ -873,6 +929,41 @@ function writeScrollTop(
       'runtime rejected direct scroll input',
     )
   }
+}
+
+function clickVisibleQuote(root: ParentNode): void {
+  const container = assertScrollContainer(root)
+  const viewportRect = container.getBoundingClientRect()
+  const quote = Array.from(
+    root.querySelectorAll<HTMLElement>('[data-ai-action="jump-to-quote"]'),
+  ).find((candidate) => {
+    const row = candidate.closest<HTMLElement>('[data-message-row]')
+    const rect = (row ?? candidate).getBoundingClientRect()
+
+    return rect.bottom > viewportRect.top && rect.top < viewportRect.bottom
+  })
+
+  if (!quote) {
+    throw new E2EActionError(
+      'missing_visible_quote',
+      'no visible quote action is available',
+    )
+  }
+
+  quote.click()
+}
+
+function getNextFeedId(scenario: DemoMessageScenario): string {
+  const nextFeed = scenario.feeds.find((feed) => feed.id !== scenario.activeFeedId)
+
+  if (!nextFeed) {
+    throw new E2EActionError(
+      'missing_alternate_feed',
+      'no alternate feed is available',
+    )
+  }
+
+  return nextFeed.id
 }
 
 function getPayloadString(

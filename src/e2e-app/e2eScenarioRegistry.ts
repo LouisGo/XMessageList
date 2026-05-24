@@ -34,6 +34,34 @@ const P0_SCENARIOS: E2EScenarioDefinition[] = [
     seedCount: DEFAULT_FEED.seedCount,
     seedLabel: 'p0-user-scroll-up-append-no-follow-v1',
   },
+  {
+    id: 'bottom.locked-append-follow',
+    title: 'Locked bottom append follows latest',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p1-locked-append-follow-v1',
+  },
+  {
+    id: 'destination.quote-jump-visible-target',
+    title: 'Quote jump visible target',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p1-quote-jump-visible-target-v1',
+  },
+  {
+    id: 'dynamic-height.anchor-above-growth',
+    title: 'Dynamic height anchor preservation',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p1-dynamic-height-anchor-v1',
+  },
+  {
+    id: 'session.switch-restore-runtime-cache',
+    title: 'Session switch restore runtime cache',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p1-session-switch-restore-v1',
+  },
 ]
 
 export function getE2EScenarioDefinition(

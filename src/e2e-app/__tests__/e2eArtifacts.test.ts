@@ -132,6 +132,7 @@ function createEvidence(overrides: EvidenceOverrides = {}): E2EEvidence {
       pendingOperation: 'idle',
       lastEvent: 'idle',
       followBottomVisible: false,
+      highlightedMessageId: null,
     },
     events: {
       viewportAnchorChanged: [],

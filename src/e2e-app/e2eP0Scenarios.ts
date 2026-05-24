@@ -3,25 +3,33 @@ export type E2EP0ScenarioId =
   | 'paging.prepend-anchor-preservation'
   | 'bottom.user-scroll-up-append-no-follow'
 
-export type E2EP0ActionStep =
+export type E2EScenarioActionId =
+  | 'wait_for_ready'
+  | 'wait_for_idle'
+  | 'collect_evidence'
+  | 'scroll_to_middle'
+  | 'scroll_to_history_top'
+  | 'scroll_to_bottom'
+  | 'append_message'
+  | 'prepend_history'
+  | 'follow_bottom'
+  | 'jump_to_quoted_message'
+  | 'switch_feed'
+  | 'toggle_dynamic_height'
+
+export type E2EActionStep =
   | {
       kind: 'reset'
-      scenarioId: E2EP0ScenarioId
+      scenarioId: string
     }
   | {
       kind: 'action'
-      actionId:
-        | 'wait_for_ready'
-        | 'wait_for_idle'
-        | 'collect_evidence'
-        | 'scroll_to_middle'
-        | 'scroll_to_history_top'
-        | 'append_message'
-        | 'prepend_history'
-        | 'follow_bottom'
+      actionId: E2EScenarioActionId
       payload?: Record<string, unknown>
       checkpointAlias?: 'before' | 'after' | 'final'
     }
+
+export type E2EP0ActionStep = E2EActionStep
 
 export type E2EP0ScenarioDefinition = {
   id: E2EP0ScenarioId
