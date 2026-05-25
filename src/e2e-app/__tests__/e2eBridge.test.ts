@@ -316,6 +316,167 @@ describe('collectE2EState', () => {
     })
     expect(scenario.appendMessage).not.toHaveBeenCalled()
   })
+
+  it('does not treat an idle failed state as ready by default', async () => {
+    const root = document.createElement('main')
+    const scenario = createScenarioStub()
+    const consoleBuffer = createE2EConsoleBuffer()
+    const eventBuffer = createE2EEventBuffer()
+    const diagnostic: ViewportDiagnosticRecord = {
+      feedId: 'feed-runtime',
+      generation: 2,
+      channel: 'projection',
+      severity: 'error',
+      name: 'commit-timeout-bootstrap',
+      timestamp: 1,
+      details: {},
+    }
+
+    vi.mocked(scenario.activeRuntime.getDiagnosticRecords).mockReturnValue([
+      diagnostic,
+    ])
+
+    const readEvidence = (checkpointId: string) =>
+      collectE2EEvidence({
+        scenarioId: 'bootstrap.latest-bottom-lock',
+        checkpointId,
+        scenario,
+        consoleBuffer,
+        eventBuffer,
+        root,
+      })
+    const result = await runE2EAction({
+      actionId: 'wait_for_ready',
+      payload: { timeoutMs: 1 },
+      scenarioId: 'bootstrap.latest-bottom-lock',
+      scenario,
+      consoleBuffer,
+      eventBuffer,
+      root,
+      readState: () =>
+        collectE2EState({
+          scenarioId: 'bootstrap.latest-bottom-lock',
+          scenario,
+          consoleBuffer,
+          root,
+        }),
+      readEvidence,
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      actionId: 'wait_for_ready',
+      error: { code: 'wait_for_ready_timeout' },
+    })
+  })
+
+  it('allows wait_for_ready to continue after an explicitly expected viewport error', async () => {
+    const root = document.createElement('main')
+    const scenario = createScenarioStub()
+    const consoleBuffer = createE2EConsoleBuffer()
+    const eventBuffer = createE2EEventBuffer()
+    const diagnostics: ViewportDiagnosticRecord[] = [{
+      feedId: 'feed-runtime',
+      generation: 2,
+      channel: 'recovery',
+      severity: 'error',
+      name: 'runtime.error',
+      timestamp: 1,
+      details: { code: 'commit-timeout-bootstrap' },
+    }, {
+      feedId: 'feed-runtime',
+      generation: 2,
+      channel: 'transaction',
+      severity: 'error',
+      name: 'transaction.error',
+      timestamp: 2,
+      details: {},
+    }]
+
+    vi.mocked(scenario.activeRuntime.getDiagnosticRecords).mockReturnValue(
+      diagnostics,
+    )
+    recordE2ERuntimeEvent(eventBuffer, {
+      type: 'viewportError',
+      feedId: 'feed-runtime',
+      generation: 2,
+      code: 'commit-timeout-bootstrap',
+    })
+
+    const readEvidence = (checkpointId: string) =>
+      collectE2EEvidence({
+        scenarioId: 'recovery.bootstrap-commit-timeout',
+        checkpointId,
+        scenario,
+        consoleBuffer,
+        eventBuffer,
+        root,
+      })
+    const result = await runE2EAction({
+      actionId: 'wait_for_ready',
+      payload: {
+        allowViewportErrors: ['commit-timeout-bootstrap'],
+        timeoutMs: 1,
+      },
+      scenarioId: 'recovery.bootstrap-commit-timeout',
+      scenario,
+      consoleBuffer,
+      eventBuffer,
+      root,
+      readState: () =>
+        collectE2EState({
+          scenarioId: 'recovery.bootstrap-commit-timeout',
+          scenario,
+          consoleBuffer,
+          root,
+        }),
+      readEvidence,
+    })
+
+    expect(result.ok).toBe(true)
+  })
+
+  it('completes long-running mock start actions without waiting for full UI idle', async () => {
+    const root = document.createElement('main')
+    const scenario = createScenarioStub()
+    const consoleBuffer = createE2EConsoleBuffer()
+    const eventBuffer = createE2EEventBuffer()
+
+    scenario.toggleEventStorm = vi.fn(() => {
+      scenario.eventStormRunning = true
+      scenario.pendingOperation = 'mock.eventStorm'
+    })
+
+    const readEvidence = (checkpointId: string) =>
+      collectE2EEvidence({
+        scenarioId: 'storm.quote-jump-during-event-storm',
+        checkpointId,
+        scenario,
+        consoleBuffer,
+        eventBuffer,
+        root,
+      })
+    const result = await runE2EAction({
+      actionId: 'toggle_event_storm',
+      scenarioId: 'storm.quote-jump-during-event-storm',
+      scenario,
+      consoleBuffer,
+      eventBuffer,
+      root,
+      readState: () =>
+        collectE2EState({
+          scenarioId: 'storm.quote-jump-during-event-storm',
+          scenario,
+          consoleBuffer,
+          root,
+        }),
+      readEvidence,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(scenario.toggleEventStorm).toHaveBeenCalledTimes(1)
+    expect(result.after?.ui.pendingOperation).toBe('mock.eventStorm')
+  })
 })
 
 function createScenarioStub(

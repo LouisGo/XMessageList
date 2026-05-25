@@ -19,6 +19,11 @@ import type {
 import type { E2EScenarioDefinition } from './e2eScenarioRegistry'
 
 const E2E_SEED_UPDATED_AT = '1970-01-01T00:00:00.000Z'
+const QUOTE_PRECONDITION_SCENARIOS = new Set([
+  'destination.quote-jump-visible-target',
+  'storm.quote-jump-during-event-storm',
+])
+const LATEST_WINDOW_QUOTE_SEQUENCES = [69, 70, 71, 72, 73, 74, 75, 76]
 
 export type E2EDemoStore = {
   api: DemoMessageScenarioApi
@@ -170,15 +175,65 @@ export function createE2EDemoStore(
 }
 
 function createSeedFeed(scenario: E2EScenarioDefinition): PersistedDemoFeed {
+  const messages = createScenarioSeedMessages(scenario)
+
   return {
     version: 1,
     feedId: scenario.feedId,
     revision: 1,
     hasMoreBefore: scenario.seedCount > 0,
     lastViewportAnchor: undefined,
-    messages: createDemoMessages(scenario.seedCount, scenario.feedId),
+    messages,
     updatedAt: E2E_SEED_UPDATED_AT,
   }
+}
+
+function createScenarioSeedMessages(
+  scenario: E2EScenarioDefinition,
+): DemoMessage[] {
+  const messages = createDemoMessages(scenario.seedCount, scenario.feedId)
+
+  if (!QUOTE_PRECONDITION_SCENARIOS.has(scenario.id)) {
+    return messages
+  }
+
+  return addLatestWindowQuoteBand(messages)
+}
+
+function addLatestWindowQuoteBand(messages: DemoMessage[]): DemoMessage[] {
+  const bySequence = new Map<number, DemoMessage>()
+
+  for (const message of messages) {
+    bySequence.set(message.sequence, message)
+  }
+
+  return messages.map((message) => {
+    if (!LATEST_WINDOW_QUOTE_SEQUENCES.includes(message.sequence)) {
+      return message
+    }
+
+    const quoted = bySequence.get(message.sequence - 8)
+
+    if (!quoted) {
+      return message
+    }
+
+    return {
+      ...message,
+      quote: {
+        messageId: quoted.id,
+        position: quoted.sequence,
+        author: quoted.author,
+        bodyPreview: createE2EQuotePreview(quoted.body),
+      },
+    }
+  })
+}
+
+function createE2EQuotePreview(body: string): string {
+  const compact = body.replace(/\s+/g, ' ').trim()
+
+  return compact.length > 96 ? `${compact.slice(0, 96)}...` : compact
 }
 
 function resolveAnchor(

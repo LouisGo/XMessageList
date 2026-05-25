@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { createE2EDemoStore } from '../e2eDemoStore'
-import { getDefaultE2EScenarioDefinition } from '../e2eScenarioRegistry'
+import {
+  getDefaultE2EScenarioDefinition,
+  getE2EScenarioDefinition,
+} from '../e2eScenarioRegistry'
 
 describe('createE2EDemoStore', () => {
   it('resets to the fixed Phase 1 seed without using the regular demo store', async () => {
@@ -35,5 +38,39 @@ describe('createE2EDemoStore', () => {
     expect(latest.messages.at(-1)?.id).toBe(
       `${scenario.feedId}-m-${scenario.seedCount}`,
     )
+  })
+
+  it('seeds deterministic visible quote candidates for quote-jump scenarios', async () => {
+    const scenario = getE2EScenarioDefinition(
+      'destination.quote-jump-visible-target',
+    )
+
+    expect(scenario).not.toBeNull()
+
+    if (!scenario) {
+      return
+    }
+
+    const store = createE2EDemoStore(scenario)
+    const latest = await store.api.getLatestMessages({
+      feedId: scenario.feedId,
+      count: 20,
+    })
+
+    expect(latest.ok).toBe(true)
+
+    if (!latest.ok) {
+      return
+    }
+
+    const latestIds = new Set(latest.messages.map((message) => message.id))
+    const quotedRows = latest.messages.filter((message) => message.quote)
+
+    expect(quotedRows.length).toBeGreaterThan(0)
+    expect(
+      quotedRows.every((message) =>
+        latestIds.has(message.quote?.messageId ?? ''),
+      ),
+    ).toBe(true)
   })
 })

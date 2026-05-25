@@ -31,6 +31,7 @@ export type DemoMessageViewportContentProps = {
   e2e?: {
     statusRegion: ReactNode
     onResetScenario: () => void
+    viewportRemountKey?: number
   }
 }
 
@@ -379,6 +380,7 @@ export function DemoMessageViewportContent({
       </aside>
       <section className="chat-surface" aria-label="Message runtime demo">
         <MessageViewport
+          key={e2e?.viewportRemountKey ?? 0}
           runtime={scenario.activeRuntime}
           className="message-viewport"
           aiRegion={e2eEnabled ? 'message-list' : undefined}

@@ -13,9 +13,14 @@ const DEMO_RUNTIME_WINDOW = {
   maxMountedItems: 180,
 }
 
-type DemoRuntimeFactory = (
+export type DemoRuntimeFactory = (
   feedId: string,
 ) => MessageViewportRuntime<DemoMessage>
+
+export type DemoFeedRuntimeCacheOptions = {
+  capacity?: number
+  createRuntime?: DemoRuntimeFactory
+}
 
 export type DemoFeedRuntimeCache = {
   getRuntime: (feedId: string) => MessageViewportRuntime<DemoMessage>
@@ -25,7 +30,9 @@ export type DemoFeedRuntimeCache = {
   destroyAll: () => void
 }
 
-function createDemoFeedRuntime(feedId: string): MessageViewportRuntime<DemoMessage> {
+export function createDemoFeedRuntime(
+  feedId: string,
+): MessageViewportRuntime<DemoMessage> {
   return new MessageViewportRuntime<DemoMessage>({
     feedId,
     generation: 1,
@@ -46,10 +53,7 @@ function createDemoFeedRuntime(feedId: string): MessageViewportRuntime<DemoMessa
 export function createDemoFeedRuntimeCache({
   capacity = DEMO_FEED_RUNTIME_CACHE_CAPACITY,
   createRuntime = createDemoFeedRuntime,
-}: {
-  capacity?: number
-  createRuntime?: DemoRuntimeFactory
-} = {}): DemoFeedRuntimeCache {
+}: DemoFeedRuntimeCacheOptions = {}): DemoFeedRuntimeCache {
   const cache = new LRUCache<string, MessageViewportRuntime<DemoMessage>>(
     capacity,
     (_feedId, runtime) => {
@@ -86,8 +90,10 @@ export function createDemoFeedRuntimeCache({
   }
 }
 
-export function useDemoFeedRuntimeCache(): DemoFeedRuntimeCache {
-  const [cache] = useState(() => createDemoFeedRuntimeCache())
+export function useDemoFeedRuntimeCache(
+  options: DemoFeedRuntimeCacheOptions = {},
+): DemoFeedRuntimeCache {
+  const [cache] = useState(() => createDemoFeedRuntimeCache(options))
   const destroyTimerRef = useRef<number | null>(null)
 
   const destroyAll = useCallback(() => {

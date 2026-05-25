@@ -100,6 +100,10 @@ export type XMessageListE2EBridge = {
   resetScenario: (scenarioId: string) => Promise<E2EActionResult>
 }
 
+export type E2EActionHooks = {
+  reattachRuntime?: () => void | Promise<void>
+}
+
 export type E2EVisibleRow = {
   messageId: string
   serializedKey: string
@@ -514,7 +518,9 @@ export function createBootingE2EState(scenarioId: string): E2EState {
 }
 
 export function listE2EActions(state: E2EState): E2EActionDescriptor[] {
-  const pageReady = state.scenarioStatus === 'ready'
+  const pageReady =
+    state.scenarioStatus === 'ready' ||
+    (state.scenarioStatus === 'running' && isRuntimeStableForSemanticAction(state))
   const feedReady = !state.ui.feedLoading
   const canPageBefore = pageReady && state.feed.activeFeedId.length > 0
 
@@ -648,6 +654,7 @@ export async function runE2EAction(input: {
   scenario: DemoMessageScenario
   consoleBuffer: E2EConsoleBuffer
   eventBuffer: E2EEventBuffer
+  actionHooks?: E2EActionHooks
   root?: ParentNode
   readState: () => E2EState
   readEvidence: (checkpointId: string) => E2EEvidence
@@ -690,10 +697,21 @@ export async function runE2EAction(input: {
   try {
     switch (input.actionId) {
       case 'wait_for_ready':
-        await waitForCondition(input.readState, isReadyForAction, {
-          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 5_000,
-          failureCode: 'wait_for_ready_timeout',
-        })
+        await waitForCondition(
+          input.readState,
+          (state) =>
+            isReadyForAction(state, {
+              allowedViewportErrors: getPayloadStringArray(
+                input.payload,
+                'allowViewportErrors',
+              ),
+              observedViewportErrors: input.eventBuffer.viewportErrors,
+            }),
+          {
+            timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 5_000,
+            failureCode: 'wait_for_ready_timeout',
+          },
+        )
         break
       case 'wait_for_idle':
         await waitForCondition(input.readState, isRuntimeIdleForAction, {
@@ -706,7 +724,7 @@ export async function runE2EAction(input: {
       case 'scroll_to_middle':
         scrollToViewportRatio(input.scenario, input.root ?? document, 0.5)
         await waitForActionPublication()
-        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+        await waitForCondition(input.readState, isRuntimeStableForSemanticAction, {
           timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 5_000,
           failureCode: 'scroll_to_middle_timeout',
         })
@@ -722,7 +740,7 @@ export async function runE2EAction(input: {
       case 'scroll_to_bottom':
         scrollToViewportBottom(input.scenario, input.root ?? document)
         await waitForActionPublication()
-        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+        await waitForCondition(input.readState, isRuntimeStableForSemanticAction, {
           timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 5_000,
           failureCode: 'scroll_to_bottom_timeout',
         })
@@ -746,7 +764,7 @@ export async function runE2EAction(input: {
       case 'follow_bottom':
         input.scenario.followBottom('floating')
         await waitForActionPublication()
-        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+        await waitForCondition(input.readState, isRuntimeStableForSemanticAction, {
           timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
           failureCode: 'follow_bottom_timeout',
         })
@@ -754,7 +772,7 @@ export async function runE2EAction(input: {
       case 'jump_to_quoted_message':
         clickVisibleQuote(input.root ?? document)
         await waitForActionPublication()
-        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+        await waitForCondition(input.readState, isRuntimeStableForSemanticAction, {
           timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
           failureCode: 'jump_to_quoted_message_timeout',
         })
@@ -781,7 +799,7 @@ export async function runE2EAction(input: {
       case 'drag_scrollbar_to_top':
         dragScrollbarToTop(input.scenario, input.root ?? document)
         await waitForActionPublication()
-        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+        await waitForCondition(input.readState, isRuntimeStableForSemanticAction, {
           timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
           failureCode: 'drag_scrollbar_to_top_timeout',
         })
@@ -789,35 +807,53 @@ export async function runE2EAction(input: {
       case 'drag_scrollbar_to_bottom':
         dragScrollbarToBottom(input.scenario, input.root ?? document)
         await waitForActionPublication()
-        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+        await waitForCondition(input.readState, isRuntimeStableForSemanticAction, {
           timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
           failureCode: 'drag_scrollbar_to_bottom_timeout',
         })
         break
       case 'reattach_runtime':
-        reattachRuntime(input.scenario, input.root ?? document)
+        if (input.actionHooks?.reattachRuntime) {
+          await input.actionHooks.reattachRuntime()
+        } else {
+          reattachRuntime(input.scenario, input.root ?? document)
+        }
         await waitForActionPublication()
-        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+        await waitForCondition(input.readState, isRuntimeReattachedForAction, {
           timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
           failureCode: 'reattach_runtime_timeout',
         })
         break
-      case 'toggle_event_storm':
+      case 'toggle_event_storm': {
+        const wasEventStormRunning = input.readState().ui.eventStormRunning
         input.scenario.toggleEventStorm()
         await waitForActionPublication()
-        await waitForCondition(input.readState, isRuntimeIdleForAction, {
-          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
-          failureCode: 'toggle_event_storm_timeout',
-        })
+        await waitForCondition(
+          input.readState,
+          wasEventStormRunning
+            ? isRuntimeIdleForAction
+            : isEventStormActiveForAction,
+          {
+            timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
+            failureCode: 'toggle_event_storm_timeout',
+          },
+        )
         break
-      case 'toggle_bot_push':
+      }
+      case 'toggle_bot_push': {
+        const wasBotPushActive = input.readState().ui.botPushActive
         input.scenario.toggleBotPush()
         await waitForActionPublication()
-        await waitForCondition(input.readState, isRuntimeIdleForAction, {
-          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
-          failureCode: 'toggle_bot_push_timeout',
-        })
+        await waitForCondition(
+          input.readState,
+          wasBotPushActive ? isRuntimeIdleForAction : isBotPushActiveForAction,
+          {
+            timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
+            failureCode: 'toggle_bot_push_timeout',
+          },
+        )
         break
+      }
     }
 
     return {
@@ -883,11 +919,77 @@ class E2EActionError extends Error {
   }
 }
 
-function isReadyForAction(state: E2EState): boolean {
-  return state.scenarioStatus === 'ready'
+function isReadyForAction(state: E2EState, options: {
+  allowedViewportErrors?: string[]
+  observedViewportErrors?: string[]
+} = {}): boolean {
+  if (state.scenarioStatus === 'ready') {
+    return true
+  }
+
+  const allowedViewportErrors = options.allowedViewportErrors ?? []
+
+  return (
+    hasOnlyExpectedViewportErrors(
+      allowedViewportErrors,
+      options.observedViewportErrors ?? [],
+      state.safety.lastViewportError,
+    ) &&
+    state.safety.consoleErrors === 0 &&
+    isRuntimeIdleForAction(state)
+  )
+}
+
+function hasOnlyExpectedViewportErrors(
+  allowedViewportErrors: string[],
+  observedViewportErrors: string[],
+  fallbackLastViewportError: string | null,
+): boolean {
+  if (allowedViewportErrors.length === 0) {
+    return false
+  }
+
+  if (observedViewportErrors.length > 0) {
+    return observedViewportErrors.every((error) =>
+      allowedViewportErrors.includes(error),
+    )
+  }
+
+  return Boolean(
+    fallbackLastViewportError &&
+      allowedViewportErrors.includes(fallbackLastViewportError),
+  )
 }
 
 function isRuntimeIdleForAction(state: E2EState): boolean {
+  return isRuntimeStable(state) && state.ui.pendingOperation === 'idle'
+}
+
+function isRuntimeStableForSemanticAction(state: E2EState): boolean {
+  return isRuntimeStable(state) && hasOnlyLongRunningMockOperations(state)
+}
+
+function isRuntimeReattachedForAction(state: E2EState): boolean {
+  return isRuntimeIdleForAction(state) && state.runtime.observedRows > 0
+}
+
+function isEventStormActiveForAction(state: E2EState): boolean {
+  return (
+    isRuntimeStableForSemanticAction(state) &&
+    state.ui.eventStormRunning &&
+    hasPendingOperation(state, 'mock.eventStorm')
+  )
+}
+
+function isBotPushActiveForAction(state: E2EState): boolean {
+  return (
+    isRuntimeStableForSemanticAction(state) &&
+    state.ui.botPushActive &&
+    hasPendingOperation(state, 'mock.botPush')
+  )
+}
+
+function isRuntimeStable(state: E2EState): boolean {
   return (
     (state.runtime.state === 'READY' || state.runtime.state === 'READY_EMPTY') &&
     state.runtime.transactionState === 'idle' &&
@@ -897,9 +999,32 @@ function isRuntimeIdleForAction(state: E2EState): boolean {
     !state.runtime.motionActive &&
     !state.ui.feedLoading &&
     !state.ui.loadingBefore &&
-    !state.ui.loadingAfter &&
-    state.ui.pendingOperation === 'idle'
+    !state.ui.loadingAfter
   )
+}
+
+function hasOnlyLongRunningMockOperations(state: E2EState): boolean {
+  const operations = parsePendingOperations(state.ui.pendingOperation)
+
+  return operations.every(
+    (operation) =>
+      operation === 'mock.eventStorm' || operation === 'mock.botPush',
+  )
+}
+
+function hasPendingOperation(state: E2EState, operation: string): boolean {
+  return parsePendingOperations(state.ui.pendingOperation).includes(operation)
+}
+
+function parsePendingOperations(pendingOperation: string): string[] {
+  if (pendingOperation === 'idle') {
+    return []
+  }
+
+  return pendingOperation
+    .split('+')
+    .map((operation) => operation.trim())
+    .filter((operation) => operation.length > 0)
 }
 
 async function waitForCondition(
@@ -1087,6 +1212,21 @@ function getPayloadNumber(
 ): number | undefined {
   const value = payload?.[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function getPayloadStringArray(
+  payload: Record<string, unknown> | undefined,
+  key: string,
+): string[] {
+  const value = payload?.[key]
+
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.filter(
+    (item): item is string => typeof item === 'string' && item.length > 0,
+  )
 }
 
 function readViewportMetrics(root: ParentNode): E2EState['viewport'] {

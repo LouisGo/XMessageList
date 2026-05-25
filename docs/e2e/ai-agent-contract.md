@@ -128,8 +128,14 @@ type E2EActionDescriptor = {
 | `jump_to_quoted_message` | 点击当前可见 quote，触发 destination jump |
 | `switch_feed` | 切换 active feed |
 | `toggle_dynamic_height` | 打开/关闭动态高度 |
-| `toggle_event_storm` | 打开/关闭 Event Storm |
+| `reattach_runtime` | 通过 React projection remount 模拟 StrictMode attach / detach / attach |
+| `toggle_event_storm` | 打开/关闭 Event Storm；启动后允许 pendingOperation 保持 `mock.eventStorm` |
+| `toggle_bot_push` | 打开/关闭 Bot Push；启动后允许 pendingOperation 保持 `mock.botPush` |
 | `collect_evidence` | 采集 evidence checkpoint |
+
+`wait_for_ready` 默认必须等到 scenario status 为 `ready`。只有 recovery / fault-injection
+场景可以显式传入 `allowViewportErrors: string[]`，让预期的 viewport error 在 runtime
+恢复 idle 后继续执行；普通 bootstrap / smoke 场景不能用这个豁免。
 
 ## 5. Action Result
 
@@ -208,4 +214,3 @@ AI agent 执行 e2e 时必须遵守：
 | performance investigation | Chrome DevTools trace / performance tools |
 
 这个 mapping 让同一套场景可以被 Codex App、Browser Use、本地脚本或人工调试复用。
-

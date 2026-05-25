@@ -6,6 +6,7 @@ import {
   useCallback,
   useLayoutEffect,
   useMemo,
+  useRef,
 } from 'react'
 import {
   getItemContentVersion,
@@ -52,18 +53,33 @@ export function MessageRowProjection<
   enableAiDomAttributes = false,
   testId,
 }: MessageRowProjectionProps<TMessage, TOptimistic>) {
-  const key = getRuntimeItemKey(item)
+  const key = useMemo(() => getRuntimeItemKey(item), [item])
   const serializedKey = serializeRuntimeItemKey(key)
+  const rowElementRef = useRef<HTMLDivElement | null>(null)
   const messageId =
     enableAiDomAttributes && key.kind === 'committed'
       ? key.messageId
       : undefined
   const setRef = useCallback(
     (element: HTMLDivElement | null) => {
+      rowElementRef.current = element
       runtime.registerRow(key, element)
     },
     [runtime, key],
   )
+
+  useLayoutEffect(() => {
+    const element = rowElementRef.current
+
+    if (element) {
+      // StrictMode 会重放 layout effect，但不一定重放 ref callback；这里补回 runtime row registry。
+      runtime.registerRow(key, element)
+    }
+
+    return () => {
+      runtime.registerRow(key, null)
+    }
+  }, [runtime, key])
 
   return (
     <div

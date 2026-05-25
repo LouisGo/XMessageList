@@ -8,6 +8,9 @@ export type E2EScenarioDefinition = {
   feedId: string
   seedCount: number
   seedLabel: string
+  faults?: {
+    bootstrapCommitTimeout?: 'drop-first-commit-and-retry'
+  }
 }
 
 const DEFAULT_FEED = getDemoFeedDefinition(DEMO_FEEDS[0]?.id ?? 'feed-runtime')
@@ -89,6 +92,9 @@ const P0_SCENARIOS: E2EScenarioDefinition[] = [
     feedId: DEFAULT_FEED.id,
     seedCount: DEFAULT_FEED.seedCount,
     seedLabel: 'p2-bootstrap-commit-timeout-v1',
+    faults: {
+      bootstrapCommitTimeout: 'drop-first-commit-and-retry',
+    },
   },
   {
     id: 'storm.quote-jump-during-event-storm',

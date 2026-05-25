@@ -6,7 +6,11 @@ import {
   useState,
 } from 'react'
 import { DemoMessageViewportContent } from '../demo/DemoMessageViewport'
-import { useDemoFeedRuntimeCache } from '../demo/useDemoFeedRuntimeCache'
+import {
+  createDemoFeedRuntime,
+  useDemoFeedRuntimeCache,
+  type DemoRuntimeFactory,
+} from '../demo/useDemoFeedRuntimeCache'
 import {
   type DemoMessageScenario,
   useDemoMessageScenario,
@@ -18,6 +22,7 @@ import {
   createBootingE2EState,
   createE2EConsoleBuffer,
   createE2EEventBuffer,
+  type E2EActionHooks,
   type E2EActionResult,
   type E2EConsoleBuffer,
   type E2EEvidence,
@@ -146,7 +151,11 @@ function E2EScenarioHost({
   registerBridgeRuntime: (runtime: BridgeRuntime) => () => void
   resetScenario: (scenarioId: string) => Promise<E2EActionResult>
 }) {
-  const runtimeCache = useDemoFeedRuntimeCache()
+  const runtimeFactory = useMemo(
+    () => createE2ERuntimeFactory(scenarioDefinition),
+    [scenarioDefinition],
+  )
+  const runtimeCache = useDemoFeedRuntimeCache({ createRuntime: runtimeFactory })
   const scenario = useDemoMessageScenario(runtimeCache, {
     api: store.api,
     storage: store.storage,
@@ -157,6 +166,7 @@ function E2EScenarioHost({
   const [state, setState] = useState<E2EState>(() =>
     createBootingE2EState(scenarioDefinition.id),
   )
+  const [viewportRemountToken, setViewportRemountToken] = useState(0)
 
   useEffect(() => {
     scenarioRef.current = scenario
@@ -182,6 +192,16 @@ function E2EScenarioHost({
     })
   ), [consoleBuffer, eventBuffer, scenarioDefinition.id])
 
+  const reattachRuntime = useCallback(async () => {
+    setViewportRemountToken((token) => token + 1)
+    await waitForNextPaint()
+    await waitForNextPaint()
+  }, [])
+
+  const actionHooks = useMemo<E2EActionHooks>(() => ({
+    reattachRuntime,
+  }), [reattachRuntime])
+
   useEffect(() => registerBridgeRuntime({
     getState: readState,
     listActions: () => listE2EActions(readState()),
@@ -194,6 +214,7 @@ function E2EScenarioHost({
         scenario: scenarioRef.current,
         consoleBuffer,
         eventBuffer,
+        actionHooks,
         root: rootRef.current ?? document,
         readState,
         readEvidence,
@@ -201,6 +222,7 @@ function E2EScenarioHost({
   }), [
     consoleBuffer,
     eventBuffer,
+    actionHooks,
     readEvidence,
     readState,
     registerBridgeRuntime,
@@ -242,6 +264,7 @@ function E2EScenarioHost({
           />
         ),
         onResetScenario: resetCurrentScenario,
+        viewportRemountKey: viewportRemountToken,
       }}
     />
   )
@@ -280,6 +303,67 @@ function E2EAIStatusRegion({
       <div>Seed: {seedLabel}</div>
     </section>
   )
+}
+
+function createE2ERuntimeFactory(
+  scenarioDefinition: E2EScenarioDefinition,
+): DemoRuntimeFactory {
+  if (
+    scenarioDefinition.faults?.bootstrapCommitTimeout ===
+      'drop-first-commit-and-retry'
+  ) {
+    return (feedId) =>
+      installBootstrapCommitTimeoutFault(createDemoFeedRuntime(feedId))
+  }
+
+  return createDemoFeedRuntime
+}
+
+function installBootstrapCommitTimeoutFault(
+  runtime: ReturnType<typeof createDemoFeedRuntime>,
+): ReturnType<typeof createDemoFeedRuntime> {
+  const notifyProjectionCommitted = runtime.notifyProjectionCommitted.bind(runtime)
+  const destroy = runtime.destroy.bind(runtime)
+  let shouldDropBootstrapCommit = true
+  let retryScheduled = false
+
+  const unsubscribe = runtime.subscribeEvent((event) => {
+    if (
+      event.type !== 'viewportError' ||
+      event.code !== 'commit-timeout-bootstrap' ||
+      retryScheduled
+    ) {
+      return
+    }
+
+    retryScheduled = true
+    window.setTimeout(() => {
+      runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+    }, 0)
+  })
+
+  runtime.notifyProjectionCommitted = (commit) => {
+    const debug = runtime.getDebugSnapshot()
+
+    if (
+      shouldDropBootstrapCommit &&
+      debug.state === 'BOOTSTRAPPING' &&
+      debug.transactionState !== 'idle'
+    ) {
+      // e2e recovery 场景只丢弃首个 bootstrap ack；之后必须恢复正常 ack 链路。
+      shouldDropBootstrapCommit = false
+      return
+    }
+
+    notifyProjectionCommitted(commit)
+  }
+
+  runtime.destroy = () => {
+    unsubscribe()
+    destroy()
+  }
+
+  return runtime
 }
 
 function waitForNextPaint(): Promise<void> {

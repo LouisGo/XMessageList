@@ -26,6 +26,7 @@ export const E2E_P3_SCENARIO_DEFINITIONS: E2EP3ScenarioDefinition[] = [
       { kind: 'action', actionId: 'toggle_event_storm' },
       { kind: 'action', actionId: 'scroll_to_middle' },
       { kind: 'action', actionId: 'jump_to_quoted_message' },
+      { kind: 'action', actionId: 'toggle_event_storm' },
       { kind: 'action', actionId: 'wait_for_idle' },
       {
         kind: 'action',
@@ -57,6 +58,7 @@ export const E2E_P3_SCENARIO_DEFINITIONS: E2EP3ScenarioDefinition[] = [
       },
       { kind: 'action', actionId: 'toggle_bot_push' },
       { kind: 'action', actionId: 'follow_bottom' },
+      { kind: 'action', actionId: 'toggle_bot_push' },
       { kind: 'action', actionId: 'wait_for_idle' },
       {
         kind: 'action',

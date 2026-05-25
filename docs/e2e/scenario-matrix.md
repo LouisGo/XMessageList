@@ -103,7 +103,7 @@ Oracle:
 
 Actions:
 
-1. 打开含 quote 的中部窗口。
+1. 使用 e2e seed 中 latest window 的 deterministic quote band。
 2. 点击当前可见 quote。
 3. wait idle。
 4. collect evidence。
@@ -178,6 +178,9 @@ Oracle:
 
 目的：StrictMode 模拟 cleanup 不导致 observer 重复、runtime 销毁或 commit 丢失。
 
+Action 必须通过 React projection remount 触发 detach/attach，不能只调用
+`runtime.detach()` / `runtime.attach()` 绕过 row ref 注册链路。
+
 Oracle:
 
 - observed rows 数量合理。
@@ -187,6 +190,9 @@ Oracle:
 ### 4.4 `recovery.bootstrap-commit-timeout`
 
 目的：commit timeout recovery 后，runtime 不留在中间态，sentinel 不误触发 edge need。
+
+e2e host 需要显式注入一次 bootstrap commit timeout，例如丢弃首个 bootstrap
+commit ack 后再触发一次 latest bootstrap retry。
 
 Oracle:
 
@@ -203,6 +209,8 @@ Oracle:
 AI role:
 
 - AI 可以探索不同 quote 和 timing。
+- Event Storm 启动后 `pendingOperation` 会保持 `mock.eventStorm`，中途语义动作只等待 runtime 稳定。
+- 场景收尾必须显式停止 Event Storm，再执行最终 `wait_for_idle`。
 - 必须输出最短复现。
 
 Oracle:
@@ -214,6 +222,9 @@ Oracle:
 ### 5.2 `storm.follow-bottom-with-bot-push`
 
 目的：Bot Push 和 followBottom 混跑时，不抢滚、不丢 bottom affordance。
+
+Bot Push 启动后 `pendingOperation` 会保持 `mock.botPush`，followBottom 执行完后
+必须显式停止 Bot Push，再进入最终 idle oracle。
 
 Oracle:
 
@@ -269,4 +280,3 @@ Tags: bootstrap, bottom-lock
 - 能显著提升 AI agent 复现和归因效率。
 
 不要为了“测试多”而添加低价值场景。
-

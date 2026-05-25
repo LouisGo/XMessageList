@@ -84,7 +84,11 @@ export const E2E_P2_SCENARIO_DEFINITIONS: E2EP2ScenarioDefinition[] = [
     title: 'Bootstrap commit timeout recovery',
     actionSteps: [
       { kind: 'reset', scenarioId: 'recovery.bootstrap-commit-timeout' },
-      { kind: 'action', actionId: 'wait_for_ready' },
+      {
+        kind: 'action',
+        actionId: 'wait_for_ready',
+        payload: { allowViewportErrors: ['commit-timeout-bootstrap'] },
+      },
       {
         kind: 'action',
         actionId: 'collect_evidence',
