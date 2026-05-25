@@ -12,6 +12,8 @@ export type E2EScenarioActionId =
   | 'scroll_to_bottom'
   | 'append_message'
   | 'prepend_history'
+  | 'start_prepend_history'
+  | 'send_message'
   | 'follow_bottom'
   | 'jump_to_quoted_message'
   | 'switch_feed'
@@ -31,7 +33,7 @@ export type E2EActionStep =
       kind: 'action'
       actionId: E2EScenarioActionId
       payload?: Record<string, unknown>
-      checkpointAlias?: 'before' | 'after' | 'final'
+      checkpointAlias?: 'before' | 'during' | 'after' | 'final'
     }
 
 export type E2EP0ActionStep = E2EActionStep

@@ -11,7 +11,10 @@ import {
   MessageViewport,
   type MessageDataItem,
 } from '../index'
-import { type DemoMessage } from './demoData'
+import {
+  type DemoMessage,
+  type DemoOptimisticMessageDraft,
+} from './demoData'
 import { useDemoFeedRuntimeCache } from './useDemoFeedRuntimeCache'
 import {
   type DemoMessageScenario,
@@ -65,7 +68,19 @@ export function DemoMessageViewportContent({
     }
 
     if (item.kind === 'optimistic') {
-      return <article className="message-row system">Sending...</article>
+      const draft = item.draft as DemoOptimisticMessageDraft
+
+      return (
+        <article className="message-row self">
+          <header>
+            <strong>{draft.author}</strong>
+            <div className="message-row-meta">
+              <span>Sending...</span>
+            </div>
+          </header>
+          <p>{draft.body}</p>
+        </article>
+      )
     }
 
     const message = item.message

@@ -1,12 +1,24 @@
 import type {
   CommittedMessageDataItem,
+  MessageDataItem,
   MessageIdentityAnchor,
+  MessageIdentityRemap,
   MessageDataSnapshot,
   MessageDataSnapshotChange,
+  NonEmptyMessageIdentityRemaps,
+  OptimisticMessageDataItem,
   ViewportEffect,
 } from '../runtime'
 
 export type DemoViewportEffect = Exclude<ViewportEffect, 'identity-remap'>
+export type DemoOptimisticMessageDraft = {
+  author: string
+  body: string
+}
+export type DemoMessageDataItem = MessageDataItem<
+  DemoMessage,
+  DemoOptimisticMessageDraft
+>
 
 export type DemoMessageKind = 'text' | 'longText' | 'image' | 'video' | 'album'
 
@@ -330,6 +342,29 @@ export function toCommittedItem(
   }
 }
 
+export function createOptimisticOutgoingItem(input: {
+  clientMessageId: string
+  body: string
+}): OptimisticMessageDataItem<DemoOptimisticMessageDraft> {
+  const contentVersion = Math.abs(hashCode(input.body)) + 1
+
+  return {
+    kind: 'optimistic',
+    key: {
+      kind: 'optimistic',
+      clientMessageId: input.clientMessageId,
+    },
+    draft: {
+      author: 'You',
+      body: input.body,
+    },
+    status: 'sending',
+    version: contentVersion,
+    contentVersion,
+    estimatedHeight: input.body.length > 180 ? 230 : 76,
+  }
+}
+
 function getDemoMessageContentVersion(message: DemoMessage): number {
   return (
     Math.abs(
@@ -385,7 +420,7 @@ export function createDemoSnapshot(input: {
   hasMoreBefore?: boolean
   hasMoreAfter?: boolean
 }): MessageDataSnapshot<DemoMessage> {
-  return {
+  return createDemoSnapshotFromItems({
     feedId: input.feedId,
     generation: input.generation,
     revision: input.revision,
@@ -398,10 +433,81 @@ export function createDemoSnapshot(input: {
     anchorStatus: input.anchorStatus ?? 'normal',
     hasMoreBefore: input.hasMoreBefore ?? input.messages.length > 0,
     hasMoreAfter: input.hasMoreAfter ?? false,
+    effect: input.effect,
+    kind: input.kind ?? 'patch',
+  })
+}
+
+export function createDemoSnapshotFromItems(input: {
+  feedId: string
+  generation: number
+  items: DemoMessageDataItem[]
+  revision: number
+  effect: DemoViewportEffect
+  kind?: MessageDataSnapshot['change']['kind']
+  anchor?: MessageIdentityAnchor
+  anchorStatus?: MessageDataSnapshot['anchorStatus']
+  hasMoreBefore?: boolean
+  hasMoreAfter?: boolean
+}): MessageDataSnapshot<DemoMessage, DemoOptimisticMessageDraft> {
+  return {
+    feedId: input.feedId,
+    generation: input.generation,
+    revision: input.revision,
+    items: input.items,
+    anchor: input.anchor ?? getLastCommittedAnchor(input.items),
+    anchorStatus: input.anchorStatus ?? 'normal',
+    hasMoreBefore: input.hasMoreBefore ?? input.items.length > 0,
+    hasMoreAfter: input.hasMoreAfter ?? false,
     change: createDemoSnapshotChange({
       kind: input.kind ?? 'patch',
       effect: input.effect,
     }),
+  }
+}
+
+export function createDemoIdentityRemapSnapshot(input: {
+  feedId: string
+  generation: number
+  items: DemoMessageDataItem[]
+  revision: number
+  identityRemaps: NonEmptyMessageIdentityRemaps
+  anchor?: MessageIdentityAnchor
+  anchorStatus?: MessageDataSnapshot['anchorStatus']
+  hasMoreBefore?: boolean
+  hasMoreAfter?: boolean
+}): MessageDataSnapshot<DemoMessage, DemoOptimisticMessageDraft> {
+  return {
+    feedId: input.feedId,
+    generation: input.generation,
+    revision: input.revision,
+    items: input.items,
+    anchor: input.anchor ?? getLastCommittedAnchor(input.items),
+    anchorStatus: input.anchorStatus ?? 'normal',
+    hasMoreBefore: input.hasMoreBefore ?? input.items.length > 0,
+    hasMoreAfter: input.hasMoreAfter ?? false,
+    change: {
+      kind: 'identityRebind',
+      viewportModifier: 'identity-remap',
+      viewportEffect: 'identity-remap',
+      identityRemaps: input.identityRemaps,
+    },
+  }
+}
+
+export function createOutgoingIdentityRemap(input: {
+  clientMessageId: string
+  messageId: string
+}): MessageIdentityRemap {
+  return {
+    from: {
+      kind: 'optimistic',
+      clientMessageId: input.clientMessageId,
+    },
+    to: {
+      kind: 'committed',
+      messageId: input.messageId,
+    },
   }
 }
 
@@ -413,6 +519,21 @@ export function createDemoSnapshotChange(input: {
     kind: input.kind,
     viewportModifier: input.effect,
     viewportEffect: input.effect,
+  }
+}
+
+function getLastCommittedAnchor(
+  items: DemoMessageDataItem[],
+): MessageIdentityAnchor | undefined {
+  const item = items.findLast((candidate) => candidate.kind === 'committed')
+
+  if (!item || item.kind !== 'committed') {
+    return undefined
+  }
+
+  return {
+    messageId: item.message.id,
+    position: item.message.sequence,
   }
 }
 

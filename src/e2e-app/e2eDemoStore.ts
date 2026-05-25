@@ -23,6 +23,9 @@ const QUOTE_PRECONDITION_SCENARIOS = new Set([
   'destination.quote-jump-visible-target',
   'storm.quote-jump-during-event-storm',
 ])
+const UNLOADED_QUOTE_PRECONDITION_SCENARIOS = new Set([
+  'destination.quote-jump-unloaded-target',
+])
 const LATEST_WINDOW_QUOTE_SEQUENCES = [69, 70, 71, 72, 73, 74, 75, 76]
 
 export type E2EDemoStore = {
@@ -35,8 +38,10 @@ export function createE2EDemoStore(
   initialScenario: E2EScenarioDefinition,
 ): E2EDemoStore {
   const feeds = new Map<string, PersistedDemoFeed>()
+  let activeScenario = initialScenario
 
   const resetScenario = (scenario: E2EScenarioDefinition) => {
+    activeScenario = scenario
     feeds.clear()
     feeds.set(scenario.feedId, createSeedFeed(scenario))
   }
@@ -104,6 +109,12 @@ export function createE2EDemoStore(
   const getMessagesAround = async (
     req: GetMessagesAroundReq,
   ): Promise<GetMessagesAroundResp<DemoMessage>> => {
+    const delayMs = activeScenario.faults?.historyPrependDelayMs
+
+    if (delayMs && req.before > 0 && req.after === 0) {
+      await delay(delayMs)
+    }
+
     const feed = feeds.get(req.feedId)
 
     if (!feed) {
@@ -194,7 +205,9 @@ function createScenarioSeedMessages(
   const messages = createDemoMessages(scenario.seedCount, scenario.feedId)
 
   if (!QUOTE_PRECONDITION_SCENARIOS.has(scenario.id)) {
-    return messages
+    return UNLOADED_QUOTE_PRECONDITION_SCENARIOS.has(scenario.id)
+      ? addLatestVisibleUnloadedQuote(messages)
+      : messages
   }
 
   return addLatestWindowQuoteBand(messages)
@@ -230,10 +243,51 @@ function addLatestWindowQuoteBand(messages: DemoMessage[]): DemoMessage[] {
   })
 }
 
+function addLatestVisibleUnloadedQuote(messages: DemoMessage[]): DemoMessage[] {
+  const bySequence = new Map<number, DemoMessage>()
+
+  for (const message of messages) {
+    bySequence.set(message.sequence, message)
+  }
+
+  const targetSequence = Math.max(1, messages.length - 48)
+  const originSequences = [messages.length - 1, messages.length]
+
+  return messages.map((message) => {
+    if (!originSequences.includes(message.sequence)) {
+      return message
+    }
+
+    const quoted = bySequence.get(
+      targetSequence + Math.max(0, message.sequence - originSequences[0]),
+    )
+
+    if (!quoted) {
+      return message
+    }
+
+    return {
+      ...message,
+      quote: {
+        messageId: quoted.id,
+        position: quoted.sequence,
+        author: quoted.author,
+        bodyPreview: createE2EQuotePreview(quoted.body),
+      },
+    }
+  })
+}
+
 function createE2EQuotePreview(body: string): string {
   const compact = body.replace(/\s+/g, ' ').trim()
 
   return compact.length > 96 ? `${compact.slice(0, 96)}...` : compact
+}
+
+function delay(timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, timeoutMs)
+  })
 }
 
 function resolveAnchor(

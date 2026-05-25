@@ -3,6 +3,8 @@ import type { E2EActionStep } from './e2eP0Scenarios'
 export type E2EP1ScenarioId =
   | 'bottom.locked-append-follow'
   | 'destination.quote-jump-visible-target'
+  | 'destination.quote-jump-unloaded-target'
+  | 'send.optimistic-ack-follow-bottom'
   | 'dynamic-height.anchor-above-growth'
   | 'session.switch-restore-runtime-cache'
 
@@ -63,6 +65,61 @@ export const E2E_P1_SCENARIO_DEFINITIONS: E2EP1ScenarioDefinition[] = [
     oracleIds: [
       'expectRuntimeIdle',
       'expectDestinationSettledOnTarget',
+    ],
+  },
+  {
+    id: 'destination.quote-jump-unloaded-target',
+    priority: 'P1',
+    title: 'Quote jump requests unloaded target',
+    actionSteps: [
+      { kind: 'reset', scenarioId: 'destination.quote-jump-unloaded-target' },
+      { kind: 'action', actionId: 'wait_for_ready' },
+      { kind: 'action', actionId: 'jump_to_quoted_message' },
+      { kind: 'action', actionId: 'wait_for_idle' },
+      {
+        kind: 'action',
+        actionId: 'collect_evidence',
+        payload: { checkpointId: 'after' },
+        checkpointAlias: 'after',
+      },
+    ],
+    oracleIds: [
+      'expectRuntimeIdle',
+      'expectNeedMessagesAroundObserved:jump',
+      'expectDestinationSettledOnTarget',
+    ],
+  },
+  {
+    id: 'send.optimistic-ack-follow-bottom',
+    priority: 'P1',
+    title: 'Optimistic send ack keeps bottom lock',
+    actionSteps: [
+      { kind: 'reset', scenarioId: 'send.optimistic-ack-follow-bottom' },
+      { kind: 'action', actionId: 'wait_for_ready' },
+      {
+        kind: 'action',
+        actionId: 'send_message',
+        payload: {
+          body: 'E2E optimistic send should rebind to a committed row.',
+          waitFor: 'optimistic',
+          checkpointId: 'during',
+        },
+        checkpointAlias: 'during',
+      },
+      { kind: 'action', actionId: 'wait_for_idle' },
+      {
+        kind: 'action',
+        actionId: 'collect_evidence',
+        payload: { checkpointId: 'after' },
+        checkpointAlias: 'after',
+      },
+    ],
+    oracleIds: [
+      'expectVisibleOptimisticRow',
+      'expectRuntimeIdle',
+      'expectNoOptimisticRows',
+      'expectBottomLocked',
+      'expectLatestMessageVisible',
     ],
   },
   {

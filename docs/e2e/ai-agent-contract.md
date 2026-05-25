@@ -124,6 +124,8 @@ type E2EActionDescriptor = {
 | `scroll_to_bottom` | 用户滚动到底部 |
 | `append_message` | 通过 demo policy 追加一条消息 |
 | `prepend_history` | 通过 demo policy 加载历史 |
+| `start_prepend_history` | 触发历史加载，只等待 before 请求进入 pending，不等待 idle |
+| `send_message` | 发送消息；payload: `{ body: string, waitFor?: 'optimistic' | 'idle' }` |
 | `follow_bottom` | 点击或 dispatch follow bottom 语义动作 |
 | `jump_to_quoted_message` | 点击当前可见 quote，触发 destination jump |
 | `switch_feed` | 切换 active feed |
@@ -155,7 +157,46 @@ type E2EActionResult = {
 
 失败时必须返回结构化错误，不能只抛字符串。
 
-## 6. Semantic DOM Contract
+## 6. Evidence Schema
+
+`getEvidence()` 返回可持久化的 oracle 输入。新增场景依赖这些字段：
+
+```ts
+type E2EEventEvidence = {
+  viewportAnchorChanged: Array<{
+    reason: string
+    messageId: string | null
+    offsetWithinMessage: number | null
+  }>
+  needMoreBefore: number
+  needMoreAfter: number
+  needMessagesAround: Array<{
+    reason: string
+    messageId: string
+    position?: number
+  }>
+  destinationSettled: Array<{
+    intent: string
+    resolution?: string
+    targetMessageId?: string
+    resolvedMessageId?: string
+  }>
+  viewportErrors: string[]
+}
+
+type E2EVisibleRow = {
+  messageId: string
+  serializedKey: string
+  top: number
+  bottom: number
+  height: number
+}
+```
+
+optimistic/committed 判定必须使用 `visibleRows[].serializedKey`，例如
+`optimistic:client-...` 或 `committed:<messageId>`；不要新增 DOM 属性来表达发送态。
+
+## 7. Semantic DOM Contract
 
 即使有 global bridge，DOM 仍要对 AI 和人工友好：
 
@@ -171,7 +212,7 @@ type E2EActionResult = {
 
 语义属性必须稳定，不应绑定样式类名。
 
-## 7. AI Status Region
+## 8. AI Status Region
 
 页面应提供可见或半隐藏的 AI 状态区域：
 
@@ -191,7 +232,7 @@ type E2EActionResult = {
 
 这让 Browser Use 这类基于页面状态的 agent 即使不调用 bridge，也能读到当前上下文。
 
-## 8. Agent Rules
+## 9. Agent Rules
 
 AI agent 执行 e2e 时必须遵守：
 
@@ -202,7 +243,7 @@ AI agent 执行 e2e 时必须遵守：
 5. 失败时保存 evidence，不凭主观视觉描述下结论。
 6. 如果 evidence 不足，报告缺失字段，而不是猜测 root cause。
 
-## 9. Browser Use / Chrome DevTools MCP Mapping
+## 10. Browser Use / Chrome DevTools MCP Mapping
 
 | Need | Preferred primitive |
 | --- | --- |

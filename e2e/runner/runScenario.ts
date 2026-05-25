@@ -32,14 +32,19 @@ import {
   expectDestinationSettledOnTarget,
   expectDiagnosticObserved,
   expectLatestMessageVisible,
+  expectLoadedMessageCountDelta,
   expectNeedMoreAfterWithin,
   expectNeedMoreBeforeWithin,
+  expectNeedMessagesAroundObserved,
   expectNoFeedPollution,
   expectNoFollowWhenUserReading,
+  expectNoOptimisticRows,
+  expectNoUnexpectedErrors,
   expectNoWhiteScreen,
   expectDestinationOutcomeRecorded,
   expectRuntimeIdle,
   expectRuntimeAttachedOnce,
+  expectVisibleOptimisticRow,
   expectViewportErrorObserved,
   type E2EOracleResult,
 } from '../../src/e2e-app/e2eOracles.ts'
@@ -80,7 +85,9 @@ type ScenarioRunResult = {
   artifactPaths: string[]
 }
 
-type EvidenceCheckpoints = Partial<Record<'before' | 'after' | 'final', E2EEvidence>>
+type EvidenceCheckpoints = Partial<
+  Record<'before' | 'during' | 'after' | 'final', E2EEvidence>
+>
 
 type RunnableScenarioDefinition =
   | E2EP0ScenarioDefinition
@@ -337,10 +344,11 @@ function evaluateScenarioOracles(
   finalEvidence: E2EEvidence,
 ): E2EOracleResult[] {
   if (definition.id === 'bootstrap.latest-bottom-lock') {
-    return [
+    return withNoUnexpectedErrors([
       expectRuntimeIdle(finalEvidence),
       expectBottomLocked(finalEvidence, { thresholdPx: 1 }),
-    ]
+      expectLatestMessageVisible(finalEvidence),
+    ], finalEvidence)
   }
 
   if (definition.id === 'paging.prepend-anchor-preservation') {
@@ -351,10 +359,11 @@ function evaluateScenarioOracles(
       return [missingEvidenceOracle('expectAnchorPreserved', 'before')]
     }
 
-    return [
+    return withNoUnexpectedErrors([
       expectRuntimeIdle(after),
       expectAnchorPreserved(before, after, { tolerancePx: 1 }),
-    ]
+      expectNeedMoreBeforeWithin(after, 1),
+    ], after)
   }
 
   if (definition.id === 'bottom.user-scroll-up-append-no-follow') {
@@ -365,28 +374,58 @@ function evaluateScenarioOracles(
       return [missingEvidenceOracle('expectNoFollowWhenUserReading', 'before')]
     }
 
-    return [
+    return withNoUnexpectedErrors([
       expectRuntimeIdle(after),
       expectNoFollowWhenUserReading(before, after),
-    ]
+    ], after)
   }
 
   if (definition.id === 'bottom.locked-append-follow') {
     const after = checkpoints.after ?? finalEvidence
 
-    return [
+    return withNoUnexpectedErrors([
       expectRuntimeIdle(after),
       expectBottomLocked(after, { thresholdPx: 1 }),
       expectLatestMessageVisible(after),
-    ]
+    ], after)
   }
 
   if (definition.id === 'destination.quote-jump-visible-target') {
     const after = checkpoints.after ?? finalEvidence
 
-    return [
+    return withNoUnexpectedErrors([
       expectRuntimeIdle(after),
       expectDestinationSettledOnTarget(after),
+    ], after)
+  }
+
+  if (definition.id === 'destination.quote-jump-unloaded-target') {
+    const after = checkpoints.after ?? finalEvidence
+
+    return withNoUnexpectedErrors([
+      expectRuntimeIdle(after),
+      expectNeedMessagesAroundObserved(after, { reason: 'jump' }),
+      expectDestinationSettledOnTarget(after),
+    ], after)
+  }
+
+  if (definition.id === 'send.optimistic-ack-follow-bottom') {
+    const during = checkpoints.during
+    const after = checkpoints.after ?? finalEvidence
+
+    if (!during) {
+      return [missingEvidenceOracle('expectVisibleOptimisticRow', 'during')]
+    }
+
+    return [
+      expectVisibleOptimisticRow(during),
+      expectNoUnexpectedErrors(during),
+      ...withNoUnexpectedErrors([
+        expectRuntimeIdle(after),
+        expectNoOptimisticRows(after),
+        expectBottomLocked(after, { thresholdPx: 1 }),
+        expectLatestMessageVisible(after),
+      ], after),
     ]
   }
 
@@ -398,11 +437,11 @@ function evaluateScenarioOracles(
       return [missingEvidenceOracle('expectAnchorPreserved', 'before')]
     }
 
-    return [
+    return withNoUnexpectedErrors([
       expectRuntimeIdle(after),
       expectAnchorPreserved(before, after, { tolerancePx: 1 }),
       expectDiagnosticObserved(after, 'correction.anchorPreserved'),
-    ]
+    ], after)
   }
 
   if (definition.id === 'session.switch-restore-runtime-cache') {
@@ -413,47 +452,65 @@ function evaluateScenarioOracles(
       return [missingEvidenceOracle('expectNoFeedPollution', 'before')]
     }
 
-    return [
+    return withNoUnexpectedErrors([
       expectRuntimeIdle(after),
       expectNoFeedPollution(before, after),
       expectAnchorPreserved(before, after, { tolerancePx: 1 }),
-    ]
+    ], after)
   }
 
   if (definition.id === 'edge.custom-scrollbar-drag-top') {
     const after = checkpoints.after ?? finalEvidence
 
-    return [
+    return withNoUnexpectedErrors([
       expectRuntimeIdle(after),
       expectNeedMoreBeforeWithin(after, 1),
-    ]
+    ], after)
   }
 
   if (definition.id === 'edge.custom-scrollbar-drag-bottom') {
     const after = checkpoints.after ?? finalEvidence
 
-    return [
+    return withNoUnexpectedErrors([
       expectRuntimeIdle(after),
       expectNeedMoreAfterWithin(after, 1),
-    ]
+    ], after)
+  }
+
+  if (definition.id === 'paging.prepend-slow-request-race') {
+    const before = checkpoints.before
+    const after = checkpoints.after ?? finalEvidence
+
+    if (!before) {
+      return [missingEvidenceOracle('expectAnchorPreserved', 'before')]
+    }
+
+    return withNoUnexpectedErrors([
+      expectRuntimeIdle(after),
+      expectAnchorPreserved(before, after, { tolerancePx: 1 }),
+      expectNeedMoreBeforeWithin(after, 1),
+      expectLoadedMessageCountDelta(before, after, 20),
+    ], after)
   }
 
   if (definition.id === 'lifecycle.strictmode-attach-detach-attach') {
     const after = checkpoints.after ?? finalEvidence
 
-    return [
+    return withNoUnexpectedErrors([
       expectRuntimeIdle(after),
       expectRuntimeAttachedOnce(after),
-    ]
+    ], after)
   }
 
   if (definition.id === 'recovery.bootstrap-commit-timeout') {
     const after = checkpoints.after ?? finalEvidence
 
-    return [
+    return withNoUnexpectedErrors([
       expectRuntimeIdle(after),
       expectViewportErrorObserved(after, 'commit-timeout-bootstrap'),
-    ]
+      expectNeedMoreBeforeWithin(after, 0),
+      expectNeedMoreAfterWithin(after, 0),
+    ], after, ['commit-timeout-bootstrap'])
   }
 
   if (definition.id === 'storm.quote-jump-during-event-storm') {
@@ -492,6 +549,17 @@ function evaluateScenarioOracles(
   }
 
   return [missingEvidenceOracle('unknownScenario', definition.id)]
+}
+
+function withNoUnexpectedErrors(
+  results: E2EOracleResult[],
+  evidence: E2EEvidence,
+  allowedViewportErrors: string[] = [],
+): E2EOracleResult[] {
+  return [
+    ...results,
+    expectNoUnexpectedErrors(evidence, { allowedViewportErrors }),
+  ]
 }
 
 async function writeScenarioArtifacts(input: {

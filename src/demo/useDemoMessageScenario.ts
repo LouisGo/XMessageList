@@ -15,12 +15,17 @@ import type {
 import {
   type DemoViewportEffect,
   type DemoMessage,
+  createDemoIdentityRemapSnapshot,
   createDemoMessages,
   createDemoSnapshot,
+  createDemoSnapshotFromItems,
   createNewestMessage,
+  createOptimisticOutgoingItem,
   createOutgoingMessage,
+  createOutgoingIdentityRemap,
   getNextMessageSequence,
   normalizeDemoMessages,
+  toCommittedItem,
 } from './demoData'
 import {
   DEMO_FEEDS,
@@ -1872,16 +1877,98 @@ export function useDemoMessageScenario(
       return false
     }
 
-    void runLoggedOperation({
+    const feedId = activeFeedIdRef.current
+    const requestId = createDemoRequestId('message.send')
+    const details = {
+      bodyLength: trimmed.length,
+      lineCount: trimmed.split('\n').length,
+    }
+
+    if (feedLoadingRef.current) {
+      setLastEvent('wait for feed before sending')
+      void log({
+        requestId,
+        operation: 'message.send',
+        phase: 'skip',
+        feedId,
+        messageCount: messagesRef.current.length,
+        details: { reason: 'feed-loading', ...details },
+      })
+      return false
+    }
+
+    const projectsIntoCurrentWindow = !hasMoreAfterRef.current
+    const clientMessageId = `${feedId}-client-${Date.now()}-${revisionRef.current + 1}`
+
+    beginPendingOperation('message.send')
+    setLastEvent('sending message...')
+
+    if (projectsIntoCurrentWindow) {
+      revisionRef.current += 1
+      hasMoreBeforeRef.current = computeHasMoreBefore(
+        feedMessagesRef.current,
+        messagesRef.current,
+      )
+      hasMoreAfterRef.current = computeHasMoreAfter(
+        feedMessagesRef.current,
+        messagesRef.current,
+      )
+      syncDisplayedCounts()
+      activeRuntimeRef.current?.setDataSnapshot(
+        createDemoSnapshotFromItems({
+          feedId,
+          generation: generationRef.current,
+          revision: revisionRef.current,
+          items: [
+            ...messagesRef.current.map(toCommittedItem),
+            createOptimisticOutgoingItem({
+              clientMessageId,
+              body: trimmed,
+            }),
+          ],
+          effect: 'auto-scroll-to-bottom',
+          kind: 'append',
+          hasMoreBefore: hasMoreBeforeRef.current,
+          hasMoreAfter: hasMoreAfterRef.current,
+        }),
+      )
+      saveCurrentFeedSessionState()
+    }
+
+    void log({
+      requestId,
       operation: 'message.send',
-      startEvent: 'sending message...',
-      details: { bodyLength: trimmed.length, lineCount: trimmed.split('\n').length },
-      apply: async (feedId) => {
-        const projectsIntoCurrentWindow = !hasMoreAfterRef.current
+      phase: 'start',
+      feedId,
+      messageCount: messagesRef.current.length,
+      details: {
+        ...details,
+        optimistic: projectsIntoCurrentWindow,
+        clientMessageId,
+      },
+    })
+
+    void (async () => {
+      try {
+        await sleep(OPERATION_DELAYS['message.send'])
+
+        if (activeFeedIdRef.current !== feedId) {
+          await log({
+            requestId,
+            operation: 'message.send',
+            phase: 'cancel',
+            feedId,
+            messageCount: messagesRef.current.length,
+            details: { reason: 'feed-switched', clientMessageId },
+          })
+          return
+        }
+
         const message = createOutgoingMessage(trimmed, {
           feedId,
           sequence: getNextMessageSequence(feedMessagesRef.current),
           quoteCandidates: feedMessagesRef.current,
+          random: () => 1,
         })
 
         feedMessagesRef.current = [...feedMessagesRef.current, message]
@@ -1890,18 +1977,56 @@ export function useDemoMessageScenario(
 
         if (projectsIntoCurrentWindow) {
           messagesRef.current = [...messagesRef.current, message]
-
-          return {
-            effect: 'auto-scroll-to-bottom' as DemoViewportEffect,
-            kind: 'append' as DemoSnapshotKind,
-            eventText: `sent ${message.id}`,
+          revisionRef.current += 1
+          hasMoreBeforeRef.current = computeHasMoreBefore(
+            feedMessagesRef.current,
+            messagesRef.current,
+          )
+          hasMoreAfterRef.current = computeHasMoreAfter(
+            feedMessagesRef.current,
+            messagesRef.current,
+          )
+          syncDisplayedCounts()
+          activeRuntimeRef.current?.setDataSnapshot(
+            createDemoIdentityRemapSnapshot({
+              feedId,
+              generation: generationRef.current,
+              revision: revisionRef.current,
+              items: messagesRef.current.map(toCommittedItem),
+              identityRemaps: [
+                createOutgoingIdentityRemap({
+                  clientMessageId,
+                  messageId: message.id,
+                }),
+              ],
+              anchor: {
+                messageId: message.id,
+                position: message.sequence,
+              },
+              hasMoreBefore: hasMoreBeforeRef.current,
+              hasMoreAfter: hasMoreAfterRef.current,
+            }),
+          )
+          activeRuntimeRef.current?.dispatch({ type: 'followBottom' })
+          saveCurrentFeedSessionState()
+          await persistCurrentFeed()
+          setLastEvent(`sent ${message.id}`)
+          await log({
+            requestId,
+            operation: 'message.send',
+            phase: 'success',
+            feedId,
+            messageCount: messagesRef.current.length,
             details: {
+              ...details,
               sentId: message.id,
-              bodyLength: trimmed.length,
+              clientMessageId,
               visibleInCurrentWindow: true,
               rebuiltLatestWindow: false,
+              viewportModifier: 'identity-remap',
             },
-          }
+          })
+          return
         }
 
         // 当前窗口不是 latest 时，send 需要模拟真实 IM：写入后重新请求 latest page，
@@ -1928,14 +2053,22 @@ export function useDemoMessageScenario(
         messagesRef.current = normalizeDemoMessages(feedId, latestResp.messages)
         hasMoreBeforeRef.current = latestResp.hasMoreBefore
         hasMoreAfterRef.current = latestResp.hasMoreAfter
-
-        return {
-          effect: 'auto-scroll-to-bottom' as DemoViewportEffect,
-          kind: 'reset' as DemoSnapshotKind,
-          eventText: `sent ${message.id} and rebuilt latest`,
+        publishCurrentMessages('auto-scroll-to-bottom', 'reset', {
+          anchor: latestResp.anchor,
+          anchorStatus: latestResp.anchorStatus,
+        })
+        await persistCurrentFeed()
+        setLastEvent(`sent ${message.id} and rebuilt latest`)
+        await log({
+          requestId,
+          operation: 'message.send',
+          phase: 'success',
+          feedId,
+          messageCount: messagesRef.current.length,
           details: {
+            ...details,
             sentId: message.id,
-            bodyLength: trimmed.length,
+            clientMessageId,
             visibleInCurrentWindow: true,
             rebuiltLatestWindow: true,
             latestTotal: latestResp.total,
@@ -1943,12 +2076,35 @@ export function useDemoMessageScenario(
             hasMoreAfter: latestResp.hasMoreAfter,
             anchor: latestResp.anchor,
           },
-        }
-      },
-    })
+        })
+      } catch (error) {
+        const message = getErrorMessage(error)
+        setLastEvent('message.send failed')
+        await log({
+          requestId,
+          operation: 'message.send',
+          phase: 'error',
+          feedId,
+          messageCount: messagesRef.current.length,
+          error: message,
+        })
+      } finally {
+        endPendingOperation('message.send')
+      }
+    })()
 
     return true
-  }, [api, runLoggedOperation, storage])
+  }, [
+    api,
+    beginPendingOperation,
+    endPendingOperation,
+    log,
+    persistCurrentFeed,
+    publishCurrentMessages,
+    saveCurrentFeedSessionState,
+    storage,
+    syncDisplayedCounts,
+  ])
 
   const followBottom = useCallback((source: 'sidebar' | 'floating') => {
     void log({

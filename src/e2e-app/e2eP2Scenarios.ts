@@ -3,6 +3,7 @@ import type { E2EActionStep } from './e2eP0Scenarios'
 export type E2EP2ScenarioId =
   | 'edge.custom-scrollbar-drag-top'
   | 'edge.custom-scrollbar-drag-bottom'
+  | 'paging.prepend-slow-request-race'
   | 'lifecycle.strictmode-attach-detach-attach'
   | 'recovery.bootstrap-commit-timeout'
 
@@ -55,6 +56,36 @@ export const E2E_P2_SCENARIO_DEFINITIONS: E2EP2ScenarioDefinition[] = [
     oracleIds: [
       'expectRuntimeIdle',
       'expectNeedMoreAfterWithin:1',
+    ],
+  },
+  {
+    id: 'paging.prepend-slow-request-race',
+    priority: 'P2',
+    title: 'Slow prepend request deduplicates edge race',
+    actionSteps: [
+      { kind: 'reset', scenarioId: 'paging.prepend-slow-request-race' },
+      { kind: 'action', actionId: 'wait_for_ready' },
+      { kind: 'action', actionId: 'scroll_to_middle' },
+      {
+        kind: 'action',
+        actionId: 'collect_evidence',
+        payload: { checkpointId: 'before' },
+        checkpointAlias: 'before',
+      },
+      { kind: 'action', actionId: 'start_prepend_history' },
+      { kind: 'action', actionId: 'prepend_history' },
+      {
+        kind: 'action',
+        actionId: 'collect_evidence',
+        payload: { checkpointId: 'after' },
+        checkpointAlias: 'after',
+      },
+    ],
+    oracleIds: [
+      'expectRuntimeIdle',
+      'expectAnchorPreserved',
+      'expectNeedMoreBeforeWithin:1',
+      'expectLoadedMessageCountDelta:20',
     ],
   },
   {

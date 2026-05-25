@@ -23,13 +23,18 @@ import {
   expectDestinationOutcomeRecorded,
   expectDiagnosticObserved,
   expectLatestMessageVisible,
+  expectLoadedMessageCountDelta,
   expectNeedMoreAfterWithin,
   expectNeedMoreBeforeWithin,
+  expectNeedMessagesAroundObserved,
   expectNoFeedPollution,
   expectNoFollowWhenUserReading,
+  expectNoOptimisticRows,
+  expectNoUnexpectedErrors,
   expectNoWhiteScreen,
   expectRuntimeIdle,
   expectRuntimeAttachedOnce,
+  expectVisibleOptimisticRow,
   expectViewportErrorObserved,
 } from '../e2eOracles'
 import { getE2EScenarioDefinition } from '../e2eScenarioRegistry'
@@ -71,6 +76,36 @@ describe('e2e deterministic oracles', () => {
       'bottom lock is UNLOCKED',
       'distance to bottom 24 exceeds 1',
       'follow bottom affordance is visible',
+    ])
+  })
+
+  it('checks unexpected console and viewport errors with an explicit allowlist', () => {
+    expect(expectNoUnexpectedErrors(createEvidence()).ok).toBe(true)
+    expect(
+      expectNoUnexpectedErrors(
+        createEvidence({
+          events: {
+            viewportErrors: ['commit-timeout-bootstrap'],
+          },
+        }),
+        { allowedViewportErrors: ['commit-timeout-bootstrap'] },
+      ).ok,
+    ).toBe(true)
+
+    const failed = expectNoUnexpectedErrors(createEvidence({
+      console: {
+        errors: [{ text: 'boom' }],
+        warnings: [],
+      },
+      events: {
+        viewportErrors: ['unexpected-runtime-error'],
+      },
+    }))
+
+    expect(failed.ok).toBe(false)
+    expect(failed.details?.failures).toEqual([
+      'console errors is 1',
+      'viewport errors: unexpected-runtime-error',
     ])
   })
 
@@ -213,6 +248,40 @@ describe('e2e deterministic oracles', () => {
     ).toBe(true)
   })
 
+  it('checks IM-specific event and optimistic row helpers', () => {
+    const duringSend = createEvidence({
+      viewport: {
+        visibleRows: [
+          createVisibleRow('feed-runtime-m-80'),
+          createVisibleRow('optimistic:client-1', 'optimistic:client-1'),
+        ],
+      },
+      events: {
+        needMessagesAround: [{
+          reason: 'jump',
+          messageId: 'feed-runtime-m-32',
+          position: 32,
+        }],
+      },
+    })
+
+    expect(expectVisibleOptimisticRow(duringSend).ok).toBe(true)
+    expect(expectNoOptimisticRows(duringSend).ok).toBe(false)
+    expect(
+      expectNeedMessagesAroundObserved(duringSend, {
+        reason: 'jump',
+        messageId: 'feed-runtime-m-32',
+      }).ok,
+    ).toBe(true)
+    expect(
+      expectLoadedMessageCountDelta(
+        createEvidence({ feed: { loadedMessageCount: 20 } }),
+        createEvidence({ feed: { loadedMessageCount: 40 } }),
+        20,
+      ).ok,
+    ).toBe(true)
+  })
+
   it('checks P3 stress helpers without promoting them to gates', () => {
     expect(expectNoWhiteScreen(createEvidence()).ok).toBe(true)
     expect(
@@ -255,6 +324,8 @@ describe('P1 e2e scenario definitions', () => {
     expect(E2E_P1_SCENARIO_DEFINITIONS.map((scenario) => scenario.id)).toEqual([
       'bottom.locked-append-follow',
       'destination.quote-jump-visible-target',
+      'destination.quote-jump-unloaded-target',
+      'send.optimistic-ack-follow-bottom',
       'dynamic-height.anchor-above-growth',
       'session.switch-restore-runtime-cache',
     ])
@@ -273,6 +344,7 @@ describe('P2 e2e scenario definitions', () => {
     expect(E2E_P2_SCENARIO_DEFINITIONS.map((scenario) => scenario.id)).toEqual([
       'edge.custom-scrollbar-drag-top',
       'edge.custom-scrollbar-drag-bottom',
+      'paging.prepend-slow-request-race',
       'lifecycle.strictmode-attach-detach-attach',
       'recovery.bootstrap-commit-timeout',
     ])
@@ -373,6 +445,7 @@ function createEvidence(overrides: EvidenceOverrides = {}): E2EEvidence {
       viewportAnchorChanged: [],
       needMoreBefore: 0,
       needMoreAfter: 0,
+      needMessagesAround: [],
       destinationSettled: [],
       viewportErrors: [],
     },
@@ -426,10 +499,13 @@ function createAnchor(messageId: string, top: number): NonNullable<
   }
 }
 
-function createVisibleRow(messageId: string): E2EEvidence['viewport']['visibleRows'][number] {
+function createVisibleRow(
+  messageId: string,
+  serializedKey = `committed:${messageId}`,
+): E2EEvidence['viewport']['visibleRows'][number] {
   return {
     messageId,
-    serializedKey: `committed:${messageId}`,
+    serializedKey,
     top: 0,
     bottom: 40,
     height: 40,

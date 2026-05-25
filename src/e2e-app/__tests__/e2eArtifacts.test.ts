@@ -138,6 +138,7 @@ function createEvidence(overrides: EvidenceOverrides = {}): E2EEvidence {
       viewportAnchorChanged: [],
       needMoreBefore: 0,
       needMoreAfter: 0,
+      needMessagesAround: [],
       destinationSettled: [],
       viewportErrors: [],
     },

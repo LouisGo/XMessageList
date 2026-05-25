@@ -166,6 +166,8 @@ describe('collectE2EState', () => {
       'scroll_to_bottom',
       'append_message',
       'prepend_history',
+      'start_prepend_history',
+      'send_message',
       'follow_bottom',
       'jump_to_quoted_message',
       'switch_feed',
@@ -235,6 +237,27 @@ describe('collectE2EState', () => {
     expect(buffer.viewportAnchorChanged).toHaveLength(80)
     expect(buffer.viewportAnchorChanged[0]?.messageId).toBe('m-5')
     expect(buffer.viewportAnchorChanged.at(-1)?.messageId).toBe('m-84')
+  })
+
+  it('records needMessagesAround events for destination-loading evidence', () => {
+    const buffer = createE2EEventBuffer()
+
+    recordE2ERuntimeEvent(buffer, {
+      type: 'needMessagesAround',
+      feedId: 'feed-runtime',
+      generation: 1,
+      reason: 'jump',
+      target: {
+        messageId: 'feed-runtime-m-32',
+        position: 32,
+      },
+    })
+
+    expect(buffer.needMessagesAround).toEqual([{
+      reason: 'jump',
+      messageId: 'feed-runtime-m-32',
+      position: 32,
+    }])
   })
 
   it('keeps priority diagnostics when the runtime diagnostic buffer is noisy', () => {
@@ -476,6 +499,132 @@ describe('collectE2EState', () => {
     expect(result.ok).toBe(true)
     expect(scenario.toggleEventStorm).toHaveBeenCalledTimes(1)
     expect(result.after?.ui.pendingOperation).toBe('mock.eventStorm')
+  })
+
+  it('returns start_prepend_history while the prepend request is still pending', async () => {
+    const root = document.createElement('main')
+    const scenario = createScenarioStub()
+    const consoleBuffer = createE2EConsoleBuffer()
+    const eventBuffer = createE2EEventBuffer()
+
+    scenario.loadHistoryBatch = vi.fn(() => {
+      scenario.loadingBefore = true
+      scenario.pendingOperation = 'history.prepend'
+    })
+
+    const readEvidence = (checkpointId: string) =>
+      collectE2EEvidence({
+        scenarioId: 'paging.prepend-slow-request-race',
+        checkpointId,
+        scenario,
+        consoleBuffer,
+        eventBuffer,
+        root,
+      })
+    const result = await runE2EAction({
+      actionId: 'start_prepend_history',
+      scenarioId: 'paging.prepend-slow-request-race',
+      scenario,
+      consoleBuffer,
+      eventBuffer,
+      root,
+      readState: () =>
+        collectE2EState({
+          scenarioId: 'paging.prepend-slow-request-race',
+          scenario,
+          consoleBuffer,
+          root,
+        }),
+      readEvidence,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(scenario.loadHistoryBatch).toHaveBeenCalledTimes(1)
+    expect(result.after?.ui.pendingOperation).toBe('history.prepend')
+  })
+
+  it('returns send_message(waitFor optimistic) before full runtime idle', async () => {
+    const root = document.createElement('main')
+    const container = document.createElement('div')
+    const scenario = createScenarioStub()
+    const consoleBuffer = createE2EConsoleBuffer()
+    const eventBuffer = createE2EEventBuffer()
+
+    container.dataset.testid = 'message-scroll-container'
+    Object.defineProperties(container, {
+      scrollTop: { value: 0, configurable: true },
+      scrollHeight: { value: 120, configurable: true },
+      clientHeight: { value: 120, configurable: true },
+    })
+    container.getBoundingClientRect = () => ({
+      top: 0,
+      bottom: 120,
+      left: 0,
+      right: 320,
+      width: 320,
+      height: 120,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    root.append(container)
+
+    scenario.sendMessage = vi.fn(() => {
+      const row = document.createElement('div')
+
+      row.dataset.messageRow = 'optimistic:client-e2e'
+      row.getBoundingClientRect = () => ({
+        top: 12,
+        bottom: 52,
+        left: 0,
+        right: 320,
+        width: 320,
+        height: 40,
+        x: 0,
+        y: 12,
+        toJSON: () => ({}),
+      })
+      container.append(row)
+      scenario.pendingOperation = 'message.send'
+      return true
+    })
+
+    const readEvidence = (checkpointId: string) =>
+      collectE2EEvidence({
+        scenarioId: 'send.optimistic-ack-follow-bottom',
+        checkpointId,
+        scenario,
+        consoleBuffer,
+        eventBuffer,
+        root,
+      })
+    const result = await runE2EAction({
+      actionId: 'send_message',
+      payload: {
+        body: 'hello from e2e',
+        waitFor: 'optimistic',
+      },
+      scenarioId: 'send.optimistic-ack-follow-bottom',
+      scenario,
+      consoleBuffer,
+      eventBuffer,
+      root,
+      readState: () =>
+        collectE2EState({
+          scenarioId: 'send.optimistic-ack-follow-bottom',
+          scenario,
+          consoleBuffer,
+          root,
+        }),
+      readEvidence,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(scenario.sendMessage).toHaveBeenCalledWith('hello from e2e')
+    expect(result.after?.ui.pendingOperation).toBe('message.send')
+    expect(result.after?.viewport.visibleRows[0]?.serializedKey).toBe(
+      'optimistic:client-e2e',
+    )
   })
 })
 

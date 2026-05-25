@@ -10,6 +10,7 @@ export type E2EScenarioDefinition = {
   seedLabel: string
   faults?: {
     bootstrapCommitTimeout?: 'drop-first-commit-and-retry'
+    historyPrependDelayMs?: number
   }
 }
 
@@ -52,6 +53,20 @@ const P0_SCENARIOS: E2EScenarioDefinition[] = [
     seedLabel: 'p1-quote-jump-visible-target-v1',
   },
   {
+    id: 'destination.quote-jump-unloaded-target',
+    title: 'Quote jump unloaded target',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p1-quote-jump-unloaded-target-v1',
+  },
+  {
+    id: 'send.optimistic-ack-follow-bottom',
+    title: 'Optimistic send ack follows bottom',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p1-send-optimistic-ack-v1',
+  },
+  {
     id: 'dynamic-height.anchor-above-growth',
     title: 'Dynamic height anchor preservation',
     feedId: DEFAULT_FEED.id,
@@ -78,6 +93,16 @@ const P0_SCENARIOS: E2EScenarioDefinition[] = [
     feedId: DEFAULT_FEED.id,
     seedCount: DEFAULT_FEED.seedCount,
     seedLabel: 'p2-scrollbar-drag-bottom-v1',
+  },
+  {
+    id: 'paging.prepend-slow-request-race',
+    title: 'Slow prepend request race',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p2-prepend-slow-request-race-v1',
+    faults: {
+      historyPrependDelayMs: 400,
+    },
   },
   {
     id: 'lifecycle.strictmode-attach-detach-attach',

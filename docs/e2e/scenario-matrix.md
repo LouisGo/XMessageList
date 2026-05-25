@@ -31,9 +31,8 @@ Oracle:
 
 - `expectRuntimeIdle`
 - `expectBottomLocked`
-- visible rows 包含最新消息。
-- 无 `commit-timeout-bootstrap`。
-- console error 为 0。
+- `expectLatestMessageVisible`
+- `expectNoUnexpectedErrors`
 
 ### 2.2 `paging.prepend-anchor-preservation`
 
@@ -53,7 +52,8 @@ Oracle:
 
 - `expectRuntimeIdle`
 - `expectAnchorPreserved(before, after, { tolerancePx: 1 })`
-- `needMoreBefore` 不重复异常触发。
+- `expectNeedMoreBeforeWithin(after, 1)`
+- `expectNoUnexpectedErrors`
 - recovery/programmatic scroll 不被误判为用户 edge intent。
 
 ### 2.3 `bottom.user-scroll-up-append-no-follow`
@@ -76,6 +76,7 @@ Oracle:
 - `expectNoFollowWhenUserReading`
 - `bottomLockState === 'UNLOCKED'`
 - follow-bottom affordance 可见。
+- `expectNoUnexpectedErrors`
 
 ## 3. P1 Scenarios
 
@@ -96,6 +97,7 @@ Oracle:
 - `expectBottomLocked`
 - 新消息可见。
 - append 后不出现 transient wrong bottom button state。
+- `expectNoUnexpectedErrors`
 
 ### 3.2 `destination.quote-jump-visible-target`
 
@@ -113,8 +115,46 @@ Oracle:
 - `expectDestinationSettledOnTarget`
 - highlighted message id 与 resolved target 一致。
 - target row 不应错位到不可见区域。
+- `expectNoUnexpectedErrors`
 
-### 3.3 `dynamic-height.anchor-above-growth`
+### 3.3 `destination.quote-jump-unloaded-target`
+
+目的：latest 可见 quote 指向未加载历史消息时，runtime 必须发起 around-target 请求，并最终 settle/highlight 到目标。
+
+Actions:
+
+1. 使用 e2e seed 中 latest window 的 deterministic unloaded quote。
+2. 点击当前可见 quote。
+3. wait idle。
+4. collect evidence。
+
+Oracle:
+
+- `expectNeedMessagesAroundObserved(after, { reason: 'jump' })`
+- `expectDestinationSettledOnTarget`
+- target row 可见且 highlighted message id 一致。
+- `expectNoUnexpectedErrors`
+
+### 3.4 `send.optimistic-ack-follow-bottom`
+
+目的：发送消息先出现 optimistic row，ack 后通过 `identity-remap` 变成 committed row，并保持锁底。
+
+Actions:
+
+1. latest bootstrap。
+2. `send_message({ body, waitFor: 'optimistic' })` collect during。
+3. wait idle。
+4. collect after。
+
+Oracle:
+
+- during: `expectVisibleOptimisticRow`
+- after: `expectNoOptimisticRows`
+- after: `expectBottomLocked`
+- after: `expectLatestMessageVisible`
+- `expectNoUnexpectedErrors`
+
+### 3.5 `dynamic-height.anchor-above-growth`
 
 目的：anchor 上方异步内容增高后，阅读位置保持。
 
@@ -131,8 +171,9 @@ Oracle:
 - anchor delta <= 1px。
 - 发生 `correction.anchorPreserved` diagnostic。
 - scroll correction 不触发 edge paging。
+- `expectNoUnexpectedErrors`
 
-### 3.4 `session.switch-restore-runtime-cache`
+### 3.6 `session.switch-restore-runtime-cache`
 
 目的：feed A 中部切到 B，再切回 A，恢复 projection / anchor / height cache。
 
@@ -152,6 +193,7 @@ Oracle:
 - A 的 restored visible range 接近 before。
 - feed B 的 events 不污染 A。
 - detach anchor event 被 host 接收。
+- `expectNoUnexpectedErrors`
 
 ## 4. P2 Scenarios
 
@@ -164,6 +206,7 @@ Oracle:
 - `needMoreBefore` 只触发一次或符合场景预期。
 - recovery scroll 不释放 edge latch。
 - drag end 后 intent 清理。
+- `expectNoUnexpectedErrors`
 
 ### 4.2 `edge.custom-scrollbar-drag-bottom`
 
@@ -173,8 +216,28 @@ Oracle:
 
 - partial DataWindow 不伪装成 true bottom locked。
 - `needMoreAfter` 只在有更多 newer data 且用户意图存在时触发。
+- `expectNoUnexpectedErrors`
 
-### 4.3 `lifecycle.strictmode-attach-detach-attach`
+### 4.3 `paging.prepend-slow-request-race`
+
+目的：before 分页慢请求未完成时重复触顶/触发 prepend，host 只能发起一次有效 before edge，并保持 anchor。
+
+Actions:
+
+1. scroll to middle。
+2. collect before。
+3. `start_prepend_history`，只等到 `loadingBefore` / `history.prepend` pending。
+4. pending 期间再次 `prepend_history`，验证 host/runtime 不发起重复有效请求。
+5. collect after。
+
+Oracle:
+
+- `expectAnchorPreserved(before, after, { tolerancePx: 1 })`
+- `expectNeedMoreBeforeWithin(after, 1)`
+- `expectLoadedMessageCountDelta(before, after, 20)`
+- `expectNoUnexpectedErrors`
+
+### 4.4 `lifecycle.strictmode-attach-detach-attach`
 
 目的：StrictMode 模拟 cleanup 不导致 observer 重复、runtime 销毁或 commit 丢失。
 
@@ -186,8 +249,9 @@ Oracle:
 - observed rows 数量合理。
 - 没有 stale generation callback 修改当前 feed。
 - no duplicate viewportAnchorChanged detach for same real unmount。
+- `expectNoUnexpectedErrors`
 
-### 4.4 `recovery.bootstrap-commit-timeout`
+### 4.5 `recovery.bootstrap-commit-timeout`
 
 目的：commit timeout recovery 后，runtime 不留在中间态，sentinel 不误触发 edge need。
 
@@ -199,6 +263,7 @@ Oracle:
 - recovery 后状态稳定。
 - `viewportError` 可观测。
 - no unintended `needMoreBefore` / `needMoreAfter`。
+- `expectNoUnexpectedErrors(after, { allowedViewportErrors: ['commit-timeout-bootstrap'] })`
 
 ## 5. P3 AI Stress Scenarios
 

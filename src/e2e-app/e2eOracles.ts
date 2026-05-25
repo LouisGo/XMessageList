@@ -15,6 +15,15 @@ export type BottomLockedOptions = {
   thresholdPx?: number
 }
 
+export type NoUnexpectedErrorsOptions = {
+  allowedViewportErrors?: string[]
+}
+
+export type NeedMessagesAroundOptions = {
+  reason?: string
+  messageId?: string
+}
+
 export function expectRuntimeIdle(evidence: E2EEvidence): E2EOracleResult {
   const failures: string[] = []
 
@@ -49,6 +58,34 @@ export function expectRuntimeIdle(evidence: E2EEvidence): E2EOracleResult {
       })
 }
 
+export function expectNoUnexpectedErrors(
+  evidence: E2EEvidence,
+  options: NoUnexpectedErrorsOptions = {},
+): E2EOracleResult {
+  const allowedViewportErrors = new Set(options.allowedViewportErrors ?? [])
+  const unexpectedViewportErrors = evidence.events.viewportErrors.filter(
+    (error) => !allowedViewportErrors.has(error),
+  )
+  const failures: string[] = []
+
+  if (evidence.console.errors.length > 0) {
+    failures.push(`console errors is ${evidence.console.errors.length}`)
+  }
+
+  if (unexpectedViewportErrors.length > 0) {
+    failures.push(`viewport errors: ${unexpectedViewportErrors.join(', ')}`)
+  }
+
+  return failures.length === 0
+    ? pass('expectNoUnexpectedErrors', 'no unexpected errors observed')
+    : fail('expectNoUnexpectedErrors', 'unexpected errors observed', {
+        failures,
+        consoleErrors: evidence.console.errors,
+        viewportErrors: evidence.events.viewportErrors,
+        allowedViewportErrors: [...allowedViewportErrors],
+      })
+}
+
 export function expectBottomLocked(
   evidence: E2EEvidence,
   options: BottomLockedOptions = {},
@@ -76,6 +113,34 @@ export function expectBottomLocked(
         failures,
         thresholdPx,
         distanceToBottom: evidence.viewport.distanceToBottom,
+      })
+}
+
+export function expectVisibleOptimisticRow(
+  evidence: E2EEvidence,
+): E2EOracleResult {
+  const optimisticRows = evidence.viewport.visibleRows.filter((row) =>
+    row.serializedKey.startsWith('optimistic:'),
+  )
+
+  return optimisticRows.length > 0
+    ? pass('expectVisibleOptimisticRow', 'visible optimistic row observed')
+    : fail('expectVisibleOptimisticRow', 'visible optimistic row missing', {
+        visibleRows: evidence.viewport.visibleRows,
+      })
+}
+
+export function expectNoOptimisticRows(
+  evidence: E2EEvidence,
+): E2EOracleResult {
+  const optimisticRows = evidence.viewport.visibleRows.filter((row) =>
+    row.serializedKey.startsWith('optimistic:'),
+  )
+
+  return optimisticRows.length === 0
+    ? pass('expectNoOptimisticRows', 'no visible optimistic rows remain')
+    : fail('expectNoOptimisticRows', 'optimistic rows still visible', {
+        optimisticRows,
       })
 }
 
@@ -225,6 +290,52 @@ export function expectDestinationSettledOnTarget(
           settled,
           visibleIds,
           highlightedMessageId: evidence.ui.highlightedMessageId,
+        },
+      )
+}
+
+export function expectNeedMessagesAroundObserved(
+  evidence: E2EEvidence,
+  options: NeedMessagesAroundOptions = {},
+): E2EOracleResult {
+  const matched = evidence.events.needMessagesAround.some((event) => {
+    if (options.reason && event.reason !== options.reason) {
+      return false
+    }
+
+    if (options.messageId && event.messageId !== options.messageId) {
+      return false
+    }
+
+    return true
+  })
+
+  return matched
+    ? pass('expectNeedMessagesAroundObserved', 'needMessagesAround observed')
+    : fail('expectNeedMessagesAroundObserved', 'needMessagesAround missing', {
+        expected: options,
+        needMessagesAround: evidence.events.needMessagesAround,
+      })
+}
+
+export function expectLoadedMessageCountDelta(
+  before: E2EEvidence,
+  after: E2EEvidence,
+  expectedDelta: number,
+): E2EOracleResult {
+  const actualDelta =
+    after.feed.loadedMessageCount - before.feed.loadedMessageCount
+
+  return actualDelta === expectedDelta
+    ? pass('expectLoadedMessageCountDelta', 'loaded message count delta matched')
+    : fail(
+        'expectLoadedMessageCountDelta',
+        'loaded message count delta did not match',
+        {
+          actualDelta,
+          expectedDelta,
+          beforeLoadedMessageCount: before.feed.loadedMessageCount,
+          afterLoadedMessageCount: after.feed.loadedMessageCount,
         },
       )
 }

@@ -171,6 +171,11 @@ export type E2EEventEvidence = {
   }>
   needMoreBefore: number
   needMoreAfter: number
+  needMessagesAround: Array<{
+    reason: string
+    messageId: string
+    position?: number
+  }>
   destinationSettled: Array<{
     intent: string
     resolution?: string
@@ -231,6 +236,7 @@ export function createE2EEventBuffer(): E2EEventBuffer {
     viewportAnchorChanged: [],
     needMoreBefore: 0,
     needMoreAfter: 0,
+    needMessagesAround: [],
     destinationSettled: [],
     viewportErrors: [],
   }
@@ -240,6 +246,7 @@ export function clearE2EEventBuffer(buffer: E2EEventBuffer): void {
   buffer.viewportAnchorChanged.length = 0
   buffer.needMoreBefore = 0
   buffer.needMoreAfter = 0
+  buffer.needMessagesAround.length = 0
   buffer.destinationSettled.length = 0
   buffer.viewportErrors.length = 0
 }
@@ -269,6 +276,19 @@ export function recordE2ERuntimeEvent(
 
   if (event.type === 'needMoreAfter') {
     buffer.needMoreAfter += 1
+    return
+  }
+
+  if (event.type === 'needMessagesAround') {
+    pushBounded(
+      buffer.needMessagesAround,
+      {
+        reason: event.reason,
+        messageId: event.target.messageId,
+        position: event.target.position,
+      },
+      E2E_EVENT_BUFFER_LIMIT,
+    )
     return
   }
 
@@ -448,6 +468,7 @@ export function collectE2EEvidence(input: {
       viewportAnchorChanged: [...input.eventBuffer.viewportAnchorChanged],
       needMoreBefore: input.eventBuffer.needMoreBefore,
       needMoreAfter: input.eventBuffer.needMoreAfter,
+      needMessagesAround: [...input.eventBuffer.needMessagesAround],
       destinationSettled: [...input.eventBuffer.destinationSettled],
       viewportErrors: [...input.eventBuffer.viewportErrors],
     },
@@ -523,6 +544,8 @@ export function listE2EActions(state: E2EState): E2EActionDescriptor[] {
     (state.scenarioStatus === 'running' && isRuntimeStableForSemanticAction(state))
   const feedReady = !state.ui.feedLoading
   const canPageBefore = pageReady && state.feed.activeFeedId.length > 0
+  const canInteractDuringPrepend =
+    feedReady && hasPendingOperation(state, 'history.prepend')
 
   return [
     {
@@ -554,8 +577,10 @@ export function listE2EActions(state: E2EState): E2EActionDescriptor[] {
       id: 'scroll_to_history_top',
       label: 'Scroll to history top',
       category: 'scroll',
-      enabled: canPageBefore,
-      reasonDisabled: canPageBefore ? undefined : 'scenario is not ready',
+      enabled: canPageBefore || canInteractDuringPrepend,
+      reasonDisabled: canPageBefore || canInteractDuringPrepend
+        ? undefined
+        : 'scenario is not ready',
     },
     {
       id: 'scroll_to_bottom',
@@ -575,8 +600,28 @@ export function listE2EActions(state: E2EState): E2EActionDescriptor[] {
       id: 'prepend_history',
       label: 'Prepend history',
       category: 'paging',
+      enabled: (pageReady && feedReady) || canInteractDuringPrepend,
+      reasonDisabled: (pageReady && feedReady) || canInteractDuringPrepend
+        ? undefined
+        : 'feed is not ready',
+    },
+    {
+      id: 'start_prepend_history',
+      label: 'Start prepend history',
+      category: 'paging',
       enabled: pageReady && feedReady,
       reasonDisabled: pageReady && feedReady ? undefined : 'feed is not ready',
+    },
+    {
+      id: 'send_message',
+      label: 'Send message',
+      category: 'message',
+      enabled: pageReady && feedReady,
+      reasonDisabled: pageReady && feedReady ? undefined : 'feed is not ready',
+      payloadSchema: {
+        body: 'string',
+        waitFor: ['optimistic', 'idle'],
+      },
     },
     {
       id: 'follow_bottom',
@@ -761,6 +806,56 @@ export async function runE2EAction(input: {
           failureCode: 'prepend_history_timeout',
         })
         break
+      case 'start_prepend_history':
+        input.scenario.loadHistoryBatch('manual')
+        await waitForActionPublication()
+        await waitForCondition(input.readState, isHistoryPrependPendingForAction, {
+          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 2_000,
+          failureCode: 'start_prepend_history_timeout',
+        })
+        break
+      case 'send_message': {
+        const body = getPayloadString(input.payload, 'body')
+
+        if (!body) {
+          throw new E2EActionError(
+            'missing_send_body',
+            'send_message requires a non-empty body payload',
+          )
+        }
+
+        const accepted = input.scenario.sendMessage(body)
+
+        if (!accepted) {
+          throw new E2EActionError(
+            'send_message_rejected',
+            'scenario rejected the send_message payload',
+          )
+        }
+
+        await waitForActionPublication()
+
+        if (getPayloadString(input.payload, 'waitFor') === 'optimistic') {
+          await waitForEvidence(
+            input.readEvidence,
+            (evidence) =>
+              hasVisibleOptimisticRow(evidence) &&
+              hasPendingOperationEvidence(evidence, 'message.send'),
+            {
+              checkpointId: checkpointId ?? `after:${input.actionId}`,
+              timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 5_000,
+              failureCode: 'send_message_optimistic_timeout',
+            },
+          )
+          break
+        }
+
+        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
+          failureCode: 'send_message_timeout',
+        })
+        break
+      }
       case 'follow_bottom':
         input.scenario.followBottom('floating')
         await waitForActionPublication()
@@ -973,6 +1068,10 @@ function isRuntimeReattachedForAction(state: E2EState): boolean {
   return isRuntimeIdleForAction(state) && state.runtime.observedRows > 0
 }
 
+function isHistoryPrependPendingForAction(state: E2EState): boolean {
+  return state.ui.loadingBefore || hasPendingOperation(state, 'history.prepend')
+}
+
 function isEventStormActiveForAction(state: E2EState): boolean {
   return (
     isRuntimeStableForSemanticAction(state) &&
@@ -1027,6 +1126,19 @@ function parsePendingOperations(pendingOperation: string): string[] {
     .filter((operation) => operation.length > 0)
 }
 
+function hasPendingOperationEvidence(
+  evidence: E2EEvidence,
+  operation: string,
+): boolean {
+  return parsePendingOperations(evidence.ui.pendingOperation).includes(operation)
+}
+
+function hasVisibleOptimisticRow(evidence: E2EEvidence): boolean {
+  return evidence.viewport.visibleRows.some((row) =>
+    row.serializedKey.startsWith('optimistic:'),
+  )
+}
+
 async function waitForCondition(
   readState: () => E2EState,
   predicate: (state: E2EState) => boolean,
@@ -1051,6 +1163,36 @@ async function waitForCondition(
   throw new E2EActionError(
     input.failureCode,
     `${input.failureCode}: runtime=${lastState.runtime.state}/${lastState.runtime.transactionState}, pending=${lastState.ui.pendingOperation}`,
+  )
+}
+
+async function waitForEvidence(
+  readEvidence: (checkpointId: string) => E2EEvidence,
+  predicate: (evidence: E2EEvidence) => boolean,
+  input: {
+    checkpointId: string
+    timeoutMs: number
+    failureCode: string
+  },
+): Promise<void> {
+  const startedAt = performance.now()
+  let lastEvidence = readEvidence(input.checkpointId)
+
+  while (performance.now() - startedAt <= input.timeoutMs) {
+    lastEvidence = readEvidence(input.checkpointId)
+
+    if (predicate(lastEvidence)) {
+      return
+    }
+
+    await delay(50)
+  }
+
+  throw new E2EActionError(
+    input.failureCode,
+    `${input.failureCode}: visible=${lastEvidence.viewport.visibleRows
+      .map((row) => row.serializedKey)
+      .join(',')}, pending=${lastEvidence.ui.pendingOperation}`,
   )
 }
 
@@ -1285,8 +1427,9 @@ function getVisibleRows(root: ParentNode, container: HTMLElement): E2EVisibleRow
       return []
     }
 
-    const messageId = row.dataset.messageId ?? parseCommittedMessageId(row)
     const serializedKey = row.dataset.messageRow
+    const messageId =
+      row.dataset.messageId ?? parseCommittedMessageId(row) ?? serializedKey
 
     return messageId && serializedKey
       ? [{
