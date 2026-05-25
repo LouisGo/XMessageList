@@ -4,7 +4,6 @@ import { ViewportCompactionCoordinator } from '../commands/viewportCompactionCoo
 import { RuntimeCommandRouter } from '../commands/runtimeCommandRouter'
 import { RuntimeBottomLockCoordinator } from './runtimeBottomLockCoordinator'
 import { RuntimeTransactionDiagnostics } from './runtimeTransactionDiagnostics'
-import { RuntimeViewportAnchorEvents } from './runtimeViewportAnchorEvents'
 import { AnchorCoordinator } from '../../dom/anchorCoordinator'
 import { EdgeNeedCoordinator } from '../../events/edgeNeedCoordinator'
 import { DestinationMotionCoordinator } from '../../scroll/destinationMotionCoordinator'
@@ -12,6 +11,7 @@ import { ViewportTransactionController } from '../../transactions/viewportTransa
 import type { MessageViewportRuntimeOptions } from '../../types'
 import type { RuntimeControllerHost } from './runtimeControllerHost'
 import { createRuntimeControllerBaseServices } from './runtimeControllerBaseServices'
+import { createRuntimeControllerEventServices } from './runtimeControllerEventServices'
 import { createRuntimeControllerViewportServices } from './runtimeControllerViewportServices'
 import { createRuntimeControllerServiceRefs } from './runtimeControllerServiceRefs'
 
@@ -81,17 +81,16 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
       store.getSnapshot().bootstrapState === 'READY',
     host.emitEvent,
   )
-  const anchorEvents = new RuntimeViewportAnchorEvents({
+  const { anchorEvents, observationEvents } = createRuntimeControllerEventServices({
     scheduler,
     lifecycle,
-    getDataSnapshot: host.getDataSnapshot,
-    getState: host.getState,
+    registry,
+    store,
+    host,
     getActiveTransactionKind: () =>
       serviceRefs.transactionDiagnostics.get().getActiveTransactionKind(),
-    captureViewportAnchor: host.captureViewportAnchor,
     scheduleScrollbarDragEdgeRecheck: (reason) =>
       serviceRefs.scrollFrame.get().scheduleScrollbarDragEdgeRecheck(reason),
-    emitEvent: host.emitEvent,
   })
   const destinationIntent = new DestinationIntentCoordinator<TMessage, TOptimistic>({
     lifecycle,
@@ -260,6 +259,7 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     destinationIntent,
     viewportCompaction,
     anchorEvents,
+    observationEvents,
     bottomLock,
     commit,
     projection,
@@ -292,6 +292,7 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     dataSnapshotCoordinator: viewportServices.dataSnapshotCoordinator,
     recovery: viewportServices.recovery,
     anchorEvents,
+    observationEvents,
     eventHub,
     diagnostics,
   }

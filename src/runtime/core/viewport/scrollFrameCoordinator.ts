@@ -63,6 +63,10 @@ export type ScrollFrameDeps<TMessage, TOptimistic> = {
     scrollSource: ScrollSource,
   ) => void
   scheduleViewportAnchorIdleEvent: () => void
+  emitViewportObservationChanged: (
+    reason: 'scroll-frame',
+    scrollSource: ScrollSource,
+  ) => void
   runAnchorlessWindowSlideTransaction: (
     nextWindow: RenderWindow,
     expectedData: { feedId: string; generation: number; revision: number },
@@ -138,6 +142,7 @@ export class ScrollFrameCoordinator<TMessage, TOptimistic> {
     this.emitScrollSourceDiagnostic(scrollSource, metrics)
     this.updateBottomLock(data, metrics, scrollSource)
     this.emitEdgeNeeds(data, metrics, scrollSource)
+    this.deps.emitViewportObservationChanged('scroll-frame', scrollSource)
 
     if (scrollSource === 'user') {
       this.scrollbarDragEdge.updateEdgeIntent(data, metrics)

@@ -414,19 +414,19 @@ export function DemoMessageViewportContent({
               </div>
             ) : null
           }
-          renderFollowBottom={() => (
+          renderFollowBottom={({ followBottom }) => (
             <button
               type="button"
               className="follow-bottom-button"
               aria-label="Follow latest messages"
               data-testid="follow-bottom-button"
               data-ai-action={e2eEnabled ? 'follow-bottom' : undefined}
-              onClick={() => scenario.followBottom('floating')}
+              onClick={followBottom}
             >
               Bottom
             </button>
           )}
-          onViewportAnchorChange={scenario.rememberRuntimeViewportAnchor}
+          onViewportAnchorChanged={scenario.rememberRuntimeViewportAnchor}
         />
         <form className="message-composer" onSubmit={sendDraft}>
           <textarea

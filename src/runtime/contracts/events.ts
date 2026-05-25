@@ -1,4 +1,9 @@
-import type { AnchorState, MessageIdentityAnchor } from './identity'
+import type {
+  AnchorState,
+  MessageIdentityAnchor,
+  MessageRuntimeItemKey,
+} from './identity'
+import type { ScrollSource } from './commands'
 
 export type ViewportAnchorChangeReason =
   | 'scroll-idle'
@@ -11,6 +16,42 @@ export type ViewportAnchorChangedEvent = {
   generation: number
   reason: ViewportAnchorChangeReason
   anchor: AnchorState | null
+}
+
+export type ViewportObservationReason =
+  | 'scroll-frame'
+  | 'scroll-idle'
+  | 'transaction-settle'
+  | 'detach'
+
+export type ViewportScrollDirection = 'up' | 'down' | null
+
+export type ViewportObservationActivity = {
+  phase: 'scrolling' | 'idle'
+  direction: ViewportScrollDirection
+}
+
+export type ViewportObservedItem = {
+  key: MessageRuntimeItemKey
+  visibleRatio: number
+}
+
+export type ViewportVisibleRange = {
+  firstKey: MessageRuntimeItemKey | null
+  lastKey: MessageRuntimeItemKey | null
+}
+
+export type ViewportObservationChangedEvent = {
+  type: 'viewportObservationChanged'
+  feedId: string
+  generation: number
+  reason: ViewportObservationReason
+  scrollSource: ScrollSource | null
+  direction: ViewportScrollDirection
+  activity: ViewportObservationActivity
+  anchor: AnchorState | null
+  visibleRange: ViewportVisibleRange
+  visibleItems: ViewportObservedItem[]
 }
 
 export type DiagnosticChannel =
@@ -89,6 +130,7 @@ export type MessageViewportRuntimeEvent =
       resolvedTarget?: MessageIdentityAnchor
     }
   | ViewportAnchorChangedEvent
+  | ViewportObservationChangedEvent
   | ViewportDiagnosticEvent
   | { type: 'viewportReady'; feedId: string; generation: number }
   | { type: 'viewportError'; feedId: string; generation: number; code: string }

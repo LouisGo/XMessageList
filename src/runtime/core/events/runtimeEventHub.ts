@@ -96,6 +96,7 @@ export class RuntimeEventHub {
         break
       case 'viewportError':
       case 'viewportAnchorChanged':
+      case 'viewportObservationChanged':
       case 'viewportDiagnostic':
         break
     }

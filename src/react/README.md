@@ -24,6 +24,8 @@ Rules:
 - do not compute RenderWindow in React
 - do not measure row height in React
 - do not read or write `scrollTop` in React
+- expose viewport activity through runtime observation events, not raw scroll
+  events
 
 The adapter standardizes IM viewport projection SOP without owning scrolling:
 
@@ -32,6 +34,25 @@ The adapter standardizes IM viewport projection SOP without owning scrolling:
 - overlay the custom scrollbar as a DOM-only direct-manipulation layer
 - dispatch semantic follow-bottom commands
 - expose runtime anchor persistence events to the app/demo
+- expose read-only viewport observations for read receipts, pinned previews,
+  sticky time, and analytics
 
 Demo code should provide data, message rendering, and labels only. It should not
 query the runtime DOM or attach raw scroll listeners.
+
+Public read hooks:
+
+- `useMessageViewportSnapshot(runtime)` reads the projection snapshot without
+  sending commit acknowledgements.
+- `useMessageViewportSelector(runtime, selector, isEqual?)` reads a stable
+  selected slice without owning projection commit.
+
+Observation API:
+
+- `onViewportObservation` receives `viewportObservationChanged` events with
+  visible item keys, visible ratios, visible range, scroll source, direction,
+  activity, and anchor.
+- `renderViewportOverlay` receives `{ snapshot, observation, commands }`.
+  Use it for fixed-time labels, pinned-message previews, or local overlays.
+- Follow-bottom and jump actions from overlays must call `commands`, which
+  dispatch runtime semantic commands instead of writing `scrollTop`.

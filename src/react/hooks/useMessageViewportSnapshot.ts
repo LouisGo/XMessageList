@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useRef, useSyncExternalStore } from 'react'
 import type {
   MessageViewportRuntime,
   MessageViewportSnapshot,
@@ -16,7 +16,7 @@ type SnapshotSelectionCache<TMessage, TOptimistic, TSelected> = {
   selected: TSelected
 }
 
-export function useMessageViewportRuntimeSelector<
+function useMessageViewportBaseSelector<
   TMessage = unknown,
   TOptimistic = unknown,
   TSelected = MessageViewportSnapshot<TMessage, TOptimistic>,
@@ -76,35 +76,33 @@ export function useMessageViewportRuntimeSelector<
   )
 }
 
+export function useMessageViewportSelector<
+  TMessage = unknown,
+  TOptimistic = unknown,
+  TSelected = MessageViewportSnapshot<TMessage, TOptimistic>,
+>(
+  runtime: MessageViewportRuntime<TMessage, TOptimistic>,
+  selector: SnapshotSelector<TMessage, TOptimistic, TSelected>,
+  isEqual: (left: TSelected, right: TSelected) => boolean = Object.is,
+): TSelected {
+  return useMessageViewportBaseSelector(runtime, selector, isEqual)
+}
+
 function selectFullSnapshot<TMessage, TOptimistic>(
   snapshot: MessageViewportSnapshot<TMessage, TOptimistic>,
 ): MessageViewportSnapshot<TMessage, TOptimistic> {
   return snapshot
 }
 
-/**
- * React adapter 的唯一状态入口。React 在 render 阶段读取 runtime snapshot，
- * 并在 layout effect 中确认本轮 projection 已经提交到 DOM。
- */
-export function useMessageViewportRuntime<
+export function useMessageViewportSnapshot<
   TMessage = unknown,
   TOptimistic = unknown,
 >(
   runtime: MessageViewportRuntime<TMessage, TOptimistic>,
 ): MessageViewportSnapshot<TMessage, TOptimistic> {
-  const snapshot = useMessageViewportRuntimeSelector(
+  return useMessageViewportSelector(
     runtime,
     selectFullSnapshot,
     Object.is,
   )
-
-  useLayoutEffect(() => {
-    runtime.notifyProjectionCommitted({
-      feedId: snapshot.feedId,
-      generation: snapshot.generation,
-      revision: snapshot.revision,
-    })
-  }, [runtime, snapshot.feedId, snapshot.generation, snapshot.revision])
-
-  return snapshot
 }

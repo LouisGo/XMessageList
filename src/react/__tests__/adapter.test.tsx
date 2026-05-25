@@ -4,8 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   MessageViewport,
   MessageViewportRuntime,
+  useMessageViewportSelector,
+  useMessageViewportSnapshot,
   type MessageDataSnapshot,
   type MessageViewportSnapshot,
+  type ViewportObservationChangedEvent,
 } from '../..'
 import { useStableCallback } from '../hooks/stableState'
 import {
@@ -58,14 +61,22 @@ function TestHarness({
   runtime,
   hasMoreBefore,
   hasMoreAfter,
-  onViewportAnchorChange,
+  onViewportAnchorChanged,
+  onViewportObservation,
+  renderViewportOverlay,
 }: {
   runtime: MessageViewportRuntime<TestMessage>
   hasMoreBefore?: boolean
   hasMoreAfter?: boolean
-  onViewportAnchorChange?: Parameters<
+  onViewportAnchorChanged?: Parameters<
     typeof MessageViewport<TestMessage>
-  >[0]['onViewportAnchorChange']
+  >[0]['onViewportAnchorChanged']
+  onViewportObservation?: Parameters<
+    typeof MessageViewport<TestMessage>
+  >[0]['onViewportObservation']
+  renderViewportOverlay?: Parameters<
+    typeof MessageViewport<TestMessage>
+  >[0]['renderViewportOverlay']
 }) {
   useEffect(() => {
     runtime.setDataSnapshot(createSnapshot({ hasMoreBefore, hasMoreAfter }))
@@ -84,7 +95,9 @@ function TestHarness({
       renderBottomEdge={(snapshot) => (
         <div data-testid="bottom-edge">{snapshot.edgeState.after}</div>
       )}
-      onViewportAnchorChange={onViewportAnchorChange}
+      onViewportAnchorChanged={onViewportAnchorChanged}
+      onViewportObservation={onViewportObservation}
+      renderViewportOverlay={renderViewportOverlay}
       style={{ height: 240 }}
     />
   )
@@ -92,18 +105,22 @@ function TestHarness({
 
 function ViewportOnlyHarness({
   runtime,
-  onViewportAnchorChange,
+  onViewportAnchorChanged,
   renderFollowBottom,
-  customScrollbar,
+  renderViewportOverlay,
+  scrollbar,
 }: {
   runtime: MessageViewportRuntime<TestMessage>
-  onViewportAnchorChange?: Parameters<
+  onViewportAnchorChanged?: Parameters<
     typeof MessageViewport<TestMessage>
-  >[0]['onViewportAnchorChange']
+  >[0]['onViewportAnchorChanged']
   renderFollowBottom?: Parameters<
     typeof MessageViewport<TestMessage>
   >[0]['renderFollowBottom']
-  customScrollbar?: boolean
+  renderViewportOverlay?: Parameters<
+    typeof MessageViewport<TestMessage>
+  >[0]['renderViewportOverlay']
+  scrollbar?: 'custom' | 'native'
 }) {
   return (
     <MessageViewport
@@ -112,8 +129,9 @@ function ViewportOnlyHarness({
         item.kind === 'committed' ? <span>{item.message.id}</span> : null
       }
       renderFollowBottom={renderFollowBottom}
-      onViewportAnchorChange={onViewportAnchorChange}
-      customScrollbar={customScrollbar}
+      renderViewportOverlay={renderViewportOverlay}
+      onViewportAnchorChanged={onViewportAnchorChanged}
+      scrollbar={scrollbar}
       style={{ height: 240 }}
     />
   )
@@ -153,6 +171,83 @@ describe('React adapter', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it('reads snapshots from public hooks without sending projection commits', async () => {
+    const listeners = new Set<() => void>()
+    let snapshot: MessageViewportSnapshot<TestMessage> = {
+      feedId: 'feed',
+      generation: 1,
+      revision: 1,
+      items: [],
+      renderWindow: {
+        startIndex: 0,
+        endIndex: -1,
+        itemKeys: [],
+      },
+      topSpacer: 0,
+      bottomSpacer: 0,
+      bottomLockState: 'LOCKED',
+      bootstrapState: 'READY_EMPTY',
+      viewportPhase: 'IDLE',
+      edgeState: {
+        before: 'idle',
+        after: 'idle',
+      },
+    }
+    const runtime = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+
+        return () => {
+          listeners.delete(listener)
+        }
+      },
+      notifyProjectionCommitted: vi.fn(),
+    } as unknown as MessageViewportRuntime<TestMessage>
+
+    function HookHarness() {
+      const fullSnapshot = useMessageViewportSnapshot(runtime)
+      const revision = useMessageViewportSelector(
+        runtime,
+        (nextSnapshot) => nextSnapshot.revision,
+        Object.is,
+      )
+
+      return (
+        <span data-testid="snapshot-hook-output">
+          {fullSnapshot.feedId}:{revision}
+        </span>
+      )
+    }
+
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(<HookHarness />)
+    })
+
+    expect(host.textContent).toContain('feed:1')
+    expect(runtime.notifyProjectionCommitted).not.toHaveBeenCalled()
+
+    await act(async () => {
+      snapshot = {
+        ...snapshot,
+        revision: 2,
+      }
+      for (const listener of listeners) {
+        listener()
+      }
+    })
+
+    expect(host.textContent).toContain('feed:2')
+    expect(runtime.notifyProjectionCommitted).not.toHaveBeenCalled()
+
+    await act(async () => {
+      root.unmount()
+    })
   })
 
   it('commits projection through layout effect and supports StrictMode remount', async () => {
@@ -242,7 +337,7 @@ describe('React adapter', () => {
     })
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
+      root.render(<ViewportOnlyHarness runtime={runtime} scrollbar="custom" />)
     })
     await act(async () => {
       await flushFramesWithMicrotasks(scheduler, 4)
@@ -409,7 +504,7 @@ describe('React adapter', () => {
       },
     })
     const dispatch = vi.spyOn(runtime, 'dispatch')
-    const onViewportAnchorChange = vi.fn()
+    const onViewportAnchorChanged = vi.fn()
     const host = document.createElement('div')
     const root = createRoot(host)
 
@@ -427,7 +522,7 @@ describe('React adapter', () => {
         <TestHarness
           runtime={runtime}
           hasMoreAfter
-          onViewportAnchorChange={onViewportAnchorChange}
+          onViewportAnchorChanged={onViewportAnchorChanged}
         />,
       )
     })
@@ -442,8 +537,8 @@ describe('React adapter', () => {
       'exhausted',
     )
     expect(followButton).not.toBeNull()
-    expect(onViewportAnchorChange).toHaveBeenCalled()
-    expect(onViewportAnchorChange.mock.calls.at(-1)?.[0]).toEqual(
+    expect(onViewportAnchorChanged).toHaveBeenCalled()
+    expect(onViewportAnchorChanged.mock.calls.at(-1)?.[0]).toEqual(
       expect.objectContaining({
         type: 'viewportAnchorChanged',
         feedId: 'feed',
@@ -626,7 +721,7 @@ describe('React adapter', () => {
         <MessageViewport
           runtime={runtime}
           renderMessage={renderMessage}
-          customScrollbar={false}
+          scrollbar="native"
         />,
       )
     })
@@ -666,6 +761,128 @@ describe('React adapter', () => {
     })
 
     expect(renderMessage).toHaveBeenCalledTimes(3)
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('does not re-run edge slot renderers for non-edge snapshot updates', async () => {
+    const listeners = new Set<() => void>()
+    let snapshot: MessageViewportSnapshot<TestMessage> = {
+      feedId: 'feed',
+      generation: 1,
+      revision: 1,
+      items: [],
+      renderWindow: {
+        startIndex: 0,
+        endIndex: -1,
+        itemKeys: [],
+      },
+      topSpacer: 0,
+      bottomSpacer: 0,
+      bottomLockState: 'LOCKED',
+      bootstrapState: 'READY_EMPTY',
+      viewportPhase: 'IDLE',
+      edgeState: {
+        before: 'idle',
+        after: 'idle',
+      },
+    }
+    const runtime = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+
+        return () => {
+          listeners.delete(listener)
+        }
+      },
+      attach: vi.fn(),
+      detach: vi.fn(),
+      dispatch: vi.fn(),
+      notifyProjectionCommitted: vi.fn(),
+      registerRow: vi.fn(),
+      registerTopSentinel: vi.fn(),
+      registerBottomSentinel: vi.fn(),
+      registerTopSpacer: vi.fn(),
+      registerBottomSpacer: vi.fn(),
+      subscribeEvent: vi.fn(() => () => {}),
+      beginDirectScroll: vi.fn(),
+      writeDirectScrollTop: vi.fn(),
+      endDirectScroll: vi.fn(),
+      getViewportAnchorState: vi.fn(() => null),
+      getDiagnosticRecords: vi.fn(() => []),
+      getDebugSnapshot: vi.fn(),
+    } as unknown as MessageViewportRuntime<TestMessage>
+    const renderTopEdge = vi.fn((nextSnapshot: MessageViewportSnapshot) => (
+      <div data-testid="top-edge">
+        {nextSnapshot.edgeState.before}:{nextSnapshot.revision}
+      </div>
+    ))
+    const renderBottomEdge = vi.fn((nextSnapshot: MessageViewportSnapshot) => (
+      <div data-testid="bottom-edge">
+        {nextSnapshot.edgeState.after}:{nextSnapshot.revision}
+      </div>
+    ))
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(
+        <MessageViewport
+          runtime={runtime}
+          renderMessage={() => null}
+          renderTopEdge={renderTopEdge}
+          renderBottomEdge={renderBottomEdge}
+          scrollbar="native"
+        />,
+      )
+    })
+
+    expect(renderTopEdge).toHaveBeenCalledTimes(1)
+    expect(renderBottomEdge).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('[data-testid="top-edge"]')?.textContent).toBe(
+      'idle:1',
+    )
+
+    await act(async () => {
+      snapshot = {
+        ...snapshot,
+        revision: 2,
+        topSpacer: 24,
+        viewportPhase: 'PROJECTING',
+      }
+      for (const listener of listeners) {
+        listener()
+      }
+    })
+
+    expect(renderTopEdge).toHaveBeenCalledTimes(1)
+    expect(renderBottomEdge).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('[data-testid="top-edge"]')?.textContent).toBe(
+      'idle:1',
+    )
+
+    await act(async () => {
+      snapshot = {
+        ...snapshot,
+        revision: 3,
+        edgeState: {
+          before: 'loading',
+          after: 'idle',
+        },
+      }
+      for (const listener of listeners) {
+        listener()
+      }
+    })
+
+    expect(renderTopEdge).toHaveBeenCalledTimes(2)
+    expect(renderBottomEdge).toHaveBeenCalledTimes(2)
+    expect(host.querySelector('[data-testid="top-edge"]')?.textContent).toBe(
+      'loading:3',
+    )
 
     await act(async () => {
       root.unmount()
@@ -786,7 +1003,7 @@ describe('React adapter', () => {
             )
           }}
           getRowRenderVersion={getRowRenderVersion}
-          customScrollbar={false}
+          scrollbar="native"
         />
       )
     }
@@ -826,6 +1043,170 @@ describe('React adapter', () => {
 
     expect(renderCounts.get('m-1')).toBe(1)
     expect(renderCounts.get('m-2')).toBe(3)
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('updates viewport overlays from observations without re-running row renderers', async () => {
+    const runtimeListeners = new Set<() => void>()
+    const runtimeEventListeners = new Set<
+      (event: ViewportObservationChangedEvent) => void
+    >()
+    const itemA = {
+      kind: 'committed' as const,
+      key: { kind: 'committed' as const, messageId: 'm-1' },
+      message: { id: 'm-1' },
+      version: 1,
+      contentVersion: 1,
+      estimatedHeight: 48,
+    }
+    const itemB = {
+      kind: 'committed' as const,
+      key: { kind: 'committed' as const, messageId: 'm-2' },
+      message: { id: 'm-2' },
+      version: 1,
+      contentVersion: 1,
+      estimatedHeight: 48,
+    }
+    const snapshot: MessageViewportSnapshot<TestMessage> = {
+      feedId: 'feed',
+      generation: 1,
+      revision: 1,
+      items: [itemA, itemB],
+      renderWindow: {
+        startIndex: 0,
+        endIndex: 1,
+        itemKeys: [itemA.key, itemB.key],
+      },
+      topSpacer: 0,
+      bottomSpacer: 0,
+      bottomLockState: 'LOCKED',
+      bootstrapState: 'READY',
+      viewportPhase: 'IDLE',
+      edgeState: {
+        before: 'idle',
+        after: 'idle',
+      },
+    }
+    const runtime = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        runtimeListeners.add(listener)
+
+        return () => {
+          runtimeListeners.delete(listener)
+        }
+      },
+      subscribeEvent: (
+        listener: (event: ViewportObservationChangedEvent) => void,
+      ) => {
+        runtimeEventListeners.add(listener)
+
+        return () => {
+          runtimeEventListeners.delete(listener)
+        }
+      },
+      attach: vi.fn(),
+      detach: vi.fn(),
+      dispatch: vi.fn(),
+      notifyProjectionCommitted: vi.fn(),
+      registerRow: vi.fn(),
+      registerTopSentinel: vi.fn(),
+      registerBottomSentinel: vi.fn(),
+      registerTopSpacer: vi.fn(),
+      registerBottomSpacer: vi.fn(),
+      beginDirectScroll: vi.fn(),
+      writeDirectScrollTop: vi.fn(),
+      endDirectScroll: vi.fn(),
+      getViewportAnchorState: vi.fn(() => null),
+      getDiagnosticRecords: vi.fn(() => []),
+      getDebugSnapshot: vi.fn(),
+    } as unknown as MessageViewportRuntime<TestMessage> & {
+      dispatch: ReturnType<typeof vi.fn>
+    }
+    const renderCounts = new Map<string, number>()
+    const renderViewportOverlay = vi.fn(({ observation, commands }) => (
+      <button
+        type="button"
+        data-testid="viewport-overlay-follow"
+        onClick={commands.followBottom}
+      >
+        {observation?.visibleRange.firstKey?.kind === 'committed'
+          ? observation.visibleRange.firstKey.messageId
+          : 'none'}
+      </button>
+    ))
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(
+        <MessageViewport
+          runtime={runtime}
+          renderMessage={(item) => {
+            if (item.kind !== 'committed') {
+              return null
+            }
+
+            renderCounts.set(
+              item.message.id,
+              (renderCounts.get(item.message.id) ?? 0) + 1,
+            )
+            return <span>{item.message.id}</span>
+          }}
+          renderViewportOverlay={renderViewportOverlay}
+          scrollbar="native"
+        />,
+      )
+    })
+
+    expect(renderCounts.get('m-1')).toBe(1)
+    expect(renderCounts.get('m-2')).toBe(1)
+    expect(host.querySelector('[data-testid="viewport-overlay-follow"]')?.textContent)
+      .toBe('none')
+
+    await act(async () => {
+      const event: ViewportObservationChangedEvent = {
+        type: 'viewportObservationChanged',
+        feedId: 'feed',
+        generation: 1,
+        reason: 'scroll-frame',
+        scrollSource: 'user',
+        direction: 'down',
+        activity: {
+          phase: 'scrolling',
+          direction: 'down',
+        },
+        anchor: null,
+        visibleRange: {
+          firstKey: itemA.key,
+          lastKey: itemB.key,
+        },
+        visibleItems: [
+          { key: itemA.key, visibleRatio: 1 },
+          { key: itemB.key, visibleRatio: 0.5 },
+        ],
+      }
+
+      for (const listener of runtimeEventListeners) {
+        listener(event)
+      }
+    })
+
+    expect(host.querySelector('[data-testid="viewport-overlay-follow"]')?.textContent)
+      .toBe('m-1')
+    expect(renderCounts.get('m-1')).toBe(1)
+    expect(renderCounts.get('m-2')).toBe(1)
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(
+        '[data-testid="viewport-overlay-follow"]',
+      )?.click()
+    })
+
+    expect(runtime.dispatch).toHaveBeenCalledWith({ type: 'followBottom' })
 
     await act(async () => {
       root.unmount()
@@ -944,7 +1325,7 @@ describe('React adapter', () => {
     })
     const host = document.createElement('div')
     const root = createRoot(host)
-    const onViewportAnchorChange = vi.fn()
+    const onViewportAnchorChanged = vi.fn()
 
     Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
       configurable: true,
@@ -968,7 +1349,7 @@ describe('React adapter', () => {
       root.render(
         <ViewportOnlyHarness
           runtime={runtimeA}
-          onViewportAnchorChange={onViewportAnchorChange}
+          onViewportAnchorChanged={onViewportAnchorChanged}
         />,
       )
     })
@@ -978,7 +1359,7 @@ describe('React adapter', () => {
 
     expect(host.textContent).toContain('a-')
     layoutViewportRows(host)
-    onViewportAnchorChange.mockClear()
+    onViewportAnchorChanged.mockClear()
     const detachDomSnapshots: string[] = []
     const originalDetach = runtimeA.detach.bind(runtimeA)
 
@@ -991,7 +1372,7 @@ describe('React adapter', () => {
       root.render(
         <ViewportOnlyHarness
           runtime={runtimeB}
-          onViewportAnchorChange={onViewportAnchorChange}
+          onViewportAnchorChanged={onViewportAnchorChanged}
         />,
       )
     })
@@ -1001,7 +1382,7 @@ describe('React adapter', () => {
 
     expect(detachDomSnapshots[0]).toContain('a-')
     expect(detachDomSnapshots[0]).not.toContain('b-')
-    expect(onViewportAnchorChange).toHaveBeenCalledWith(
+    expect(onViewportAnchorChanged).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'viewportAnchorChanged',
         feedId: 'feed-a',
@@ -1033,7 +1414,7 @@ describe('React adapter', () => {
     })
     const host = document.createElement('div')
     const root = createRoot(host)
-    const onViewportAnchorChange = vi.fn()
+    const onViewportAnchorChanged = vi.fn()
 
     Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
       configurable: true,
@@ -1051,7 +1432,7 @@ describe('React adapter', () => {
       root.render(
         <ViewportOnlyHarness
           runtime={runtime}
-          onViewportAnchorChange={onViewportAnchorChange}
+          onViewportAnchorChanged={onViewportAnchorChanged}
         />,
       )
     })
@@ -1060,13 +1441,13 @@ describe('React adapter', () => {
     })
 
     layoutViewportRows(host)
-    onViewportAnchorChange.mockClear()
+    onViewportAnchorChanged.mockClear()
 
     await act(async () => {
       root.unmount()
     })
 
-    expect(onViewportAnchorChange).toHaveBeenCalledWith(
+    expect(onViewportAnchorChanged).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'viewportAnchorChanged',
         feedId: 'feed',
@@ -1085,7 +1466,7 @@ describe('React adapter', () => {
     const root = createRoot(host)
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
+      root.render(<ViewportOnlyHarness runtime={runtime} scrollbar="custom" />)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(
@@ -1109,9 +1490,7 @@ describe('React adapter', () => {
       scrollContainer.dispatchEvent(new Event('scroll'))
     })
 
-    expect(
-      host.querySelector('[data-custom-scrollbar="true"] style')?.textContent,
-    ).toContain('scrollbar-width: none')
+    expect(document.head.textContent).toContain('scrollbar-width: none')
     expect(host.querySelector('[data-testid="custom-scrollbar"]')).not.toBeNull()
     expect(host.querySelector('[data-testid="custom-scrollbar-thumb"]')).not.toBeNull()
 
@@ -1127,7 +1506,7 @@ describe('React adapter', () => {
 
     await act(async () => {
       root.render(
-        <ViewportOnlyHarness runtime={runtime} customScrollbar={false} />,
+        <ViewportOnlyHarness runtime={runtime} scrollbar="native" />,
       )
     })
 
@@ -1158,7 +1537,7 @@ describe('React adapter', () => {
     const root = createRoot(host)
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
+      root.render(<ViewportOnlyHarness runtime={runtime} scrollbar="custom" />)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(
@@ -1234,7 +1613,7 @@ describe('React adapter', () => {
     })
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
+      root.render(<ViewportOnlyHarness runtime={runtime} scrollbar="custom" />)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(
@@ -1391,7 +1770,7 @@ describe('React adapter', () => {
     const root = createRoot(host)
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
+      root.render(<ViewportOnlyHarness runtime={runtime} scrollbar="custom" />)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(
@@ -1456,7 +1835,7 @@ describe('React adapter', () => {
     let scrollHeight = 1200
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
+      root.render(<ViewportOnlyHarness runtime={runtime} scrollbar="custom" />)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(
@@ -1530,7 +1909,7 @@ describe('React adapter', () => {
     })
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
+      root.render(<ViewportOnlyHarness runtime={runtime} scrollbar="custom" />)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(
@@ -1608,7 +1987,7 @@ describe('React adapter', () => {
     let scrollHeight = 1200
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
+      root.render(<ViewportOnlyHarness runtime={runtime} scrollbar="custom" />)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(
@@ -1680,7 +2059,7 @@ describe('React adapter', () => {
     let scrollTop = 480
 
     await act(async () => {
-      root.render(<ViewportOnlyHarness runtime={runtime} customScrollbar />)
+      root.render(<ViewportOnlyHarness runtime={runtime} scrollbar="custom" />)
     })
 
     const scrollContainer = host.querySelector<HTMLElement>(

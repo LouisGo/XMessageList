@@ -22,6 +22,7 @@ import type { DestinationIntentCoordinator } from '../commands/destinationIntent
 import type { ViewportCompactionCoordinator } from '../commands/viewportCompactionCoordinator'
 import type { RuntimeBottomLockCoordinator } from './runtimeBottomLockCoordinator'
 import type { RuntimeViewportAnchorEvents } from './runtimeViewportAnchorEvents'
+import type { RuntimeViewportObservationEvents } from './runtimeViewportObservationEvents'
 import type {
   NormalizedWindowConfig,
   RuntimeObserverFactory,
@@ -49,6 +50,7 @@ type RuntimeControllerViewportServicesInput<TMessage, TOptimistic> = {
   destinationIntent: DestinationIntentCoordinator<TMessage, TOptimistic>
   viewportCompaction: ViewportCompactionCoordinator<TMessage, TOptimistic>
   anchorEvents: RuntimeViewportAnchorEvents<TMessage, TOptimistic>
+  observationEvents: RuntimeViewportObservationEvents<TMessage, TOptimistic>
   bottomLock: RuntimeBottomLockCoordinator<TMessage, TOptimistic>
   commit: CommitCoordinator<TMessage, TOptimistic>
   projection: ProjectionCoordinator<TMessage, TOptimistic>
@@ -97,6 +99,8 @@ export function createRuntimeControllerViewportServices<
         source,
       ),
     scheduleViewportAnchorIdleEvent: () => input.anchorEvents.scheduleIdleEvent(),
+    emitViewportObservationChanged: (reason, scrollSource) =>
+      input.observationEvents.emitChanged(reason, scrollSource),
     runAnchorlessWindowSlideTransaction: (nextWindow, expectedData) =>
       input.transactionController.runAnchorlessWindowSlideTransaction(
         nextWindow,

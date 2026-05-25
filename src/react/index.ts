@@ -1,9 +1,9 @@
-export {
-  MessageRowProjection,
-  MessageViewport,
-} from './components/MessageViewport'
+export { MessageViewport } from './components/MessageViewport'
 export type {
-  MessageRowProjectionProps,
+  MessageViewportCommands,
   MessageViewportProps,
-} from './components/MessageViewport'
-export { useMessageViewportRuntime } from './hooks/useMessageViewportRuntime'
+} from './components/types'
+export {
+  useMessageViewportSelector,
+  useMessageViewportSnapshot,
+} from './hooks/useMessageViewportSnapshot'

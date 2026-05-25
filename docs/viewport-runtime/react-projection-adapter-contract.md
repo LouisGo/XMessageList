@@ -26,33 +26,25 @@ Demo / app 只提供业务 message JSX、文案/slot 和数据加载响应，不
 
 ## 2. Adapter Shape
 
-推荐 hook：
+公开 read hook：
 
 ```ts
-function useMessageViewportRuntime(runtime: MessageViewportRuntime) {
+function useMessageViewportSnapshot(runtime: MessageViewportRuntime) {
   const subscribe = useCallback(
     (listener: RuntimeListener) => runtime.subscribe(listener),
     [runtime],
   );
   const getSnapshot = useCallback(() => runtime.getSnapshot(), [runtime]);
 
-  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-
-  useLayoutEffect(() => {
-    runtime.notifyProjectionCommitted({
-      feedId: snapshot.feedId,
-      generation: snapshot.generation,
-      revision: snapshot.revision,
-    });
-  }, [runtime, snapshot.feedId, snapshot.generation, snapshot.revision]);
-
-  return snapshot;
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 ```
 
 注意：
 
 - `subscribe` 和 `getSnapshot` 必须是稳定引用，不能每次 render 重新 bind。
+- 公开 read hook 不发送 projection commit ack；commit ack 只允许由 adapter
+  内部 projection boundary 在 DOM commit 后发送。
 - `getSnapshot` 在 snapshot 未变化时必须返回同一对象引用。
 - commit 回执用 `useLayoutEffect`，不是 `useEffect`。
 - commit 回执只带 projection revision，不带 DOM measurement。
@@ -82,7 +74,7 @@ viewport unmount 时，该 cleanup 可能早于 scroll container 的
 
 ## 3. Ref Registry
 
-React row wrapper 必须注册 DOM。
+Adapter 内部 row wrapper 必须注册 DOM；它不是 public React API。
 
 ```tsx
 function MessageRowProjection(props: {
@@ -253,10 +245,12 @@ React event handler
 DOM scroll event
 -> runtime scroll handler
 -> optional snapshot publish
--> optional viewportAnchorChanged event
+-> optional viewportObservationChanged / viewportAnchorChanged event
 ```
 
 React 不转发 raw scroll event。Scroll listener 由 runtime 在 `attach` 时注册到 container。
+面向 read receipt、pin preview、fixed time 这类需求时，接入层订阅 runtime
+observation，而不是注册 `onScroll/onScrollEnd` 或 query projection DOM。
 
 `MessageViewport` 可以接收：
 
@@ -274,7 +268,17 @@ type MessageViewportProps = {
     snapshot: MessageViewportSnapshot;
     followBottom: () => void;
   }) => ReactNode;
-  onViewportAnchorChange?: (event: ViewportAnchorChangedEvent) => void;
+  onViewportAnchorChanged?: (event: ViewportAnchorChangedEvent) => void;
+  onViewportObservation?: (event: ViewportObservationChangedEvent) => void;
+  renderViewportOverlay?: (input: {
+    snapshot: MessageViewportSnapshot;
+    observation: ViewportObservationChangedEvent | null;
+    commands: {
+      followBottom(): void;
+      jump(target: MessageIdentityAnchor, origin?: MessageIdentityAnchor): void;
+    };
+  }) => ReactNode;
+  scrollbar?: 'custom' | 'native';
 };
 ```
 
@@ -283,10 +287,20 @@ projection / motion 的中间态由 runtime 内部 `viewportPhase` 表达；Reac
 只按 snapshot 中的稳定 bottom lock 渲染，不再识别 `RECOVERING`。
 点击只 dispatch semantic command，不直接写 `scrollTop`。
 
-`onViewportAnchorChange` 必须透传 runtime 的完整 `viewportAnchorChanged` event，
+`renderTopEdge` / `renderBottomEdge` 是 edge-state slot。Adapter 只订阅
+`feedId/generation/edgeState` 来触发它们重渲染；如果业务 UI 依赖其他 snapshot
+字段，应使用 `renderViewportOverlay` 或 `useMessageViewportSelector` 表达自己的
+订阅 slice。
+
+`onViewportAnchorChanged` 必须透传 runtime 的完整 `viewportAnchorChanged` event，
 不能只透出 `anchor/reason`。Feed 切换时旧 runtime 会在 pre-mutation `detach()`
 中发出 `reason: 'detach'`，接入方必须依赖 event 自带的 `feedId/generation`
 把 anchor 写回对应 feed/session，不能读取当前 active feed。
+
+`viewportObservationChanged` 只表达视口可见事实：visible message key、
+visible ratio、visible range、scroll source、direction、activity 和 anchor。
+它不能携带 raw `scrollTop`，也不能进入 projection snapshot；否则滚动观察会重新
+驱动整屏 projection render / commit ack。
 
 ## 9. Fallback Policy
 

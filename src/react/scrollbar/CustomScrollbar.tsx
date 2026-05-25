@@ -16,6 +16,13 @@ type ControllerEntry<TMessage, TOptimistic> = {
   runtime: MessageViewportRuntime<TMessage, TOptimistic>
 }
 
+type StyleEntry = {
+  element: HTMLStyleElement
+  references: number
+}
+
+const styleEntries = new WeakMap<Document, StyleEntry>()
+
 export function CustomScrollbar<TMessage = unknown, TOptimistic = unknown>({
   container,
   runtime,
@@ -27,6 +34,14 @@ export function CustomScrollbar<TMessage = unknown, TOptimistic = unknown>({
   const controllerRef =
     useRef<ControllerEntry<TMessage, TOptimistic> | null>(null)
   const skipNextProjectionSyncRef = useRef(false)
+
+  useLayoutEffect(() => {
+    if (!enabled || !container) {
+      return
+    }
+
+    return retainCustomScrollbarStyle(container.ownerDocument)
+  }, [container, enabled])
 
   useLayoutEffect(() => {
     const track = trackRef.current
@@ -79,20 +94,57 @@ export function CustomScrollbar<TMessage = unknown, TOptimistic = unknown>({
   }
 
   return (
-    <>
-      <style>{customScrollbarStyle}</style>
+    <div
+      ref={trackRef}
+      aria-hidden="true"
+      className="x-message-scrollbar"
+      data-testid="custom-scrollbar"
+    >
       <div
-        ref={trackRef}
-        aria-hidden="true"
-        className="x-message-scrollbar"
-        data-testid="custom-scrollbar"
-      >
-        <div
-          ref={thumbRef}
-          className="x-message-scrollbar-thumb"
-          data-testid="custom-scrollbar-thumb"
-        />
-      </div>
-    </>
+        ref={thumbRef}
+        className="x-message-scrollbar-thumb"
+        data-testid="custom-scrollbar-thumb"
+      />
+    </div>
   )
+}
+
+function retainCustomScrollbarStyle(ownerDocument: Document): () => void {
+  const current = styleEntries.get(ownerDocument)
+
+  if (current) {
+    current.references += 1
+    return () => {
+      releaseCustomScrollbarStyle(ownerDocument)
+    }
+  }
+
+  const element = ownerDocument.createElement('style')
+  element.textContent = customScrollbarStyle
+  ownerDocument.head.appendChild(element)
+  styleEntries.set(ownerDocument, {
+    element,
+    references: 1,
+  })
+
+  return () => {
+    releaseCustomScrollbarStyle(ownerDocument)
+  }
+}
+
+function releaseCustomScrollbarStyle(ownerDocument: Document): void {
+  const current = styleEntries.get(ownerDocument)
+
+  if (!current) {
+    return
+  }
+
+  current.references -= 1
+
+  if (current.references > 0) {
+    return
+  }
+
+  current.element.remove()
+  styleEntries.delete(ownerDocument)
 }

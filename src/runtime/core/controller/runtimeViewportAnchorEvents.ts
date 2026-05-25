@@ -21,6 +21,8 @@ type RuntimeViewportAnchorEventDeps<TMessage, TOptimistic> = {
   getActiveTransactionKind: () => ViewportTransactionKind | null
   captureViewportAnchor: () => AnchorState | null
   scheduleScrollbarDragEdgeRecheck: (reason: string) => void
+  emitViewportObservationChanged: (reason: ViewportAnchorChangeReason) => void
+  resetViewportObservation: () => void
   emitEvent: (event: MessageViewportRuntimeEvent) => void
 }
 
@@ -63,6 +65,7 @@ export class RuntimeViewportAnchorEvents<TMessage, TOptimistic> {
         ? this.deps.captureViewportAnchor()
         : anchorOverride
 
+    this.deps.emitViewportObservationChanged(reason)
     this.deps.emitEvent({
       type: 'viewportAnchorChanged',
       feedId: data.feedId,
@@ -86,6 +89,8 @@ export class RuntimeViewportAnchorEvents<TMessage, TOptimistic> {
   }
 
   cancelScheduledWork(): void {
+    this.deps.resetViewportObservation()
+
     if (this.anchorIdleTimer === null) {
       return
     }
