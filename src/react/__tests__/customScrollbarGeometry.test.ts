@@ -63,6 +63,73 @@ describe('computeCustomScrollbarGeometry', () => {
     expect(scrollTop).toBeCloseTo(403.45, 2)
   })
 
+  it('keeps drag amplification neutral for finite physical geometry', () => {
+    const geometry = computeCustomScrollbarGeometry({
+      scrollTop: 300,
+      scrollHeight: 1200,
+      clientHeight: 240,
+    })
+
+    expect(geometry.dragAmplification).toBe(1)
+  })
+
+  it('amplifies drag under infinite cached-height pressure', () => {
+    const geometry = computeCustomScrollbarGeometry(
+      {
+        scrollTop: 300,
+        scrollHeight: 12000,
+        clientHeight: 240,
+      },
+      {
+        cachedHeightPx: 4800,
+        infinite: true,
+      },
+    )
+
+    expect(geometry.dragAmplification).toBeGreaterThan(1)
+    expect(geometry.dragAmplification).toBeLessThanOrEqual(2.75)
+  })
+
+  it('applies smart drag amplification around the active drag start', () => {
+    const geometry = computeCustomScrollbarGeometry(
+      {
+        scrollTop: 100,
+        scrollHeight: 12000,
+        clientHeight: 240,
+      },
+      {
+        cachedHeightPx: 4800,
+        infinite: true,
+      },
+    )
+
+    const amplified = getScrollTopForScrollbarPointer({
+      pointerY: 40,
+      trackTop: 0,
+      grabOffset: 14.3,
+      geometry,
+      fallbackScrollTop: 100,
+      dragStartPointerY: 20,
+      dragStartScrollTop: 100,
+      dragAmplification: geometry.dragAmplification,
+    })
+    const physical = getScrollTopForScrollbarPointer({
+      pointerY: 40,
+      trackTop: 0,
+      grabOffset: 14.3,
+      geometry: {
+        ...geometry,
+        dragAmplification: 1,
+      },
+      fallbackScrollTop: 100,
+      dragStartPointerY: 20,
+      dragStartScrollTop: 100,
+      dragAmplification: 1,
+    })
+
+    expect(amplified).toBeGreaterThan(physical)
+  })
+
   it('keeps pointer drag bounded by the track', () => {
     const geometry = computeCustomScrollbarGeometry({
       scrollTop: 0,

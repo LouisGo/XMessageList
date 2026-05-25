@@ -18,6 +18,9 @@ type CustomScrollbarControllerOptions<TMessage, TOptimistic> = {
 type DragState = {
   pointerId: number
   pointerY: number
+  startPointerY: number
+  startScrollTop: number
+  amplification: number
   grabOffset: number
   captureElement: HTMLElement
   trackTop: number
@@ -47,7 +50,7 @@ export class CustomScrollbarController<TMessage, TOptimistic> {
       TOptimistic
     >,
   ) {
-    this.dom = new CustomScrollbarDom(options)
+    this.dom = new CustomScrollbarDom(options, () => this.getGeometryOptions())
     this.observers = new CustomScrollbarObservers(this.dom, {
       onScroll: this.handleScroll,
       onContainerPointerEnter: this.handleContainerPointerEnter,
@@ -214,6 +217,9 @@ export class CustomScrollbarController<TMessage, TOptimistic> {
     this.drag = {
       pointerId: event.pointerId,
       pointerY: event.clientY,
+      startPointerY: event.clientY,
+      startScrollTop: this.dom.container.scrollTop,
+      amplification: geometry.dragAmplification,
       grabOffset,
       captureElement,
       trackTop,
@@ -268,6 +274,9 @@ export class CustomScrollbarController<TMessage, TOptimistic> {
       grabOffset: drag.grabOffset,
       geometry,
       fallbackScrollTop: this.dom.container.scrollTop,
+      dragStartPointerY: drag.startPointerY,
+      dragStartScrollTop: drag.startScrollTop,
+      dragAmplification: drag.amplification,
     })
 
     if (Math.abs(nextScrollTop - this.dom.container.scrollTop) < scrollWriteEpsilonPx) {
@@ -318,6 +327,23 @@ export class CustomScrollbarController<TMessage, TOptimistic> {
     // projection/分页改变 scrollHeight 后，保持指针相对 thumb 的抓取点不变，避免 thumb 在手下跳动。
     drag.trackTop = trackTop
     drag.grabOffset = pointerTrackY - geometry.thumbTop
+    drag.startPointerY = drag.pointerY
+    drag.startScrollTop = this.dom.container.scrollTop
+    drag.amplification = Math.max(drag.amplification, geometry.dragAmplification)
+  }
+
+  private getGeometryOptions(): {
+    cachedHeightPx: number
+    infinite: boolean
+  } {
+    const snapshot = this.options.runtime.getSnapshot()
+
+    return {
+      cachedHeightPx: Math.max(0, snapshot.topSpacer + snapshot.bottomSpacer),
+      infinite:
+        snapshot.edgeState.before !== 'exhausted' ||
+        snapshot.edgeState.after !== 'exhausted',
+    }
   }
 
   private queueSync(input?: SyncRequest): void {

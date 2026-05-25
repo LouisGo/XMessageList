@@ -1,6 +1,7 @@
 import {
   computeCustomScrollbarGeometry,
   type CustomScrollbarGeometry,
+  type CustomScrollbarGeometryOptions,
 } from './customScrollbarGeometry'
 
 export type CustomScrollbarElements = {
@@ -18,7 +19,10 @@ export class CustomScrollbarDom {
   private lastThumbHeight = ''
   private lastThumbTransform = ''
 
-  constructor(private readonly elements: CustomScrollbarElements) {}
+  constructor(
+    private readonly elements: CustomScrollbarElements,
+    private readonly readGeometryOptions?: () => CustomScrollbarGeometryOptions,
+  ) {}
 
   get container(): HTMLElement {
     return this.elements.container
@@ -49,7 +53,7 @@ export class CustomScrollbarDom {
       scrollTop: this.container.scrollTop,
       scrollHeight: this.container.scrollHeight,
       clientHeight: this.container.clientHeight,
-    })
+    }, this.readGeometryOptions?.())
   }
 
   readTrackTop(): number {

@@ -2453,16 +2453,86 @@ describe('React adapter', () => {
       root.unmount()
     })
   })
+
+  it('amplifies custom thumb drag when cached spacer height makes drag feel heavy', async () => {
+    const runtime = createMockRuntime({
+      snapshot: {
+        topSpacer: 4800,
+        edgeState: {
+          before: 'idle',
+          after: 'exhausted',
+        },
+      },
+    })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scrollTop = 100
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtime} scrollbar="custom" />)
+    })
+
+    const scrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    expect(scrollContainer).not.toBeNull()
+    if (!scrollContainer) {
+      return
+    }
+
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      value: 12000,
+    })
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value) => {
+        scrollTop = value
+      },
+    })
+
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+
+    const thumb = host.querySelector<HTMLElement>(
+      '[data-testid="custom-scrollbar-thumb"]',
+    )
+    expect(thumb).not.toBeNull()
+    if (!thumb) {
+      return
+    }
+
+    await act(async () => {
+      thumb.dispatchEvent(createPointerEvent('pointerdown', 20, 1))
+      document.dispatchEvent(createPointerEvent('pointermove', 40, 1))
+    })
+
+    expect(scrollContainer.scrollTop).toBeGreaterThan(1800)
+    expect(scrollContainer.scrollTop).toBeLessThan(4000)
+
+    await act(async () => {
+      document.dispatchEvent(createPointerEvent('pointerup', 40, 1))
+      root.unmount()
+    })
+  })
 })
 
-function createMockRuntime(): MessageViewportRuntime<TestMessage> & {
+function createMockRuntime(input?: {
+  snapshot?: Partial<MessageViewportSnapshot<TestMessage>>
+}): MessageViewportRuntime<TestMessage> & {
   dispatch: ReturnType<typeof vi.fn>
   beginDirectScroll: ReturnType<typeof vi.fn>
   writeDirectScrollTop: ReturnType<typeof vi.fn>
   endDirectScroll: ReturnType<typeof vi.fn>
 } {
   let attachedContainer: HTMLElement | null = null
-  const snapshot: MessageViewportSnapshot<TestMessage> = {
+  const defaultSnapshot: MessageViewportSnapshot<TestMessage> = {
     feedId: 'feed',
     generation: 1,
     revision: 1,
@@ -2481,6 +2551,12 @@ function createMockRuntime(): MessageViewportRuntime<TestMessage> & {
       before: 'idle',
       after: 'idle',
     },
+  }
+  const snapshot: MessageViewportSnapshot<TestMessage> = {
+    ...defaultSnapshot,
+    ...input?.snapshot,
+    renderWindow: input?.snapshot?.renderWindow ?? defaultSnapshot.renderWindow,
+    edgeState: input?.snapshot?.edgeState ?? defaultSnapshot.edgeState,
   }
 
   return {
