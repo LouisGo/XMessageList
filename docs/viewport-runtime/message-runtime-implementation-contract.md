@@ -32,6 +32,7 @@ class MessageViewportRuntime {
 
   subscribe(listener: RuntimeListener): () => void;
   subscribeEvent(listener: RuntimeEventListener): () => void;
+  subscribeViewportObservation(listener: ViewportObservationListener): () => void;
   getSnapshot(): MessageViewportSnapshot;
   getViewportAnchorState(): AnchorState | null;
 

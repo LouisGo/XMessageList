@@ -204,10 +204,21 @@ export const ViewportOverlayProjection = memo(function ViewportOverlayProjection
     selectFullSnapshot,
     Object.is,
   )
+  const currentObservation =
+    observation &&
+    observation.reason !== 'detach' &&
+    observation.feedId === snapshot.feedId &&
+    observation.generation === snapshot.generation
+      ? observation
+      : null
 
   return (
     <>
-      {renderViewportOverlay?.({ snapshot, observation, commands })}
+      {renderViewportOverlay?.({
+        snapshot,
+        observation: currentObservation,
+        commands,
+      })}
     </>
   )
 }) as <TMessage = unknown, TOptimistic = unknown>(props: {

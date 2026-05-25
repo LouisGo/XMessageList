@@ -66,8 +66,22 @@ export function MessageViewport<
   )
   const stableOnViewportObservation = useStableCallback(
     (event: ViewportObservationChangedEvent) => {
-      setObservation(event)
       onViewportObservation?.(event)
+
+      if (!renderViewportOverlay || event.reason === 'detach') {
+        return
+      }
+
+      const snapshot = runtime.getSnapshot()
+
+      if (
+        event.feedId !== snapshot.feedId ||
+        event.generation !== snapshot.generation
+      ) {
+        return
+      }
+
+      setObservation(event)
     },
   )
   const followBottom = useStableCallback(() => {

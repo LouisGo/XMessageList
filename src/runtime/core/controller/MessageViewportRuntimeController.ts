@@ -56,6 +56,7 @@ import type {
   ViewportPhase,
   ViewportAnchorChangeReason,
   ViewportDiagnosticRecord,
+  ViewportObservationListener,
 } from '../../types'
 
 /**
@@ -253,16 +254,13 @@ export class MessageViewportRuntimeController<
     this.diagnostics = services.diagnostics
   }
 
-  attach(container: HTMLElement): void {
-    this.runtimeLifecycle.attach(container)
-  }
+  attach(container: HTMLElement): void { this.runtimeLifecycle.attach(container) }
 
-  detach(): void {
-    this.runtimeLifecycle.detach()
-  }
+  detach(): void { this.runtimeLifecycle.detach() }
 
   destroy(): void {
     this.runtimeLifecycle.destroy()
+    this.eventHub.clearViewportObservationListeners()
   }
 
   setDataSnapshot(snapshot: MessageDataSnapshot<TMessage, TOptimistic>): void {
@@ -289,9 +287,9 @@ export class MessageViewportRuntimeController<
     return this.store.subscribe(listener)
   }
 
-  subscribeEvent(listener: RuntimeEventListener): () => void {
-    return this.eventHub.subscribeEvent(listener)
-  }
+  subscribeEvent(listener: RuntimeEventListener): () => void { return this.eventHub.subscribeEvent(listener) }
+
+  subscribeViewportObservation(listener: ViewportObservationListener): () => void { return this.eventHub.subscribeViewportObservation(listener) }
 
   getSnapshot(): MessageViewportSnapshot<TMessage, TOptimistic> {
     return this.store.getSnapshot()

@@ -19,11 +19,20 @@ export class RuntimeScrollContainer<
   TOptimistic = unknown,
 > extends Component<RuntimeScrollContainerProps<TMessage, TOptimistic>> {
   private unsubscribeRuntimeEvents: (() => void) | null = null
+
+  private unsubscribeViewportObservation: (() => void) | null = null
+
   private subscribedRuntime: MessageViewportRuntime<TMessage, TOptimistic> | null =
     null
 
+  private subscribedViewportObservationRuntime: MessageViewportRuntime<
+    TMessage,
+    TOptimistic
+  > | null = null
+
   componentDidMount(): void {
     this.syncRuntimeEventSubscription()
+    this.syncViewportObservationSubscription()
   }
 
   getSnapshotBeforeUpdate(
@@ -42,21 +51,21 @@ export class RuntimeScrollContainer<
     // React requires componentDidUpdate when getSnapshotBeforeUpdate is present.
     if (prevProps.runtime !== this.props.runtime) {
       this.clearRuntimeEventSubscription()
+      this.clearViewportObservationSubscription()
     }
 
     this.syncRuntimeEventSubscription()
+    this.syncViewportObservationSubscription()
   }
 
   componentWillUnmount(): void {
     this.props.runtime.detach()
     this.clearRuntimeEventSubscription()
+    this.clearViewportObservationSubscription()
   }
 
   private syncRuntimeEventSubscription(): void {
-    if (
-      !this.props.onViewportAnchorChanged &&
-      !this.props.onViewportObservation
-    ) {
+    if (!this.props.onViewportAnchorChanged) {
       this.clearRuntimeEventSubscription()
       return
     }
@@ -73,11 +82,6 @@ export class RuntimeScrollContainer<
     this.unsubscribeRuntimeEvents = this.props.runtime.subscribeEvent((event) => {
       if (event.type === 'viewportAnchorChanged') {
         this.props.onViewportAnchorChanged?.(event)
-        return
-      }
-
-      if (event.type === 'viewportObservationChanged') {
-        this.props.onViewportObservation?.(event)
       }
     })
   }
@@ -86,6 +90,33 @@ export class RuntimeScrollContainer<
     this.unsubscribeRuntimeEvents?.()
     this.unsubscribeRuntimeEvents = null
     this.subscribedRuntime = null
+  }
+
+  private syncViewportObservationSubscription(): void {
+    if (!this.props.onViewportObservation) {
+      this.clearViewportObservationSubscription()
+      return
+    }
+
+    if (
+      this.subscribedViewportObservationRuntime === this.props.runtime &&
+      this.unsubscribeViewportObservation
+    ) {
+      return
+    }
+
+    this.clearViewportObservationSubscription()
+    this.subscribedViewportObservationRuntime = this.props.runtime
+    this.unsubscribeViewportObservation =
+      this.props.runtime.subscribeViewportObservation((event) => {
+        this.props.onViewportObservation?.(event)
+      })
+  }
+
+  private clearViewportObservationSubscription(): void {
+    this.unsubscribeViewportObservation?.()
+    this.unsubscribeViewportObservation = null
+    this.subscribedViewportObservationRuntime = null
   }
 
   render() {

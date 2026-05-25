@@ -86,6 +86,7 @@ export function createRuntimeControllerServices<TMessage, TOptimistic>(
     lifecycle,
     registry,
     store,
+    eventHub,
     host,
     getActiveTransactionKind: () =>
       serviceRefs.transactionDiagnostics.get().getActiveTransactionKind(),

@@ -13,6 +13,7 @@ import type {
   RuntimeState,
   ScrollSource,
   ViewportDiagnosticRecord,
+  ViewportObservationListener,
 } from './types'
 
 /**
@@ -74,6 +75,10 @@ export class MessageViewportRuntime<
 
   subscribeEvent(listener: RuntimeEventListener): () => void {
     return this.controller.subscribeEvent(listener)
+  }
+
+  subscribeViewportObservation(listener: ViewportObservationListener): () => void {
+    return this.controller.subscribeViewportObservation(listener)
   }
 
   getSnapshot(): MessageViewportSnapshot<TMessage, TOptimistic> {

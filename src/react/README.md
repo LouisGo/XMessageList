@@ -52,7 +52,12 @@ Observation API:
 - `onViewportObservation` receives `viewportObservationChanged` events with
   visible item keys, visible ratios, visible range, scroll source, direction,
   activity, and anchor.
+- Observation events come from the runtime's dedicated
+  `subscribeViewportObservation` stream. Generic `subscribeEvent` listeners do
+  not activate visible-range measurement.
 - `renderViewportOverlay` receives `{ snapshot, observation, commands }`.
   Use it for fixed-time labels, pinned-message previews, or local overlays.
+- Callback-only observation consumers do not update React adapter state; only
+  viewport overlays retain the latest matching observation locally.
 - Follow-bottom and jump actions from overlays must call `commands`, which
   dispatch runtime semantic commands instead of writing `scrollTop`.

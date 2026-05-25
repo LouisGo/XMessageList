@@ -8,12 +8,14 @@ import type {
   ViewportTransactionKind,
 } from '../../types'
 import type { RuntimeControllerHost } from './runtimeControllerHost'
+import type { RuntimeEventHub } from '../events/runtimeEventHub'
 
 type RuntimeControllerEventServicesInput<TMessage, TOptimistic> = {
   scheduler: RuntimeScheduler
   lifecycle: LifecycleGuard
   registry: DomRegistry
   store: ProjectionStore<TMessage, TOptimistic>
+  eventHub: RuntimeEventHub
   host: RuntimeControllerHost<TMessage, TOptimistic>
   getActiveTransactionKind: () => ViewportTransactionKind | null
   scheduleScrollbarDragEdgeRecheck: (reason: string) => void
@@ -28,7 +30,10 @@ export function createRuntimeControllerEventServices<TMessage, TOptimistic>(
     getDataSnapshot: input.host.getDataSnapshot,
     getLastScrollSource: input.host.getLastScrollSource,
     captureViewportAnchor: input.host.captureViewportAnchor,
-    emitEvent: input.host.emitEvent,
+    hasViewportObservationListeners: () =>
+      input.eventHub.hasViewportObservationListeners(),
+    emitViewportObservation: (event) =>
+      input.eventHub.emitViewportObservation(event),
   })
   const anchorEvents = new RuntimeViewportAnchorEvents({
     scheduler: input.scheduler,
@@ -43,6 +48,7 @@ export function createRuntimeControllerEventServices<TMessage, TOptimistic>(
     resetViewportObservation: () => observationEvents.reset(),
     emitEvent: input.host.emitEvent,
   })
+  input.eventHub.setViewportObservationResetter(() => observationEvents.reset())
 
   return {
     anchorEvents,

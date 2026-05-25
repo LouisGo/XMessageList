@@ -1,4 +1,4 @@
-import { StrictMode, act, useEffect, useState } from 'react'
+import { Profiler, StrictMode, act, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -1051,7 +1051,7 @@ describe('React adapter', () => {
 
   it('updates viewport overlays from observations without re-running row renderers', async () => {
     const runtimeListeners = new Set<() => void>()
-    const runtimeEventListeners = new Set<
+    const viewportObservationListeners = new Set<
       (event: ViewportObservationChangedEvent) => void
     >()
     const itemA = {
@@ -1099,13 +1099,14 @@ describe('React adapter', () => {
           runtimeListeners.delete(listener)
         }
       },
-      subscribeEvent: (
+      subscribeEvent: vi.fn(() => () => {}),
+      subscribeViewportObservation: (
         listener: (event: ViewportObservationChangedEvent) => void,
       ) => {
-        runtimeEventListeners.add(listener)
+        viewportObservationListeners.add(listener)
 
         return () => {
-          runtimeEventListeners.delete(listener)
+          viewportObservationListeners.delete(listener)
         }
       },
       attach: vi.fn(),
@@ -1190,7 +1191,7 @@ describe('React adapter', () => {
         ],
       }
 
-      for (const listener of runtimeEventListeners) {
+      for (const listener of viewportObservationListeners) {
         listener(event)
       }
     })
@@ -1207,6 +1208,336 @@ describe('React adapter', () => {
     })
 
     expect(runtime.dispatch).toHaveBeenCalledWith({ type: 'followBottom' })
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('forwards callback-only observations without committing React state', async () => {
+    const runtimeListeners = new Set<() => void>()
+    const viewportObservationListeners = new Set<
+      (event: ViewportObservationChangedEvent) => void
+    >()
+    const snapshot: MessageViewportSnapshot<TestMessage> = {
+      feedId: 'feed',
+      generation: 1,
+      revision: 1,
+      items: [],
+      renderWindow: {
+        startIndex: 0,
+        endIndex: -1,
+        itemKeys: [],
+      },
+      topSpacer: 0,
+      bottomSpacer: 0,
+      bottomLockState: 'LOCKED',
+      bootstrapState: 'READY_EMPTY',
+      viewportPhase: 'IDLE',
+      edgeState: {
+        before: 'idle',
+        after: 'idle',
+      },
+    }
+    const runtime = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        runtimeListeners.add(listener)
+
+        return () => {
+          runtimeListeners.delete(listener)
+        }
+      },
+      subscribeEvent: vi.fn(() => () => {}),
+      subscribeViewportObservation: (
+        listener: (event: ViewportObservationChangedEvent) => void,
+      ) => {
+        viewportObservationListeners.add(listener)
+
+        return () => {
+          viewportObservationListeners.delete(listener)
+        }
+      },
+      attach: vi.fn(),
+      detach: vi.fn(),
+      dispatch: vi.fn(),
+      notifyProjectionCommitted: vi.fn(),
+      registerRow: vi.fn(),
+      registerTopSentinel: vi.fn(),
+      registerBottomSentinel: vi.fn(),
+      registerTopSpacer: vi.fn(),
+      registerBottomSpacer: vi.fn(),
+      beginDirectScroll: vi.fn(),
+      writeDirectScrollTop: vi.fn(),
+      endDirectScroll: vi.fn(),
+      getViewportAnchorState: vi.fn(() => null),
+      getDiagnosticRecords: vi.fn(() => []),
+      getDebugSnapshot: vi.fn(),
+    } as unknown as MessageViewportRuntime<TestMessage>
+    const onViewportObservation = vi.fn()
+    const onRender = vi.fn()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(
+        <Profiler id="viewport" onRender={onRender}>
+          <MessageViewport
+            runtime={runtime}
+            renderMessage={() => null}
+            onViewportObservation={onViewportObservation}
+            scrollbar="native"
+          />
+        </Profiler>,
+      )
+    })
+
+    const renderCountAfterMount = onRender.mock.calls.length
+
+    await act(async () => {
+      const event: ViewportObservationChangedEvent = {
+        type: 'viewportObservationChanged',
+        feedId: 'feed',
+        generation: 1,
+        reason: 'scroll-frame',
+        scrollSource: 'user',
+        direction: 'down',
+        activity: {
+          phase: 'scrolling',
+          direction: 'down',
+        },
+        anchor: null,
+        visibleRange: {
+          firstKey: null,
+          lastKey: null,
+        },
+        visibleItems: [],
+      }
+
+      for (const listener of viewportObservationListeners) {
+        listener(event)
+      }
+    })
+
+    expect(onViewportObservation).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'scroll-frame' }),
+    )
+    expect(onRender).toHaveBeenCalledTimes(renderCountAfterMount)
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('does not project stale detach observations after runtime changes', async () => {
+    const snapshotA: MessageViewportSnapshot<TestMessage> = {
+      feedId: 'feed-a',
+      generation: 1,
+      revision: 1,
+      items: [],
+      renderWindow: {
+        startIndex: 0,
+        endIndex: -1,
+        itemKeys: [],
+      },
+      topSpacer: 0,
+      bottomSpacer: 0,
+      bottomLockState: 'LOCKED',
+      bootstrapState: 'READY_EMPTY',
+      viewportPhase: 'IDLE',
+      edgeState: {
+        before: 'idle',
+        after: 'idle',
+      },
+    }
+    const snapshotB: MessageViewportSnapshot<TestMessage> = {
+      ...snapshotA,
+      feedId: 'feed-b',
+    }
+    const runtimeAListeners = new Set<() => void>()
+    const runtimeBListeners = new Set<() => void>()
+    const runtimeAObservationListeners = new Set<
+      (event: ViewportObservationChangedEvent) => void
+    >()
+    const runtimeBObservationListeners = new Set<
+      (event: ViewportObservationChangedEvent) => void
+    >()
+    const runtimeA = {
+      getSnapshot: () => snapshotA,
+      subscribe: (listener: () => void) => {
+        runtimeAListeners.add(listener)
+
+        return () => {
+          runtimeAListeners.delete(listener)
+        }
+      },
+      subscribeEvent: vi.fn(() => () => {}),
+      subscribeViewportObservation: (
+        listener: (event: ViewportObservationChangedEvent) => void,
+      ) => {
+        runtimeAObservationListeners.add(listener)
+
+        return () => {
+          runtimeAObservationListeners.delete(listener)
+        }
+      },
+      attach: vi.fn(),
+      detach: vi.fn(() => {
+        const event: ViewportObservationChangedEvent = {
+          type: 'viewportObservationChanged',
+          feedId: 'feed-a',
+          generation: 1,
+          reason: 'detach',
+          scrollSource: 'user',
+          direction: 'down',
+          activity: {
+            phase: 'idle',
+            direction: 'down',
+          },
+          anchor: null,
+          visibleRange: {
+            firstKey: { kind: 'committed', messageId: 'a-1' },
+            lastKey: { kind: 'committed', messageId: 'a-1' },
+          },
+          visibleItems: [
+            {
+              key: { kind: 'committed', messageId: 'a-1' },
+              visibleRatio: 1,
+            },
+          ],
+        }
+
+        for (const listener of runtimeAObservationListeners) {
+          listener(event)
+        }
+      }),
+      dispatch: vi.fn(),
+      notifyProjectionCommitted: vi.fn(),
+      registerRow: vi.fn(),
+      registerTopSentinel: vi.fn(),
+      registerBottomSentinel: vi.fn(),
+      registerTopSpacer: vi.fn(),
+      registerBottomSpacer: vi.fn(),
+      beginDirectScroll: vi.fn(),
+      writeDirectScrollTop: vi.fn(),
+      endDirectScroll: vi.fn(),
+      getViewportAnchorState: vi.fn(() => null),
+      getDiagnosticRecords: vi.fn(() => []),
+      getDebugSnapshot: vi.fn(),
+    } as unknown as MessageViewportRuntime<TestMessage>
+    const runtimeB = {
+      getSnapshot: () => snapshotB,
+      subscribe: (listener: () => void) => {
+        runtimeBListeners.add(listener)
+
+        return () => {
+          runtimeBListeners.delete(listener)
+        }
+      },
+      subscribeEvent: vi.fn(() => () => {}),
+      subscribeViewportObservation: (
+        listener: (event: ViewportObservationChangedEvent) => void,
+      ) => {
+        runtimeBObservationListeners.add(listener)
+
+        return () => {
+          runtimeBObservationListeners.delete(listener)
+        }
+      },
+      attach: vi.fn(),
+      detach: vi.fn(),
+      dispatch: vi.fn(),
+      notifyProjectionCommitted: vi.fn(),
+      registerRow: vi.fn(),
+      registerTopSentinel: vi.fn(),
+      registerBottomSentinel: vi.fn(),
+      registerTopSpacer: vi.fn(),
+      registerBottomSpacer: vi.fn(),
+      beginDirectScroll: vi.fn(),
+      writeDirectScrollTop: vi.fn(),
+      endDirectScroll: vi.fn(),
+      getViewportAnchorState: vi.fn(() => null),
+      getDiagnosticRecords: vi.fn(() => []),
+      getDebugSnapshot: vi.fn(),
+    } as unknown as MessageViewportRuntime<TestMessage>
+    const onViewportObservation = vi.fn()
+    const renderViewportOverlay = vi.fn(({ snapshot, observation }) => (
+      <div data-testid="viewport-overlay">
+        {`${snapshot.feedId}:${
+          observation?.visibleRange.firstKey?.kind === 'committed'
+            ? observation.visibleRange.firstKey.messageId
+            : 'none'
+        }`}
+      </div>
+    ))
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(
+        <MessageViewport
+          runtime={runtimeA}
+          renderMessage={() => null}
+          renderViewportOverlay={renderViewportOverlay}
+          onViewportObservation={onViewportObservation}
+          scrollbar="native"
+        />,
+      )
+    })
+
+    await act(async () => {
+      const event: ViewportObservationChangedEvent = {
+        type: 'viewportObservationChanged',
+        feedId: 'feed-a',
+        generation: 1,
+        reason: 'scroll-frame',
+        scrollSource: 'user',
+        direction: 'down',
+        activity: {
+          phase: 'scrolling',
+          direction: 'down',
+        },
+        anchor: null,
+        visibleRange: {
+          firstKey: { kind: 'committed', messageId: 'a-1' },
+          lastKey: { kind: 'committed', messageId: 'a-1' },
+        },
+        visibleItems: [
+          {
+            key: { kind: 'committed', messageId: 'a-1' },
+            visibleRatio: 1,
+          },
+        ],
+      }
+
+      for (const listener of runtimeAObservationListeners) {
+        listener(event)
+      }
+    })
+
+    expect(host.querySelector('[data-testid="viewport-overlay"]')?.textContent)
+      .toBe('feed-a:a-1')
+
+    await act(async () => {
+      root.render(
+        <MessageViewport
+          runtime={runtimeB}
+          renderMessage={() => null}
+          renderViewportOverlay={renderViewportOverlay}
+          onViewportObservation={onViewportObservation}
+          scrollbar="native"
+        />,
+      )
+    })
+
+    expect(onViewportObservation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        feedId: 'feed-a',
+        reason: 'detach',
+      }),
+    )
+    expect(host.querySelector('[data-testid="viewport-overlay"]')?.textContent)
+      .toBe('feed-b:none')
 
     await act(async () => {
       root.unmount()

@@ -26,6 +26,7 @@ class MessageViewportRuntime {
 
   subscribe(listener: RuntimeListener): () => void;
   subscribeEvent(listener: RuntimeEventListener): () => void;
+  subscribeViewportObservation(listener: ViewportObservationListener): () => void;
   getSnapshot(): MessageViewportSnapshot;
   getViewportAnchorState(): AnchorState | null;
 
@@ -513,6 +514,9 @@ type MessageViewportRuntimeEvent =
 ```
 
 这些事件只能表达 viewport 需求，不携带 SDK query 细节。
+`viewportObservationChanged` 不属于 `MessageViewportRuntimeEvent`；它通过
+`subscribeViewportObservation` 专用 stream 暴露，避免普通 event listener 激活
+visible range 测量。
 
 当前实现会在用户接近 after edge 时发出 `needMoreAfter(reason: 'near-bottom')`。
 这是“用户向下浏览”的逐页分页信号。

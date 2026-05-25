@@ -49,6 +49,7 @@ export type {
   ViewportAnchorChangedEvent,
   ViewportAnchorChangeReason,
   ViewportObservationChangedEvent,
+  ViewportObservationListener,
   ViewportObservationReason,
   ViewportObservedItem,
   ViewportScrollDirection,

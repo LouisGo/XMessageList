@@ -54,6 +54,10 @@ export type ViewportObservationChangedEvent = {
   visibleItems: ViewportObservedItem[]
 }
 
+export type ViewportObservationListener = (
+  event: ViewportObservationChangedEvent,
+) => void
+
 export type DiagnosticChannel =
   | 'lifecycle'
   | 'data'
@@ -130,7 +134,6 @@ export type MessageViewportRuntimeEvent =
       resolvedTarget?: MessageIdentityAnchor
     }
   | ViewportAnchorChangedEvent
-  | ViewportObservationChangedEvent
   | ViewportDiagnosticEvent
   | { type: 'viewportReady'; feedId: string; generation: number }
   | { type: 'viewportError'; feedId: string; generation: number; code: string }

@@ -3,6 +3,8 @@ import type {
   MessageViewportRuntimeEvent,
   RuntimeEventListener,
   ViewportAnchorChangeReason,
+  ViewportObservationChangedEvent,
+  ViewportObservationListener,
 } from '../../types'
 import type { RuntimeDiagnosticInput } from '../../debug/diagnosticRecorder'
 
@@ -14,6 +16,11 @@ type RuntimeEventHubDeps = {
 }
 
 export class RuntimeEventHub {
+  private readonly viewportObservationListeners =
+    new Set<ViewportObservationListener>()
+
+  private resetViewportObservation: (() => void) | null = null
+
   constructor(private readonly deps: RuntimeEventHubDeps) {}
 
   // event hub 只负责 runtime 事件分发和诊断镜像，不持有 viewport 状态；
@@ -25,12 +32,42 @@ export class RuntimeEventHub {
     }
   }
 
+  subscribeViewportObservation(listener: ViewportObservationListener): () => void {
+    this.viewportObservationListeners.add(listener)
+    return () => {
+      this.viewportObservationListeners.delete(listener)
+
+      if (this.viewportObservationListeners.size === 0) {
+        this.resetViewportObservation?.()
+      }
+    }
+  }
+
+  hasViewportObservationListeners(): boolean {
+    return this.viewportObservationListeners.size > 0
+  }
+
+  setViewportObservationResetter(reset: () => void): void {
+    this.resetViewportObservation = reset
+  }
+
+  clearViewportObservationListeners(): void {
+    this.viewportObservationListeners.clear()
+    this.resetViewportObservation?.()
+  }
+
   emitEvent(event: MessageViewportRuntimeEvent): void {
     if (event.type !== 'viewportDiagnostic') {
       this.emitEventDiagnostic(event)
     }
 
     for (const listener of this.deps.eventListeners) {
+      listener(event)
+    }
+  }
+
+  emitViewportObservation(event: ViewportObservationChangedEvent): void {
+    for (const listener of this.viewportObservationListeners) {
       listener(event)
     }
   }
@@ -96,7 +133,6 @@ export class RuntimeEventHub {
         break
       case 'viewportError':
       case 'viewportAnchorChanged':
-      case 'viewportObservationChanged':
       case 'viewportDiagnostic':
         break
     }

@@ -4,7 +4,6 @@ import type {
   AnchorState,
   MessageDataSnapshot,
   MessageRuntimeItemKey,
-  MessageViewportRuntimeEvent,
   ScrollSource,
   ViewportObservationChangedEvent,
   ViewportObservationReason,
@@ -22,7 +21,8 @@ type RuntimeViewportObservationEventsDeps<TMessage, TOptimistic> = {
   getDataSnapshot: () => MessageDataSnapshot<TMessage, TOptimistic> | null
   getLastScrollSource: () => ScrollSource | null
   captureViewportAnchor: () => AnchorState | null
-  emitEvent: (event: MessageViewportRuntimeEvent) => void
+  hasViewportObservationListeners: () => boolean
+  emitViewportObservation: (event: ViewportObservationChangedEvent) => void
 }
 
 const OBSERVATION_SCROLL_EPSILON_PX = 0.5
@@ -44,6 +44,10 @@ export class RuntimeViewportObservationEvents<TMessage, TOptimistic> {
     reason: ViewportObservationReason,
     scrollSource = this.deps.getLastScrollSource(),
   ): void {
+    if (!this.deps.hasViewportObservationListeners()) {
+      return
+    }
+
     const data = this.deps.getDataSnapshot()
     const container = this.deps.registry.getContainer()
 
@@ -97,7 +101,7 @@ export class RuntimeViewportObservationEvents<TMessage, TOptimistic> {
     }
 
     this.lastSignature = signature
-    this.deps.emitEvent(event)
+    this.deps.emitViewportObservation(event)
   }
 
   reset(): void {

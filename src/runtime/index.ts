@@ -54,6 +54,7 @@ export type {
   ViewportEdgeStatus,
   ViewportObservationActivity,
   ViewportObservationChangedEvent,
+  ViewportObservationListener,
   ViewportObservationReason,
   ViewportObservedItem,
   ViewportScrollDirection,

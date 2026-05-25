@@ -250,7 +250,10 @@ DOM scroll event
 
 React 不转发 raw scroll event。Scroll listener 由 runtime 在 `attach` 时注册到 container。
 面向 read receipt、pin preview、fixed time 这类需求时，接入层订阅 runtime
-observation，而不是注册 `onScroll/onScrollEnd` 或 query projection DOM。
+专用 `runtime.subscribeViewportObservation(...)` stream，而不是注册
+`onScroll/onScrollEnd`、普通
+`subscribeEvent` listener 或 query projection DOM。没有 observation listener 时，
+runtime 不计算 visible range。
 
 `MessageViewport` 可以接收：
 
@@ -301,6 +304,12 @@ projection / motion 的中间态由 runtime 内部 `viewportPhase` 表达；Reac
 visible ratio、visible range、scroll source、direction、activity 和 anchor。
 它不能携带 raw `scrollTop`，也不能进入 projection snapshot；否则滚动观察会重新
 驱动整屏 projection render / commit ack。
+
+`onViewportObservation` 只透传专用 observation stream；如果没有
+`renderViewportOverlay`，它不能写 React state。`renderViewportOverlay` 使用的本地
+observation state 必须按当前 snapshot 的 `feedId/generation` 过滤，并忽略
+`reason: 'detach'`，避免 feed 切换时旧 runtime 的 terminal observation 污染新
+projection。
 
 ## 9. Fallback Policy
 
