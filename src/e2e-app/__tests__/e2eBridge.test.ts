@@ -136,6 +136,7 @@ describe('collectE2EState', () => {
       {
         messageId: 'feed-runtime-m-80',
         serializedKey: 'committed:feed-runtime-m-80',
+        itemKind: 'committed',
         top: 12,
         bottom: 52,
         height: 40,
@@ -167,7 +168,10 @@ describe('collectE2EState', () => {
       'append_message',
       'prepend_history',
       'start_prepend_history',
+      'append_history',
+      'start_append_history',
       'send_message',
+      'retry_failed_send',
       'follow_bottom',
       'jump_to_quoted_message',
       'switch_feed',
@@ -543,6 +547,48 @@ describe('collectE2EState', () => {
     expect(result.after?.ui.pendingOperation).toBe('history.prepend')
   })
 
+  it('returns start_append_history while the append request is still pending', async () => {
+    const root = document.createElement('main')
+    const scenario = createScenarioStub()
+    const consoleBuffer = createE2EConsoleBuffer()
+    const eventBuffer = createE2EEventBuffer()
+
+    scenario.loadFutureBatch = vi.fn(() => {
+      scenario.loadingAfter = true
+      scenario.pendingOperation = 'history.append'
+    })
+
+    const readEvidence = (checkpointId: string) =>
+      collectE2EEvidence({
+        scenarioId: 'paging.append-slow-request-race',
+        checkpointId,
+        scenario,
+        consoleBuffer,
+        eventBuffer,
+        root,
+      })
+    const result = await runE2EAction({
+      actionId: 'start_append_history',
+      scenarioId: 'paging.append-slow-request-race',
+      scenario,
+      consoleBuffer,
+      eventBuffer,
+      root,
+      readState: () =>
+        collectE2EState({
+          scenarioId: 'paging.append-slow-request-race',
+          scenario,
+          consoleBuffer,
+          root,
+        }),
+      readEvidence,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(scenario.loadFutureBatch).toHaveBeenCalledTimes(1)
+    expect(result.after?.ui.pendingOperation).toBe('history.append')
+  })
+
   it('returns send_message(waitFor optimistic) before full runtime idle', async () => {
     const root = document.createElement('main')
     const container = document.createElement('div')
@@ -586,6 +632,16 @@ describe('collectE2EState', () => {
       })
       container.append(row)
       scenario.pendingOperation = 'message.send'
+      vi.mocked(scenario.activeRuntime.getSnapshot).mockReturnValue({
+        ...createRuntimeSnapshot(),
+        items: [{
+          kind: 'optimistic',
+          key: { kind: 'optimistic', clientMessageId: 'client-e2e' },
+          draft: {},
+          status: 'sending',
+          version: 1,
+        }],
+      })
       return true
     })
 
@@ -625,6 +681,127 @@ describe('collectE2EState', () => {
     expect(result.after?.viewport.visibleRows[0]?.serializedKey).toBe(
       'optimistic:client-e2e',
     )
+    expect(result.after?.viewport.visibleRows[0]?.optimisticStatus).toBe(
+      'sending',
+    )
+  })
+
+  it('returns send_message(waitFor failed) after the optimistic row fails', async () => {
+    const root = document.createElement('main')
+    const container = createVisibleContainer(root)
+    const scenario = createScenarioStub()
+    const consoleBuffer = createE2EConsoleBuffer()
+    const eventBuffer = createE2EEventBuffer()
+
+    scenario.sendMessage = vi.fn(() => {
+      appendVisibleRow(container, 'optimistic:client-e2e')
+      scenario.pendingOperation = 'idle'
+      vi.mocked(scenario.activeRuntime.getSnapshot).mockReturnValue({
+        ...createRuntimeSnapshot(),
+        items: [{
+          kind: 'optimistic',
+          key: { kind: 'optimistic', clientMessageId: 'client-e2e' },
+          draft: {},
+          status: 'failed',
+          version: 1,
+        }],
+      })
+      return true
+    })
+
+    const readEvidence = (checkpointId: string) =>
+      collectE2EEvidence({
+        scenarioId: 'send.optimistic-fail-retry',
+        checkpointId,
+        scenario,
+        consoleBuffer,
+        eventBuffer,
+        root,
+      })
+    const result = await runE2EAction({
+      actionId: 'send_message',
+      payload: {
+        body: 'hello from e2e',
+        waitFor: 'failed',
+      },
+      scenarioId: 'send.optimistic-fail-retry',
+      scenario,
+      consoleBuffer,
+      eventBuffer,
+      root,
+      readState: () =>
+        collectE2EState({
+          scenarioId: 'send.optimistic-fail-retry',
+          scenario,
+          consoleBuffer,
+          root,
+        }),
+      readEvidence,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(scenario.sendMessage).toHaveBeenCalledWith('hello from e2e')
+    expect(result.after?.viewport.visibleRows[0]?.optimisticStatus).toBe(
+      'failed',
+    )
+  })
+
+  it('runs retry_failed_send and can return while retry send is pending', async () => {
+    const root = document.createElement('main')
+    const container = createVisibleContainer(root)
+    const scenario = createScenarioStub()
+    const consoleBuffer = createE2EConsoleBuffer()
+    const eventBuffer = createE2EEventBuffer()
+
+    scenario.retryFailedSend = vi.fn(() => {
+      appendVisibleRow(container, 'optimistic:client-e2e')
+      scenario.pendingOperation = 'message.send'
+      vi.mocked(scenario.activeRuntime.getSnapshot).mockReturnValue({
+        ...createRuntimeSnapshot(),
+        items: [{
+          kind: 'optimistic',
+          key: { kind: 'optimistic', clientMessageId: 'client-e2e' },
+          draft: {},
+          status: 'sending',
+          version: 1,
+        }],
+      })
+      return true
+    })
+
+    const readEvidence = (checkpointId: string) =>
+      collectE2EEvidence({
+        scenarioId: 'send.optimistic-fail-retry',
+        checkpointId,
+        scenario,
+        consoleBuffer,
+        eventBuffer,
+        root,
+      })
+    const result = await runE2EAction({
+      actionId: 'retry_failed_send',
+      payload: { waitFor: 'optimistic' },
+      scenarioId: 'send.optimistic-fail-retry',
+      scenario,
+      consoleBuffer,
+      eventBuffer,
+      root,
+      readState: () =>
+        collectE2EState({
+          scenarioId: 'send.optimistic-fail-retry',
+          scenario,
+          consoleBuffer,
+          root,
+        }),
+      readEvidence,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(scenario.retryFailedSend).toHaveBeenCalledTimes(1)
+    expect(result.after?.ui.pendingOperation).toBe('message.send')
+    expect(result.after?.viewport.visibleRows[0]?.optimisticStatus).toBe(
+      'sending',
+    )
   })
 })
 
@@ -644,19 +821,7 @@ function createScenarioStub(
       unread: 0,
     },
     activeRuntime: {
-      getSnapshot: vi.fn(() => ({
-        feedId: 'feed-runtime',
-        generation: 2,
-        revision: 7,
-        items: [],
-        renderWindow: { startIndex: 0, endIndex: -1, itemKeys: [] },
-        topSpacer: 10,
-        bottomSpacer: 20,
-        bottomLockState: 'LOCKED',
-        bootstrapState: 'READY',
-        viewportPhase: 'IDLE',
-        edgeState: { before: 'idle', after: 'idle' },
-      })),
+      getSnapshot: vi.fn(() => createRuntimeSnapshot()),
       getDebugSnapshot: vi.fn(() => ({
         state: 'READY',
         readySubstate: 'READY_IDLE',
@@ -690,6 +855,7 @@ function createScenarioStub(
     lastEvent: 'loaded Runtime Lab',
     selectFeed: vi.fn(),
     loadHistoryBatch: vi.fn(),
+    loadFutureBatch: vi.fn(),
     appendMessage: vi.fn(),
     appendLongBurst: vi.fn(),
     toggleEventStorm: vi.fn(),
@@ -699,10 +865,70 @@ function createScenarioStub(
     reactToMessage: vi.fn(),
     toggleDynamicHeight: vi.fn(),
     sendMessage: vi.fn(() => true),
+    retryFailedSend: vi.fn(() => true),
     followBottom: vi.fn(),
     jumpToQuote: vi.fn(),
     clearFeed: vi.fn(),
     rememberRuntimeViewportAnchor: vi.fn(),
     ...overrides,
   }
+}
+
+function createRuntimeSnapshot() {
+  return {
+    feedId: 'feed-runtime',
+    generation: 2,
+    revision: 7,
+    items: [],
+    renderWindow: { startIndex: 0, endIndex: -1, itemKeys: [] },
+    topSpacer: 10,
+    bottomSpacer: 20,
+    bottomLockState: 'LOCKED',
+    bootstrapState: 'READY',
+    viewportPhase: 'IDLE',
+    edgeState: { before: 'idle', after: 'idle' },
+  } as ReturnType<DemoMessageScenario['activeRuntime']['getSnapshot']>
+}
+
+function createVisibleContainer(root: HTMLElement): HTMLElement {
+  const container = document.createElement('div')
+
+  container.dataset.testid = 'message-scroll-container'
+  Object.defineProperties(container, {
+    scrollTop: { value: 0, configurable: true },
+    scrollHeight: { value: 120, configurable: true },
+    clientHeight: { value: 120, configurable: true },
+  })
+  container.getBoundingClientRect = () => ({
+    top: 0,
+    bottom: 120,
+    left: 0,
+    right: 320,
+    width: 320,
+    height: 120,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  })
+  root.append(container)
+
+  return container
+}
+
+function appendVisibleRow(container: HTMLElement, serializedKey: string): void {
+  const row = document.createElement('div')
+
+  row.dataset.messageRow = serializedKey
+  row.getBoundingClientRect = () => ({
+    top: 12,
+    bottom: 52,
+    left: 0,
+    right: 320,
+    width: 320,
+    height: 40,
+    x: 0,
+    y: 12,
+    toJSON: () => ({}),
+  })
+  container.append(row)
 }

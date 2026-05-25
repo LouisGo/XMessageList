@@ -114,6 +114,7 @@ function createEvidence(overrides: EvidenceOverrides = {}): E2EEvidence {
       visibleRows: [{
         messageId: 'feed-runtime-m-80',
         serializedKey: 'committed:feed-runtime-m-80',
+        itemKind: 'committed',
         top: 0,
         bottom: 40,
         height: 40,

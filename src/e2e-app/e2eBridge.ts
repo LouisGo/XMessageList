@@ -1,6 +1,7 @@
 import type { DemoMessageScenario } from '../demo/useDemoMessageScenario'
 import {
   serializeRuntimeItemKey,
+  type MessageDataItem,
   type MessageViewportRuntimeEvent,
   type ViewportDiagnosticRecord,
 } from '../runtime'
@@ -104,9 +105,13 @@ export type E2EActionHooks = {
   reattachRuntime?: () => void | Promise<void>
 }
 
+export type E2EVisibleRowItemKind = 'committed' | 'optimistic' | 'tombstone'
+
 export type E2EVisibleRow = {
   messageId: string
   serializedKey: string
+  itemKind: E2EVisibleRowItemKind
+  optimisticStatus?: 'sending' | 'failed'
   top: number
   bottom: number
   height: number
@@ -431,7 +436,9 @@ export function collectE2EEvidence(input: {
     root,
   })
   const container = getScrollContainer(root)
-  const visibleRows = container ? getVisibleRows(root, container) : []
+  const visibleRows = container
+    ? getVisibleRows(root, container, snapshot.items)
+    : []
   const currentAnchor = getCurrentAnchorEvidence(input.scenario, root, container)
 
   return {
@@ -546,6 +553,10 @@ export function listE2EActions(state: E2EState): E2EActionDescriptor[] {
   const canPageBefore = pageReady && state.feed.activeFeedId.length > 0
   const canInteractDuringPrepend =
     feedReady && hasPendingOperation(state, 'history.prepend')
+  const canInteractDuringAppend =
+    feedReady && hasPendingOperation(state, 'history.append')
+  const canSwitchFeed =
+    pageReady || canInteractDuringPrepend || canInteractDuringAppend
 
   return [
     {
@@ -613,6 +624,22 @@ export function listE2EActions(state: E2EState): E2EActionDescriptor[] {
       reasonDisabled: pageReady && feedReady ? undefined : 'feed is not ready',
     },
     {
+      id: 'append_history',
+      label: 'Append history',
+      category: 'paging',
+      enabled: (pageReady && feedReady) || canInteractDuringAppend,
+      reasonDisabled: (pageReady && feedReady) || canInteractDuringAppend
+        ? undefined
+        : 'feed is not ready',
+    },
+    {
+      id: 'start_append_history',
+      label: 'Start append history',
+      category: 'paging',
+      enabled: pageReady && feedReady,
+      reasonDisabled: pageReady && feedReady ? undefined : 'feed is not ready',
+    },
+    {
       id: 'send_message',
       label: 'Send message',
       category: 'message',
@@ -620,6 +647,16 @@ export function listE2EActions(state: E2EState): E2EActionDescriptor[] {
       reasonDisabled: pageReady && feedReady ? undefined : 'feed is not ready',
       payloadSchema: {
         body: 'string',
+        waitFor: ['optimistic', 'failed', 'idle'],
+      },
+    },
+    {
+      id: 'retry_failed_send',
+      label: 'Retry failed send',
+      category: 'message',
+      enabled: pageReady && feedReady,
+      reasonDisabled: pageReady && feedReady ? undefined : 'feed is not ready',
+      payloadSchema: {
         waitFor: ['optimistic', 'idle'],
       },
     },
@@ -641,8 +678,8 @@ export function listE2EActions(state: E2EState): E2EActionDescriptor[] {
       id: 'switch_feed',
       label: 'Switch feed',
       category: 'feed',
-      enabled: pageReady,
-      reasonDisabled: pageReady ? undefined : 'scenario is not ready',
+      enabled: canSwitchFeed,
+      reasonDisabled: canSwitchFeed ? undefined : 'scenario is not ready',
       payloadSchema: {
         feedId: 'string',
       },
@@ -814,6 +851,22 @@ export async function runE2EAction(input: {
           failureCode: 'start_prepend_history_timeout',
         })
         break
+      case 'append_history':
+        input.scenario.loadFutureBatch('edge-user')
+        await waitForActionPublication()
+        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
+          failureCode: 'append_history_timeout',
+        })
+        break
+      case 'start_append_history':
+        input.scenario.loadFutureBatch('edge-user')
+        await waitForActionPublication()
+        await waitForCondition(input.readState, isHistoryAppendPendingForAction, {
+          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 2_000,
+          failureCode: 'start_append_history_timeout',
+        })
+        break
       case 'send_message': {
         const body = getPayloadString(input.payload, 'body')
 
@@ -835,11 +888,13 @@ export async function runE2EAction(input: {
 
         await waitForActionPublication()
 
-        if (getPayloadString(input.payload, 'waitFor') === 'optimistic') {
+        const waitFor = getPayloadString(input.payload, 'waitFor')
+
+        if (waitFor === 'optimistic') {
           await waitForEvidence(
             input.readEvidence,
             (evidence) =>
-              hasVisibleOptimisticRow(evidence) &&
+              hasVisibleOptimisticRow(evidence, 'sending') &&
               hasPendingOperationEvidence(evidence, 'message.send'),
             {
               checkpointId: checkpointId ?? `after:${input.actionId}`,
@@ -850,9 +905,57 @@ export async function runE2EAction(input: {
           break
         }
 
+        if (waitFor === 'failed') {
+          await waitForEvidence(
+            input.readEvidence,
+            (evidence) =>
+              hasVisibleOptimisticRow(evidence, 'failed') &&
+              !hasPendingOperationEvidence(evidence, 'message.send'),
+            {
+              checkpointId: checkpointId ?? `after:${input.actionId}`,
+              timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 5_000,
+              failureCode: 'send_message_failed_timeout',
+            },
+          )
+          break
+        }
+
         await waitForCondition(input.readState, isRuntimeIdleForAction, {
           timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
           failureCode: 'send_message_timeout',
+        })
+        break
+      }
+      case 'retry_failed_send': {
+        const accepted = input.scenario.retryFailedSend()
+
+        if (!accepted) {
+          throw new E2EActionError(
+            'retry_failed_send_rejected',
+            'scenario rejected retry_failed_send',
+          )
+        }
+
+        await waitForActionPublication()
+
+        if (getPayloadString(input.payload, 'waitFor') === 'optimistic') {
+          await waitForEvidence(
+            input.readEvidence,
+            (evidence) =>
+              hasVisibleOptimisticRow(evidence, 'sending') &&
+              hasPendingOperationEvidence(evidence, 'message.send'),
+            {
+              checkpointId: checkpointId ?? `after:${input.actionId}`,
+              timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 5_000,
+              failureCode: 'retry_failed_send_optimistic_timeout',
+            },
+          )
+          break
+        }
+
+        await waitForCondition(input.readState, isRuntimeIdleForAction, {
+          timeoutMs: getPayloadNumber(input.payload, 'timeoutMs') ?? 7_000,
+          failureCode: 'retry_failed_send_timeout',
         })
         break
       }
@@ -1072,6 +1175,10 @@ function isHistoryPrependPendingForAction(state: E2EState): boolean {
   return state.ui.loadingBefore || hasPendingOperation(state, 'history.prepend')
 }
 
+function isHistoryAppendPendingForAction(state: E2EState): boolean {
+  return state.ui.loadingAfter || hasPendingOperation(state, 'history.append')
+}
+
 function isEventStormActiveForAction(state: E2EState): boolean {
   return (
     isRuntimeStableForSemanticAction(state) &&
@@ -1133,10 +1240,17 @@ function hasPendingOperationEvidence(
   return parsePendingOperations(evidence.ui.pendingOperation).includes(operation)
 }
 
-function hasVisibleOptimisticRow(evidence: E2EEvidence): boolean {
-  return evidence.viewport.visibleRows.some((row) =>
-    row.serializedKey.startsWith('optimistic:'),
-  )
+function hasVisibleOptimisticRow(
+  evidence: E2EEvidence,
+  status?: 'sending' | 'failed',
+): boolean {
+  return evidence.viewport.visibleRows.some((row) => {
+    if (row.itemKind !== 'optimistic') {
+      return false
+    }
+
+    return !status || row.optimisticStatus === status
+  })
 }
 
 async function waitForCondition(
@@ -1414,11 +1528,16 @@ function getScrollContainer(root: ParentNode): HTMLElement | null {
   )
 }
 
-function getVisibleRows(root: ParentNode, container: HTMLElement): E2EVisibleRow[] {
+function getVisibleRows(
+  root: ParentNode,
+  container: HTMLElement,
+  items: Array<MessageDataItem<unknown, unknown>> = [],
+): E2EVisibleRow[] {
   const viewportRect = container.getBoundingClientRect()
   const rows = Array.from(
     root.querySelectorAll<HTMLElement>('[data-message-row]'),
   )
+  const itemMetadata = createVisibleRowItemMetadata(items)
 
   return rows.flatMap((row) => {
     const rect = row.getBoundingClientRect()
@@ -1430,17 +1549,67 @@ function getVisibleRows(root: ParentNode, container: HTMLElement): E2EVisibleRow
     const serializedKey = row.dataset.messageRow
     const messageId =
       row.dataset.messageId ?? parseCommittedMessageId(row) ?? serializedKey
+    const metadata = serializedKey
+      ? itemMetadata.get(serializedKey) ?? inferVisibleRowItemMetadata(serializedKey)
+      : null
 
-    return messageId && serializedKey
+    return messageId && serializedKey && metadata
       ? [{
           messageId,
           serializedKey,
+          itemKind: metadata.itemKind,
+          optimisticStatus: metadata.optimisticStatus,
           top: rect.top - viewportRect.top,
           bottom: rect.bottom - viewportRect.top,
           height: rect.height,
         }]
       : []
   })
+}
+
+function createVisibleRowItemMetadata(
+  items: Array<MessageDataItem<unknown, unknown>>,
+): Map<string, {
+  itemKind: E2EVisibleRowItemKind
+  optimisticStatus?: 'sending' | 'failed'
+}> {
+  const metadata = new Map<string, {
+    itemKind: E2EVisibleRowItemKind
+    optimisticStatus?: 'sending' | 'failed'
+  }>()
+
+  for (const item of items) {
+    const serializedKey = serializeRuntimeItemKey(item.key)
+
+    if (item.kind === 'optimistic') {
+      metadata.set(serializedKey, {
+        itemKind: 'optimistic',
+        optimisticStatus: item.status,
+      })
+      continue
+    }
+
+    metadata.set(serializedKey, {
+      itemKind: item.kind,
+    })
+  }
+
+  return metadata
+}
+
+function inferVisibleRowItemMetadata(serializedKey: string): {
+  itemKind: E2EVisibleRowItemKind
+  optimisticStatus?: 'sending' | 'failed'
+} {
+  if (serializedKey.startsWith('optimistic:')) {
+    return { itemKind: 'optimistic' }
+  }
+
+  if (serializedKey.startsWith('committed:')) {
+    return { itemKind: 'committed' }
+  }
+
+  return { itemKind: 'tombstone' }
 }
 
 function getCurrentAnchorEvidence(

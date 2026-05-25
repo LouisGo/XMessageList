@@ -345,6 +345,7 @@ export function toCommittedItem(
 export function createOptimisticOutgoingItem(input: {
   clientMessageId: string
   body: string
+  status?: OptimisticMessageDataItem<DemoOptimisticMessageDraft>['status']
 }): OptimisticMessageDataItem<DemoOptimisticMessageDraft> {
   const contentVersion = Math.abs(hashCode(input.body)) + 1
 
@@ -358,7 +359,7 @@ export function createOptimisticOutgoingItem(input: {
       author: 'You',
       body: input.body,
     },
-    status: 'sending',
+    status: input.status ?? 'sending',
     version: contentVersion,
     contentVersion,
     estimatedHeight: input.body.length > 180 ? 230 : 76,

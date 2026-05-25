@@ -25,6 +25,10 @@ const QUOTE_PRECONDITION_SCENARIOS = new Set([
 ])
 const UNLOADED_QUOTE_PRECONDITION_SCENARIOS = new Set([
   'destination.quote-jump-unloaded-target',
+  'paging.append-slow-request-race',
+])
+const DELETED_QUOTE_PRECONDITION_SCENARIOS = new Set([
+  'destination.quote-jump-deleted-target',
 ])
 const LATEST_WINDOW_QUOTE_SEQUENCES = [69, 70, 71, 72, 73, 74, 75, 76]
 
@@ -109,10 +113,15 @@ export function createE2EDemoStore(
   const getMessagesAround = async (
     req: GetMessagesAroundReq,
   ): Promise<GetMessagesAroundResp<DemoMessage>> => {
-    const delayMs = activeScenario.faults?.historyPrependDelayMs
+    const prependDelayMs = activeScenario.faults?.historyPrependDelayMs
+    const appendDelayMs = activeScenario.faults?.historyAppendDelayMs
 
-    if (delayMs && req.before > 0 && req.after === 0) {
-      await delay(delayMs)
+    if (prependDelayMs && req.before > 0 && req.after === 0) {
+      await delay(prependDelayMs)
+    }
+
+    if (appendDelayMs && req.before === 0 && req.after > 0) {
+      await delay(appendDelayMs)
     }
 
     const feed = feeds.get(req.feedId)
@@ -205,9 +214,15 @@ function createScenarioSeedMessages(
   const messages = createDemoMessages(scenario.seedCount, scenario.feedId)
 
   if (!QUOTE_PRECONDITION_SCENARIOS.has(scenario.id)) {
-    return UNLOADED_QUOTE_PRECONDITION_SCENARIOS.has(scenario.id)
-      ? addLatestVisibleUnloadedQuote(messages)
-      : messages
+    if (UNLOADED_QUOTE_PRECONDITION_SCENARIOS.has(scenario.id)) {
+      return addLatestVisibleUnloadedQuote(messages)
+    }
+
+    if (DELETED_QUOTE_PRECONDITION_SCENARIOS.has(scenario.id)) {
+      return addLatestVisibleDeletedQuote(messages)
+    }
+
+    return messages
   }
 
   return addLatestWindowQuoteBand(messages)
@@ -276,6 +291,40 @@ function addLatestVisibleUnloadedQuote(messages: DemoMessage[]): DemoMessage[] {
       },
     }
   })
+}
+
+function addLatestVisibleDeletedQuote(messages: DemoMessage[]): DemoMessage[] {
+  const bySequence = new Map<number, DemoMessage>()
+
+  for (const message of messages) {
+    bySequence.set(message.sequence, message)
+  }
+
+  const targetSequence = Math.max(1, messages.length - 48)
+  const target = bySequence.get(targetSequence)
+  const originSequences = [messages.length - 1, messages.length]
+
+  if (!target) {
+    return messages
+  }
+
+  return messages
+    .filter((message) => message.sequence !== targetSequence)
+    .map((message) => {
+      if (!originSequences.includes(message.sequence)) {
+        return message
+      }
+
+      return {
+        ...message,
+        quote: {
+          messageId: target.id,
+          position: target.sequence,
+          author: target.author,
+          bodyPreview: createE2EQuotePreview(target.body),
+        },
+      }
+    })
 }
 
 function createE2EQuotePreview(body: string): string {

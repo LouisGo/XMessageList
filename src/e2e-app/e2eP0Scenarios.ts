@@ -13,7 +13,10 @@ export type E2EScenarioActionId =
   | 'append_message'
   | 'prepend_history'
   | 'start_prepend_history'
+  | 'append_history'
+  | 'start_append_history'
   | 'send_message'
+  | 'retry_failed_send'
   | 'follow_bottom'
   | 'jump_to_quoted_message'
   | 'switch_feed'
@@ -33,7 +36,13 @@ export type E2EActionStep =
       kind: 'action'
       actionId: E2EScenarioActionId
       payload?: Record<string, unknown>
-      checkpointAlias?: 'before' | 'during' | 'after' | 'final'
+      checkpointAlias?:
+        | 'before'
+        | 'during'
+        | 'failed'
+        | 'retrying'
+        | 'after'
+        | 'final'
     }
 
 export type E2EP0ActionStep = E2EActionStep

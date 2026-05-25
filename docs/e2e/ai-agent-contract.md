@@ -125,7 +125,10 @@ type E2EActionDescriptor = {
 | `append_message` | 通过 demo policy 追加一条消息 |
 | `prepend_history` | 通过 demo policy 加载历史 |
 | `start_prepend_history` | 触发历史加载，只等待 before 请求进入 pending，不等待 idle |
-| `send_message` | 发送消息；payload: `{ body: string, waitFor?: 'optimistic' | 'idle' }` |
+| `append_history` | 通过 demo policy 加载 newer page |
+| `start_append_history` | 触发 newer page 加载，只等待 after 请求进入 pending，不等待 idle |
+| `send_message` | 发送消息；payload: `{ body: string, waitFor?: 'optimistic' | 'failed' | 'idle' }` |
+| `retry_failed_send` | 重试当前 failed optimistic send；payload: `{ waitFor?: 'optimistic' | 'idle' }` |
 | `follow_bottom` | 点击或 dispatch follow bottom 语义动作 |
 | `jump_to_quoted_message` | 点击当前可见 quote，触发 destination jump |
 | `switch_feed` | 切换 active feed |
@@ -187,14 +190,17 @@ type E2EEventEvidence = {
 type E2EVisibleRow = {
   messageId: string
   serializedKey: string
+  itemKind: 'committed' | 'optimistic' | 'tombstone'
+  optimisticStatus?: 'sending' | 'failed'
   top: number
   bottom: number
   height: number
 }
 ```
 
-optimistic/committed 判定必须使用 `visibleRows[].serializedKey`，例如
-`optimistic:client-...` 或 `committed:<messageId>`；不要新增 DOM 属性来表达发送态。
+optimistic/committed 的身份仍以 `visibleRows[].serializedKey` 为准，例如
+`optimistic:client-...` 或 `committed:<messageId>`。`itemKind` 和
+`optimisticStatus` 只能从 runtime snapshot 派生，不新增 DOM 属性来表达发送态。
 
 ## 7. Semantic DOM Contract
 

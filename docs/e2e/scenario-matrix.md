@@ -154,7 +154,31 @@ Oracle:
 - after: `expectLatestMessageVisible`
 - `expectNoUnexpectedErrors`
 
-### 3.5 `dynamic-height.anchor-above-growth`
+### 3.5 `send.optimistic-fail-retry`
+
+目的：发送失败后保留 failed optimistic row，retry 使用同一 optimistic key，成功 ack 后再通过 `identity-remap` 变成 committed row。
+
+Actions:
+
+1. latest bootstrap。
+2. `send_message({ body, waitFor: 'failed' })`。
+3. wait idle。
+4. collect failed。
+5. `retry_failed_send({ waitFor: 'optimistic' })` collect retrying。
+6. wait idle。
+7. collect after。
+
+Oracle:
+
+- failed: `expectVisibleOptimisticRow({ status: 'failed' })`
+- failed: 不出现超过当前 feed message count 的 committed row。
+- retrying: `expectVisibleOptimisticRow({ status: 'sending' })`
+- retrying: optimistic serializedKey 与 failed 阶段一致。
+- after: `expectNoOptimisticRows`
+- after: `expectBottomLocked` 和 `expectLatestMessageVisible`
+- `expectNoUnexpectedErrors`
+
+### 3.6 `dynamic-height.anchor-above-growth`
 
 目的：anchor 上方异步内容增高后，阅读位置保持。
 
@@ -173,7 +197,7 @@ Oracle:
 - scroll correction 不触发 edge paging。
 - `expectNoUnexpectedErrors`
 
-### 3.6 `session.switch-restore-runtime-cache`
+### 3.7 `session.switch-restore-runtime-cache`
 
 目的：feed A 中部切到 B，再切回 A，恢复 projection / anchor / height cache。
 
@@ -237,7 +261,69 @@ Oracle:
 - `expectLoadedMessageCountDelta(before, after, 20)`
 - `expectNoUnexpectedErrors`
 
-### 4.4 `lifecycle.strictmode-attach-detach-attach`
+### 4.4 `paging.append-slow-request-race`
+
+目的：after/newer 分页慢请求未完成时重复触发 append，host 只能发起一次有效 after edge，并保持当前 anchor。
+
+Initial state:
+
+- 通过 unloaded quote jump 进入 partial middle window，确保 `hasMoreAfter=true`。
+
+Actions:
+
+1. latest bootstrap。
+2. `jump_to_quoted_message` 进入 around-target 中间窗口。
+3. wait idle。
+4. collect before。
+5. `start_append_history`，只等到 `loadingAfter` / `history.append` pending。
+6. pending 期间再次 `append_history`。
+7. collect after。
+
+Oracle:
+
+- `expectAnchorPreserved(before, after, { tolerancePx: 1 })`
+- `expectNeedMoreAfterWithin(after, 1)`
+- `expectLoadedMessageCountDelta(before, after, 20)`
+- `expectNoUnexpectedErrors`
+
+### 4.5 `destination.quote-jump-deleted-target`
+
+目的：quote 指向已删除但仍带 position 的历史消息时，runtime 发起 around-target 请求并 settle 到 nearby fallback，不高亮原 target。
+
+Actions:
+
+1. 使用 e2e seed 中 latest 可见 deleted quote。
+2. 点击当前可见 quote。
+3. wait idle。
+4. collect after。
+
+Oracle:
+
+- `expectNeedMessagesAroundObserved(after, { reason: 'jump' })`
+- `destinationSettled.resolution === 'fallback-deleted'`
+- resolved fallback target 可见。
+- `highlightedMessageId === null`
+- `expectNoUnexpectedErrors`
+
+### 4.6 `session.switch-during-pending-prepend`
+
+目的：before 分页 pending 时立即切会话，旧 feed 的迟到请求不能污染新 active feed。
+
+Actions:
+
+1. feed A scroll to middle。
+2. `start_prepend_history` 进入 pending。
+3. `switch_feed({ feedId: 'feed-release' })`。
+4. collect after。
+
+Oracle:
+
+- active feed 是 `feed-release`。
+- visible committed rows 均属于 active feed。
+- runtime idle。
+- `expectNoUnexpectedErrors`
+
+### 4.7 `lifecycle.strictmode-attach-detach-attach`
 
 目的：StrictMode 模拟 cleanup 不导致 observer 重复、runtime 销毁或 commit 丢失。
 
@@ -251,7 +337,7 @@ Oracle:
 - no duplicate viewportAnchorChanged detach for same real unmount。
 - `expectNoUnexpectedErrors`
 
-### 4.5 `recovery.bootstrap-commit-timeout`
+### 4.8 `recovery.bootstrap-commit-timeout`
 
 目的：commit timeout recovery 后，runtime 不留在中间态，sentinel 不误触发 edge need。
 

@@ -159,6 +159,9 @@ function E2EScenarioHost({
   const scenario = useDemoMessageScenario(runtimeCache, {
     api: store.api,
     storage: store.storage,
+    faults: {
+      sendFailureMode: scenarioDefinition.faults?.sendFailureMode,
+    },
   })
   const rootRef = useRef<HTMLElement | null>(null)
   const scenarioRef = useRef<DemoMessageScenario>(scenario)
@@ -167,6 +170,16 @@ function E2EScenarioHost({
     createBootingE2EState(scenarioDefinition.id),
   )
   const [viewportRemountToken, setViewportRemountToken] = useState(0)
+
+  useEffect(() => {
+    const originalAlert = window.alert
+
+    window.alert = () => undefined
+
+    return () => {
+      window.alert = originalAlert
+    }
+  }, [])
 
   useEffect(() => {
     scenarioRef.current = scenario

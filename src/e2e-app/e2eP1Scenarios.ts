@@ -5,6 +5,7 @@ export type E2EP1ScenarioId =
   | 'destination.quote-jump-visible-target'
   | 'destination.quote-jump-unloaded-target'
   | 'send.optimistic-ack-follow-bottom'
+  | 'send.optimistic-fail-retry'
   | 'dynamic-height.anchor-above-growth'
   | 'session.switch-restore-runtime-cache'
 
@@ -116,6 +117,56 @@ export const E2E_P1_SCENARIO_DEFINITIONS: E2EP1ScenarioDefinition[] = [
     ],
     oracleIds: [
       'expectVisibleOptimisticRow',
+      'expectRuntimeIdle',
+      'expectNoOptimisticRows',
+      'expectBottomLocked',
+      'expectLatestMessageVisible',
+    ],
+  },
+  {
+    id: 'send.optimistic-fail-retry',
+    priority: 'P1',
+    title: 'Optimistic send failure retries with same identity',
+    actionSteps: [
+      { kind: 'reset', scenarioId: 'send.optimistic-fail-retry' },
+      { kind: 'action', actionId: 'wait_for_ready' },
+      {
+        kind: 'action',
+        actionId: 'send_message',
+        payload: {
+          body: 'E2E failed optimistic send should retry with the same key.',
+          waitFor: 'failed',
+        },
+      },
+      { kind: 'action', actionId: 'wait_for_idle' },
+      {
+        kind: 'action',
+        actionId: 'collect_evidence',
+        payload: { checkpointId: 'failed' },
+        checkpointAlias: 'failed',
+      },
+      {
+        kind: 'action',
+        actionId: 'retry_failed_send',
+        payload: {
+          waitFor: 'optimistic',
+          checkpointId: 'retrying',
+        },
+        checkpointAlias: 'retrying',
+      },
+      { kind: 'action', actionId: 'wait_for_idle' },
+      {
+        kind: 'action',
+        actionId: 'collect_evidence',
+        payload: { checkpointId: 'after' },
+        checkpointAlias: 'after',
+      },
+    ],
+    oracleIds: [
+      'expectVisibleOptimisticRow:failed',
+      'expectVisibleOptimisticRow:sending',
+      'expectSameVisibleOptimisticKey',
+      'expectNoCommittedRowsBeyondFeedMessageCount',
       'expectRuntimeIdle',
       'expectNoOptimisticRows',
       'expectBottomLocked',

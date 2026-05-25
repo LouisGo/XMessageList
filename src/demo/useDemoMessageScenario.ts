@@ -184,9 +184,14 @@ export type DemoMessageScenarioApi = {
   getMessagesAround: typeof getMessagesAround
 }
 
+export type DemoMessageScenarioFaults = {
+  sendFailureMode?: 'fail-first-and-retry-succeeds'
+}
+
 export type DemoMessageScenarioOptions = {
   api?: DemoMessageScenarioApi
   storage?: DemoMessageScenarioStorage
+  faults?: DemoMessageScenarioFaults
 }
 
 const DEFAULT_DEMO_MESSAGE_SCENARIO_API: DemoMessageScenarioApi = {
@@ -224,6 +229,7 @@ export type DemoMessageScenario = {
   lastEvent: string
   selectFeed: (feedId: string) => void
   loadHistoryBatch: (source?: 'manual' | 'auto') => void
+  loadFutureBatch: (source?: 'edge-user') => void
   appendMessage: () => void
   appendLongBurst: () => void
   toggleEventStorm: () => void
@@ -233,6 +239,7 @@ export type DemoMessageScenario = {
   reactToMessage: (messageId: string) => void
   toggleDynamicHeight: () => void
   sendMessage: (body: string) => boolean
+  retryFailedSend: () => boolean
   followBottom: (source: 'sidebar' | 'floating') => void
   jumpToQuote: (input: {
     origin: { messageId: string; position?: number }
@@ -307,6 +314,12 @@ export function useDemoMessageScenario(
   const botPushActiveRef = useRef(false)
   const botPushTimerRef = useRef<number | null>(null)
   const highlightTimerRef = useRef<number | null>(null)
+  const sendFailureConsumedRef = useRef(false)
+  const failedOptimisticSendRef = useRef<{
+    feedId: string
+    clientMessageId: string
+    body: string
+  } | null>(null)
 
   const activeFeed = useMemo(
     () => getDemoFeedDefinition(activeFeedId),
@@ -859,6 +872,18 @@ export function useDemoMessageScenario(
 
       const result = await input.apply(feedId)
 
+      if (activeFeedIdRef.current !== feedId) {
+        await log({
+          requestId,
+          operation: input.operation,
+          phase: 'cancel',
+          feedId,
+          messageCount: messagesRef.current.length,
+          details: { reason: 'feed-switched-after-apply' },
+        })
+        return
+      }
+
       publishCurrentMessages(result.effect, result.kind, {
         anchor: result.anchor,
         anchorStatus: result.anchorStatus,
@@ -880,6 +905,19 @@ export function useDemoMessageScenario(
         details: result.details,
       })
     } catch (error) {
+      if (error instanceof DemoOperationCancelled) {
+        setLastEvent(`${input.operation} cancelled`)
+        await log({
+          requestId,
+          operation: input.operation,
+          phase: 'cancel',
+          feedId,
+          messageCount: messagesRef.current.length,
+          details: { reason: error.reason },
+        })
+        return
+      }
+
       const message = getErrorMessage(error)
       setLastEvent(`${input.operation} failed`)
       await log({
@@ -1331,7 +1369,7 @@ export function useDemoMessageScenario(
         // 先同步完整持久化 feed。分页边界必须由 BFF + 持久化数据共同决定，
         // demo 不能在触顶后私自再造更老消息，否则会把一个有限 feed 伪装成无限历史。
         const storeFeed = await storage.loadPersistedDemoFeed(feedId)
-        feedMessagesRef.current = storeFeed
+        const storeMessages = storeFeed
           ? normalizeDemoMessages(feedId, storeFeed.messages)
           : []
 
@@ -1355,6 +1393,11 @@ export function useDemoMessageScenario(
           throw new Error(resp.errorMessage)
         }
 
+        if (activeFeedIdRef.current !== feedId) {
+          throw new DemoOperationCancelled('feed-switched')
+        }
+
+        feedMessagesRef.current = storeMessages
         // BFF 返回 anchor 之前的消息，前端与当前视口合并
         const olderInView = resp.messages.filter(
           (message) => message.id !== oldestViewportMsg.id,
@@ -1453,7 +1496,7 @@ export function useDemoMessageScenario(
       details: { batchSize: PAGE_SIZE, source },
       apply: async (feedId) => {
         const storeFeed = await storage.loadPersistedDemoFeed(feedId)
-        feedMessagesRef.current = storeFeed
+        const storeMessages = storeFeed
           ? normalizeDemoMessages(feedId, storeFeed.messages)
           : []
 
@@ -1477,6 +1520,11 @@ export function useDemoMessageScenario(
           throw new Error(resp.errorMessage)
         }
 
+        if (activeFeedIdRef.current !== feedId) {
+          throw new DemoOperationCancelled('feed-switched')
+        }
+
+        feedMessagesRef.current = storeMessages
         const newerInView = resp.messages.filter(
           (message) => message.id !== newestViewportMsg.id,
         )
@@ -1529,7 +1577,7 @@ export function useDemoMessageScenario(
       details: { batchSize: PAGE_SIZE, source },
       apply: async (feedId) => {
         const storeFeed = await storage.loadPersistedDemoFeed(feedId)
-        feedMessagesRef.current = storeFeed
+        const storeMessages = storeFeed
           ? normalizeDemoMessages(feedId, storeFeed.messages)
           : []
 
@@ -1542,6 +1590,11 @@ export function useDemoMessageScenario(
           throw new Error(resp.errorMessage)
         }
 
+        if (activeFeedIdRef.current !== feedId) {
+          throw new DemoOperationCancelled('feed-switched')
+        }
+
+        feedMessagesRef.current = storeMessages
         messagesRef.current = normalizeDemoMessages(feedId, resp.messages)
         hasMoreBeforeRef.current = resp.hasMoreBefore
         hasMoreAfterRef.current = resp.hasMoreAfter
@@ -1616,7 +1669,7 @@ export function useDemoMessageScenario(
       },
       apply: async (feedId) => {
         const storeFeed = await storage.loadPersistedDemoFeed(feedId)
-        feedMessagesRef.current = storeFeed
+        const storeMessages = storeFeed
           ? normalizeDemoMessages(feedId, storeFeed.messages)
           : []
 
@@ -1631,6 +1684,11 @@ export function useDemoMessageScenario(
           throw new Error(resp.errorMessage)
         }
 
+        if (activeFeedIdRef.current !== feedId) {
+          throw new DemoOperationCancelled('feed-switched')
+        }
+
+        feedMessagesRef.current = storeMessages
         messagesRef.current = normalizeDemoMessages(feedId, resp.messages)
         hasMoreBeforeRef.current = resp.hasMoreBefore
         hasMoreAfterRef.current = resp.hasMoreAfter
@@ -1870,6 +1928,46 @@ export function useDemoMessageScenario(
     })
   }, [runLoggedOperation])
 
+  const publishOptimisticSendSnapshot = useCallback((input: {
+    feedId: string
+    clientMessageId: string
+    body: string
+    status: 'sending' | 'failed'
+    effect: DemoViewportEffect
+    kind: DemoSnapshotKind
+  }) => {
+    revisionRef.current += 1
+    hasMoreBeforeRef.current = computeHasMoreBefore(
+      feedMessagesRef.current,
+      messagesRef.current,
+    )
+    hasMoreAfterRef.current = computeHasMoreAfter(
+      feedMessagesRef.current,
+      messagesRef.current,
+    )
+    syncDisplayedCounts()
+    activeRuntimeRef.current?.setDataSnapshot(
+      createDemoSnapshotFromItems({
+        feedId: input.feedId,
+        generation: generationRef.current,
+        revision: revisionRef.current,
+        items: [
+          ...messagesRef.current.map(toCommittedItem),
+          createOptimisticOutgoingItem({
+            clientMessageId: input.clientMessageId,
+            body: input.body,
+            status: input.status,
+          }),
+        ],
+        effect: input.effect,
+        kind: input.kind,
+        hasMoreBefore: hasMoreBeforeRef.current,
+        hasMoreAfter: hasMoreAfterRef.current,
+      }),
+    )
+    saveCurrentFeedSessionState()
+  }, [saveCurrentFeedSessionState, syncDisplayedCounts])
+
   const sendMessage = useCallback((body: string): boolean => {
     const trimmed = body.trim()
 
@@ -1904,35 +2002,14 @@ export function useDemoMessageScenario(
     setLastEvent('sending message...')
 
     if (projectsIntoCurrentWindow) {
-      revisionRef.current += 1
-      hasMoreBeforeRef.current = computeHasMoreBefore(
-        feedMessagesRef.current,
-        messagesRef.current,
-      )
-      hasMoreAfterRef.current = computeHasMoreAfter(
-        feedMessagesRef.current,
-        messagesRef.current,
-      )
-      syncDisplayedCounts()
-      activeRuntimeRef.current?.setDataSnapshot(
-        createDemoSnapshotFromItems({
-          feedId,
-          generation: generationRef.current,
-          revision: revisionRef.current,
-          items: [
-            ...messagesRef.current.map(toCommittedItem),
-            createOptimisticOutgoingItem({
-              clientMessageId,
-              body: trimmed,
-            }),
-          ],
-          effect: 'auto-scroll-to-bottom',
-          kind: 'append',
-          hasMoreBefore: hasMoreBeforeRef.current,
-          hasMoreAfter: hasMoreAfterRef.current,
-        }),
-      )
-      saveCurrentFeedSessionState()
+      publishOptimisticSendSnapshot({
+        feedId,
+        clientMessageId,
+        body: trimmed,
+        status: 'sending',
+        effect: 'auto-scroll-to-bottom',
+        kind: 'append',
+      })
     }
 
     void log({
@@ -1960,6 +2037,45 @@ export function useDemoMessageScenario(
             feedId,
             messageCount: messagesRef.current.length,
             details: { reason: 'feed-switched', clientMessageId },
+          })
+          return
+        }
+
+        if (
+          options.faults?.sendFailureMode === 'fail-first-and-retry-succeeds' &&
+          !sendFailureConsumedRef.current
+        ) {
+          sendFailureConsumedRef.current = true
+          failedOptimisticSendRef.current = {
+            feedId,
+            clientMessageId,
+            body: trimmed,
+          }
+
+          if (projectsIntoCurrentWindow) {
+            publishOptimisticSendSnapshot({
+              feedId,
+              clientMessageId,
+              body: trimmed,
+              status: 'failed',
+              effect: 'items-change',
+              kind: 'patch',
+            })
+          }
+
+          setLastEvent('message send failed')
+          await log({
+            requestId,
+            operation: 'message.send',
+            phase: 'error',
+            feedId,
+            messageCount: messagesRef.current.length,
+            error: 'send-failed-e2e',
+            details: {
+              ...details,
+              clientMessageId,
+              optimistic: projectsIntoCurrentWindow,
+            },
           })
           return
         }
@@ -2100,9 +2216,152 @@ export function useDemoMessageScenario(
     endPendingOperation,
     log,
     persistCurrentFeed,
+    publishOptimisticSendSnapshot,
     publishCurrentMessages,
     saveCurrentFeedSessionState,
     storage,
+    syncDisplayedCounts,
+    options.faults?.sendFailureMode,
+  ])
+
+  const retryFailedSend = useCallback((): boolean => {
+    const failed = failedOptimisticSendRef.current
+
+    if (
+      !failed ||
+      feedLoadingRef.current ||
+      failed.feedId !== activeFeedIdRef.current
+    ) {
+      return false
+    }
+
+    const feedId = failed.feedId
+    const requestId = createDemoRequestId('message.send')
+    const details = {
+      bodyLength: failed.body.length,
+      lineCount: failed.body.split('\n').length,
+      retry: true,
+      clientMessageId: failed.clientMessageId,
+    }
+
+    beginPendingOperation('message.send')
+    setLastEvent('retrying message...')
+    publishOptimisticSendSnapshot({
+      feedId,
+      clientMessageId: failed.clientMessageId,
+      body: failed.body,
+      status: 'sending',
+      effect: 'items-change',
+      kind: 'patch',
+    })
+
+    void log({
+      requestId,
+      operation: 'message.send',
+      phase: 'start',
+      feedId,
+      messageCount: messagesRef.current.length,
+      details,
+    })
+
+    void (async () => {
+      try {
+        await sleep(OPERATION_DELAYS['message.send'])
+
+        if (activeFeedIdRef.current !== feedId) {
+          await log({
+            requestId,
+            operation: 'message.send',
+            phase: 'cancel',
+            feedId,
+            messageCount: messagesRef.current.length,
+            details: { reason: 'feed-switched', ...details },
+          })
+          return
+        }
+
+        const message = createOutgoingMessage(failed.body, {
+          feedId,
+          sequence: getNextMessageSequence(feedMessagesRef.current),
+          quoteCandidates: feedMessagesRef.current,
+          random: () => 1,
+        })
+
+        feedMessagesRef.current = [...feedMessagesRef.current, message]
+        messagesRef.current = [...messagesRef.current, message]
+        failedOptimisticSendRef.current = null
+        lastViewportAnchorRef.current = undefined
+        revisionRef.current += 1
+        hasMoreBeforeRef.current = computeHasMoreBefore(
+          feedMessagesRef.current,
+          messagesRef.current,
+        )
+        hasMoreAfterRef.current = computeHasMoreAfter(
+          feedMessagesRef.current,
+          messagesRef.current,
+        )
+        syncDisplayedCounts()
+        activeRuntimeRef.current?.setDataSnapshot(
+          createDemoIdentityRemapSnapshot({
+            feedId,
+            generation: generationRef.current,
+            revision: revisionRef.current,
+            items: messagesRef.current.map(toCommittedItem),
+            identityRemaps: [
+              createOutgoingIdentityRemap({
+                clientMessageId: failed.clientMessageId,
+                messageId: message.id,
+              }),
+            ],
+            anchor: {
+              messageId: message.id,
+              position: message.sequence,
+            },
+            hasMoreBefore: hasMoreBeforeRef.current,
+            hasMoreAfter: hasMoreAfterRef.current,
+          }),
+        )
+        activeRuntimeRef.current?.dispatch({ type: 'followBottom' })
+        saveCurrentFeedSessionState()
+        await persistCurrentFeed()
+        setLastEvent(`sent ${message.id}`)
+        await log({
+          requestId,
+          operation: 'message.send',
+          phase: 'success',
+          feedId,
+          messageCount: messagesRef.current.length,
+          details: {
+            ...details,
+            sentId: message.id,
+            visibleInCurrentWindow: true,
+            viewportModifier: 'identity-remap',
+          },
+        })
+      } catch (error) {
+        setLastEvent('message retry failed')
+        await log({
+          requestId,
+          operation: 'message.send',
+          phase: 'error',
+          feedId,
+          messageCount: messagesRef.current.length,
+          error: getErrorMessage(error),
+          details,
+        })
+      } finally {
+        endPendingOperation('message.send')
+      }
+    })()
+
+    return true
+  }, [
+    beginPendingOperation,
+    endPendingOperation,
+    log,
+    persistCurrentFeed,
+    publishOptimisticSendSnapshot,
+    saveCurrentFeedSessionState,
     syncDisplayedCounts,
   ])
 
@@ -2597,6 +2856,7 @@ export function useDemoMessageScenario(
     lastEvent,
     selectFeed,
     loadHistoryBatch,
+    loadFutureBatch,
     appendMessage,
     appendLongBurst,
     toggleEventStorm,
@@ -2606,6 +2866,7 @@ export function useDemoMessageScenario(
     reactToMessage,
     toggleDynamicHeight,
     sendMessage,
+    retryFailedSend,
     followBottom,
     jumpToQuote,
     clearFeed,
@@ -2621,6 +2882,12 @@ function sleep(timeoutMs: number): Promise<void> {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+class DemoOperationCancelled extends Error {
+  constructor(readonly reason: string) {
+    super(reason)
+  }
 }
 
 function readNumberDetail(

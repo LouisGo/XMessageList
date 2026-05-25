@@ -4,6 +4,9 @@ export type E2EP2ScenarioId =
   | 'edge.custom-scrollbar-drag-top'
   | 'edge.custom-scrollbar-drag-bottom'
   | 'paging.prepend-slow-request-race'
+  | 'paging.append-slow-request-race'
+  | 'destination.quote-jump-deleted-target'
+  | 'session.switch-during-pending-prepend'
   | 'lifecycle.strictmode-attach-detach-attach'
   | 'recovery.bootstrap-commit-timeout'
 
@@ -86,6 +89,86 @@ export const E2E_P2_SCENARIO_DEFINITIONS: E2EP2ScenarioDefinition[] = [
       'expectAnchorPreserved',
       'expectNeedMoreBeforeWithin:1',
       'expectLoadedMessageCountDelta:20',
+    ],
+  },
+  {
+    id: 'paging.append-slow-request-race',
+    priority: 'P2',
+    title: 'Slow append request deduplicates edge race',
+    actionSteps: [
+      { kind: 'reset', scenarioId: 'paging.append-slow-request-race' },
+      { kind: 'action', actionId: 'wait_for_ready' },
+      { kind: 'action', actionId: 'jump_to_quoted_message' },
+      { kind: 'action', actionId: 'wait_for_idle' },
+      {
+        kind: 'action',
+        actionId: 'collect_evidence',
+        payload: { checkpointId: 'before' },
+        checkpointAlias: 'before',
+      },
+      { kind: 'action', actionId: 'start_append_history' },
+      { kind: 'action', actionId: 'append_history' },
+      {
+        kind: 'action',
+        actionId: 'collect_evidence',
+        payload: { checkpointId: 'after' },
+        checkpointAlias: 'after',
+      },
+    ],
+    oracleIds: [
+      'expectRuntimeIdle',
+      'expectAnchorPreserved',
+      'expectNeedMoreAfterWithin:1',
+      'expectLoadedMessageCountDelta:20',
+    ],
+  },
+  {
+    id: 'destination.quote-jump-deleted-target',
+    priority: 'P2',
+    title: 'Quote jump deleted target falls back nearby',
+    actionSteps: [
+      { kind: 'reset', scenarioId: 'destination.quote-jump-deleted-target' },
+      { kind: 'action', actionId: 'wait_for_ready' },
+      { kind: 'action', actionId: 'jump_to_quoted_message' },
+      { kind: 'action', actionId: 'wait_for_idle' },
+      {
+        kind: 'action',
+        actionId: 'collect_evidence',
+        payload: { checkpointId: 'after' },
+        checkpointAlias: 'after',
+      },
+    ],
+    oracleIds: [
+      'expectRuntimeIdle',
+      'expectNeedMessagesAroundObserved:jump',
+      'expectDestinationFallbackDeleted',
+    ],
+  },
+  {
+    id: 'session.switch-during-pending-prepend',
+    priority: 'P2',
+    title: 'Session switch during pending prepend avoids stale rows',
+    actionSteps: [
+      { kind: 'reset', scenarioId: 'session.switch-during-pending-prepend' },
+      { kind: 'action', actionId: 'wait_for_ready' },
+      { kind: 'action', actionId: 'scroll_to_middle' },
+      { kind: 'action', actionId: 'start_prepend_history' },
+      {
+        kind: 'action',
+        actionId: 'switch_feed',
+        payload: { feedId: 'feed-release', timeoutMs: 10_000 },
+      },
+      {
+        kind: 'action',
+        actionId: 'collect_evidence',
+        payload: { checkpointId: 'after' },
+        checkpointAlias: 'after',
+      },
+    ],
+    oracleIds: [
+      'expectRuntimeIdle',
+      'expectActiveFeed:feed-release',
+      'expectVisibleRowsBelongToActiveFeed',
     ],
   },
   {

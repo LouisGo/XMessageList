@@ -19,6 +19,8 @@ import {
 import {
   expectAnchorPreserved,
   expectBottomLocked,
+  expectActiveFeed,
+  expectDestinationFallbackDeleted,
   expectDestinationSettledOnTarget,
   expectDestinationOutcomeRecorded,
   expectDiagnosticObserved,
@@ -27,6 +29,7 @@ import {
   expectNeedMoreAfterWithin,
   expectNeedMoreBeforeWithin,
   expectNeedMessagesAroundObserved,
+  expectNoCommittedRowsBeyondFeedMessageCount,
   expectNoFeedPollution,
   expectNoFollowWhenUserReading,
   expectNoOptimisticRows,
@@ -34,7 +37,9 @@ import {
   expectNoWhiteScreen,
   expectRuntimeIdle,
   expectRuntimeAttachedOnce,
+  expectSameVisibleOptimisticKey,
   expectVisibleOptimisticRow,
+  expectVisibleRowsBelongToActiveFeed,
   expectViewportErrorObserved,
 } from '../e2eOracles'
 import { getE2EScenarioDefinition } from '../e2eScenarioRegistry'
@@ -253,7 +258,10 @@ describe('e2e deterministic oracles', () => {
       viewport: {
         visibleRows: [
           createVisibleRow('feed-runtime-m-80'),
-          createVisibleRow('optimistic:client-1', 'optimistic:client-1'),
+          createVisibleRow('optimistic:client-1', 'optimistic:client-1', {
+            itemKind: 'optimistic',
+            optimisticStatus: 'sending',
+          }),
         ],
       },
       events: {
@@ -266,6 +274,7 @@ describe('e2e deterministic oracles', () => {
     })
 
     expect(expectVisibleOptimisticRow(duringSend).ok).toBe(true)
+    expect(expectVisibleOptimisticRow(duringSend, { status: 'sending' }).ok).toBe(true)
     expect(expectNoOptimisticRows(duringSend).ok).toBe(false)
     expect(
       expectNeedMessagesAroundObserved(duringSend, {
@@ -280,6 +289,79 @@ describe('e2e deterministic oracles', () => {
         20,
       ).ok,
     ).toBe(true)
+  })
+
+  it('checks retry and deleted quote fallback correctness helpers', () => {
+    const failed = createEvidence({
+      viewport: {
+        visibleRows: [
+          createVisibleRow('feed-runtime-m-80'),
+          createVisibleRow('optimistic:client-1', 'optimistic:client-1', {
+            itemKind: 'optimistic',
+            optimisticStatus: 'failed',
+          }),
+        ],
+      },
+    })
+    const retrying = createEvidence({
+      viewport: {
+        visibleRows: [
+          createVisibleRow('feed-runtime-m-80'),
+          createVisibleRow('optimistic:client-1', 'optimistic:client-1', {
+            itemKind: 'optimistic',
+            optimisticStatus: 'sending',
+          }),
+        ],
+      },
+    })
+    const fallback = createEvidence({
+      runtime: {
+        destinationState: 'settled',
+      },
+      events: {
+        destinationSettled: [{
+          intent: 'jump',
+          targetMessageId: 'feed-runtime-m-32',
+          resolvedMessageId: 'feed-runtime-m-33',
+          resolution: 'fallback-deleted',
+        }],
+      },
+      viewport: {
+        visibleRows: [createVisibleRow('feed-runtime-m-33')],
+      },
+    })
+
+    expect(expectVisibleOptimisticRow(failed, { status: 'failed' }).ok).toBe(true)
+    expect(expectSameVisibleOptimisticKey(failed, retrying).ok).toBe(true)
+    expect(expectNoCommittedRowsBeyondFeedMessageCount(failed).ok).toBe(true)
+    expect(expectNoCommittedRowsBeyondFeedMessageCount(createEvidence({
+      viewport: {
+        visibleRows: [createVisibleRow('feed-runtime-m-81')],
+      },
+    })).ok).toBe(false)
+    expect(expectDestinationFallbackDeleted(fallback).ok).toBe(true)
+  })
+
+  it('checks active feed and stale row pollution after switching sessions', () => {
+    const releaseEvidence = createEvidence({
+      feed: {
+        activeFeedId: 'feed-release',
+      },
+      viewport: {
+        visibleRows: [createVisibleRow('feed-release-m-80')],
+      },
+    })
+
+    expect(expectActiveFeed(releaseEvidence, 'feed-release').ok).toBe(true)
+    expect(expectVisibleRowsBelongToActiveFeed(releaseEvidence).ok).toBe(true)
+    expect(expectVisibleRowsBelongToActiveFeed(createEvidence({
+      feed: {
+        activeFeedId: 'feed-release',
+      },
+      viewport: {
+        visibleRows: [createVisibleRow('feed-runtime-m-80')],
+      },
+    })).ok).toBe(false)
   })
 
   it('checks P3 stress helpers without promoting them to gates', () => {
@@ -326,6 +408,7 @@ describe('P1 e2e scenario definitions', () => {
       'destination.quote-jump-visible-target',
       'destination.quote-jump-unloaded-target',
       'send.optimistic-ack-follow-bottom',
+      'send.optimistic-fail-retry',
       'dynamic-height.anchor-above-growth',
       'session.switch-restore-runtime-cache',
     ])
@@ -345,6 +428,9 @@ describe('P2 e2e scenario definitions', () => {
       'edge.custom-scrollbar-drag-top',
       'edge.custom-scrollbar-drag-bottom',
       'paging.prepend-slow-request-race',
+      'paging.append-slow-request-race',
+      'destination.quote-jump-deleted-target',
+      'session.switch-during-pending-prepend',
       'lifecycle.strictmode-attach-detach-attach',
       'recovery.bootstrap-commit-timeout',
     ])
@@ -502,12 +588,15 @@ function createAnchor(messageId: string, top: number): NonNullable<
 function createVisibleRow(
   messageId: string,
   serializedKey = `committed:${messageId}`,
+  overrides: Partial<E2EEvidence['viewport']['visibleRows'][number]> = {},
 ): E2EEvidence['viewport']['visibleRows'][number] {
   return {
     messageId,
     serializedKey,
+    itemKind: 'committed',
     top: 0,
     bottom: 40,
     height: 40,
+    ...overrides,
   }
 }

@@ -11,6 +11,8 @@ export type E2EScenarioDefinition = {
   faults?: {
     bootstrapCommitTimeout?: 'drop-first-commit-and-retry'
     historyPrependDelayMs?: number
+    historyAppendDelayMs?: number
+    sendFailureMode?: 'fail-first-and-retry-succeeds'
   }
 }
 
@@ -67,6 +69,16 @@ const P0_SCENARIOS: E2EScenarioDefinition[] = [
     seedLabel: 'p1-send-optimistic-ack-v1',
   },
   {
+    id: 'send.optimistic-fail-retry',
+    title: 'Optimistic send failure retry',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p1-send-optimistic-fail-retry-v1',
+    faults: {
+      sendFailureMode: 'fail-first-and-retry-succeeds',
+    },
+  },
+  {
     id: 'dynamic-height.anchor-above-growth',
     title: 'Dynamic height anchor preservation',
     feedId: DEFAULT_FEED.id,
@@ -100,6 +112,33 @@ const P0_SCENARIOS: E2EScenarioDefinition[] = [
     feedId: DEFAULT_FEED.id,
     seedCount: DEFAULT_FEED.seedCount,
     seedLabel: 'p2-prepend-slow-request-race-v1',
+    faults: {
+      historyPrependDelayMs: 400,
+    },
+  },
+  {
+    id: 'paging.append-slow-request-race',
+    title: 'Slow append request race',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p2-append-slow-request-race-v1',
+    faults: {
+      historyAppendDelayMs: 400,
+    },
+  },
+  {
+    id: 'destination.quote-jump-deleted-target',
+    title: 'Quote jump deleted target fallback',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p2-quote-jump-deleted-target-v1',
+  },
+  {
+    id: 'session.switch-during-pending-prepend',
+    title: 'Session switch during pending prepend',
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: 'p2-switch-during-pending-prepend-v1',
     faults: {
       historyPrependDelayMs: 400,
     },

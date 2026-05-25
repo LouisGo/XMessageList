@@ -108,6 +108,43 @@ describe('createE2EDemoStore', () => {
     ).toBe(true)
   })
 
+  it('seeds deleted quote targets as absent feed rows with a position fallback', async () => {
+    const scenario = getE2EScenarioDefinition(
+      'destination.quote-jump-deleted-target',
+    )
+
+    expect(scenario).not.toBeNull()
+
+    if (!scenario) {
+      return
+    }
+
+    const store = createE2EDemoStore(scenario)
+    const latest = await store.api.getLatestMessages({
+      feedId: scenario.feedId,
+      count: 20,
+    })
+    const all = await store.storage.loadPersistedDemoFeed(scenario.feedId)
+
+    expect(latest.ok).toBe(true)
+    expect(all).not.toBeNull()
+
+    if (!latest.ok || !all) {
+      return
+    }
+
+    const quotedRows = latest.messages.filter((message) => message.quote)
+    const allIds = new Set(all.messages.map((message) => message.id))
+
+    expect(quotedRows.length).toBeGreaterThan(0)
+    expect(
+      quotedRows.every((message) => {
+        const quote = message.quote
+        return quote && !allIds.has(quote.messageId) && quote.position > 0
+      }),
+    ).toBe(true)
+  })
+
   it('delays only history prepend requests when the scenario fault is active', async () => {
     vi.useFakeTimers()
 
@@ -142,6 +179,45 @@ describe('createE2EDemoStore', () => {
       expect(prependSettled).toBe(false)
       await vi.advanceTimersByTimeAsync(1)
       await expect(prepend).resolves.toMatchObject({ ok: true })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('delays only history append requests when the scenario fault is active', async () => {
+    vi.useFakeTimers()
+
+    try {
+      const baseScenario = getDefaultE2EScenarioDefinition()
+      const store = createE2EDemoStore({
+        ...baseScenario,
+        faults: {
+          historyAppendDelayMs: 100,
+        },
+      })
+      let appendSettled = false
+
+      const prepend = store.api.getMessagesAround({
+        feedId: baseScenario.feedId,
+        anchor: { messageId: `${baseScenario.feedId}-m-61` },
+        before: 20,
+        after: 0,
+      })
+      const append = store.api.getMessagesAround({
+        feedId: baseScenario.feedId,
+        anchor: { messageId: `${baseScenario.feedId}-m-61` },
+        before: 0,
+        after: 20,
+      }).then((resp) => {
+        appendSettled = true
+        return resp
+      })
+
+      await expect(prepend).resolves.toMatchObject({ ok: true })
+      await vi.advanceTimersByTimeAsync(99)
+      expect(appendSettled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(append).resolves.toMatchObject({ ok: true })
     } finally {
       vi.useRealTimers()
     }

@@ -18,6 +18,7 @@ import {
 } from '../demoLocalStoreClient'
 import {
   type DemoMessageScenario,
+  type DemoMessageScenarioOptions,
   useDemoMessageScenario,
 } from '../useDemoMessageScenario'
 import type { DemoFeedRuntimeCache } from '../useDemoFeedRuntimeCache'
@@ -115,17 +116,19 @@ function createRuntimeStub(
 function TestHarness({
   runtime,
   runtimeCache,
+  scenarioOptions,
   onScenario,
 }: {
   runtime?: RuntimeStub
   runtimeCache?: DemoFeedRuntimeCache
+  scenarioOptions?: DemoMessageScenarioOptions
   onScenario: (scenario: DemoMessageScenario) => void
 }) {
   const resolvedRuntimeCache = useMemo(
     () => runtimeCache ?? createRuntimeCacheStub(assertRuntimeStub(runtime)),
     [runtime, runtimeCache],
   )
-  const scenario = useDemoMessageScenario(resolvedRuntimeCache)
+  const scenario = useDemoMessageScenario(resolvedRuntimeCache, scenarioOptions)
 
   useEffect(() => {
     onScenario(scenario)
@@ -1142,6 +1145,87 @@ describe('useDemoMessageScenario', () => {
         : undefined,
     ).toBe('feed-runtime-m-81')
     expect(store.get('feed-runtime')?.lastViewportAnchor).toBeUndefined()
+  })
+
+  it('keeps failed optimistic send identity when retry succeeds', async () => {
+    const { runtime } = createRuntimeStub()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scenario: DemoMessageScenario | null = null
+
+    await act(async () => {
+      root.render(
+        <TestHarness
+          runtime={runtime}
+          scenarioOptions={{
+            faults: {
+              sendFailureMode: 'fail-first-and-retry-succeeds',
+            },
+          }}
+          onScenario={(next) => {
+            scenario = next
+          }}
+        />,
+      )
+    })
+
+    await flushTimers(180)
+
+    await act(async () => {
+      expect(assertScenario(scenario).sendMessage('retry me from test')).toBe(true)
+    })
+
+    const sendingSnapshot = vi.mocked(runtime.setDataSnapshot).mock.calls.at(-1)?.[0]
+    const sendingItem = sendingSnapshot?.items.at(-1)
+    const optimisticKey = sendingItem?.key
+
+    expect(sendingItem?.kind).toBe('optimistic')
+    expect(sendingItem?.kind === 'optimistic' ? sendingItem.status : undefined)
+      .toBe('sending')
+
+    await flushTimers(60)
+
+    const failedSnapshot = vi.mocked(runtime.setDataSnapshot).mock.calls.at(-1)?.[0]
+    const failedItem = failedSnapshot?.items.at(-1)
+
+    expect(assertScenario(scenario).messageCount).toBe(40)
+    expect(failedItem?.kind).toBe('optimistic')
+    expect(failedItem?.key).toEqual(optimisticKey)
+    expect(failedItem?.kind === 'optimistic' ? failedItem.status : undefined)
+      .toBe('failed')
+    expect(
+      store.get('feed-runtime')?.messages.some(
+        (message) => message.id === 'feed-runtime-m-41',
+      ),
+    ).toBe(false)
+
+    await act(async () => {
+      expect(assertScenario(scenario).retryFailedSend()).toBe(true)
+    })
+
+    const retryingSnapshot = vi.mocked(runtime.setDataSnapshot).mock.calls.at(-1)?.[0]
+    const retryingItem = retryingSnapshot?.items.at(-1)
+
+    expect(retryingItem?.kind).toBe('optimistic')
+    expect(retryingItem?.key).toEqual(optimisticKey)
+    expect(
+      retryingItem?.kind === 'optimistic' ? retryingItem.status : undefined,
+    ).toBe('sending')
+
+    await flushTimers(60)
+
+    const committedSnapshot = vi.mocked(runtime.setDataSnapshot).mock.calls.at(-1)?.[0]
+    const committedItem = committedSnapshot?.items.at(-1)
+
+    expect(assertScenario(scenario).messageCount).toBe(41)
+    expect(committedSnapshot?.change.viewportModifier).toBe('identity-remap')
+    expect(committedItem?.kind).toBe('committed')
+    expect(
+      committedItem?.kind === 'committed'
+        ? committedItem.key.messageId
+        : undefined,
+    ).toBe('feed-runtime-m-41')
+    expect(runtime.dispatch).toHaveBeenLastCalledWith({ type: 'followBottom' })
   })
 
   it('toggles advanced event storm as a continuous tail event stream', async () => {

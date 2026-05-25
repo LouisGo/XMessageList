@@ -77,6 +77,8 @@ type ViewportEvidence = {
   visibleRows: Array<{
     messageId: string
     serializedKey: string
+    itemKind: 'committed' | 'optimistic' | 'tombstone'
+    optimisticStatus?: 'sending' | 'failed'
     top: number
     bottom: number
     height: number
@@ -85,6 +87,7 @@ type ViewportEvidence = {
 ```
 
 Visible rows 必须基于真实 DOM rect 和 viewport intersection 计算，不能只读 projection items。
+`itemKind` / `optimisticStatus` 必须从 runtime snapshot 派生，不新增 DOM 属性。
 
 ## 6. Anchor Evidence
 
@@ -121,8 +124,14 @@ type EventEvidence = {
   }>
   needMoreBefore: number
   needMoreAfter: number
+  needMessagesAround: Array<{
+    reason: string
+    messageId: string
+    position?: number
+  }>
   destinationSettled: Array<{
     intent: string
+    resolution?: string
     targetMessageId?: string
     resolvedMessageId?: string
   }>
@@ -299,4 +308,3 @@ None
 ```
 
 `.logs/` 不进入 git。
-

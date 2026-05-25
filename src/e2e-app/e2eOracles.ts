@@ -24,6 +24,10 @@ export type NeedMessagesAroundOptions = {
   messageId?: string
 }
 
+export type VisibleOptimisticRowOptions = {
+  status?: 'sending' | 'failed'
+}
+
 export function expectRuntimeIdle(evidence: E2EEvidence): E2EOracleResult {
   const failures: string[] = []
 
@@ -118,14 +122,20 @@ export function expectBottomLocked(
 
 export function expectVisibleOptimisticRow(
   evidence: E2EEvidence,
+  options: VisibleOptimisticRowOptions = {},
 ): E2EOracleResult {
-  const optimisticRows = evidence.viewport.visibleRows.filter((row) =>
-    row.serializedKey.startsWith('optimistic:'),
-  )
+  const optimisticRows = evidence.viewport.visibleRows.filter((row) => {
+    if (row.itemKind !== 'optimistic') {
+      return false
+    }
+
+    return !options.status || row.optimisticStatus === options.status
+  })
 
   return optimisticRows.length > 0
     ? pass('expectVisibleOptimisticRow', 'visible optimistic row observed')
     : fail('expectVisibleOptimisticRow', 'visible optimistic row missing', {
+        expectedStatus: options.status,
         visibleRows: evidence.viewport.visibleRows,
       })
 }
@@ -133,8 +143,8 @@ export function expectVisibleOptimisticRow(
 export function expectNoOptimisticRows(
   evidence: E2EEvidence,
 ): E2EOracleResult {
-  const optimisticRows = evidence.viewport.visibleRows.filter((row) =>
-    row.serializedKey.startsWith('optimistic:'),
+  const optimisticRows = evidence.viewport.visibleRows.filter(
+    (row) => row.itemKind === 'optimistic',
   )
 
   return optimisticRows.length === 0
@@ -142,6 +152,67 @@ export function expectNoOptimisticRows(
     : fail('expectNoOptimisticRows', 'optimistic rows still visible', {
         optimisticRows,
       })
+}
+
+export function expectSameVisibleOptimisticKey(
+  before: E2EEvidence,
+  after: E2EEvidence,
+): E2EOracleResult {
+  const beforeKey = before.viewport.visibleRows.find(
+    (row) => row.itemKind === 'optimistic',
+  )?.serializedKey
+  const afterKey = after.viewport.visibleRows.find(
+    (row) => row.itemKind === 'optimistic',
+  )?.serializedKey
+  const failures: string[] = []
+
+  if (!beforeKey) {
+    failures.push('before optimistic row is missing')
+  }
+
+  if (!afterKey) {
+    failures.push('after optimistic row is missing')
+  }
+
+  if (beforeKey && afterKey && beforeKey !== afterKey) {
+    failures.push(`optimistic key changed from ${beforeKey} to ${afterKey}`)
+  }
+
+  return failures.length === 0
+    ? pass('expectSameVisibleOptimisticKey', 'visible optimistic key is stable')
+    : fail('expectSameVisibleOptimisticKey', 'visible optimistic key changed', {
+        failures,
+        beforeKey,
+        afterKey,
+      })
+}
+
+export function expectNoCommittedRowsBeyondFeedMessageCount(
+  evidence: E2EEvidence,
+): E2EOracleResult {
+  const activeFeedPrefix = `${evidence.feed.activeFeedId}-m-`
+  const extraCommittedRows = evidence.viewport.visibleRows.filter((row) => {
+    if (row.itemKind !== 'committed' || !row.messageId.startsWith(activeFeedPrefix)) {
+      return false
+    }
+
+    const sequence = Number(row.messageId.slice(activeFeedPrefix.length))
+    return Number.isFinite(sequence) && sequence > evidence.feed.messageCount
+  })
+
+  return extraCommittedRows.length === 0
+    ? pass(
+        'expectNoCommittedRowsBeyondFeedMessageCount',
+        'no committed row beyond feed count observed',
+      )
+    : fail(
+        'expectNoCommittedRowsBeyondFeedMessageCount',
+        'committed row appeared before ack',
+        {
+          messageCount: evidence.feed.messageCount,
+          extraCommittedRows,
+        },
+      )
 }
 
 export function expectAnchorPreserved(
@@ -294,6 +365,58 @@ export function expectDestinationSettledOnTarget(
       )
 }
 
+export function expectDestinationFallbackDeleted(
+  evidence: E2EEvidence,
+): E2EOracleResult {
+  const settled = evidence.events.destinationSettled.at(-1)
+  const visibleIds = evidence.viewport.visibleRows.map((row) => row.messageId)
+  const failures: string[] = []
+
+  if (!settled) {
+    failures.push('destinationSettled event is missing')
+  }
+
+  if (settled && settled.resolution !== 'fallback-deleted') {
+    failures.push(`resolution is ${settled.resolution ?? 'missing'}`)
+  }
+
+  if (settled?.targetMessageId && settled.resolvedMessageId) {
+    if (settled.targetMessageId === settled.resolvedMessageId) {
+      failures.push('resolved target did not fallback to a different message')
+    }
+  }
+
+  if (!settled?.resolvedMessageId) {
+    failures.push('resolved fallback target is missing')
+  } else if (!visibleIds.includes(settled.resolvedMessageId)) {
+    failures.push(`resolved fallback ${settled.resolvedMessageId} is not visible`)
+  }
+
+  if (evidence.ui.highlightedMessageId !== null) {
+    failures.push(`highlight is ${evidence.ui.highlightedMessageId}`)
+  }
+
+  if (evidence.runtime.destinationState !== 'settled') {
+    failures.push(`destination state is ${evidence.runtime.destinationState}`)
+  }
+
+  return failures.length === 0
+    ? pass(
+        'expectDestinationFallbackDeleted',
+        'destination settled on deleted-target fallback',
+      )
+    : fail(
+        'expectDestinationFallbackDeleted',
+        'destination deleted-target fallback failed',
+        {
+          failures,
+          settled,
+          visibleIds,
+          highlightedMessageId: evidence.ui.highlightedMessageId,
+        },
+      )
+}
+
 export function expectNeedMessagesAroundObserved(
   evidence: E2EEvidence,
   options: NeedMessagesAroundOptions = {},
@@ -383,6 +506,42 @@ export function expectNoFeedPollution(
         activeFeedId,
         pollutedVisibleIds,
       })
+}
+
+export function expectActiveFeed(
+  evidence: E2EEvidence,
+  expectedFeedId: string,
+): E2EOracleResult {
+  return evidence.feed.activeFeedId === expectedFeedId
+    ? pass('expectActiveFeed', 'active feed matched')
+    : fail('expectActiveFeed', 'active feed did not match', {
+        expectedFeedId,
+        activeFeedId: evidence.feed.activeFeedId,
+      })
+}
+
+export function expectVisibleRowsBelongToActiveFeed(
+  evidence: E2EEvidence,
+): E2EOracleResult {
+  const activeFeedId = evidence.feed.activeFeedId
+  const pollutedVisibleIds = evidence.viewport.visibleRows
+    .filter((row) => row.itemKind === 'committed')
+    .map((row) => row.messageId)
+    .filter((messageId) => !messageId.startsWith(`${activeFeedId}-`))
+
+  return pollutedVisibleIds.length === 0
+    ? pass(
+        'expectVisibleRowsBelongToActiveFeed',
+        'visible rows belong to active feed',
+      )
+    : fail(
+        'expectVisibleRowsBelongToActiveFeed',
+        'visible rows include another feed',
+        {
+          activeFeedId,
+          pollutedVisibleIds,
+        },
+      )
 }
 
 export function expectNeedMoreBeforeWithin(

@@ -28,7 +28,9 @@ import {
 } from '../../src/e2e-app/e2eP3Scenarios.ts'
 import {
   expectAnchorPreserved,
+  expectActiveFeed,
   expectBottomLocked,
+  expectDestinationFallbackDeleted,
   expectDestinationSettledOnTarget,
   expectDiagnosticObserved,
   expectLatestMessageVisible,
@@ -36,6 +38,7 @@ import {
   expectNeedMoreAfterWithin,
   expectNeedMoreBeforeWithin,
   expectNeedMessagesAroundObserved,
+  expectNoCommittedRowsBeyondFeedMessageCount,
   expectNoFeedPollution,
   expectNoFollowWhenUserReading,
   expectNoOptimisticRows,
@@ -44,7 +47,9 @@ import {
   expectDestinationOutcomeRecorded,
   expectRuntimeIdle,
   expectRuntimeAttachedOnce,
+  expectSameVisibleOptimisticKey,
   expectVisibleOptimisticRow,
+  expectVisibleRowsBelongToActiveFeed,
   expectViewportErrorObserved,
   type E2EOracleResult,
 } from '../../src/e2e-app/e2eOracles.ts'
@@ -86,7 +91,7 @@ type ScenarioRunResult = {
 }
 
 type EvidenceCheckpoints = Partial<
-  Record<'before' | 'during' | 'after' | 'final', E2EEvidence>
+  Record<'before' | 'during' | 'failed' | 'retrying' | 'after' | 'final', E2EEvidence>
 >
 
 type RunnableScenarioDefinition =
@@ -429,6 +434,36 @@ function evaluateScenarioOracles(
     ]
   }
 
+  if (definition.id === 'send.optimistic-fail-retry') {
+    const failed = checkpoints.failed
+    const retrying = checkpoints.retrying
+    const after = checkpoints.after ?? finalEvidence
+
+    if (!failed) {
+      return [missingEvidenceOracle('expectVisibleOptimisticRow', 'failed')]
+    }
+
+    if (!retrying) {
+      return [missingEvidenceOracle('expectVisibleOptimisticRow', 'retrying')]
+    }
+
+    return [
+      expectVisibleOptimisticRow(failed, { status: 'failed' }),
+      expectNoCommittedRowsBeyondFeedMessageCount(failed),
+      expectBottomLocked(failed, { thresholdPx: 1 }),
+      expectNoUnexpectedErrors(failed),
+      expectVisibleOptimisticRow(retrying, { status: 'sending' }),
+      expectSameVisibleOptimisticKey(failed, retrying),
+      expectNoUnexpectedErrors(retrying),
+      ...withNoUnexpectedErrors([
+        expectRuntimeIdle(after),
+        expectNoOptimisticRows(after),
+        expectBottomLocked(after, { thresholdPx: 1 }),
+        expectLatestMessageVisible(after),
+      ], after),
+    ]
+  }
+
   if (definition.id === 'dynamic-height.anchor-above-growth') {
     const before = checkpoints.before
     const after = checkpoints.after ?? finalEvidence
@@ -490,6 +525,42 @@ function evaluateScenarioOracles(
       expectAnchorPreserved(before, after, { tolerancePx: 1 }),
       expectNeedMoreBeforeWithin(after, 1),
       expectLoadedMessageCountDelta(before, after, 20),
+    ], after)
+  }
+
+  if (definition.id === 'paging.append-slow-request-race') {
+    const before = checkpoints.before
+    const after = checkpoints.after ?? finalEvidence
+
+    if (!before) {
+      return [missingEvidenceOracle('expectAnchorPreserved', 'before')]
+    }
+
+    return withNoUnexpectedErrors([
+      expectRuntimeIdle(after),
+      expectAnchorPreserved(before, after, { tolerancePx: 1 }),
+      expectNeedMoreAfterWithin(after, 1),
+      expectLoadedMessageCountDelta(before, after, 20),
+    ], after)
+  }
+
+  if (definition.id === 'destination.quote-jump-deleted-target') {
+    const after = checkpoints.after ?? finalEvidence
+
+    return withNoUnexpectedErrors([
+      expectRuntimeIdle(after),
+      expectNeedMessagesAroundObserved(after, { reason: 'jump' }),
+      expectDestinationFallbackDeleted(after),
+    ], after)
+  }
+
+  if (definition.id === 'session.switch-during-pending-prepend') {
+    const after = checkpoints.after ?? finalEvidence
+
+    return withNoUnexpectedErrors([
+      expectRuntimeIdle(after),
+      expectActiveFeed(after, 'feed-release'),
+      expectVisibleRowsBelongToActiveFeed(after),
     ], after)
   }
 
