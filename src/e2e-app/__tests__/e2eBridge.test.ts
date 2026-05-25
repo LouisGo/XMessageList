@@ -6,6 +6,7 @@ import {
   collectE2EState,
   createE2EConsoleBuffer,
   createE2EEventBuffer,
+  createE2EPerformanceBuffer,
   listE2EActions,
   recordE2ERuntimeEvent,
   runE2EAction,
@@ -220,6 +221,53 @@ describe('collectE2EState', () => {
     expect(result.ok).toBe(true)
     expect(result.before?.checkpointId).toBe('before:collect_evidence')
     expect(result.after?.checkpointId).toBe('manual_checkpoint')
+  })
+
+  it('records action duration measures into performance evidence', async () => {
+    const root = document.createElement('main')
+    const scenario = createScenarioStub()
+    const consoleBuffer = createE2EConsoleBuffer()
+    const eventBuffer = createE2EEventBuffer()
+    const performanceBuffer = createE2EPerformanceBuffer()
+    const readEvidence = (checkpointId: string) =>
+      collectE2EEvidence({
+        scenarioId: 'perf.bootstrap-latest-budget',
+        checkpointId,
+        scenario,
+        consoleBuffer,
+        eventBuffer,
+        performanceBuffer,
+        root,
+      })
+    const result = await runE2EAction({
+      actionId: 'wait_for_idle',
+      scenarioId: 'perf.bootstrap-latest-budget',
+      scenario,
+      consoleBuffer,
+      eventBuffer,
+      performanceBuffer,
+      root,
+      readState: () =>
+        collectE2EState({
+          scenarioId: 'perf.bootstrap-latest-budget',
+          scenario,
+          consoleBuffer,
+          root,
+        }),
+      readEvidence,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.after?.performance.actionMeasures).toEqual([
+      expect.objectContaining({
+        actionId: 'wait_for_idle',
+        checkpointId: 'after:wait_for_idle',
+        ok: true,
+      }),
+    ])
+    expect(
+      result.after?.performance.actionMeasures[0]?.durationMs,
+    ).toBeGreaterThanOrEqual(0)
   })
 
   it('keeps viewport event evidence bounded', () => {

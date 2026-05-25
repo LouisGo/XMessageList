@@ -65,13 +65,17 @@ describe('e2e artifacts', () => {
 })
 
 type EvidenceOverrides = Partial<
-  Omit<E2EEvidence, 'runtime' | 'viewport' | 'ui' | 'events' | 'diagnostics'>
+  Omit<
+    E2EEvidence,
+    'runtime' | 'viewport' | 'ui' | 'events' | 'diagnostics' | 'performance'
+  >
 > & {
   runtime?: Partial<E2EEvidence['runtime']>
   viewport?: Partial<E2EEvidence['viewport']>
   ui?: Partial<E2EEvidence['ui']>
   events?: Partial<E2EEvidence['events']>
   diagnostics?: Partial<E2EEvidence['diagnostics']>
+  performance?: Partial<E2EEvidence['performance']>
 }
 
 function createEvidence(overrides: EvidenceOverrides = {}): E2EEvidence {
@@ -150,6 +154,16 @@ function createEvidence(overrides: EvidenceOverrides = {}): E2EEvidence {
       errors: [],
       warnings: [],
     },
+    performance: {
+      actionMeasures: [],
+      longTasks: [],
+      frame: {
+        sampleCount: 1,
+        maxGapMs: 16,
+        gapsOver50Ms: 0,
+        gapsOver100Ms: 0,
+      },
+    },
   }
 
   return {
@@ -174,6 +188,14 @@ function createEvidence(overrides: EvidenceOverrides = {}): E2EEvidence {
     diagnostics: {
       ...base.diagnostics,
       ...overrides.diagnostics,
+    },
+    performance: {
+      ...base.performance,
+      ...overrides.performance,
+      frame: {
+        ...base.performance.frame,
+        ...overrides.performance?.frame,
+      },
     },
   }
 }

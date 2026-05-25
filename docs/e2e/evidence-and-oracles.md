@@ -26,6 +26,7 @@ type E2EEvidence = {
   events: EventEvidence
   diagnostics: DiagnosticEvidence
   console: ConsoleEvidence
+  performance: PerformanceEvidence
   artifacts?: ArtifactEvidence
 }
 ```
@@ -178,9 +179,40 @@ type ConsoleEvidence = {
 
 任何 console error 默认使 P0/P1 场景失败，除非场景显式声明允许。
 
-## 10. Standard Oracles
+## 10. Performance Evidence
 
-### 10.1 Runtime Idle
+```ts
+type PerformanceEvidence = {
+  actionMeasures: Array<{
+    actionId: string
+    checkpointId: string
+    durationMs: number
+    ok: boolean
+    startedAt: number
+    endedAt: number
+  }>
+  longTasks: Array<{
+    name: string
+    entryType: string
+    startTime: number
+    durationMs: number
+  }>
+  frame: {
+    sampleCount: number
+    maxGapMs: number
+    gapsOver50Ms: number
+    gapsOver100Ms: number
+  }
+}
+```
+
+性能 evidence 使用 `PerformanceObserver('longtask')`、`requestAnimationFrame`
+gap monitor 和 bridge action duration 生成。它只服务独立 `perf` priority；
+正确性矩阵不应该因为机器负载波动而失败。
+
+## 11. Standard Oracles
+
+### 11.1 Runtime Idle
 
 ```ts
 expectRuntimeIdle(evidence)
@@ -194,7 +226,7 @@ expectRuntimeIdle(evidence)
 - `runtime.motionActive === false`。
 - `runtime.pendingCommands === 0`。
 
-### 10.2 Anchor Preserved
+### 11.2 Anchor Preserved
 
 ```ts
 expectAnchorPreserved(before, after, { tolerancePx: 1 })
@@ -207,7 +239,7 @@ expectAnchorPreserved(before, after, { tolerancePx: 1 })
 - `Math.abs(deltaPx) <= tolerancePx`。
 - 无异常 `viewportError`。
 
-### 10.3 Bottom Locked
+### 11.3 Bottom Locked
 
 ```ts
 expectBottomLocked(evidence, { thresholdPx })
@@ -219,7 +251,7 @@ expectBottomLocked(evidence, { thresholdPx })
 - `distanceToBottom <= thresholdPx`。
 - follow-bottom button 不应可见。
 
-### 10.4 User Reading Is Not Stolen
+### 11.4 User Reading Is Not Stolen
 
 ```ts
 expectNoFollowWhenUserReading(before, after)
@@ -231,7 +263,7 @@ expectNoFollowWhenUserReading(before, after)
 - before anchor 仍可见或 after first visible message 与 before 接近。
 - `bottomLockState === 'UNLOCKED'`。
 
-### 10.5 Destination Settled On Target
+### 11.5 Destination Settled On Target
 
 ```ts
 expectDestinationSettledOnTarget(evidence, targetMessageId)
@@ -244,7 +276,7 @@ expectDestinationSettledOnTarget(evidence, targetMessageId)
 - highlight message id 与 resolved target 一致。
 - runtime 回到 idle。
 
-### 10.6 No Feed Pollution
+### 11.6 No Feed Pollution
 
 ```ts
 expectNoFeedPollution(beforeSwitch, afterSwitch)
@@ -257,7 +289,7 @@ expectNoFeedPollution(beforeSwitch, afterSwitch)
 - bottom lock / pending operation 没有从旧 feed 泄漏。
 - stale ResizeObserver / commit ack 没有产生新 feed error。
 
-## 11. Failure Report
+## 12. Failure Report
 
 失败报告必须使用统一格式：
 
@@ -293,7 +325,7 @@ None
 - console.json
 ```
 
-## 12. Evidence Storage
+## 13. Evidence Storage
 
 建议后续输出到：
 

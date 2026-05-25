@@ -392,7 +392,45 @@ Oracle:
 - no stale ResizeObserver error。
 - restored feed anchor 合理。
 
-## 6. Scenario Definition Template
+## 6. Performance Scenarios
+
+性能场景使用独立 `perf` priority，默认不进入 correctness `--priority all`。它们只验证相对稳定的首批预算：action latency、Long Task、frame gap，不引入复杂 trace 或真实用户硬件预算。
+
+### 6.1 `perf.bootstrap-latest-budget`
+
+目的：latest bootstrap 不出现明显主线程阻塞，且 ready latency 保持在本地开发可接受范围。
+
+Oracle:
+
+- `expectActionDurationWithin(final, 'wait_for_ready', 2500)`
+- `expectNoLongTasks(final, { thresholdMs: 100, maxCount: 0 })`
+- `expectFrameGapWithin(final, 250)`
+- 同时复用 bootstrap correctness oracle。
+
+### 6.2 `perf.send-ack-latency-budget`
+
+目的：发送消息的 optimistic 阶段和 ack settle 阶段都保持响应，不因 identity-remap 或 bottom follow 引入明显卡顿。
+
+Oracle:
+
+- during: `expectActionDurationWithin(during, 'send_message', 500)`
+- after: `expectActionDurationWithin(after, 'wait_for_idle', 1500)`
+- after: `expectNoLongTasks(after, { thresholdMs: 100, maxCount: 0 })`
+- after: `expectFrameGapWithin(after, 250)`
+- 同时复用 optimistic send correctness oracle。
+
+### 6.3 `perf.prepend-latency-budget`
+
+目的：普通 before 分页、DOM commit、measurement、anchor correction 的端到端耗时保持在预算内。
+
+Oracle:
+
+- `expectActionDurationWithin(after, 'prepend_history', 1500)`
+- `expectNoLongTasks(after, { thresholdMs: 100, maxCount: 0 })`
+- `expectFrameGapWithin(after, 250)`
+- 同时复用 anchor preserved / loaded delta oracle。
+
+## 7. Scenario Definition Template
 
 ```md
 # <scenario-id>
@@ -421,7 +459,7 @@ Tags: bootstrap, bottom-lock
 ...
 ```
 
-## 7. Scope Control
+## 8. Scope Control
 
 新增场景必须满足至少一个条件：
 

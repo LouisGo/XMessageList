@@ -1,4 +1,5 @@
 import { DEMO_FEEDS, getDemoFeedDefinition } from '../demo/demoFeeds'
+import { E2E_PERFORMANCE_SCENARIO_DEFINITIONS } from './e2ePerformanceScenarios'
 
 export const DEFAULT_E2E_SCENARIO_ID = 'bootstrap.latest-bottom-lock'
 
@@ -181,6 +182,13 @@ const P0_SCENARIOS: E2EScenarioDefinition[] = [
     seedCount: DEFAULT_FEED.seedCount,
     seedLabel: 'p3-dynamic-height-session-switch-v1',
   },
+  ...E2E_PERFORMANCE_SCENARIO_DEFINITIONS.map((scenario) => ({
+    id: scenario.id,
+    title: scenario.title,
+    feedId: DEFAULT_FEED.id,
+    seedCount: DEFAULT_FEED.seedCount,
+    seedLabel: `${scenario.id}-v1`,
+  })),
 ]
 
 export function getE2EScenarioDefinition(

@@ -196,11 +196,36 @@ type E2EVisibleRow = {
   bottom: number
   height: number
 }
+
+type E2EPerformanceEvidence = {
+  actionMeasures: Array<{
+    actionId: string
+    checkpointId: string
+    durationMs: number
+    ok: boolean
+    startedAt: number
+    endedAt: number
+  }>
+  longTasks: Array<{
+    name: string
+    entryType: string
+    startTime: number
+    durationMs: number
+  }>
+  frame: {
+    sampleCount: number
+    maxGapMs: number
+    gapsOver50Ms: number
+    gapsOver100Ms: number
+  }
+}
 ```
 
 optimistic/committed 的身份仍以 `visibleRows[].serializedKey` 为准，例如
 `optimistic:client-...` 或 `committed:<messageId>`。`itemKind` 和
 `optimisticStatus` 只能从 runtime snapshot 派生，不新增 DOM 属性来表达发送态。
+
+性能 evidence 只用于独立 `perf` priority，不进入默认 correctness `all` 矩阵。
 
 ## 7. Semantic DOM Contract
 

@@ -56,6 +56,8 @@ export function createE2EFailureReport(
     `- Need more after: ${evidence?.events.needMoreAfter ?? 0}`,
     `- Destination settled events: ${evidence?.events.destinationSettled.length ?? 0}`,
     `- Error diagnostics: ${formatDiagnosticErrors(evidence)}`,
+    `- Long tasks >=100ms: ${formatLongTaskCount(evidence, 100)}`,
+    `- Max frame gap: ${formatNumber(evidence?.performance.frame.maxGapMs)}`,
     '',
     '## Evidence Gaps',
     '',
@@ -219,4 +221,13 @@ function formatDiagnosticErrors(evidence: E2EEvidence | undefined): string {
     .map((record) => record.name)
 
   return errors && errors.length > 0 ? errors.join(', ') : 'none'
+}
+
+function formatLongTaskCount(
+  evidence: E2EEvidence | undefined,
+  thresholdMs: number,
+): number {
+  return evidence?.performance.longTasks.filter(
+    (task) => task.durationMs >= thresholdMs,
+  ).length ?? 0
 }

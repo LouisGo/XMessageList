@@ -17,18 +17,22 @@ import {
 } from '../demo/useDemoMessageScenario'
 import {
   clearE2EConsoleBuffer,
+  clearE2EPerformanceBuffer,
   collectE2EEvidence,
   collectE2EState,
   createBootingE2EState,
   createE2EConsoleBuffer,
   createE2EEventBuffer,
+  createE2EPerformanceBuffer,
   type E2EActionHooks,
   type E2EActionResult,
   type E2EConsoleBuffer,
   type E2EEvidence,
   type E2EEventBuffer,
+  type E2EPerformanceBuffer,
   type E2EState,
   installE2EConsoleCapture,
+  installE2EPerformanceCapture,
   listE2EActions,
   recordE2ERuntimeEvent,
   runE2EAction,
@@ -56,6 +60,7 @@ export function E2EMessageViewportApp() {
     initialScenario,
   ])
   const consoleBuffer = useMemo(() => createE2EConsoleBuffer(), [])
+  const performanceBuffer = useMemo(() => createE2EPerformanceBuffer(), [])
   const bridgeRuntimeRef = useRef<BridgeRuntime>(
     createBootingBridgeRuntime(initialScenario.id),
   )
@@ -81,6 +86,7 @@ export function E2EMessageViewportApp() {
 
     store.resetScenario(nextScenario)
     clearE2EConsoleBuffer(consoleBuffer)
+    clearE2EPerformanceBuffer(performanceBuffer)
     bridgeRuntimeRef.current = createBootingBridgeRuntime(nextScenario.id)
     setScenario(nextScenario)
     setResetToken((token) => token + 1)
@@ -92,7 +98,7 @@ export function E2EMessageViewportApp() {
       actionId: 'resetScenario',
       message: `reset ${nextScenario.id}`,
     }
-  }, [consoleBuffer, store])
+  }, [consoleBuffer, performanceBuffer, store])
 
   const registerBridgeRuntime = useCallback((runtime: BridgeRuntime) => {
     bridgeRuntimeRef.current = runtime
@@ -105,6 +111,10 @@ export function E2EMessageViewportApp() {
   }, [scenario.id])
 
   useEffect(() => installE2EConsoleCapture(consoleBuffer), [consoleBuffer])
+  useEffect(
+    () => installE2EPerformanceCapture(performanceBuffer),
+    [performanceBuffer],
+  )
 
   useEffect(() => {
     const bridge: XMessageListE2EBridge = {
@@ -132,6 +142,7 @@ export function E2EMessageViewportApp() {
       scenarioDefinition={scenario}
       store={store}
       consoleBuffer={consoleBuffer}
+      performanceBuffer={performanceBuffer}
       registerBridgeRuntime={registerBridgeRuntime}
       resetScenario={resetScenario}
     />
@@ -142,12 +153,14 @@ function E2EScenarioHost({
   scenarioDefinition,
   store,
   consoleBuffer,
+  performanceBuffer,
   registerBridgeRuntime,
   resetScenario,
 }: {
   scenarioDefinition: E2EScenarioDefinition
   store: E2EDemoStore
   consoleBuffer: E2EConsoleBuffer
+  performanceBuffer: E2EPerformanceBuffer
   registerBridgeRuntime: (runtime: BridgeRuntime) => () => void
   resetScenario: (scenarioId: string) => Promise<E2EActionResult>
 }) {
@@ -201,9 +214,10 @@ function E2EScenarioHost({
       scenario: scenarioRef.current,
       consoleBuffer,
       eventBuffer,
+      performanceBuffer,
       root: rootRef.current ?? document,
     })
-  ), [consoleBuffer, eventBuffer, scenarioDefinition.id])
+  ), [consoleBuffer, eventBuffer, performanceBuffer, scenarioDefinition.id])
 
   const reattachRuntime = useCallback(async () => {
     setViewportRemountToken((token) => token + 1)
@@ -227,6 +241,7 @@ function E2EScenarioHost({
         scenario: scenarioRef.current,
         consoleBuffer,
         eventBuffer,
+        performanceBuffer,
         actionHooks,
         root: rootRef.current ?? document,
         readState,
@@ -235,6 +250,7 @@ function E2EScenarioHost({
   }), [
     consoleBuffer,
     eventBuffer,
+    performanceBuffer,
     actionHooks,
     readEvidence,
     readState,

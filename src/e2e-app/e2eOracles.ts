@@ -28,6 +28,11 @@ export type VisibleOptimisticRowOptions = {
   status?: 'sending' | 'failed'
 }
 
+export type LongTaskBudgetOptions = {
+  thresholdMs?: number
+  maxCount?: number
+}
+
 export function expectRuntimeIdle(evidence: E2EEvidence): E2EOracleResult {
   const failures: string[] = []
 
@@ -151,6 +156,80 @@ export function expectNoOptimisticRows(
     ? pass('expectNoOptimisticRows', 'no visible optimistic rows remain')
     : fail('expectNoOptimisticRows', 'optimistic rows still visible', {
         optimisticRows,
+      })
+}
+
+export function expectNoLongTasks(
+  evidence: E2EEvidence,
+  options: LongTaskBudgetOptions = {},
+): E2EOracleResult {
+  const thresholdMs = options.thresholdMs ?? 100
+  const maxCount = options.maxCount ?? 0
+  const longTasks = evidence.performance.longTasks.filter(
+    (task) => task.durationMs >= thresholdMs,
+  )
+
+  return longTasks.length <= maxCount
+    ? pass('expectNoLongTasks', 'long task count is within budget')
+    : fail('expectNoLongTasks', 'long task count exceeded budget', {
+        thresholdMs,
+        maxCount,
+        longTasks,
+      })
+}
+
+export function expectActionDurationWithin(
+  evidence: E2EEvidence,
+  actionId: string,
+  maxDurationMs: number,
+): E2EOracleResult {
+  const measure = evidence.performance.actionMeasures.findLast(
+    (item) => item.actionId === actionId && item.ok,
+  )
+  const failures: string[] = []
+
+  if (!measure) {
+    failures.push(`action measure ${actionId} is missing`)
+  } else if (measure.durationMs > maxDurationMs) {
+    failures.push(
+      `${actionId} duration ${measure.durationMs.toFixed(2)} exceeds ${maxDurationMs}`,
+    )
+  }
+
+  return failures.length === 0
+    ? pass('expectActionDurationWithin', 'action duration is within budget')
+    : fail('expectActionDurationWithin', 'action duration exceeded budget', {
+        failures,
+        actionId,
+        maxDurationMs,
+        measure,
+        actionMeasures: evidence.performance.actionMeasures,
+      })
+}
+
+export function expectFrameGapWithin(
+  evidence: E2EEvidence,
+  maxGapMs: number,
+): E2EOracleResult {
+  const frame = evidence.performance.frame
+  const failures: string[] = []
+
+  if (frame.sampleCount <= 0) {
+    failures.push('no frame samples captured')
+  }
+
+  if (frame.maxGapMs > maxGapMs) {
+    failures.push(
+      `max frame gap ${frame.maxGapMs.toFixed(2)} exceeds ${maxGapMs}`,
+    )
+  }
+
+  return failures.length === 0
+    ? pass('expectFrameGapWithin', 'frame gap is within budget')
+    : fail('expectFrameGapWithin', 'frame gap exceeded budget', {
+        failures,
+        maxGapMs,
+        frame,
       })
 }
 

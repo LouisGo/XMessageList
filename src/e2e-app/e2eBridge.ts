@@ -117,6 +117,33 @@ export type E2EVisibleRow = {
   height: number
 }
 
+export type E2EPerformanceActionMeasure = {
+  actionId: string
+  checkpointId: string
+  durationMs: number
+  ok: boolean
+  startedAt: number
+  endedAt: number
+}
+
+export type E2ELongTaskRecord = {
+  name: string
+  entryType: string
+  startTime: number
+  durationMs: number
+}
+
+export type E2EPerformanceEvidence = {
+  actionMeasures: E2EPerformanceActionMeasure[]
+  longTasks: E2ELongTaskRecord[]
+  frame: {
+    sampleCount: number
+    maxGapMs: number
+    gapsOver50Ms: number
+    gapsOver100Ms: number
+  }
+}
+
 export type E2EEvidence = {
   schemaVersion: 1
   scenarioId: string
@@ -166,6 +193,7 @@ export type E2EEvidence = {
     errors: E2EConsoleRecord[]
     warnings: E2EConsoleRecord[]
   }
+  performance: E2EPerformanceEvidence
 }
 
 export type E2EEventEvidence = {
@@ -201,9 +229,14 @@ export type E2EConsoleBuffer = {
 
 export type E2EEventBuffer = E2EEventEvidence
 
+export type E2EPerformanceBuffer = E2EPerformanceEvidence & {
+  lastFrameTimestamp: number | null
+}
+
 const E2E_CONSOLE_BUFFER_LIMIT = 80
 const E2E_EVENT_BUFFER_LIMIT = 80
 const E2E_DIAGNOSTIC_BUFFER_LIMIT = 80
+const E2E_PERFORMANCE_BUFFER_LIMIT = 80
 
 const PRIORITY_DIAGNOSTIC_NAMES = new Set([
   'projection.publish',
@@ -247,6 +280,20 @@ export function createE2EEventBuffer(): E2EEventBuffer {
   }
 }
 
+export function createE2EPerformanceBuffer(): E2EPerformanceBuffer {
+  return {
+    actionMeasures: [],
+    longTasks: [],
+    frame: {
+      sampleCount: 0,
+      maxGapMs: 0,
+      gapsOver50Ms: 0,
+      gapsOver100Ms: 0,
+    },
+    lastFrameTimestamp: null,
+  }
+}
+
 export function clearE2EEventBuffer(buffer: E2EEventBuffer): void {
   buffer.viewportAnchorChanged.length = 0
   buffer.needMoreBefore = 0
@@ -254,6 +301,16 @@ export function clearE2EEventBuffer(buffer: E2EEventBuffer): void {
   buffer.needMessagesAround.length = 0
   buffer.destinationSettled.length = 0
   buffer.viewportErrors.length = 0
+}
+
+export function clearE2EPerformanceBuffer(buffer: E2EPerformanceBuffer): void {
+  buffer.actionMeasures.length = 0
+  buffer.longTasks.length = 0
+  buffer.frame.sampleCount = 0
+  buffer.frame.maxGapMs = 0
+  buffer.frame.gapsOver50Ms = 0
+  buffer.frame.gapsOver100Ms = 0
+  buffer.lastFrameTimestamp = null
 }
 
 export function recordE2ERuntimeEvent(
@@ -313,6 +370,73 @@ export function recordE2ERuntimeEvent(
 
   if (event.type === 'viewportError') {
     pushBounded(buffer.viewportErrors, event.code, E2E_EVENT_BUFFER_LIMIT)
+  }
+}
+
+export function installE2EPerformanceCapture(
+  buffer: E2EPerformanceBuffer,
+): () => void {
+  let cancelled = false
+  let animationFrameId: number | null = null
+  let longTaskObserver: PerformanceObserver | null = null
+
+  if (
+    typeof window.PerformanceObserver === 'function' &&
+    window.PerformanceObserver.supportedEntryTypes.includes('longtask')
+  ) {
+    longTaskObserver = new window.PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        pushBounded(
+          buffer.longTasks,
+          {
+            name: entry.name,
+            entryType: entry.entryType,
+            startTime: entry.startTime,
+            durationMs: entry.duration,
+          },
+          E2E_PERFORMANCE_BUFFER_LIMIT,
+        )
+      }
+    })
+    longTaskObserver.observe({ entryTypes: ['longtask'] })
+  }
+
+  const tick = (timestamp: number) => {
+    if (cancelled) {
+      return
+    }
+
+    if (buffer.lastFrameTimestamp !== null) {
+      const gapMs = timestamp - buffer.lastFrameTimestamp
+
+      buffer.frame.sampleCount += 1
+      buffer.frame.maxGapMs = Math.max(buffer.frame.maxGapMs, gapMs)
+
+      if (gapMs > 50) {
+        buffer.frame.gapsOver50Ms += 1
+      }
+
+      if (gapMs > 100) {
+        buffer.frame.gapsOver100Ms += 1
+      }
+    }
+
+    buffer.lastFrameTimestamp = timestamp
+    animationFrameId = window.requestAnimationFrame(tick)
+  }
+
+  if (typeof window.requestAnimationFrame === 'function') {
+    animationFrameId = window.requestAnimationFrame(tick)
+  }
+
+  return () => {
+    cancelled = true
+
+    if (animationFrameId !== null) {
+      window.cancelAnimationFrame(animationFrameId)
+    }
+
+    longTaskObserver?.disconnect()
   }
 }
 
@@ -425,6 +549,7 @@ export function collectE2EEvidence(input: {
   scenario: DemoMessageScenario
   consoleBuffer: E2EConsoleBuffer
   eventBuffer: E2EEventBuffer
+  performanceBuffer?: E2EPerformanceBuffer
   root?: ParentNode
 }): E2EEvidence {
   const root = input.root ?? document
@@ -488,6 +613,7 @@ export function collectE2EEvidence(input: {
       errors: [...input.consoleBuffer.errors],
       warnings: [...input.consoleBuffer.warnings],
     },
+    performance: snapshotPerformanceEvidence(input.performanceBuffer),
   }
 }
 
@@ -736,12 +862,14 @@ export async function runE2EAction(input: {
   scenario: DemoMessageScenario
   consoleBuffer: E2EConsoleBuffer
   eventBuffer: E2EEventBuffer
+  performanceBuffer?: E2EPerformanceBuffer
   actionHooks?: E2EActionHooks
   root?: ParentNode
   readState: () => E2EState
   readEvidence: (checkpointId: string) => E2EEvidence
 }): Promise<E2EActionResult> {
   const checkpointId = getPayloadString(input.payload, 'checkpointId')
+  const actionStartedAt = performance.now()
   const before = input.readEvidence(`before:${input.actionId}`)
   const descriptor = listE2EActions(input.readState()).find(
     (action) => action.id === input.actionId,
@@ -1054,14 +1182,32 @@ export async function runE2EAction(input: {
       }
     }
 
+    const resolvedCheckpointId = checkpointId ?? `after:${input.actionId}`
+    recordE2EActionMeasure(input.performanceBuffer, {
+      actionId: input.actionId,
+      checkpointId: resolvedCheckpointId,
+      startedAt: actionStartedAt,
+      endedAt: performance.now(),
+      ok: true,
+    })
+
     return {
       ok: true,
       actionId: input.actionId,
       message: `completed ${input.actionId}`,
       before,
-      after: input.readEvidence(checkpointId ?? `after:${input.actionId}`),
+      after: input.readEvidence(resolvedCheckpointId),
     }
   } catch (error) {
+    const resolvedCheckpointId = `error:${input.actionId}`
+    recordE2EActionMeasure(input.performanceBuffer, {
+      actionId: input.actionId,
+      checkpointId: resolvedCheckpointId,
+      startedAt: actionStartedAt,
+      endedAt: performance.now(),
+      ok: false,
+    })
+
     return {
       ok: false,
       actionId: input.actionId,
@@ -1069,7 +1215,7 @@ export async function runE2EAction(input: {
         ? error.message
         : `failed ${input.actionId}`,
       before,
-      after: input.readEvidence(`error:${input.actionId}`),
+      after: input.readEvidence(resolvedCheckpointId),
       error: {
         code: error instanceof E2EActionError ? error.code : 'action_failed',
         details: {
@@ -1688,6 +1834,47 @@ function normalizeDiagnosticRecords(
       correlationId: record.correlationId,
       details: record.details,
     }))
+}
+
+function recordE2EActionMeasure(
+  buffer: E2EPerformanceBuffer | undefined,
+  input: Omit<E2EPerformanceActionMeasure, 'durationMs'>,
+): void {
+  if (!buffer) {
+    return
+  }
+
+  pushBounded(
+    buffer.actionMeasures,
+    {
+      ...input,
+      durationMs: Math.max(0, input.endedAt - input.startedAt),
+    },
+    E2E_PERFORMANCE_BUFFER_LIMIT,
+  )
+}
+
+function snapshotPerformanceEvidence(
+  buffer: E2EPerformanceBuffer | undefined,
+): E2EPerformanceEvidence {
+  if (!buffer) {
+    return {
+      actionMeasures: [],
+      longTasks: [],
+      frame: {
+        sampleCount: 0,
+        maxGapMs: 0,
+        gapsOver50Ms: 0,
+        gapsOver100Ms: 0,
+      },
+    }
+  }
+
+  return {
+    actionMeasures: [...buffer.actionMeasures],
+    longTasks: [...buffer.longTasks],
+    frame: { ...buffer.frame },
+  }
 }
 
 function isPriorityDiagnostic(record: ViewportDiagnosticRecord): boolean {

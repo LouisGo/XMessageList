@@ -274,7 +274,30 @@ Risks:
 - Event Storm 随机性必须可 seed。
 - AI exploration 可能产生高噪声报告，需要 report schema 约束。
 
-## 12. Long-term Maintenance Rules
+## 12. Phase 8: Separate Performance Gates
+
+Goal:
+
+把性能预算从 correctness gate 中拆出来，单独用 `--priority perf` 执行，避免机器负载让 P0/P1/P2 产生噪声。
+
+Scenarios:
+
+- `perf.bootstrap-latest-budget`
+- `perf.send-ack-latency-budget`
+- `perf.prepend-latency-budget`
+
+Exit criteria:
+
+- Evidence 包含 action duration、Long Task、frame gap。
+- 首批只覆盖稳定预算，不做复杂 trace / 设备分档 / CI 性能基线。
+- perf 失败报告能指出是 action latency、long task 还是 frame gap 超预算。
+
+Risks:
+
+- 性能阈值天然受机器负载影响，必须保持独立运行。
+- 浏览器后台化会影响 frame gap，需要在 failure report 中保留原始 evidence。
+
+## 13. Long-term Maintenance Rules
 
 - 每个 runtime bugfix 如果涉及真实浏览器 timing，应补一个 scenario 或 oracle。
 - 新增 scenario 必须先写 markdown task，再实现 bridge/action。

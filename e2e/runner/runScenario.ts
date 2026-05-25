@@ -27,17 +27,25 @@ import {
   type E2EP3ScenarioDefinition,
 } from '../../src/e2e-app/e2eP3Scenarios.ts'
 import {
+  E2E_PERFORMANCE_SCENARIO_DEFINITIONS,
+  getE2EPerformanceScenarioDefinition,
+  type E2EPerformanceScenarioDefinition,
+} from '../../src/e2e-app/e2ePerformanceScenarios.ts'
+import {
   expectAnchorPreserved,
   expectActiveFeed,
+  expectActionDurationWithin,
   expectBottomLocked,
   expectDestinationFallbackDeleted,
   expectDestinationSettledOnTarget,
   expectDiagnosticObserved,
   expectLatestMessageVisible,
   expectLoadedMessageCountDelta,
+  expectFrameGapWithin,
   expectNeedMoreAfterWithin,
   expectNeedMoreBeforeWithin,
   expectNeedMessagesAroundObserved,
+  expectNoLongTasks,
   expectNoCommittedRowsBeyondFeedMessageCount,
   expectNoFeedPollution,
   expectNoFollowWhenUserReading,
@@ -59,7 +67,7 @@ type RunnerOptions = {
   cdpEndpoint: string
   outDir: string
   scenarioId?: string
-  priority: 'P0' | 'P1' | 'P2' | 'P3' | 'all'
+  priority: 'P0' | 'P1' | 'P2' | 'P3' | 'perf' | 'all'
   timeoutMs: number
   help: boolean
 }
@@ -99,6 +107,7 @@ type RunnableScenarioDefinition =
   | E2EP1ScenarioDefinition
   | E2EP2ScenarioDefinition
   | E2EP3ScenarioDefinition
+  | E2EPerformanceScenarioDefinition
 
 const DEFAULT_OPTIONS: RunnerOptions = {
   baseUrl: 'http://127.0.0.1:5173',
@@ -584,6 +593,61 @@ function evaluateScenarioOracles(
     ], after, ['commit-timeout-bootstrap'])
   }
 
+  if (definition.id === 'perf.bootstrap-latest-budget') {
+    const final = checkpoints.final ?? finalEvidence
+
+    return withNoUnexpectedErrors([
+      expectRuntimeIdle(final),
+      expectBottomLocked(final, { thresholdPx: 1 }),
+      expectLatestMessageVisible(final),
+      expectNoLongTasks(final, { thresholdMs: 100, maxCount: 0 }),
+      expectActionDurationWithin(final, 'wait_for_ready', 2_500),
+      expectFrameGapWithin(final, 250),
+    ], final)
+  }
+
+  if (definition.id === 'perf.send-ack-latency-budget') {
+    const during = checkpoints.during
+    const after = checkpoints.after ?? finalEvidence
+
+    if (!during) {
+      return [missingEvidenceOracle('expectVisibleOptimisticRow', 'during')]
+    }
+
+    return [
+      expectVisibleOptimisticRow(during, { status: 'sending' }),
+      expectActionDurationWithin(during, 'send_message', 500),
+      expectNoUnexpectedErrors(during),
+      ...withNoUnexpectedErrors([
+        expectRuntimeIdle(after),
+        expectNoOptimisticRows(after),
+        expectBottomLocked(after, { thresholdPx: 1 }),
+        expectLatestMessageVisible(after),
+        expectNoLongTasks(after, { thresholdMs: 100, maxCount: 0 }),
+        expectActionDurationWithin(after, 'wait_for_idle', 1_500),
+        expectFrameGapWithin(after, 250),
+      ], after),
+    ]
+  }
+
+  if (definition.id === 'perf.prepend-latency-budget') {
+    const before = checkpoints.before
+    const after = checkpoints.after ?? finalEvidence
+
+    if (!before) {
+      return [missingEvidenceOracle('expectAnchorPreserved', 'before')]
+    }
+
+    return withNoUnexpectedErrors([
+      expectRuntimeIdle(after),
+      expectAnchorPreserved(before, after, { tolerancePx: 1 }),
+      expectLoadedMessageCountDelta(before, after, 20),
+      expectNoLongTasks(after, { thresholdMs: 100, maxCount: 0 }),
+      expectActionDurationWithin(after, 'prepend_history', 1_500),
+      expectFrameGapWithin(after, 250),
+    ], after)
+  }
+
   if (definition.id === 'storm.quote-jump-during-event-storm') {
     const after = checkpoints.after ?? finalEvidence
 
@@ -852,6 +916,10 @@ function resolveScenarioDefinitions(
       return E2E_P3_SCENARIO_DEFINITIONS
     }
 
+    if (options.priority === 'perf') {
+      return E2E_PERFORMANCE_SCENARIO_DEFINITIONS
+    }
+
     return [
       ...E2E_P0_SCENARIO_DEFINITIONS,
       ...E2E_P1_SCENARIO_DEFINITIONS,
@@ -863,7 +931,8 @@ function resolveScenarioDefinitions(
   const definition = getE2EP0ScenarioDefinition(options.scenarioId) ??
     getE2EP1ScenarioDefinition(options.scenarioId) ??
     getE2EP2ScenarioDefinition(options.scenarioId) ??
-    getE2EP3ScenarioDefinition(options.scenarioId)
+    getE2EP3ScenarioDefinition(options.scenarioId) ??
+    getE2EPerformanceScenarioDefinition(options.scenarioId)
 
   if (!definition) {
     throw new Error(`unknown e2e scenario ${options.scenarioId}`)
@@ -935,12 +1004,13 @@ function parsePriority(value: string): RunnerOptions['priority'] {
     value === 'P1' ||
     value === 'P2' ||
     value === 'P3' ||
+    value === 'perf' ||
     value === 'all'
   ) {
     return value
   }
 
-  throw new Error('--priority must be P0, P1, P2, P3, or all')
+  throw new Error('--priority must be P0, P1, P2, P3, perf, or all')
 }
 
 function readArgValue(argv: string[], index: number, arg: string): string {
@@ -991,7 +1061,7 @@ function helpText(): string {
     '  --base-url <url>      E2E host base URL. Default: http://127.0.0.1:5173',
     '  --cdp <url>           Chrome DevTools endpoint. Default: http://127.0.0.1:9222',
     '  --out <dir>           Artifact directory. Default: .logs/e2e',
-    '  --priority <value>    P0, P1, P2, P3, or all. Default: P0',
+    '  --priority <value>    P0, P1, P2, P3, perf, or all. Default: P0',
     '  --timeout-ms <ms>     Per-step timeout. Default: 30000',
     '',
     'Chrome must be running with --remote-debugging-port=9222, and the Vite dev server must already serve /e2e.',

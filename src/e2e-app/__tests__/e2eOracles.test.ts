@@ -18,20 +18,23 @@ import {
 } from '../e2eP3Scenarios'
 import {
   expectAnchorPreserved,
-  expectBottomLocked,
   expectActiveFeed,
+  expectActionDurationWithin,
+  expectBottomLocked,
   expectDestinationFallbackDeleted,
   expectDestinationSettledOnTarget,
   expectDestinationOutcomeRecorded,
   expectDiagnosticObserved,
   expectLatestMessageVisible,
   expectLoadedMessageCountDelta,
+  expectFrameGapWithin,
   expectNeedMoreAfterWithin,
   expectNeedMoreBeforeWithin,
   expectNeedMessagesAroundObserved,
   expectNoCommittedRowsBeyondFeedMessageCount,
   expectNoFeedPollution,
   expectNoFollowWhenUserReading,
+  expectNoLongTasks,
   expectNoOptimisticRows,
   expectNoUnexpectedErrors,
   expectNoWhiteScreen,
@@ -42,6 +45,10 @@ import {
   expectVisibleRowsBelongToActiveFeed,
   expectViewportErrorObserved,
 } from '../e2eOracles'
+import {
+  E2E_PERFORMANCE_SCENARIO_DEFINITIONS,
+  getE2EPerformanceScenarioDefinition,
+} from '../e2ePerformanceScenarios'
 import { getE2EScenarioDefinition } from '../e2eScenarioRegistry'
 
 describe('e2e deterministic oracles', () => {
@@ -291,6 +298,44 @@ describe('e2e deterministic oracles', () => {
     ).toBe(true)
   })
 
+  it('checks performance budget helpers', () => {
+    const evidence = createEvidence({
+      performance: {
+        actionMeasures: [{
+          actionId: 'send_message',
+          checkpointId: 'during',
+          durationMs: 80,
+          ok: true,
+          startedAt: 10,
+          endedAt: 90,
+        }],
+        longTasks: [{
+          name: 'self',
+          entryType: 'longtask',
+          startTime: 20,
+          durationMs: 72,
+        }],
+        frame: {
+          sampleCount: 3,
+          maxGapMs: 42,
+          gapsOver50Ms: 0,
+          gapsOver100Ms: 0,
+        },
+      },
+    })
+
+    expect(expectNoLongTasks(evidence, { thresholdMs: 100, maxCount: 0 }).ok)
+      .toBe(true)
+    expect(expectActionDurationWithin(evidence, 'send_message', 100).ok)
+      .toBe(true)
+    expect(expectFrameGapWithin(evidence, 100).ok).toBe(true)
+    expect(expectNoLongTasks(evidence, { thresholdMs: 50, maxCount: 0 }).ok)
+      .toBe(false)
+    expect(expectActionDurationWithin(evidence, 'send_message', 50).ok)
+      .toBe(false)
+    expect(expectFrameGapWithin(evidence, 30).ok).toBe(false)
+  })
+
   it('checks retry and deleted quote fallback correctness helpers', () => {
     const failed = createEvidence({
       viewport: {
@@ -462,8 +507,30 @@ describe('P3 e2e scenario definitions', () => {
   })
 })
 
+describe('performance e2e scenario definitions', () => {
+  it('defines registered performance scenarios separately from correctness all', () => {
+    expect(E2E_PERFORMANCE_SCENARIO_DEFINITIONS.map((scenario) => scenario.id))
+      .toEqual([
+        'perf.bootstrap-latest-budget',
+        'perf.send-ack-latency-budget',
+        'perf.prepend-latency-budget',
+      ])
+
+    for (const scenario of E2E_PERFORMANCE_SCENARIO_DEFINITIONS) {
+      expect(getE2EScenarioDefinition(scenario.id)).not.toBeNull()
+      expect(getE2EPerformanceScenarioDefinition(scenario.id)).toBe(scenario)
+      expect(scenario.priority).toBe('PERF')
+      expect(scenario.gate).toBe('performance')
+      expect(scenario.oracleIds.length).toBeGreaterThan(0)
+    }
+  })
+})
+
 type EvidenceOverrides = Partial<
-  Omit<E2EEvidence, 'feed' | 'runtime' | 'viewport' | 'ui' | 'events' | 'anchors'>
+  Omit<
+    E2EEvidence,
+    'feed' | 'runtime' | 'viewport' | 'ui' | 'events' | 'anchors' | 'performance'
+  >
 > & {
   feed?: Partial<E2EEvidence['feed']>
   runtime?: Partial<E2EEvidence['runtime']>
@@ -471,6 +538,7 @@ type EvidenceOverrides = Partial<
   ui?: Partial<E2EEvidence['ui']>
   events?: Partial<E2EEvidence['events']>
   anchors?: Partial<E2EEvidence['anchors']>
+  performance?: Partial<E2EEvidence['performance']>
 }
 
 function createEvidence(overrides: EvidenceOverrides = {}): E2EEvidence {
@@ -542,6 +610,16 @@ function createEvidence(overrides: EvidenceOverrides = {}): E2EEvidence {
       errors: [],
       warnings: [],
     },
+    performance: {
+      actionMeasures: [],
+      longTasks: [],
+      frame: {
+        sampleCount: 1,
+        maxGapMs: 16,
+        gapsOver50Ms: 0,
+        gapsOver100Ms: 0,
+      },
+    },
   }
 
   return {
@@ -570,6 +648,14 @@ function createEvidence(overrides: EvidenceOverrides = {}): E2EEvidence {
     anchors: {
       ...base.anchors,
       ...overrides.anchors,
+    },
+    performance: {
+      ...base.performance,
+      ...overrides.performance,
+      frame: {
+        ...base.performance.frame,
+        ...overrides.performance?.frame,
+      },
     },
   }
 }
