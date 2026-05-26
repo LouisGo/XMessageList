@@ -195,15 +195,10 @@ export function defineScrollHeight(element: HTMLElement): void {
     configurable: true,
     get() {
       const rows = Array.from(element.querySelectorAll<HTMLElement>('[data-height]'))
-      const rowHeight = rows.reduce(
+      return rows.reduce(
         (total, row) => total + Number(row.dataset.height ?? 0),
         0,
       )
-      const spacers = Array.from(
-        element.querySelectorAll<HTMLElement>('[data-spacer-height]'),
-      ).reduce((total, spacer) => total + Number(spacer.dataset.spacerHeight ?? 0), 0)
-
-      return rowHeight + spacers
     },
   })
 }

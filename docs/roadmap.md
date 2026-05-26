@@ -131,23 +131,30 @@ Phase gate：Phase 1 必须把 `src/runtime/` 与 `src/react/` 旧实现整体�
 
 目标：
 
-- [ ] 从零实现不依赖 React 的 viewport kernel。
-- [ ] 建立 projection transaction、measurement、correction 的基座。
+- [x] 从零实现不依赖 React 的 viewport kernel。
+- [x] 建立 projection transaction、measurement、correction 的基座。
 
 任务：
 
-- [ ] 实现 DOM registry：scroll container、message flow、edge triggers、bottom marker、row key -> HTMLElement。
-- [ ] 实现 projection transaction queue：capture anchor -> publish snapshot -> wait commit ack -> measure -> correct -> settle。
-- [ ] 实现 visual anchor、bottom anchor、scroll source、commit timeout、stale generation drop。
-- [ ] 实现 ResizeObserver dirty batching 和 measurement cache 边界。
-- [ ] 实现 diagnostics ring buffer 和 stable evidence hooks。
+- [x] 实现 DOM registry：scroll container、message flow、edge triggers、bottom marker、row key -> HTMLElement。
+- [x] 实现 projection transaction queue：capture anchor -> publish snapshot -> wait commit ack -> measure -> correct -> settle。
+- [x] 实现 visual anchor、bottom anchor、scroll source、commit timeout、stale generation drop。
+- [x] 实现 ResizeObserver dirty batching 和 measurement cache 边界。
+- [x] 实现 diagnostics ring buffer 和 stable evidence hooks。
 
 退出标准：
 
-- [ ] viewport runtime 不创建、合并、删除、去重或重排 items。
-- [ ] commit ack 前不能读取新 row rect 或发布 committed measurement。
-- [ ] recovery/programmatic correction 不触发 edge need。
-- [ ] targeted kernel tests 覆盖 anchor preservation、commit ack gate、resize stabilization、stale generation。
+- [x] viewport runtime 不创建、合并、删除、去重或重排 items。
+- [x] commit ack 前不能读取新 row rect 或发布 committed measurement。
+- [x] recovery/programmatic correction 不触发 edge need。
+- [x] targeted kernel tests 覆盖 anchor preservation、commit ack gate、resize stabilization、stale generation。
+
+验证证据（2026-05-26）：
+
+- 新增 viewport kernel：`RuntimeDomRegistry`、projection transaction ack gate、visual anchor correction、commit timeout、stale generation drop、ResizeObserver dirty batching、diagnostics ring buffer 与 `ViewportEvidence`。
+- `src/runtime/__tests__/viewportKernel.test.ts` 覆盖 commit ack 前不 settle、anchor correction、stale generation drop、commit timeout、loaded DOM evidence、resize dirty batching。
+- `rg "dedupe|mergeBefore|mergeAfter|sort\\(|splice\\(|messagesAround| getLatestMessages|getMessagesAround" src/runtime/controller.ts src/runtime/domRegistry.ts src/runtime/measurement.ts` 无命中，viewport kernel 不接管 data merge/reorder。
+- `npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`git diff --check` 通过。
 
 ## Phase 4 React Adapter Rebuild
 
