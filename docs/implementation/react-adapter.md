@@ -1,0 +1,88 @@
+# React Adapter 合同
+
+## Adapter 职责
+
+React adapter 是 projection 层：
+
+- 使用 external store 读取 runtime snapshot。
+- 渲染固定 DOM skeleton。
+- 给每个 row 注册 DOM ref。
+- 在 layout effect 中发送 commit ack。
+- 渲染 slots：before edge、after edge、bottom follow、overlay。
+
+## External Store
+
+要求：
+
+- `getSnapshot()` 返回稳定对象。
+- snapshot revision 只在 React 需要重新 commit 时递增。
+- 相同 `items + segmentMeta + edgeState + bottomLockState + pendingIntent + phase` 不创建新 snapshot。
+- React 不拆分 snapshot 后自行组合。
+- `hasMoreBefore/After`、modifier、generation、segmentRevision 和 commitToken 必须随 snapshot 一起发布；adapter 不从外部 props 补这些字段。
+
+## Commit Ack
+
+每次 `projectionRevision` 改变：
+
+```text
+render
+-> row refs registered
+-> layout effect
+-> runtime.ackCommit(commitToken)
+```
+
+StrictMode 下可能出现 attach/detach/attach，ack 必须带 feedId/generation/segmentRevision/projectionRevision，runtime 只接受当前 token。
+
+## Row Wrapper
+
+Row wrapper 必须：
+
+- 使用 runtime item key 作为 React key。
+- ref callback register/unregister DOM。
+- 保留 `data-runtime-key`、`data-row-kind` 和可选的 `data-message-stable-id` / `data-message-server-id` testing attribute。
+- 不读写 scrollTop。
+
+Row wrapper 可以：
+
+- 渲染业务消息内容。
+- 暴露 measured-friendly DOM boundary。
+- 支持 memoization 和 explicit render version。
+
+## Slots
+
+Slots 接收 runtime semantic state，不接收 raw DOM metrics：
+
+- `renderBeforeEdge(edgeState)`
+- `renderAfterEdge(edgeState)`
+- `renderBottomFollow(bottomLockState, snapshot.segmentMeta.hasMoreAfter)`
+- `renderOverlay(snapshot)`
+
+Slots 禁止：
+
+- query row DOM。
+- 监听 raw scroll。
+- 直接触发 SDK 请求。
+- 直接写 `scrollTop`。
+
+## Custom Scrollbar Overlay
+
+如果 adapter 提供 overlay：
+
+- overlay controller 只读 native metrics。
+- drag / track click 调 runtime direct scroll API。
+- overlay 不进入 core snapshot。
+- overlay 不改变 DOM skeleton。
+
+## App Integration
+
+App 只通过 runtime events 接入：
+
+- `needMoreBefore`
+- `needMoreAfter`
+- `needLatestMessages`
+- `needMessagesAround`
+- `viewportAnchorChanged`
+- `viewportObservationChanged`
+- diagnostics
+
+App 不通过 ref 拿 scroll container 来补逻辑。
