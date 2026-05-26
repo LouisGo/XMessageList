@@ -66,7 +66,9 @@ describe('MessageList React adapter', () => {
     runtime.subscribeRuntimeEvent((event) => {
       events.push(event.type)
     })
-    runtime.applyLoadedSegment(segment([item('row-1')]))
+    runtime.applyLoadedSegment(segment([item('row-1')], {
+      hasMoreAfter: true,
+    }))
 
     await act(async () => {
       root.render(
@@ -160,16 +162,68 @@ describe('MessageList React adapter', () => {
       root.unmount()
     })
   })
+
+  it('detaches previous runtime before attaching a switched feed runtime', async () => {
+    const runtimeA = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtimeB = createMessageListRuntime<string>({ feedId: 'feed-b' })
+    const anchorEvents: ViewportAnchorChangedEvent[] = []
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    runtimeA.subscribeRuntimeEvent((event) => {
+      if (event.type === 'viewportAnchorChanged') {
+        anchorEvents.push(event)
+      }
+    })
+    runtimeA.applyLoadedSegment(segment([item('row-a')], {
+      anchor: {
+        feedId: 'feed-a',
+        stableId: 'row-a',
+        serverId: 'row-a',
+      },
+    }))
+    runtimeB.applyLoadedSegment(segment([item('row-b', 'feed-b')], {
+      feedId: 'feed-b',
+    }))
+
+    await act(async () => {
+      root.render(
+        <MessageList
+          runtime={runtimeA}
+          renderRow={(nextItem) => <span>{nextItem.message}</span>}
+        />,
+      )
+    })
+
+    await act(async () => {
+      root.render(
+        <MessageList
+          runtime={runtimeB}
+          renderRow={(nextItem) => <span>{nextItem.message}</span>}
+        />,
+      )
+    })
+
+    expect(anchorEvents).toContainEqual(expect.objectContaining({
+      reason: 'detach',
+      anchor: expect.objectContaining({ stableId: 'row-a' }),
+    }))
+    expect(runtimeB.getSnapshot().viewportPhase).toBe('IDLE')
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
 })
 
-function item(key: string): MessageDataItem<string> {
+function item(key: string, feedId = 'feed-a'): MessageDataItem<string> {
   return {
     key,
     rowKind: 'message',
     renderVersion: 1,
     message: key,
     identity: {
-      feedId: 'feed-a',
+      feedId,
       stableId: key,
       serverId: key,
       version: 1,

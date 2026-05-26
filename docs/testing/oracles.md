@@ -111,6 +111,23 @@ After extend：
 - locked append 后 bottom marker 在 viewport bottom threshold 内。
 - unlocked append 不移动当前 visual anchor。
 
+## Destination / Feed Switch Oracle
+
+通过条件：
+
+- jump / restore 目标在当前 segment 时，只做 local align，不发 around need。
+- 目标不在当前 segment 时，发 `needMessagesAround(reason: 'jump' | 'restore')`，around reset 后对齐目标。
+- feed detach 前发布 `viewportAnchorChanged(reason: 'detach')`，host 保存 identity anchor，不保存 raw `scrollTop`。
+- feed 切回时 host 响应 runtime semantic event 返回 around / latest segment；旧 feed 的 edge latch、pending intent 和 generation 不进入新 feed。
+
+## Dynamic Height Oracle
+
+通过条件：
+
+- row height 变化来自真实 DOM / ResizeObserver，不通过 reset 掩盖。
+- above-anchor growth 后 visual anchor top delta <= 1px。
+- ResizeObserver burst 后只发布稳定 observation / diagnostics，不触发 programmatic edge need。
+
 ## Segment Trim Oracle
 
 通过条件：

@@ -92,6 +92,14 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
     return request
   }
 
+  adoptRequestToken(
+    request: DataRuntimeRequestToken,
+  ): void {
+    if (request.generation === this.generation) {
+      this.pendingRequests.set(request.requestToken, request)
+    }
+  }
+
   resetLatest(
     input: ResetSegmentInput<TMessage, TOptimistic>,
   ): LoadedSegment<TMessage, TOptimistic> {

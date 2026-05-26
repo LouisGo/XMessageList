@@ -57,6 +57,8 @@ Slots 接收 runtime semantic state，不接收 raw DOM metrics：
 - `renderScrollToLatest(input)`
 - `renderOverlay(input)`
 
+`renderBeforeEdge` / `renderAfterEdge` 的 `retry()` 只能回调 adapter-private `retryEdgeRequest(edge)`；slot 不持有 request token，不直接请求 SDK。
+
 Slots 禁止：
 
 - query row DOM。
@@ -85,4 +87,4 @@ App 只通过 runtime events 接入：
 - `viewportObservationChanged`
 - diagnostics
 
-App 不通过 ref 拿 scroll container 来补逻辑。
+App 对 `needMoreBefore` / `needMoreAfter` 必须把 runtime event 的 `requestToken` 交给 data runtime 采用；请求失败时用 `reportEdgeRequestFailure(edge, requestToken)` ack。App 不通过 ref 拿 scroll container 来补逻辑。

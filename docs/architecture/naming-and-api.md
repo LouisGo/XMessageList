@@ -114,6 +114,10 @@ type MessageListRuntime<TMessage = unknown, TOptimistic = unknown> = {
     target: MessageIdentityAnchor,
     options?: MessageListRestoreOptions,
   ): void;
+  reportEdgeRequestFailure(
+    edge: 'before' | 'after',
+    requestToken: string,
+  ): void;
 
   getSnapshot(): MessageListSnapshot<TMessage, TOptimistic>;
   subscribeSnapshot(listener: MessageListSnapshotListener): () => void;
@@ -138,6 +142,7 @@ type MessageListRuntime<TMessage = unknown, TOptimistic = unknown> = {
 | `scrollToLatest` | 用户意图：到 feed latest；若 `hasMoreAfter=true`，发 `needLatestMessages` | 直接把 current segment 的 after edge 当 latest |
 | `scrollToMessage` | 用户意图：跳到目标消息；目标缺失时发 `needMessagesAround(reason: 'jump')` | 映射为全局百分比滚动 |
 | `restoreToMessage` | 会话恢复意图：按 persisted identity anchor 恢复，不使用旧 `scrollTop` | 做 smooth jump 或复用历史 raw scrollTop |
+| `reportEdgeRequestFailure` | host 对 runtime 的 edge request 失败 ack，仅能用匹配的 `requestToken` 释放到 error 状态 | host 自行清 latch 或 reset latest |
 | `subscribeSnapshot` | 给 React external store 使用，只通知 snapshot 变化 | 用普通 event listener 代替 snapshot store |
 | `subscribeRuntimeEvent` | 订阅 semantic need、anchor、diagnostics、ready/error | 让 host 监听 raw scroll |
 | `getViewportAnchor` | 返回最新可持久化 `MessageIdentityAnchor`；DOM offset / visual anchor 不外露 | 返回 raw `scrollTop`、row rect 或 internal key |
@@ -166,10 +171,11 @@ type MessageListAdapterRuntime = {
     element: HTMLElement | null,
   ): void;
   ackProjectionCommit(token: ProjectionCommitToken): void;
+  retryEdgeRequest(edge: 'before' | 'after'): void;
 
-  beginDirectScroll(input: DirectScrollInput): void;
-  writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): boolean;
-  endDirectScroll(input: DirectScrollInput): void;
+  beginDirectScroll(): void;
+  writeDirectScrollTop(scrollTop: number): boolean;
+  endDirectScroll(): void;
 };
 ```
 

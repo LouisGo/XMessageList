@@ -202,25 +202,33 @@ Phase gate：Phase 1 必须把 `src/runtime/` 与 `src/react/` 旧实现整体�
 
 目标：
 
-- [ ] 补齐用户可见交互语义。
-- [ ] 把 edge、destination、bottom follow、underflow 都接入统一 pending intent。
+- [x] 补齐用户可见交互语义。
+- [x] 把 edge、destination、bottom follow、underflow 都接入统一 pending intent。
 
 任务：
 
-- [ ] 实现 before / after edge paging、request latch、paging error retry。
-- [ ] 实现 short segment underflow fill 仲裁，一轮只允许一个 edge request。
-- [ ] 实现 bottom follow：partial segment 走 latest reset，latest locked 后 append / streaming 保持底部。
-- [ ] 实现 jump / restore：in-segment local align，outside-segment needMessagesAround + reset-around。
-- [ ] 实现 feed switch detach checkpoint、per-feed runtime cache、generation guard。
-- [ ] 实现 dynamic height stabilization：above-anchor growth、current-row streaming、container resize。
+- [x] 实现 before / after edge paging、request latch、paging error retry。
+- [x] 实现 short segment underflow fill 仲裁，一轮只允许一个 edge request。
+- [x] 实现 bottom follow：partial segment 走 latest reset，latest locked 后 append / streaming 保持底部。
+- [x] 实现 jump / restore：in-segment local align，outside-segment needMessagesAround + reset-around。
+- [x] 实现 feed switch detach checkpoint、per-feed runtime cache、generation guard。
+- [x] 实现 dynamic height stabilization：above-anchor growth、current-row streaming、container resize。
 
 退出标准：
 
-- [ ] follow bottom 不把 partial after edge 当 latest。
-- [ ] restore 不复用旧 `scrollTop`。
-- [ ] underflow fill 不制造双边请求风暴。
-- [ ] dynamic height 不通过 reset 掩盖 measurement 问题。
-- [ ] targeted interaction tests 覆盖 edge latch、underflow、bottom lock、destination、feed switch。
+- [x] follow bottom 不把 partial after edge 当 latest。
+- [x] restore 不复用旧 `scrollTop`。
+- [x] underflow fill 不制造双边请求风暴。
+- [x] dynamic height 不通过 reset 掩盖 measurement 问题。
+- [x] targeted interaction tests 覆盖 edge latch、underflow、bottom lock、destination、feed switch。
+
+Phase 5 evidence：
+
+- `src/runtime/__tests__/viewportInteractions.test.ts` 覆盖 edge latch/error/retry、underflow 单边仲裁、bottom follow latest reset、dynamic height anchor stabilization、destination around reset 和 restore local align。
+- `src/react/__tests__/messageListAdapter.test.tsx` 覆盖 feed runtime 切换时旧 runtime 收到 detach checkpoint，slots 通过 runtime retry edge。
+- `src/runtime/data/__tests__/dataRuntime.test.ts` 覆盖 viewport semantic edge request token 采用。
+- `src/demo/useDemoMessageScenario.ts` 只响应 runtime semantic events 后调用 demo request API / data runtime，不读取 projection DOM 或 raw scroll。
+- 2026-05-26 验证：`git diff --check`、`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`npm run build:demo`。
 
 ## Phase 6 Scrollbar And Observability
 

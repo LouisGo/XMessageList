@@ -1,0 +1,281 @@
+import { describe, expect, it } from 'vitest'
+import {
+  createMessageListRuntime,
+  type LoadedSegment,
+  type MessageDataItem,
+  type MessageListRuntimeEvent,
+} from '../index'
+import { getMessageListAdapterRuntime } from '../internal'
+import {
+  createContainer,
+  createFakeObservers,
+  setElementMetrics,
+  FakeScheduler,
+} from '../../test/fakes'
+
+describe('MessageList viewport interactions', () => {
+  it('latches edge paging, reports errors, and retries through runtime state', () => {
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', observers })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const before = createMarker(0, 1)
+    const row = createRow('row-1', 1, 120)
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(before, row)
+    runtime.attachScrollContainer(container)
+    adapter.registerBeforeTriggerElement(before)
+    adapter.registerRowElement('row-1', row)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      hasMoreBefore: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    container.dispatchEvent(new Event('scroll'))
+    observers.intersectionObservers[0]?.trigger(before, true)
+    observers.intersectionObservers[0]?.trigger(before, true)
+
+    expect(events.filter((event) => event.type === 'needMoreBefore')).toHaveLength(1)
+    expect(runtime.getSnapshot()).toMatchObject({
+      pendingIntent: 'edge-before',
+      edgeState: { before: { status: 'loading', requestToken: expect.any(String) } },
+    })
+
+    const requestToken = runtime.getSnapshot().edgeState.before.requestToken as string
+    runtime.reportEdgeRequestFailure('before', requestToken)
+    expect(runtime.getSnapshot().edgeState.before.status).toBe('error')
+
+    adapter.retryEdgeRequest('before')
+    expect(events.filter((event) => event.type === 'needMoreBefore')).toHaveLength(2)
+    expect(runtime.getSnapshot()).toMatchObject({
+      pendingIntent: 'edge-before',
+      edgeState: { before: { status: 'loading' } },
+    })
+  })
+
+  it('arbitrates short segment underflow to a single edge request', () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const row = createRow('row-1', 0, 20)
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(row)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', row)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(events.filter((event) =>
+      event.type === 'needMoreBefore' || event.type === 'needMoreAfter'
+    )).toHaveLength(1)
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'needMoreBefore',
+      reason: 'underflow-fill',
+    }))
+    expect(runtime.getSnapshot()).toMatchObject({
+      pendingIntent: 'underflow-fill',
+      segmentMeta: { underflow: 'fillable' },
+    })
+  })
+
+  it('follows latest via reset and locks bottom only at feed latest', () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rowA = createRow('row-1', 0, 50)
+    const rowB = createRow('row-2', 50, 50)
+    const rowC = createRow('row-3', 100, 50)
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(rowA)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', rowA)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    runtime.scrollToLatest()
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'needLatestMessages',
+      reason: 'bottom-follow',
+    }))
+    expect(runtime.getSnapshot()).toMatchObject({
+      pendingIntent: 'follow-bottom',
+      bottomLockState: 'UNLOCKED',
+    })
+
+    container.append(rowB, rowC)
+    adapter.registerRowElement('row-2', rowB)
+    adapter.registerRowElement('row-3', rowC)
+    runtime.applyLoadedSegment(segment([item('row-1'), item('row-2'), item('row-3')], 2, 1, {
+      hasMoreAfter: false,
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      pendingIntent: null,
+      bottomLockState: 'LOCKED',
+    })
+    expect(container.scrollTop).toBe(50)
+  })
+
+  it('stabilizes dynamic height changes above the visual anchor', () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      observers,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rowA = createRow('row-1', -40, 30)
+    const rowB = createRow('row-2', 0, 30)
+
+    container.scrollTop = 40
+    container.append(rowA, rowB)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', rowA)
+    adapter.registerRowElement('row-2', rowB)
+    runtime.applyLoadedSegment(segment([item('row-1'), item('row-2')], 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    setElementMetrics(rowA, { top: -60, height: 50 })
+    setElementMetrics(rowB, { top: 20, height: 30 })
+    observers.resizeObservers[0]?.trigger(rowA, 50)
+    scheduler.flushFrame()
+
+    expect(container.scrollTop).toBe(60)
+    expect(runtime.getDiagnostics().map((record) => record.name)).toContain(
+      'measurement.resizeDirty',
+    )
+  })
+
+  it('requests around messages for outside destination and aligns reset target', () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rowA = createRow('row-1', 0, 50)
+    const rowB = createRow('row-2', 50, 50)
+    const targetRow = createRow('row-3', 100, 50)
+    const target = { feedId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(rowA)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', rowA)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    runtime.scrollToMessage(target, { align: 'end' })
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'needMessagesAround',
+      reason: 'jump',
+      target,
+    }))
+    expect(runtime.getSnapshot().pendingIntent).toBe('destination')
+
+    container.append(rowB, targetRow)
+    adapter.registerRowElement('row-2', rowB)
+    adapter.registerRowElement('row-3', targetRow)
+    runtime.applyLoadedSegment(segment([item('row-1'), item('row-2'), item('row-3')], 2, 1, {
+      modifier: { type: 'reset-around', target },
+      anchor: target,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(container.scrollTop).toBe(50)
+    expect(runtime.getSnapshot().pendingIntent).toBeNull()
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'viewportAnchorChanged',
+      reason: 'transaction-settle',
+      anchor: expect.objectContaining({ stableId: 'row-3' }),
+    }))
+  })
+
+  it('restores visible targets with local align before requesting around', () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rowA = createRow('row-1', 0, 50)
+    const rowB = createRow('row-2', 50, 50)
+    const rowC = createRow('row-3', 100, 50)
+    const target = { feedId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(rowA, rowB, rowC)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', rowA)
+    adapter.registerRowElement('row-2', rowB)
+    adapter.registerRowElement('row-3', rowC)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(
+      segment([item('row-1'), item('row-2'), item('row-3')], 1, 1),
+    )
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    runtime.restoreToMessage(target, { align: 'end' })
+
+    expect(events.some((event) => event.type === 'needMessagesAround')).toBe(false)
+    expect(container.scrollTop).toBe(50)
+    expect(runtime.getSnapshot().pendingIntent).toBeNull()
+  })
+})
+
+function item(key: string): MessageDataItem<string> {
+  return {
+    key,
+    rowKind: 'message',
+    renderVersion: 1,
+    message: key,
+    identity: {
+      feedId: 'feed-a',
+      stableId: key,
+      serverId: key,
+      version: 1,
+    },
+  }
+}
+
+function segment(
+  items: MessageDataItem<string>[],
+  generation: number,
+  segmentRevision: number,
+  overrides: Partial<LoadedSegment<string>> = {},
+): LoadedSegment<string> {
+  return {
+    feedId: 'feed-a',
+    generation,
+    segmentRevision,
+    items,
+    hasMoreBefore: false,
+    hasMoreAfter: false,
+    modifier: { type: 'bootstrap' },
+    ...overrides,
+  }
+}
+
+function createRow(key: string, top: number, height: number): HTMLDivElement {
+  const row = document.createElement('div')
+  row.dataset.runtimeKey = key
+  row.dataset.rowKind = 'message'
+  row.dataset.messageStableId = key
+  setElementMetrics(row, { top, height })
+  return row
+}
+
+function createMarker(top: number, height: number): HTMLDivElement {
+  const marker = document.createElement('div')
+  setElementMetrics(marker, { top, height })
+  return marker
+}

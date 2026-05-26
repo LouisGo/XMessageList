@@ -22,6 +22,10 @@ export type MessageListRuntime<TMessage = unknown, TOptimistic = unknown> = {
   detachScrollContainer(): void
   destroy(): void
   applyLoadedSegment(segment: LoadedSegment<TMessage, TOptimistic>): void
+  reportEdgeRequestFailure(
+    edge: 'before' | 'after',
+    requestToken: string,
+  ): void
   scrollToLatest(options?: MessageListScrollOptions): void
   scrollToMessage(
     target: MessageIdentityAnchor,

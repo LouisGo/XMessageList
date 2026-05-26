@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  MessageIdentityAnchor,
   MessageListRuntime,
+  MessageListRuntimeEvent,
   ViewportAnchorChangedEvent,
 } from '../runtime'
 import {
@@ -14,10 +16,13 @@ import {
 } from './demoData'
 import { DEMO_FEEDS, getDemoFeedDefinition } from './demoFeeds'
 import {
-  getLatestMessages,
-  getMessagesAround,
   replaceDemoFeedMessages,
 } from './demoMessageApi'
+import {
+  applyAroundRequest,
+  applyEdgeRequest,
+  applyLatestRequest,
+} from './demoScenarioRequests'
 import type { DemoFeedRuntimeCache } from './useDemoFeedRuntimeCache'
 
 const PAGE_SIZE = 20
@@ -69,6 +74,8 @@ export function useDemoMessageScenario(
   const [lastEvent, setLastEvent] = useState('bootstrapping latest segment')
   const [feedLoading, setFeedLoading] = useState(true)
   const dataRuntimesRef = useRef(new Map<string, MessageListDataRuntime<DemoMessage>>())
+  const savedAnchorsRef = useRef(new Map<string, MessageIdentityAnchor>())
+  const dynamicHeightExpandedRef = useRef(false)
   const runtime = runtimeCache.getRuntime(activeFeedId)
   const activeFeed = useMemo(
     () => getDemoFeedDefinition(activeFeedId),
@@ -97,52 +104,101 @@ export function useDemoMessageScenario(
     const nextMessages = segment.items
       .map((item) => item.message)
       .filter((message): message is DemoMessage => Boolean(message))
-    setMessages(nextMessages)
-    runtime.applyLoadedSegment(segment)
-  }, [runtime])
+    if (segment.feedId === activeFeedId) {
+      setMessages(nextMessages)
+    }
+    runtimeCache.getRuntime(segment.feedId).applyLoadedSegment(segment)
+  }, [activeFeedId, runtimeCache])
+
+  const handleSemanticEvent = useCallback((
+    event: MessageListRuntimeEvent,
+  ): Promise<{ message: string } | null> | null => {
+    if (!isRuntimeNeedEvent(event) || event.feedId !== activeFeedId) {
+      return null
+    }
+
+    const dataRuntime = getDataRuntime(event.feedId)
+    const context = {
+      dataRuntime,
+      runtime: runtimeCache.getRuntime(event.feedId),
+      publishSegment,
+      pageSize: PAGE_SIZE,
+    }
+
+    if (event.type === 'needLatestMessages') {
+      return applyLatestRequest({ ...context, feedId: event.feedId, event })
+    }
+    if (event.type === 'needMessagesAround') {
+      return applyAroundRequest({ ...context, event })
+    }
+    if (event.type === 'needMoreBefore' || event.type === 'needMoreAfter') {
+      return applyEdgeRequest({ ...context, event })
+    }
+    return null
+  }, [activeFeedId, getDataRuntime, publishSegment, runtimeCache])
 
   useEffect(() => {
     let cancelled = false
-    void getLatestMessages({ feedId: activeFeedId, count: PAGE_SIZE })
-      .then((resp) => {
-        if (cancelled || !resp.ok) {
+    const unsubscribe = runtime.subscribeRuntimeEvent((event) => {
+      const request = handleSemanticEvent(event)
+      if (!request) {
+        return
+      }
+      void request.then((result) => {
+        if (!cancelled && result) {
+          setLastEvent(result.message)
+        }
+      })
+    })
+
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [handleSemanticEvent, runtime])
+
+  useEffect(() => {
+    let cancelled = false
+    const dataRuntime = getDataRuntime(activeFeedId)
+    const cachedSegment = dataRuntime.getSegment()
+
+    if (cachedSegment.items.length > 0) {
+      void Promise.resolve().then(() => {
+        if (cancelled) {
           return
         }
-        const dataRuntime = getDataRuntime(activeFeedId)
-        dataRuntime.resetLatest({
-          items: resp.messages.map(toDemoMessageDataItem),
-          hasMoreBefore: resp.hasMoreBefore,
-          hasMoreAfter: resp.hasMoreAfter,
-          anchor: resp.anchor.messageId
-            ? {
-                feedId: resp.feedId,
-                stableId: resp.anchor.messageId,
-                serverId: resp.anchor.messageId,
-              }
-            : undefined,
-          anchorStatus: resp.anchorStatus,
-        })
+
         publishSegment(dataRuntime)
-        setLastEvent(`loaded ${resp.messages.length} latest messages`)
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setFeedLoading(false)
+        setFeedLoading(false)
+        const savedAnchor = savedAnchorsRef.current.get(activeFeedId)
+        if (savedAnchor) {
+          runtime.restoreToMessage(savedAnchor)
+        } else {
+          runtime.scrollToLatest()
         }
       })
+      return () => {
+        cancelled = true
+      }
+    }
+
+    void applyLatestRequest({
+      dataRuntime,
+      feedId: activeFeedId,
+      runtime,
+      publishSegment,
+      pageSize: PAGE_SIZE,
+    }).then((result) => {
+      if (!cancelled) {
+        setLastEvent(result.message)
+        setFeedLoading(false)
+      }
+    })
+
     return () => {
       cancelled = true
     }
-  }, [activeFeedId, getDataRuntime, publishSegment])
-
-  useEffect(() => runtime.subscribeRuntimeEvent((event) => {
-    if (event.type === 'needLatestMessages') {
-      setLastEvent('runtime requested latest messages')
-    }
-    if (event.type === 'needMessagesAround') {
-      setLastEvent('runtime requested messages around anchor')
-    }
-  }), [runtime])
+  }, [activeFeedId, getDataRuntime, publishSegment, runtime])
 
   const appendMessage = useCallback(() => {
     const sequence = (messages.at(-1)?.sequence ?? 0) + 1
@@ -157,6 +213,45 @@ export function useDemoMessageScenario(
     setLastEvent('appended message')
   }, [activeFeedId, getDataRuntime, messages, publishSegment])
 
+  const toggleDynamicHeight = useCallback(() => {
+    if (messages.length === 0) {
+      return
+    }
+
+    dynamicHeightExpandedRef.current = !dynamicHeightExpandedRef.current
+    const targetIndex = Math.floor(messages.length / 2)
+    const nextMessages = messages.map((message, index) => index === targetIndex
+      ? {
+          ...message,
+          body: dynamicHeightExpandedRef.current
+            ? `${message.body}\n\n${message.body}\n\n${message.body}`
+            : message.body.split('\n\n')[0],
+        }
+      : message)
+    replaceDemoFeedMessages(activeFeedId, nextMessages)
+    const dataRuntime = getDataRuntime(activeFeedId)
+    dataRuntime.patchItems(nextMessages.map(toDemoMessageDataItem))
+    publishSegment(dataRuntime)
+    setLastEvent('patched dynamic row height')
+  }, [activeFeedId, getDataRuntime, messages, publishSegment])
+
+  const rememberRuntimeViewportAnchor = useCallback((
+    event: ViewportAnchorChangedEvent,
+  ) => {
+    if (event.anchor) {
+      savedAnchorsRef.current.set(event.feedId, event.anchor)
+    }
+  }, [])
+
+  const selectFeed = useCallback((feedId: string) => {
+    if (feedId !== activeFeedId) {
+      setFeedLoading(true)
+    }
+    setActiveFeedId(feedId)
+  }, [activeFeedId])
+
+  const runtimeSnapshot = runtime.getSnapshot()
+
   return {
     feeds: DEMO_FEEDS,
     activeFeedId,
@@ -166,10 +261,10 @@ export function useDemoMessageScenario(
     activeRuntime: runtime,
     messageCount: messages.length,
     loadedMessageCount: messages.length,
-    hasMoreBefore: false,
-    hasMoreAfter: false,
-    loadingBefore: false,
-    loadingAfter: false,
+    hasMoreBefore: runtimeSnapshot.segmentMeta.hasMoreBefore,
+    hasMoreAfter: runtimeSnapshot.segmentMeta.hasMoreAfter,
+    loadingBefore: runtimeSnapshot.edgeState.before.status === 'loading',
+    loadingAfter: runtimeSnapshot.edgeState.after.status === 'loading',
     feedLoading,
     eventStormRunning: false,
     botPushActive: false,
@@ -177,9 +272,9 @@ export function useDemoMessageScenario(
     highlightToken: 0,
     pendingOperation: feedLoading ? 'loading' : 'idle',
     lastEvent,
-    selectFeed: setActiveFeedId,
-    loadHistoryBatch: () => setLastEvent('history request deferred to Phase 5'),
-    loadFutureBatch: () => setLastEvent('future request deferred to Phase 5'),
+    selectFeed,
+    loadHistoryBatch: () => setLastEvent('history loads through runtime before edge'),
+    loadFutureBatch: () => setLastEvent('future loads through runtime after edge'),
     appendMessage,
     appendLongBurst: appendMessage,
     toggleEventStorm: () => setLastEvent('event storm deferred to Phase 7'),
@@ -187,7 +282,7 @@ export function useDemoMessageScenario(
     editMessage: () => setLastEvent('edit deferred to data runtime hardening'),
     deleteMessage: () => setLastEvent('delete deferred to data runtime hardening'),
     reactToMessage: () => setLastEvent('reaction deferred'),
-    toggleDynamicHeight: () => setLastEvent('dynamic height deferred to Phase 5'),
+    toggleDynamicHeight,
     sendMessage(body) {
       if (!body.trim()) {
         return false
@@ -200,33 +295,13 @@ export function useDemoMessageScenario(
     jumpToQuote: () => {
       const first = messages[0]
       if (first) {
-        const target = {
+        runtime.scrollToMessage({
           feedId: activeFeedId,
           stableId: first.id,
           serverId: first.id,
-        }
-        void getMessagesAround({
-          feedId: activeFeedId,
-          anchor: { messageId: first.id, position: first.sequence },
-          before: 5,
-          after: 5,
-        }).then((resp) => {
-          if (!resp.ok) {
-            return
-          }
-          const dataRuntime = getDataRuntime(activeFeedId)
-          dataRuntime.resetAround({
-            target,
-            items: resp.messages.map(toDemoMessageDataItem),
-            hasMoreBefore: resp.hasMoreBefore,
-            hasMoreAfter: resp.hasMoreAfter,
-            anchor: target,
-            anchorStatus: resp.anchorStatus,
-          })
-          publishSegment(dataRuntime)
         })
       }
-      setLastEvent('jump request entered data runtime')
+      setLastEvent('jump command sent to runtime')
     },
     clearFeed(feedId) {
       replaceDemoFeedMessages(feedId, [])
@@ -241,6 +316,19 @@ export function useDemoMessageScenario(
       }
       setLastEvent(`cleared ${feedId}`)
     },
-    rememberRuntimeViewportAnchor: () => undefined,
+    rememberRuntimeViewportAnchor,
   }
+}
+
+function isRuntimeNeedEvent(event: MessageListRuntimeEvent): event is Extract<
+  MessageListRuntimeEvent,
+  | { type: 'needLatestMessages' }
+  | { type: 'needMessagesAround' }
+  | { type: 'needMoreBefore' }
+  | { type: 'needMoreAfter' }
+> {
+  return event.type === 'needLatestMessages' ||
+    event.type === 'needMessagesAround' ||
+    event.type === 'needMoreBefore' ||
+    event.type === 'needMoreAfter'
 }

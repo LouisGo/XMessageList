@@ -64,6 +64,34 @@ describe('MessageListDataRuntime', () => {
     ])
   })
 
+  it('adopts viewport request tokens for semantic edge events', () => {
+    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
+    runtime.resetLatest({
+      items: [item('row-1')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })
+
+    runtime.adoptRequestToken({
+      requestToken: 'feed-a:before:runtime-1',
+      generation: 1,
+      kind: 'before',
+    })
+
+    const result = runtime.extendBefore({
+      requestToken: 'feed-a:before:runtime-1',
+      items: [item('row-0')],
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+    })
+
+    expect(result.applied).toBe(true)
+    expect(result.segment.items.map((nextItem) => nextItem.key)).toEqual([
+      'row-0',
+      'row-1',
+    ])
+  })
+
   it('drops stale responses after generation reset and trims around anchor', () => {
     const runtime = createMessageListDataRuntime<string>({
       feedId: 'feed-a',

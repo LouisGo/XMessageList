@@ -2,10 +2,6 @@ import type { MessageRuntimeItemKey } from './identity'
 import type { MessageListRuntime } from './runtime'
 import type { ProjectionCommitToken } from './snapshot'
 
-export type DirectScrollInput = {
-  source: 'custom-scrollbar-drag' | 'custom-scrollbar-track'
-}
-
 export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown> =
   MessageListRuntime<TMessage, TOptimistic> & {
     registerMessageFlowElement(element: HTMLElement | null): void
@@ -17,9 +13,10 @@ export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown>
       element: HTMLElement | null,
     ): void
     ackProjectionCommit(token: ProjectionCommitToken): void
-    beginDirectScroll(input: DirectScrollInput): void
-    writeDirectScrollTop(scrollTop: number, input: DirectScrollInput): boolean
-    endDirectScroll(input: DirectScrollInput): void
+    retryEdgeRequest(edge: 'before' | 'after'): void
+    beginDirectScroll(): void
+    writeDirectScrollTop(scrollTop: number): boolean
+    endDirectScroll(): void
   }
 
 export function getMessageListAdapterRuntime<

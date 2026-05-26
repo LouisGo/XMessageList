@@ -128,6 +128,7 @@ export function DemoMessageListContent({
           renderRow={renderDemoItem}
           renderBeforeEdge={() => null}
           renderAfterEdge={() => null}
+          onViewportAnchorChange={scenario.rememberRuntimeViewportAnchor}
         />
         <form className="message-composer" onSubmit={sendDraft}>
           <textarea
