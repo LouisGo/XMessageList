@@ -270,23 +270,31 @@ Phase 6 evidence：
 
 目标：
 
-- [ ] 把保留的 demo/e2e mock request 合同接入新 runtime。
-- [ ] 重建真实浏览器证据矩阵。
+- [x] 把保留的 demo/e2e mock request 合同接入新 runtime。
+- [x] 重建真实浏览器证据矩阵。
 
 任务：
 
-- [ ] demo 通过 runtime events 响应 `needMoreBefore`、`needMoreAfter`、`needLatestMessages`、`needMessagesAround`。
-- [ ] 保留 `getLatestMessages`、`getMessagesAround` 的请求语义和 e2e store 测试，更新返回数据到 next segment contract。
-- [ ] 更新 e2e evidence shape：无 spacer 字段，包含 segment boundary、modifier、generation/revision/token、identity、pendingIntent。
-- [ ] 重建 testing 文档中的 P0-P4 场景。
-- [ ] long-running mock event storm / bot push 保持 start/stop 语义，不阻塞 idle oracle。
+- [x] demo 通过 runtime events 响应 `needMoreBefore`、`needMoreAfter`、`needLatestMessages`、`needMessagesAround`。
+- [x] 保留 `getLatestMessages`、`getMessagesAround` 的请求语义和 e2e store 测试，更新返回数据到 next segment contract。
+- [x] 更新 e2e evidence shape：无 spacer 字段，包含 segment boundary、modifier、generation/revision/token、identity、pendingIntent。
+- [x] 重建 testing 文档中的 P0-P4 场景。
+- [x] long-running mock event storm / bot push 保持 start/stop 语义，不阻塞 idle oracle。
 
 退出标准：
 
-- [ ] testing 文档中的 P0-P4 场景真实浏览器通过。
-- [ ] correctness lane 与 perf lane 分开。
-- [ ] 失败截图、event log、diagnostics 足以定位 data / viewport / React / demo owner。
-- [ ] `npm run build:demo` 使用新 adapter 和 runtime。
+- [x] testing 文档中的 P0-P4 场景真实浏览器通过。
+- [x] correctness lane 与 perf lane 分开。
+- [x] 失败截图、event log、diagnostics 足以定位 data / viewport / React / demo owner。
+- [x] `npm run build:demo` 使用新 adapter 和 runtime。
+
+Phase 7 evidence：
+
+- `src/demo/useDemoMessageScenario.ts` 通过 runtime semantic events 调用保留的 `getLatestMessages` / `getMessagesAround` mock request，并只把返回数据交给 data runtime 后发布 immutable loaded segment。
+- `src/e2e-app/e2eBridge.ts` / `src/e2e-app/E2EMessageListApp.tsx` 暴露 bridge v1 action/evidence surface；evidence 包含 segment boundary、完整 modifier、event log、diagnostics、overlay metrics，不包含 spacer 字段。
+- `e2e/runner/runScenario.ts` 启动 demo preview + headless Chrome DevTools Protocol，分别提供 `npm run e2e:p0`、`npm run e2e:correctness`、`npm run e2e:perf`。
+- 2026-05-26 真实浏览器验证：`npm run e2e:p0` 5/5 scenarios 通过；`npm run e2e:correctness` P0-P4 15/15 scenarios 通过；`npm run e2e:perf` 1/1 scenario 通过。证据目录：`.logs/e2e/2026-05-26T11-14-39-525Z-correctness`、`.logs/e2e/2026-05-26T11-14-39-548Z-perf`。
+- Phase 7 修复回补：reset transaction 不再拿旧 visual anchor 硬修 latest/around；ordinary scroll 会更新 bottom lock observation；scroll container attach 会重连已注册 edge triggers；edge settle 会清理对应 pending intent；custom overlay track 高度与 native clientHeight 对齐。
 
 ## Phase 8 Hardening And Public Boundary
 

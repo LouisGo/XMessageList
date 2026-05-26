@@ -84,6 +84,23 @@ describe('MessageList viewport interactions', () => {
       type: 'needMoreAfter',
       reason: 'near-after',
     }))
+
+    const request = events.find((event) =>
+      event.type === 'needMoreAfter'
+    )
+    const row2 = createRow('row-2', 120, 80)
+    container.insertBefore(row2, after)
+    adapter.registerRowElement('row-2', row2)
+    runtime.applyLoadedSegment(segment([item('row-1'), item('row-2')], 1, 2, {
+      hasMoreAfter: false,
+      modifier: {
+        type: 'extend-after',
+        requestToken: request?.requestToken ?? '',
+      },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getSnapshot().pendingIntent).toBeNull()
   })
 
   it('keeps long direct scrollbar drags edge-capable until end', () => {

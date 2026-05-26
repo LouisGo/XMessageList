@@ -29,6 +29,10 @@ export function createE2EFailureReport(
     `- Result: \`${input.result.ok ? 'passed' : 'failed'}\``,
     `- Primary owner: \`${classifyE2EFailureOwner(input.result)}\``,
     `- Error code: \`${input.result.error?.code ?? 'none'}\``,
+    `- Runtime phase: \`${evidence?.phase ?? 'unknown'}\``,
+    `- Pending intent: \`${evidence?.pendingIntent ?? 'unknown'}\``,
+    `- Segment modifier: \`${evidence?.segment.modifier.type ?? 'unknown'}\``,
+    `- Viewport errors: \`${countViewportErrors(evidence)}\``,
     '',
   ].join('\n')
 }
@@ -40,5 +44,17 @@ export function classifyE2EFailureOwner(
     return 'harness'
   }
 
+  if (result.error?.code?.startsWith('missing_')) {
+    return 'react'
+  }
+
+  if (result.error?.code === 'wait_timeout') {
+    return 'runtime'
+  }
+
   return result.ok ? 'unknown' : 'runtime'
+}
+
+function countViewportErrors(evidence: E2EEvidence | undefined): number {
+  return evidence?.events.filter((event) => event.type === 'viewportError').length ?? 0
 }

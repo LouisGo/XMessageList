@@ -106,6 +106,22 @@ export function replaceDemoFeedMessages(
   feedStore.set(feedId, normalizeDemoMessages(feedId, messages))
 }
 
+export function readDemoFeedMessages(feedId: string): DemoMessage[] {
+  return [...ensureFeedMessages(feedId)]
+}
+
+export function appendDemoFeedMessages(
+  feedId: string,
+  messages: DemoMessage[],
+): DemoMessage[] {
+  const next = normalizeDemoMessages(feedId, [
+    ...ensureFeedMessages(feedId),
+    ...messages,
+  ])
+  feedStore.set(feedId, next)
+  return next
+}
+
 function ensureFeedMessages(feedId: string): DemoMessage[] {
   const existing = feedStore.get(feedId)
 

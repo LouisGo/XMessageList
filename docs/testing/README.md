@@ -15,3 +15,5 @@
 - 不能用绿色单测证明架构正确。
 - 所有 scroll specs 都需要真实浏览器证据。
 - `scrollHeight` 必须在证据中证明只来自当前 DOM segment。
+- correctness lane: `npm run e2e:correctness`
+- perf lane: `npm run e2e:perf`

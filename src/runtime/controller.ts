@@ -1,4 +1,5 @@
 import { correctTransactionAnchor } from './anchorCorrection'
+import { resolveObservedBottomLockState } from './bottomLock'
 import { DiagnosticRingBuffer } from './diagnostics'
 import { RuntimeDomRegistry } from './domRegistry'
 import { createViewportEvidence } from './evidence'
@@ -460,7 +461,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.evaluateUnderflow()
     })
   }
-
   private handleScrollFrame(): void {
     if (this.pendingTransaction || this.snapshot.viewportPhase !== 'IDLE') {
       return
@@ -469,11 +469,12 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.lastMeasurement = measureRuntimeDom(this.registry.snapshot(), {
       rowKeys: this.domInteractions.getScrollSampleKeys(),
     })
+    const bottomLockState = resolveObservedBottomLockState(this.snapshot, this.lastMeasurement)
+    if (bottomLockState !== this.snapshot.bottomLockState) {
+      this.snapshot = { ...this.snapshot, bottomLockState }
+    }
     this.emitViewportObservation()
-    this.emitAnchorChanged(
-      'scroll-idle',
-      this.resolveMeasuredViewportAnchor(),
-    )
+    this.emitAnchorChanged('scroll-idle', this.resolveMeasuredViewportAnchor())
   }
 
   private resolveMeasuredViewportAnchor(): MessageIdentityAnchor | null {

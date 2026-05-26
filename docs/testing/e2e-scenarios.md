@@ -1,5 +1,11 @@
 # E2E 场景矩阵
 
+执行入口：
+
+- `npm run e2e:p0`：只跑 P0 场景。
+- `npm run e2e:correctness`：跑 P0-P4 correctness lane。
+- `npm run e2e:perf`：跑独立 perf lane。
+
 ## P0 必须先绿
 
 ### `bootstrap.latest-native-bottom`

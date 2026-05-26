@@ -200,10 +200,16 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
 
     if (segment.modifier.type === 'extend-before') {
       next = settleEdge(next, 'before', segment.modifier.requestToken)
+      if (next.pendingIntent === 'edge-before') {
+        next = { ...next, pendingIntent: null }
+      }
     }
 
     if (segment.modifier.type === 'extend-after') {
       next = settleEdge(next, 'after', segment.modifier.requestToken)
+      if (next.pendingIntent === 'edge-after') {
+        next = { ...next, pendingIntent: null }
+      }
     }
 
     if (segment.modifier.type === 'reset-around' && this.pendingDestination) {

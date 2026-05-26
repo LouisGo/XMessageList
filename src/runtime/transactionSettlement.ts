@@ -44,6 +44,26 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
     return segment.anchor ?? getViewportAnchor()
   }
 
+  if (segment.modifier.type === 'reset-latest') {
+    if (!segment.hasMoreAfter) {
+      domInteractions.scrollToNativeBottom()
+    }
+    return segment.anchor ?? getViewportAnchor()
+  }
+
+  if (segment.modifier.type === 'reset-around') {
+    const target = segment.modifier.target ?? segment.anchor
+
+    if (
+      target &&
+      domInteractions.alignToMessage(snapshot, target, 'center')
+    ) {
+      return target
+    }
+
+    return segment.anchor ?? getViewportAnchor()
+  }
+
   if (snapshot.bottomLockState === 'LOCKED' && !segment.hasMoreAfter) {
     domInteractions.scrollToNativeBottom()
     return segment.anchor ?? getViewportAnchor()

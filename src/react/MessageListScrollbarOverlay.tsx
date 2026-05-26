@@ -272,11 +272,11 @@ function areSameMetrics(left: NativeScrollMetrics, right: NativeScrollMetrics): 
 }
 
 const overlayStyle = {
-  bottom: 8,
+  bottom: 0,
   pointerEvents: 'none',
   position: 'absolute',
   right: 6,
-  top: 8,
+  top: 0,
   width: 12,
   zIndex: 4,
 } as const

@@ -52,6 +52,45 @@ type ViewportEvidence = {
 
 Evidence 不包含 topSpacer / bottomSpacer，因为 next 基座没有这两个概念。Evidence 必须包含 segment 边界、modifier、generation/revision/token；否则 bottom follow、after paging、underflow fill 和 identity-remap 都无法可靠验收。
 
+真实浏览器 E2E bridge 在 `ViewportEvidence` 外增加稳定测试字段：
+
+```ts
+type E2EEvidence = ViewportEvidence & {
+  schemaVersion: 2;
+  scenarioId: string;
+  checkpointId: string;
+  timestamp: number;
+  segment: {
+    itemCount: number;
+    firstKey: string | null;
+    lastKey: string | null;
+    firstIdentity: { stableId?: string; serverId?: string; localId?: string } | null;
+    lastIdentity: { stableId?: string; serverId?: string; localId?: string } | null;
+    modifier: SegmentModifier;
+  };
+  events: Array<{
+    type: string;
+    feedId?: string;
+    generation?: number;
+    segmentRevision?: number;
+    requestToken?: string;
+    reason?: string;
+    edge?: 'before' | 'after';
+  }>;
+  diagnostics: ViewportDiagnosticRecord[];
+  overlay: {
+    visible: boolean;
+    thumbTop: number;
+    thumbHeight: number;
+    expectedThumbTop: number;
+    expectedThumbHeight: number;
+    trackHeight: number;
+  } | null;
+};
+```
+
+E2E bridge 只能用这些字段判定场景；失败报告必须带 action result、event log、diagnostics 和必要截图，不能通过读取 runtime private object 补答案。
+
 ## Anchor Preservation Oracle
 
 通过条件：

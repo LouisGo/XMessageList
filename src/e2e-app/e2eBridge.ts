@@ -1,4 +1,9 @@
-import type { ViewportEvidence } from '../runtime'
+import type {
+  MessageListRuntimeEvent,
+  MessageListSnapshot,
+  ViewportDiagnosticRecord,
+  ViewportEvidence,
+} from '../runtime'
 
 export type E2EScenarioStatus = 'booting' | 'ready' | 'running' | 'failed'
 
@@ -40,6 +45,51 @@ export type E2EEvidence = ViewportEvidence & {
   scenarioId: string
   checkpointId: string
   timestamp: number
+  segment: E2ESegmentEvidence
+  events: E2ERuntimeEventRecord[]
+  diagnostics: ViewportDiagnosticRecord[]
+  overlay: E2EOverlayEvidence | null
+}
+
+export type E2ESegmentEvidence = {
+  itemCount: number
+  firstKey: string | null
+  lastKey: string | null
+  firstIdentity: E2EIdentityEvidence | null
+  lastIdentity: E2EIdentityEvidence | null
+  modifier: MessageListSnapshot['segmentMeta']['modifier']
+}
+
+export type E2EIdentityEvidence = {
+  stableId?: string
+  serverId?: string
+  localId?: string
+}
+
+export type E2ERuntimeEventRecord = {
+  type: MessageListRuntimeEvent['type']
+  feedId?: string
+  timestamp: number
+  generation?: number
+  segmentRevision?: number
+  requestToken?: string
+  reason?: string
+  edge?: 'before' | 'after'
+  anchor?: unknown
+  diagnostic?: ViewportDiagnosticRecord
+  error?: {
+    code: string
+    message: string
+  }
+}
+
+export type E2EOverlayEvidence = {
+  visible: boolean
+  thumbTop: number
+  thumbHeight: number
+  expectedThumbTop: number
+  expectedThumbHeight: number
+  trackHeight: number
 }
 
 export type XMessageListE2EBridge = {

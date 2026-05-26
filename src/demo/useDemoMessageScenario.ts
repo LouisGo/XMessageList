@@ -10,18 +10,23 @@ import {
   type MessageListDataRuntime,
 } from '../runtime/data'
 import {
+  createDemoMessages,
+  createDemoMessageId,
   createNewestMessage,
   toDemoMessageDataItem,
   type DemoMessage,
 } from './demoData'
 import { DEMO_FEEDS, getDemoFeedDefinition } from './demoFeeds'
 import {
+  appendDemoFeedMessages,
+  readDemoFeedMessages,
   replaceDemoFeedMessages,
 } from './demoMessageApi'
 import {
   applyAroundRequest,
   applyEdgeRequest,
   applyLatestRequest,
+  toRuntimeAnchor,
 } from './demoScenarioRequests'
 import type { DemoFeedRuntimeCache } from './useDemoFeedRuntimeCache'
 
@@ -64,6 +69,9 @@ export type DemoMessageScenario = {
   jumpToQuote: () => void
   clearFeed: (feedId: string) => void
   rememberRuntimeViewportAnchor: (event: ViewportAnchorChangedEvent) => void
+  resetE2EScenario: (scenarioId: string) => Promise<void>
+  streamCurrentRow: () => void
+  sendOptimisticAndRemap: () => Promise<void>
 }
 
 export function useDemoMessageScenario(
@@ -73,6 +81,10 @@ export function useDemoMessageScenario(
   const [messages, setMessages] = useState<DemoMessage[]>([])
   const [lastEvent, setLastEvent] = useState('bootstrapping latest segment')
   const [feedLoading, setFeedLoading] = useState(true)
+  const [eventStormRunning, setEventStormRunning] = useState(false)
+  const [botPushActive, setBotPushActive] = useState(false)
+  const eventStormTimerRef = useRef<number | null>(null)
+  const botPushTimerRef = useRef<number | null>(null)
   const dataRuntimesRef = useRef(new Map<string, MessageListDataRuntime<DemoMessage>>())
   const savedAnchorsRef = useRef(new Map<string, MessageIdentityAnchor>())
   const dynamicHeightExpandedRef = useRef(false)
@@ -109,6 +121,31 @@ export function useDemoMessageScenario(
     }
     runtimeCache.getRuntime(segment.feedId).applyLoadedSegment(segment)
   }, [activeFeedId, runtimeCache])
+
+  const publishActivePatch = useCallback((
+    feedId: string,
+    items: DemoMessage[],
+  ) => {
+    const dataRuntime = getDataRuntime(feedId)
+    dataRuntime.patchItems(items.map(toDemoMessageDataItem))
+    publishSegment(dataRuntime)
+  }, [getDataRuntime, publishSegment])
+
+  const appendGeneratedMessages = useCallback((
+    feedId: string,
+    count: number,
+    body: string,
+  ): DemoMessage[] => {
+    const allMessages = readDemoFeedMessages(feedId)
+    const lastSequence = allMessages.at(-1)?.sequence ?? 0
+    const nextMessages = Array.from({ length: count }, (_, index) =>
+      createNewestMessage(feedId, lastSequence + index + 1, body),
+    )
+
+    appendDemoFeedMessages(feedId, nextMessages)
+    publishActivePatch(feedId, nextMessages)
+    return nextMessages
+  }, [publishActivePatch])
 
   const handleSemanticEvent = useCallback((
     event: MessageListRuntimeEvent,
@@ -192,6 +229,7 @@ export function useDemoMessageScenario(
       if (!cancelled) {
         setLastEvent(result.message)
         setFeedLoading(false)
+        runtime.scrollToLatest()
       }
     })
 
@@ -201,17 +239,66 @@ export function useDemoMessageScenario(
   }, [activeFeedId, getDataRuntime, publishSegment, runtime])
 
   const appendMessage = useCallback(() => {
-    const sequence = (messages.at(-1)?.sequence ?? 0) + 1
-    const nextMessages = [
-      ...messages,
-      createNewestMessage(activeFeedId, sequence, 'Appended demo message'),
-    ]
-    replaceDemoFeedMessages(activeFeedId, nextMessages)
-    const dataRuntime = getDataRuntime(activeFeedId)
-    dataRuntime.patchItems(nextMessages.map(toDemoMessageDataItem))
-    publishSegment(dataRuntime)
+    appendGeneratedMessages(activeFeedId, 1, 'Appended demo message')
     setLastEvent('appended message')
-  }, [activeFeedId, getDataRuntime, messages, publishSegment])
+  }, [activeFeedId, appendGeneratedMessages])
+
+  const appendLongBurst = useCallback(() => {
+    appendGeneratedMessages(activeFeedId, 8, 'Burst append from demo mock stream')
+    setLastEvent('appended burst')
+  }, [activeFeedId, appendGeneratedMessages])
+
+  const loadEdgeBatch = useCallback((edge: 'before' | 'after') => {
+    const dataRuntime = getDataRuntime(activeFeedId)
+    const segment = dataRuntime.getSegment()
+    const boundaryItem = edge === 'before'
+      ? segment.items[0]
+      : segment.items.at(-1)
+    const boundaryMessage = boundaryItem?.message
+
+    if (!boundaryMessage) {
+      setLastEvent(`no ${edge} boundary loaded`)
+      return
+    }
+
+    const allMessages = readDemoFeedMessages(activeFeedId)
+    const boundaryIndex = allMessages.findIndex((message) =>
+      message.id === boundaryMessage.id
+    )
+
+    if (boundaryIndex < 0) {
+      setLastEvent(`${edge} boundary missing from mock store`)
+      return
+    }
+
+    const request = dataRuntime.createRequestToken(edge)
+    const start = edge === 'before'
+      ? Math.max(0, boundaryIndex - PAGE_SIZE)
+      : boundaryIndex + 1
+    const end = edge === 'before'
+      ? boundaryIndex
+      : Math.min(allMessages.length, boundaryIndex + 1 + PAGE_SIZE)
+    const incoming = allMessages.slice(start, end)
+    const applyInput = {
+      requestToken: request.requestToken,
+      items: incoming.map(toDemoMessageDataItem),
+      hasMoreBefore: edge === 'before' ? start > 0 : segment.hasMoreBefore,
+      hasMoreAfter: edge === 'after' ? end < allMessages.length : segment.hasMoreAfter,
+      anchor: segment.anchor,
+      anchorStatus: segment.anchorStatus,
+    }
+    const result = edge === 'before'
+      ? dataRuntime.extendBefore(applyInput)
+      : dataRuntime.extendAfter(applyInput)
+
+    if (result.applied) {
+      publishSegment(dataRuntime)
+      setLastEvent(`manually loaded ${incoming.length} ${edge} messages`)
+      return
+    }
+
+    setLastEvent(`ignored stale manual ${edge} response`)
+  }, [activeFeedId, getDataRuntime, publishSegment])
 
   const toggleDynamicHeight = useCallback(() => {
     if (messages.length === 0) {
@@ -235,6 +322,128 @@ export function useDemoMessageScenario(
     setLastEvent('patched dynamic row height')
   }, [activeFeedId, getDataRuntime, messages, publishSegment])
 
+  const streamCurrentRow = useCallback(() => {
+    const visibleKey = runtime.getEvidence().visibleRows[0]?.key
+    const current = getDataRuntime(activeFeedId).getSegment()
+    const target = current.items.find((item) => item.key === visibleKey) ??
+      current.items[Math.floor(current.items.length / 2)]
+    const message = target?.message
+
+    if (!message) {
+      setLastEvent('no visible row to stream')
+      return
+    }
+
+    const streamed = {
+      ...message,
+      body: `${message.body}\n\nStreaming update ${Date.now()}`,
+    }
+    replaceDemoFeedMessages(
+      activeFeedId,
+      readDemoFeedMessages(activeFeedId).map((candidate) =>
+        candidate.id === streamed.id ? streamed : candidate,
+      ),
+    )
+    publishActivePatch(activeFeedId, [streamed])
+    setLastEvent('streamed current row')
+  }, [activeFeedId, getDataRuntime, publishActivePatch, runtime])
+
+  const sendOptimisticAndRemap = useCallback(async () => {
+    const dataRuntime = getDataRuntime(activeFeedId)
+    const allMessages = readDemoFeedMessages(activeFeedId)
+    const nextSequence = (allMessages.at(-1)?.sequence ?? 0) + 1
+    const localId = `local-${Date.now()}`
+    const serverId = createDemoMessageId(activeFeedId, nextSequence)
+    const optimistic: DemoMessage = {
+      id: localId,
+      feedId: activeFeedId,
+      sequence: nextSequence,
+      author: 'You',
+      body: 'Optimistic send awaiting server id',
+      tone: 'self',
+    }
+    const committed: DemoMessage = {
+      ...optimistic,
+      id: serverId,
+      body: 'Optimistic send committed by server',
+    }
+
+    appendDemoFeedMessages(activeFeedId, [committed])
+    dataRuntime.patchItems([{
+      ...toDemoMessageDataItem(optimistic),
+      rowKind: 'optimistic',
+      identity: {
+        feedId: activeFeedId,
+        stableId: localId,
+        localId,
+        version: 1,
+      },
+    }])
+    publishSegment(dataRuntime)
+    await Promise.resolve()
+    dataRuntime.applyIdentityRemap([
+      {
+        from: {
+          feedId: activeFeedId,
+          stableId: localId,
+          localId,
+        },
+        to: {
+          feedId: activeFeedId,
+          stableId: serverId,
+          serverId,
+        },
+        previousKey: localId,
+        nextKey: serverId,
+      },
+    ])
+    publishSegment(dataRuntime)
+    setLastEvent('optimistic identity remapped to server id')
+  }, [activeFeedId, getDataRuntime, publishSegment])
+
+  const stopLongRunningMocks = useCallback(() => {
+    if (eventStormTimerRef.current !== null) {
+      window.clearInterval(eventStormTimerRef.current)
+      eventStormTimerRef.current = null
+    }
+    if (botPushTimerRef.current !== null) {
+      window.clearInterval(botPushTimerRef.current)
+      botPushTimerRef.current = null
+    }
+    setEventStormRunning(false)
+    setBotPushActive(false)
+  }, [])
+
+  const toggleEventStorm = useCallback(() => {
+    if (eventStormTimerRef.current !== null) {
+      stopLongRunningMocks()
+      setLastEvent('event storm stopped')
+      return
+    }
+
+    const feedId = activeFeedId
+    setEventStormRunning(true)
+    eventStormTimerRef.current = window.setInterval(() => {
+      appendGeneratedMessages(feedId, 2, 'Event storm mock message')
+    }, 160)
+    setLastEvent('event storm started')
+  }, [activeFeedId, appendGeneratedMessages, stopLongRunningMocks])
+
+  const toggleBotPush = useCallback(() => {
+    if (botPushTimerRef.current !== null) {
+      stopLongRunningMocks()
+      setLastEvent('bot push stopped')
+      return
+    }
+
+    const feedId = activeFeedId
+    setBotPushActive(true)
+    botPushTimerRef.current = window.setInterval(() => {
+      appendGeneratedMessages(feedId, 1, 'Bot push mock message')
+    }, 500)
+    setLastEvent('bot push started')
+  }, [activeFeedId, appendGeneratedMessages, stopLongRunningMocks])
+
   const rememberRuntimeViewportAnchor = useCallback((
     event: ViewportAnchorChangedEvent,
   ) => {
@@ -249,6 +458,69 @@ export function useDemoMessageScenario(
     }
     setActiveFeedId(feedId)
   }, [activeFeedId])
+
+  const resetE2EScenario = useCallback(async (scenarioId: string) => {
+    stopLongRunningMocks()
+    savedAnchorsRef.current.clear()
+    dynamicHeightExpandedRef.current = false
+
+    const feedId = DEMO_FEEDS[0].id
+    const allMessages = createDemoMessages(resolveScenarioTotalMessages(scenarioId), feedId)
+    replaceDemoFeedMessages(feedId, allMessages)
+    const dataRuntime = getDataRuntime(feedId)
+    const runtimeForFeed = runtimeCache.getRuntime(feedId)
+
+    if (usesAroundBootstrap(scenarioId)) {
+      const targetIndex = Math.floor(allMessages.length / 2)
+      const target = allMessages[targetIndex] ?? allMessages[0]
+      const before = scenarioId === 'underflow.dual-edge-arbitration' ? 1 : 8
+      const after = scenarioId === 'underflow.dual-edge-arbitration' ? 1 : 8
+      const start = Math.max(0, targetIndex - before)
+      const end = Math.min(allMessages.length, targetIndex + after + 1)
+      dataRuntime.resetAround({
+        target: {
+          feedId,
+          stableId: target.id,
+          serverId: target.id,
+        },
+        items: allMessages.slice(start, end).map(toDemoMessageDataItem),
+        hasMoreBefore: start > 0,
+        hasMoreAfter: end < allMessages.length,
+        anchor: {
+          feedId,
+          stableId: target.id,
+          serverId: target.id,
+        },
+        anchorStatus: 'normal',
+      })
+    } else {
+      const latest = allMessages.slice(Math.max(0, allMessages.length - PAGE_SIZE))
+      dataRuntime.resetLatest({
+        items: latest.map(toDemoMessageDataItem),
+        hasMoreBefore: allMessages.length > PAGE_SIZE,
+        hasMoreAfter: false,
+        anchor: toRuntimeAnchor(feedId, latest.at(-1)?.id),
+        anchorStatus: 'normal',
+      })
+    }
+
+    const segment = dataRuntime.getSegment()
+    setActiveFeedId(feedId)
+    setMessages(segment.items
+      .map((item) => item.message)
+      .filter((message): message is DemoMessage => Boolean(message)))
+    setFeedLoading(false)
+    setLastEvent(`reset ${scenarioId}`)
+    runtimeForFeed.applyLoadedSegment(segment)
+    await Promise.resolve()
+    if (!usesAroundBootstrap(scenarioId)) {
+      runtimeForFeed.scrollToLatest()
+    }
+  }, [getDataRuntime, runtimeCache, stopLongRunningMocks])
+
+  useEffect(() => () => {
+    stopLongRunningMocks()
+  }, [stopLongRunningMocks])
 
   const runtimeSnapshot = runtime.getSnapshot()
 
@@ -266,19 +538,19 @@ export function useDemoMessageScenario(
     loadingBefore: runtimeSnapshot.edgeState.before.status === 'loading',
     loadingAfter: runtimeSnapshot.edgeState.after.status === 'loading',
     feedLoading,
-    eventStormRunning: false,
-    botPushActive: false,
+    eventStormRunning,
+    botPushActive,
     highlightedMessageId: null,
     highlightToken: 0,
     pendingOperation: feedLoading ? 'loading' : 'idle',
     lastEvent,
     selectFeed,
-    loadHistoryBatch: () => setLastEvent('history loads through runtime before edge'),
-    loadFutureBatch: () => setLastEvent('future loads through runtime after edge'),
+    loadHistoryBatch: () => loadEdgeBatch('before'),
+    loadFutureBatch: () => loadEdgeBatch('after'),
     appendMessage,
-    appendLongBurst: appendMessage,
-    toggleEventStorm: () => setLastEvent('event storm deferred to Phase 7'),
-    toggleBotPush: () => setLastEvent('bot push deferred to Phase 7'),
+    appendLongBurst,
+    toggleEventStorm,
+    toggleBotPush,
     editMessage: () => setLastEvent('edit deferred to data runtime hardening'),
     deleteMessage: () => setLastEvent('delete deferred to data runtime hardening'),
     reactToMessage: () => setLastEvent('reaction deferred'),
@@ -317,6 +589,9 @@ export function useDemoMessageScenario(
       setLastEvent(`cleared ${feedId}`)
     },
     rememberRuntimeViewportAnchor,
+    resetE2EScenario,
+    streamCurrentRow,
+    sendOptimisticAndRemap,
   }
 }
 
@@ -331,4 +606,19 @@ function isRuntimeNeedEvent(event: MessageListRuntimeEvent): event is Extract<
     event.type === 'needMessagesAround' ||
     event.type === 'needMoreBefore' ||
     event.type === 'needMoreAfter'
+}
+
+function resolveScenarioTotalMessages(scenarioId: string): number {
+  if (scenarioId === 'underflow.dual-edge-arbitration') {
+    return 18
+  }
+
+  return 80
+}
+
+function usesAroundBootstrap(scenarioId: string): boolean {
+  return scenarioId === 'paging.after-native-thumb-rebound' ||
+    scenarioId === 'underflow.dual-edge-arbitration' ||
+    scenarioId === 'destination.jump-in-segment' ||
+    scenarioId === 'follow-bottom.partial-segment'
 }

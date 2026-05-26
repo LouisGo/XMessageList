@@ -21,7 +21,9 @@
   "scripts": {
     "dev": "vite",
     "demo:seed-feed": "node --experimental-strip-types tools/seedDemoFeed.ts",
-    "e2e:p0": "node --experimental-strip-types e2e/runner/runScenario.ts",
+    "e2e:p0": "node --experimental-strip-types e2e/runner/runScenario.ts --priority p0",
+    "e2e:correctness": "node --experimental-strip-types e2e/runner/runScenario.ts --lane correctness --priority all",
+    "e2e:perf": "node --experimental-strip-types e2e/runner/runScenario.ts --lane perf --priority all",
     "build": "tsc -b && vite build",
     "build:demo": "tsc -b && vite build --config vite.demo.config.ts",
     "lint": "eslint . && npm run lint:runtime-size",

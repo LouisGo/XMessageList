@@ -64,8 +64,10 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       'scroll',
       this.handleScroll,
     )
+    this.disconnectEdgeObservers()
     this.options.registry.setScrollContainer(container)
     container.addEventListener('scroll', this.handleScroll, { passive: true })
+    this.reconnectEdgeObservers()
   }
 
   detachScrollContainer(): void {
@@ -371,6 +373,18 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     this.afterIntersectionObserver?.disconnect()
     this.beforeIntersectionObserver = null
     this.afterIntersectionObserver = null
+  }
+
+  private reconnectEdgeObservers(): void {
+    const snapshot = this.options.registry.snapshot()
+    this.beforeIntersectionObserver = this.createEdgeObserver(
+      'before',
+      snapshot.beforeTrigger,
+    )
+    this.afterIntersectionObserver = this.createEdgeObserver(
+      'after',
+      snapshot.afterTrigger,
+    )
   }
 
   private markEdgeSourceActive(now: number): void {
