@@ -68,8 +68,9 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
 
   detachScrollContainer(): void {
     this.emitAnchorChanged('detach', this.resolveCurrentVisualAnchor())
-    this.registry.setScrollContainer(null)
-    this.registry.clearRows()
+    for (const row of this.registry.clearAll()) {
+      this.resizeObserver?.unobserve(row)
+    }
   }
 
   destroy(): void {
@@ -80,6 +81,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.scheduler.cancelAnimationFrame(this.resizeFrame)
     }
     this.resizeObserver?.disconnect()
+    this.registry.clearAll()
     this.pendingTransaction = null
     this.transactionQueue.length = 0
     this.resizeFrame = null
@@ -97,6 +99,8 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       })
       return
     }
+
+    this.cancelTransactionsBeforeGeneration(segment.generation)
 
     if (this.pendingTransaction || this.isAdvancingTransactionQueue) {
       this.transactionQueue.push(segment)
@@ -384,6 +388,22 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
 
     if (next) {
       this.startTransaction(next)
+    }
+  }
+
+  private cancelTransactionsBeforeGeneration(generation: number): void {
+    if (
+      this.pendingTransaction &&
+      this.pendingTransaction.segment.generation < generation
+    ) {
+      this.scheduler.clearTimeout(this.pendingTransaction.timeoutHandle)
+      this.pendingTransaction = null
+    }
+
+    for (let index = this.transactionQueue.length - 1; index >= 0; index -= 1) {
+      if (this.transactionQueue[index].generation < generation) {
+        this.transactionQueue.splice(index, 1)
+      }
     }
   }
 

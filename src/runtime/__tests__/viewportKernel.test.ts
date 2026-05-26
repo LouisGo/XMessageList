@@ -84,6 +84,46 @@ describe('MessageList viewport kernel', () => {
     )).toHaveLength(2)
   })
 
+  it('uses generation changes as the transaction cancellation boundary', () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
+    const cancelledToken = runtime.getSnapshot().commitToken
+    runtime.applyLoadedSegment(segment([item('row-2')], 1, 2))
+    runtime.applyLoadedSegment(segment([item('row-3')], 2, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      generation: 2,
+      segmentRevision: 1,
+      viewportPhase: 'PROJECTING',
+    })
+
+    adapter.ackProjectionCommit(cancelledToken)
+
+    expect(runtime.getDiagnostics().map((record) => record.name)).toContain(
+      'transaction.staleCommitAck',
+    )
+    expect(runtime.getSnapshot()).toMatchObject({
+      generation: 2,
+      segmentRevision: 1,
+      viewportPhase: 'PROJECTING',
+    })
+
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      generation: 2,
+      segmentRevision: 1,
+      viewportPhase: 'IDLE',
+    })
+    expect(runtime.getDiagnostics().filter((record) =>
+      record.name === 'transaction.settle'
+    )).toHaveLength(1)
+  })
+
   it('keeps event-triggered segment publishes behind queued transactions', () => {
     const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -332,6 +372,48 @@ describe('MessageList viewport kernel', () => {
       visibleKeys: ['row-1', 'row-2'],
     }))
   })
+
+  it('clears all DOM refs and unobserves rows on detach', () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      observers,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const row = createRow('row-1', 0, 30)
+    const flow = createMarker(0, 30)
+    const before = createMarker(0, 1)
+    const after = createMarker(30, 1)
+    const bottom = createMarker(31, 1)
+
+    container.append(row)
+    runtime.attachScrollContainer(container)
+    adapter.registerMessageFlowElement(flow)
+    adapter.registerBeforeTriggerElement(before)
+    adapter.registerAfterTriggerElement(after)
+    adapter.registerBottomMarkerElement(bottom)
+    adapter.registerRowElement('row-1', row)
+
+    expect(observers.resizeObservers[0]?.observed.has(row)).toBe(true)
+
+    runtime.detachScrollContainer()
+    adapter.registerRowElement('row-1', null)
+
+    expect(observers.resizeObservers[0]?.observed.has(row)).toBe(false)
+
+    runtime.applyLoadedSegment(segment([item('row-2')], 2, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getEvidence()).toMatchObject({
+      visibleRows: [],
+      beforeTrigger: { top: 0, bottom: 0, height: 0 },
+      afterTrigger: { top: 0, bottom: 0, height: 0 },
+      bottomMarker: null,
+    })
+  })
 })
 
 function item(key: string): MessageDataItem<string> {
@@ -378,4 +460,10 @@ function createRow(
   row.dataset.messageStableId = key
   setElementMetrics(row, { top, height })
   return row
+}
+
+function createMarker(top: number, height: number): HTMLDivElement {
+  const marker = document.createElement('div')
+  setElementMetrics(marker, { top, height })
+  return marker
 }

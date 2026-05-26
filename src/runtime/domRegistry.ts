@@ -61,7 +61,16 @@ export class RuntimeDomRegistry {
     }
   }
 
-  clearRows(): void {
+  clearAll(): HTMLElement[] {
+    const rows = Array.from(this.rows.values())
+
+    this.scrollContainer = null
+    this.messageFlow = null
+    this.beforeTrigger = null
+    this.afterTrigger = null
+    this.bottomMarker = null
     this.rows.clear()
+
+    return rows
   }
 }
