@@ -1,10 +1,9 @@
-import type {
-  CommittedMessageDataItem,
-  MessageDataSnapshot,
-} from '../runtime/types'
-import type { DemoMessage, DemoViewportEffect } from './demoData'
-import { createDemoSnapshotChange, estimateDemoMessageHeight } from './demoData'
-import { loadPersistedDemoFeed } from './demoLocalStoreClient'
+import {
+  createDemoMessages,
+  normalizeDemoMessages,
+  type DemoMessage,
+} from './demoData'
+import { getDemoFeedDefinition } from './demoFeeds'
 import type {
   GetLatestMessagesReq,
   GetLatestMessagesResp,
@@ -15,48 +14,29 @@ import type {
 } from './demoMessageApiTypes'
 
 const DEFAULT_LATEST_LIMIT = 40
+const feedStore = new Map<string, DemoMessage[]>()
 
-/**
- * 获取 feed 最新的 N 条消息（首屏到底）。
- * 等价于真实 IM 的 getLatestMessages BFF 调用。
- */
 export async function getLatestMessages(
   req: GetLatestMessagesReq,
 ): Promise<GetLatestMessagesResp<DemoMessage>> {
-  const feed = await loadPersistedDemoFeed(req.feedId)
-
-  if (!feed) {
-    return {
-      ok: false,
-      feedId: req.feedId,
-      errorCode: 'feed-not-found',
-      errorMessage: `feed ${req.feedId} not found in local store`,
-    }
-  }
-
-  const all = feed.messages
+  const all = ensureFeedMessages(req.feedId)
   const total = all.length
   const limit = req.count ?? DEFAULT_LATEST_LIMIT
-
-  if (total === 0) {
-    return {
-      ok: true,
-      anchor: { messageId: '' },
-      anchorStatus: 'normal',
-      feedId: req.feedId,
-      hasMoreAfter: false,
-      hasMoreBefore: false,
-      total: 0,
-      messages: [],
-    }
-  }
-
   const messages = all.slice(Math.max(0, total - limit))
-  const lastMessage = messages[messages.length - 1]
+  const anchor = getDemoRespAnchor({
+    ok: true,
+    feedId: req.feedId,
+    anchor: { messageId: '' },
+    anchorStatus: 'normal',
+    hasMoreBefore: total > limit,
+    hasMoreAfter: false,
+    total,
+    messages,
+  })
 
   return {
     ok: true,
-    anchor: { messageId: lastMessage.id, position: lastMessage.sequence },
+    anchor,
     anchorStatus: 'normal',
     feedId: req.feedId,
     hasMoreAfter: false,
@@ -66,28 +46,12 @@ export async function getLatestMessages(
   }
 }
 
-/**
- * 以 anchor 为中心获取 before + after 窗口的消息。
- * 等价于真实 IM 的 getMessagesAround BFF 调用。
- */
 export async function getMessagesAround(
   req: GetMessagesAroundReq,
 ): Promise<GetMessagesAroundResp<DemoMessage>> {
-  const feed = await loadPersistedDemoFeed(req.feedId)
+  const all = ensureFeedMessages(req.feedId)
 
-  if (!feed) {
-    return {
-      ok: false,
-      feedId: req.feedId,
-      errorCode: 'feed-not-found',
-      errorMessage: `feed ${req.feedId} not found in local store`,
-    }
-  }
-
-  const all = feed.messages
-  const total = all.length
-
-  if (total === 0) {
+  if (all.length === 0) {
     return {
       ok: false,
       feedId: req.feedId,
@@ -96,87 +60,36 @@ export async function getMessagesAround(
     }
   }
 
-  const resolvedAnchor = resolveAnchor(all, req.anchor)
+  const resolved = resolveAnchor(all, req.anchor)
 
-  if (!resolvedAnchor) {
+  if (resolved < 0) {
     return {
       ok: false,
       feedId: req.feedId,
       errorCode: 'anchor-not-found',
-      errorMessage: `anchor message ${req.anchor.messageId} not found in feed ${req.feedId}`,
+      errorMessage: `anchor ${req.anchor.messageId} not found`,
     }
   }
 
-  const startIndex = Math.max(0, resolvedAnchor.index - req.before)
-  const endIndex = Math.min(total - 1, resolvedAnchor.index + req.after)
+  const startIndex = Math.max(0, resolved - req.before)
+  const endIndex = Math.min(all.length - 1, resolved + req.after)
   const messages = all.slice(startIndex, endIndex + 1)
-  const anchorMessage = all[resolvedAnchor.index]
 
   return {
     ok: true,
     anchor: {
-      messageId: anchorMessage.id,
-      position: anchorMessage.sequence,
+      messageId: all[resolved].id,
+      position: all[resolved].sequence,
     },
-    anchorStatus: resolvedAnchor.status,
+    anchorStatus: 'normal',
     feedId: req.feedId,
-    hasMoreAfter: endIndex < total - 1,
+    hasMoreAfter: endIndex < all.length - 1,
     hasMoreBefore: startIndex > 0,
-    total,
+    total: all.length,
     messages,
   }
 }
 
-/**
- * 将 BFF ok response 转换为 runtime 需要的 MessageDataSnapshot。
- */
-export function messagesAroundRespToSnapshot<TMessage>(
-  resp: MessagesAroundOkResp<TMessage>,
-  options: {
-    generation: number
-    revision: number
-    toCommittedItem: (message: TMessage) => CommittedMessageDataItem<TMessage>
-    effect: DemoViewportEffect
-    snapshotKind: MessageDataSnapshot['change']['kind']
-  },
-): MessageDataSnapshot<TMessage> {
-  return {
-    feedId: resp.feedId,
-    generation: options.generation,
-    revision: options.revision,
-    items: resp.messages.map(options.toCommittedItem),
-    anchor: resp.anchor.messageId
-      ? { messageId: resp.anchor.messageId, position: resp.anchor.position }
-      : undefined,
-    anchorStatus: resp.anchorStatus,
-    hasMoreBefore: resp.hasMoreBefore,
-    hasMoreAfter: resp.hasMoreAfter,
-    change: createDemoSnapshotChange({
-      kind: options.snapshotKind,
-      effect: options.effect,
-    }),
-  }
-}
-
-/**
- * 将 DemoMessage 转为 CommittedMessageDataItem，供 messagesAroundRespToSnapshot 使用。
- */
-export function toCommittedItem(
-  message: DemoMessage,
-): CommittedMessageDataItem<DemoMessage> {
-  return {
-    kind: 'committed',
-    key: { kind: 'committed', messageId: message.id },
-    message,
-    version: message.expanded ? 2 : 1,
-    contentVersion: message.expanded ? 2 : 1,
-    estimatedHeight: estimateDemoMessageHeight(message),
-  }
-}
-
-/**
- * 从 ok response 中提取最后一个消息作为 anchor（带 position）。
- */
 export function getDemoRespAnchor(
   resp: MessagesAroundOkResp<DemoMessage>,
 ): MessageIdentityAnchor {
@@ -186,45 +99,44 @@ export function getDemoRespAnchor(
     : resp.anchor
 }
 
+export function replaceDemoFeedMessages(
+  feedId: string,
+  messages: DemoMessage[],
+): void {
+  feedStore.set(feedId, normalizeDemoMessages(feedId, messages))
+}
+
+function ensureFeedMessages(feedId: string): DemoMessage[] {
+  const existing = feedStore.get(feedId)
+
+  if (existing) {
+    return existing
+  }
+
+  const feed = getDemoFeedDefinition(feedId)
+  const seeded = createDemoMessages(feed.seedCount, feedId)
+  feedStore.set(feedId, seeded)
+  return seeded
+}
+
 function resolveAnchor(
   messages: DemoMessage[],
   anchor: MessageIdentityAnchor,
-): { index: number; status: MessagesAroundOkResp['anchorStatus'] } | null {
-  const directIndex = messages.findIndex(
-    (message) => message.id === anchor.messageId,
-  )
+): number {
+  const direct = messages.findIndex((message) => message.id === anchor.messageId)
 
-  if (directIndex >= 0) {
-    return {
-      index: directIndex,
-      status: 'normal',
-    }
+  if (direct >= 0) {
+    return direct
   }
 
   if (!Number.isFinite(anchor.position)) {
-    return null
+    return -1
   }
 
-  const targetPosition = anchor.position as number
-  let nearestIndex = -1
-  let nearestDistance = Number.POSITIVE_INFINITY
-
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index]
-    const distance = Math.abs(message.sequence - targetPosition)
-
-    if (distance < nearestDistance) {
-      nearestIndex = index
-      nearestDistance = distance
-    }
-  }
-
-  if (nearestIndex < 0) {
-    return null
-  }
-
-  return {
-    index: nearestIndex,
-    status: 'deleted',
-  }
+  return messages.reduce((best, message, index) => {
+    const bestSequence = messages[best]?.sequence ?? Number.POSITIVE_INFINITY
+    const bestDistance = Math.abs(bestSequence - (anchor.position as number))
+    const nextDistance = Math.abs(message.sequence - (anchor.position as number))
+    return nextDistance < bestDistance ? index : best
+  }, 0)
 }

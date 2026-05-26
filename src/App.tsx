@@ -1,13 +1,13 @@
 import './app.css'
-import { DemoMessageViewport } from './demo/DemoMessageViewport'
-import { E2EMessageViewportApp } from './e2e-app/E2EMessageViewportApp'
+import { DemoMessageList } from './demo/DemoMessageList'
+import { E2EMessageListApp } from './e2e-app/E2EMessageListApp'
 
 function App() {
   if (window.location.pathname === '/e2e') {
-    return <E2EMessageViewportApp />
+    return <E2EMessageListApp />
   }
 
-  return <DemoMessageViewport />
+  return <DemoMessageList />
 }
 
 export default App

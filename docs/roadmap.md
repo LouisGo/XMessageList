@@ -65,26 +65,34 @@
 
 目标：
 
-- [ ] 一次性删除旧 `src/runtime/` 和 `src/react/` 实现。
-- [ ] 建立全新的、最小可编译合同骨架。
+- [x] 一次性删除旧 `src/runtime/` 和 `src/react/` 实现。
+- [x] 建立全新的、最小可编译合同骨架。
 
 Phase gate：Phase 1 必须把 `src/runtime/` 与 `src/react/` 旧实现整体删除后重建；禁止保留、搬运、兼容旧 runtime，也禁止用 demo/e2e 代码接管 scroll、measurement、transaction 或 anchor correction。
 
 任务：
 
-- [ ] 删除旧 runtime/react 源码和旧单测，尤其是 spacer、renderWindow、height range、virtual scrollbar travel、legacy viewportEffect 相关路径。
-- [ ] 重建 `src/runtime/` 的 contract-only skeleton：identity、loaded segment、modifier、`MessageListSnapshot`、events、diagnostics、runtime options。
-- [ ] 重建 `src/react/` 的 adapter skeleton：`MessageList` component type、slot type、commit ack type、style boundary，不实现旧 DOM。
-- [ ] 更新根入口和 package export，使旧 API 不能被新代码误引用。
-- [ ] 保留 demo/e2e request API 文件，但断开它们对旧 runtime/react 具体实现的依赖。
+- [x] 删除旧 runtime/react 源码和旧单测，尤其是 spacer、renderWindow、height range、virtual scrollbar travel、legacy viewportEffect 相关路径。
+- [x] 重建 `src/runtime/` 的 contract-only skeleton：identity、loaded segment、modifier、`MessageListSnapshot`、events、diagnostics、runtime options。
+- [x] 重建 `src/react/` 的 adapter skeleton：`MessageList` component type、slot type、commit ack type、style boundary，不实现旧 DOM。
+- [x] 更新根入口和 package export，使旧 API 不能被新代码误引用。
+- [x] 保留 demo/e2e request API 文件，但断开它们对旧 runtime/react 具体实现的依赖。
 
 退出标准：
 
-- [ ] `src/runtime/` 和 `src/react/` 中没有旧文件、旧测试或从旧实现复制来的模块。
-- [ ] `rg "renderWindow|topSpacer|bottomSpacer|spacerEngine|viewportEffect|virtual range" src/runtime src/react` 无正向实现命中。
-- [ ] 类型层只暴露 next contracts；旧字段无法被新代码引用。
-- [ ] package 根出口不再暴露 `MessageViewport`、`MessageViewportRuntime`、`MessageViewportSnapshot`、`dispatch({ type })` 这类旧 public surface。
-- [ ] repo 至少能完成 contract skeleton 的 typecheck/lint；若 demo 暂未接入，失败必须只指向后续明确 phase 的未实现入口。
+- [x] `src/runtime/` 和 `src/react/` 中没有旧文件、旧测试或从旧实现复制来的模块。
+- [x] `rg "renderWindow|topSpacer|bottomSpacer|spacerEngine|viewportEffect|virtual range" src/runtime src/react` 无正向实现命中。
+- [x] 类型层只暴露 next contracts；旧字段无法被新代码引用。
+- [x] package 根出口不再暴露 `MessageViewport`、`MessageViewportRuntime`、`MessageViewportSnapshot`、`dispatch({ type })` 这类旧 public surface。
+- [x] repo 至少能完成 contract skeleton 的 typecheck/lint；若 demo 暂未接入，失败必须只指向后续明确 phase 的未实现入口。
+
+验证证据（2026-05-26）：
+
+- `src/runtime/` 与 `src/react/` 已删除旧实现后重建；旧 runtime/react 单测和旧 spacer/renderWindow/custom scrollbar 实现已移除。
+- `rg "renderWindow|topSpacer|bottomSpacer|spacerEngine|viewportEffect|virtual range" src/runtime src/react` 无命中。
+- `rg "MessageViewport|MessageViewportRuntime|MessageViewportSnapshot|dispatch\\(\\{ type\\}|setDataSnapshot" src/runtime src/react src/index.ts` 无命中。
+- `npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`git diff --check` 通过。
+- demo/e2e request API 保留为 `getLatestMessages` / `getMessagesAround`，demo/e2e shell 仅响应 semantic runtime surface；旧 e2e runner 场景等待 Phase 7 重新接线。
 
 ## Phase 2 Data Runtime Contract
 

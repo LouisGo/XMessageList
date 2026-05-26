@@ -1,9 +1,12 @@
-export { MessageViewport } from './components/MessageViewport'
-export type {
-  MessageViewportCommands,
-  MessageViewportProps,
-} from './components/types'
+export { MessageList } from './MessageList'
 export {
-  useMessageViewportSelector,
-  useMessageViewportSnapshot,
-} from './hooks/useMessageViewportSnapshot'
+  useMessageListSelector,
+  useMessageListSnapshot,
+} from './hooks'
+export type {
+  EdgeSlotInput,
+  MessageListCommands,
+  MessageListOverlayInput,
+  MessageListProps,
+  ScrollToLatestSlotInput,
+} from './types'
