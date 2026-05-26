@@ -2227,6 +2227,81 @@ describe('React adapter', () => {
     })
   })
 
+  it('keeps active custom thumb visually stable across tiny passive geometry drift', async () => {
+    const runtime = createMockRuntime()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let scrollHeight = 1200
+    let scrollTop = 300
+
+    await act(async () => {
+      root.render(<ViewportOnlyHarness runtime={runtime} scrollbar="custom" />)
+    })
+
+    const scrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    expect(scrollContainer).not.toBeNull()
+    if (!scrollContainer) {
+      return
+    }
+
+    Object.defineProperty(scrollContainer, 'clientHeight', {
+      configurable: true,
+      value: 240,
+    })
+    Object.defineProperty(scrollContainer, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    })
+    Object.defineProperty(scrollContainer, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value) => {
+        scrollTop = value
+      },
+    })
+
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+
+    const thumb = host.querySelector<HTMLElement>(
+      '[data-testid="custom-scrollbar-thumb"]',
+    )
+    expect(thumb).not.toBeNull()
+    if (!thumb) {
+      return
+    }
+
+    await act(async () => {
+      thumb.dispatchEvent(createPointerEvent('pointerdown', 70, 1))
+    })
+
+    const stableTransform = thumb.style.transform
+    const stableHeight = thumb.style.height
+
+    scrollHeight = 1208
+
+    await act(async () => {
+      scrollContainer.dispatchEvent(new Event('scroll'))
+    })
+
+    expect(thumb.style.transform).toBe(stableTransform)
+    expect(thumb.style.height).toBe(stableHeight)
+
+    await act(async () => {
+      document.dispatchEvent(createPointerEvent('pointermove', 76, 1))
+    })
+
+    expect(thumb.style.transform).not.toBe(stableTransform)
+
+    await act(async () => {
+      document.dispatchEvent(createPointerEvent('pointerup', 76, 1))
+      root.unmount()
+    })
+  })
+
   it('does not let drag-owned sync suppress a later projection rebase in the same frame', async () => {
     const runtime = createMockRuntime()
     const host = document.createElement('div')

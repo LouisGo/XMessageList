@@ -29,10 +29,12 @@ type DragState = {
 type SyncRequest = {
   reveal?: boolean
   keepVisible?: boolean
+  forceVisualSync?: boolean
 }
 
 const hideDelayMs = 650
 const scrollWriteEpsilonPx = 0.5
+const activeDragVisualSyncEpsilonPx = 1.5
 
 export class CustomScrollbarController<TMessage, TOptimistic> {
   private readonly dom: CustomScrollbarDom
@@ -280,7 +282,7 @@ export class CustomScrollbarController<TMessage, TOptimistic> {
     })
 
     if (Math.abs(nextScrollTop - this.dom.container.scrollTop) < scrollWriteEpsilonPx) {
-      this.syncNow({ reveal: true, keepVisible: true })
+      this.syncNow({ reveal: true, keepVisible: true, forceVisualSync: true })
       return
     }
 
@@ -290,13 +292,16 @@ export class CustomScrollbarController<TMessage, TOptimistic> {
       return
     }
 
-    this.syncNow({ reveal: true, keepVisible: true })
+    this.syncNow({ reveal: true, keepVisible: true, forceVisualSync: true })
   }
 
   private syncNow(input?: SyncRequest): void {
     const geometry = this.dom.readGeometry()
-    this.dom.applyGeometry(geometry)
-    this.rebaseActiveDrag(geometry)
+    const visualGeometry = input?.forceVisualSync
+      ? geometry
+      : this.stabilizeActiveDragGeometry(geometry)
+    this.dom.applyGeometry(visualGeometry)
+    this.rebaseActiveDrag(visualGeometry)
 
     if (!geometry.scrollable) {
       return
@@ -313,6 +318,59 @@ export class CustomScrollbarController<TMessage, TOptimistic> {
 
     if (input?.reveal) {
       this.scheduleHide()
+    }
+  }
+
+  private stabilizeActiveDragGeometry(
+    geometry: CustomScrollbarGeometry,
+  ): CustomScrollbarGeometry {
+    if (!this.drag || !geometry.scrollable) {
+      return geometry
+    }
+
+    const current = this.dom.getGeometry()
+    if (
+      !current.scrollable ||
+      Math.abs(current.trackStart - geometry.trackStart) >=
+        activeDragVisualSyncEpsilonPx ||
+      Math.abs(current.trackLength - geometry.trackLength) >=
+        activeDragVisualSyncEpsilonPx
+    ) {
+      return geometry
+    }
+
+    let thumbTop = geometry.thumbTop
+    let thumbLength = geometry.thumbLength
+    let stabilized = false
+
+    if (
+      Math.abs(current.thumbLength - geometry.thumbLength) <
+      activeDragVisualSyncEpsilonPx
+    ) {
+      thumbLength = current.thumbLength
+      stabilized = true
+    }
+
+    if (
+      Math.abs(current.thumbTop - geometry.thumbTop) <
+      activeDragVisualSyncEpsilonPx
+    ) {
+      thumbTop = current.thumbTop
+      stabilized = true
+    }
+
+    if (!stabilized) {
+      return geometry
+    }
+
+    const maxThumbTop =
+      geometry.trackStart + Math.max(0, geometry.trackLength - thumbLength)
+
+    return {
+      ...geometry,
+      thumbLength,
+      // 拖拽期间吸收 Resize/Mutation 造成的小幅比例抖动；大幅分页变化仍然自然回落/上升。
+      thumbTop: Math.min(maxThumbTop, Math.max(geometry.trackStart, thumbTop)),
     }
   }
 
@@ -350,6 +408,9 @@ export class CustomScrollbarController<TMessage, TOptimistic> {
     this.pendingSync = {
       reveal: Boolean(this.pendingSync?.reveal || input?.reveal),
       keepVisible: Boolean(this.pendingSync?.keepVisible || input?.keepVisible),
+      forceVisualSync: Boolean(
+        this.pendingSync?.forceVisualSync || input?.forceVisualSync,
+      ),
     }
 
     if (this.syncFrame !== null) {
