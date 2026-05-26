@@ -2,6 +2,7 @@ import {
   findKeyForAnchor,
 } from './controllerHelpers'
 import type { RuntimeDomRegistry } from './domRegistry'
+import type { ViewportDiagnosticRecord } from './events'
 import type { MessageIdentityAnchor } from './identity'
 import type { VisualAnchor } from './measurement'
 import type { RuntimeObserverFactory, RuntimeScheduler } from './options'
@@ -13,6 +14,11 @@ export type RuntimeDomInteractionsOptions = {
   observerFactory: RuntimeObserverFactory | null
   registry: RuntimeDomRegistry
   onEdgeIntersect: (edge: RuntimeEdge) => void
+  onDiagnostic: (
+    name: string,
+    severity: ViewportDiagnosticRecord['severity'],
+    details: Record<string, unknown>,
+  ) => void
 }
 
 export class RuntimeDomInteractions<TMessage, TOptimistic> {
@@ -25,6 +31,8 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
   private suppressScrollUntil = 0
 
   private readonly rowTopByKey = new Map<string, number>()
+
+  private lastMetricRecordAt: number | null = null
 
   private readonly handleScroll = (): void => {
     const now = this.options.scheduler.now()
@@ -141,11 +149,81 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
 
   recordRowMetrics(): void {
     const snapshot = this.options.registry.snapshot()
+    const previousKeys = new Set(this.rowTopByKey.keys())
+    let hits = 0
+    let misses = 0
+
     this.rowTopByKey.clear()
 
     for (const [key, row] of snapshot.rows) {
+      if (previousKeys.delete(key)) {
+        hits += 1
+      } else {
+        misses += 1
+      }
       this.rowTopByKey.set(key, row.getBoundingClientRect().top)
     }
+
+    this.emitMeasurementCacheDiagnostics({
+      hits,
+      misses,
+      invalidated: previousKeys.size,
+      rowCount: snapshot.rows.size,
+    })
+    this.emitBlankAreaSample(snapshot)
+    this.emitFrameGapSample()
+  }
+
+  private emitMeasurementCacheDiagnostics(input: {
+    hits: number
+    misses: number
+    invalidated: number
+    rowCount: number
+  }): void {
+    if (input.hits > 0) {
+      this.options.onDiagnostic('measurement.cache.hit', 'debug', input)
+    }
+    if (input.misses > 0) {
+      this.options.onDiagnostic('measurement.cache.miss', 'info', input)
+    }
+    if (input.invalidated > 0) {
+      this.options.onDiagnostic('measurement.cache.invalidate', 'info', input)
+    }
+  }
+
+  private emitBlankAreaSample(snapshot: ReturnType<RuntimeDomRegistry['snapshot']>): void {
+    const container = snapshot.scrollContainer
+
+    if (!container) {
+      return
+    }
+
+    const containerRect = container.getBoundingClientRect()
+    const rowRects = Array.from(snapshot.rows.values(), (row) =>
+      row.getBoundingClientRect(),
+    )
+    const first = rowRects[0]
+    const last = rowRects.at(-1)
+    this.options.onDiagnostic('blank-area.sample', 'debug', {
+      scrollTop: container.scrollTop,
+      clientHeight: container.clientHeight,
+      scrollHeight: container.scrollHeight,
+      rowCount: rowRects.length,
+      blankBefore: first ? Math.max(0, first.top - containerRect.top) : 0,
+      blankAfter: last ? Math.max(0, containerRect.bottom - last.bottom) : 0,
+    })
+  }
+
+  private emitFrameGapSample(): void {
+    const now = this.options.scheduler.now()
+
+    if (this.lastMetricRecordAt !== null) {
+      this.options.onDiagnostic('frame-gap.sample', 'debug', {
+        deltaMs: now - this.lastMetricRecordAt,
+      })
+    }
+
+    this.lastMetricRecordAt = now
   }
 
   private createEdgeObserver(

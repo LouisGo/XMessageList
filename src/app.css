@@ -290,6 +290,19 @@ h1 {
   overflow-anchor: none;
 }
 
+[data-message-list][data-scrollbar-mode="custom"] [data-message-scroll-container] {
+  scrollbar-width: none;
+}
+
+[data-message-list][data-scrollbar-mode="custom"] [data-message-scroll-container]::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+[data-message-scrollbar-overlay][data-visible="false"] {
+  display: none;
+}
+
 [data-message-flow] {
   box-sizing: border-box;
   display: flex;

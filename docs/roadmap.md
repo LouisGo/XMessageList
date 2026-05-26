@@ -236,22 +236,30 @@ Phase 5 evidence：
 
 目标：
 
-- [ ] custom scrollbar overlay 只镜像 native metrics。
-- [ ] 性能和诊断可以解释所有 correction。
+- [x] custom scrollbar overlay 只镜像 native metrics。
+- [x] 性能和诊断可以解释所有 correction。
 
 任务：
 
-- [ ] 实现 native mirror overlay：thumb length / position 来自 scrollTop、clientHeight、scrollHeight。
-- [ ] 实现 drag / track click direct scroll API，写入仍由 viewport runtime scroll writer 统一管理。
-- [ ] 实现 measurement cache diagnostics、blank-area sample、frame-gap sample、transaction latency、correction delta。
-- [ ] 建立 overlay metric mismatch warning。
+- [x] 实现 native mirror overlay：thumb length / position 来自 scrollTop、clientHeight、scrollHeight。
+- [x] 实现 drag / track click direct scroll API，写入仍由 viewport runtime scroll writer 统一管理。
+- [x] 实现 measurement cache diagnostics、blank-area sample、frame-gap sample、transaction latency、correction delta。
+- [x] 建立 overlay metric mismatch warning。
 
 退出标准：
 
-- [ ] overlay 不读取 edge state 来改变 track。
-- [ ] overlay 不拥有 paging、bottom lock、trim、anchor correction。
-- [ ] before / after data load 后 thumb 自然离开边缘。
-- [ ] diagnostics 能解释 measurement cache hit/miss/invalidate 和每次 correction。
+- [x] overlay 不读取 edge state 来改变 track。
+- [x] overlay 不拥有 paging、bottom lock、trim、anchor correction。
+- [x] before / after data load 后 thumb 自然离开边缘。
+- [x] diagnostics 能解释 measurement cache hit/miss/invalidate 和每次 correction。
+
+Phase 6 evidence：
+
+- `src/react/MessageListScrollbarOverlay.tsx` 只读取 native `scrollTop` / `clientHeight` / `scrollHeight`，drag / track click 只调用 adapter-private direct scroll API。
+- `src/react/__tests__/messageListAdapter.test.tsx` 覆盖 custom overlay 渲染、track click 写入 runtime direct scroll writer、overlay metric mismatch diagnostic。
+- `src/runtime/__tests__/viewportInteractions.test.ts` 覆盖 direct scrollbar write 作为 edge-capable user input，以及 measurement cache、blank-area、frame-gap、transaction latency diagnostics。
+- `rg "edgeState|hasMoreBefore|hasMoreAfter|bottomLock|pendingIntent|applyLoadedSegment|needMore|scrollToLatest|restoreToMessage" src/react/MessageListScrollbarOverlay.tsx` 无命中，overlay 未读取 paging / bottom / destination 状态。
+- 2026-05-26 验证：`git diff --check`、`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`npm run build:demo`。
 
 ## Phase 7 Demo And E2E Rewire
 

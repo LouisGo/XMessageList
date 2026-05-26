@@ -129,6 +129,7 @@ export function DemoMessageListContent({
           renderBeforeEdge={() => null}
           renderAfterEdge={() => null}
           onViewportAnchorChange={scenario.rememberRuntimeViewportAnchor}
+          scrollbar="custom"
         />
         <form className="message-composer" onSubmit={sendDraft}>
           <textarea

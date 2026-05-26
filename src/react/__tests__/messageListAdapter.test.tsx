@@ -214,6 +214,71 @@ describe('MessageList React adapter', () => {
       root.unmount()
     })
   })
+
+  it('renders custom scrollbar overlay from native metrics', async () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    runtime.applyLoadedSegment(segment([item('row-1'), item('row-2')]))
+
+    await act(async () => {
+      root.render(
+        <MessageList
+          runtime={runtime}
+          renderRow={(nextItem) => <span>{nextItem.message}</span>}
+          scrollbar="custom"
+        />,
+      )
+    })
+
+    const container = host.querySelector<HTMLElement>('[data-message-scroll-container]')
+    const track = host.querySelector<HTMLElement>('[data-message-scrollbar-track]')
+
+    expect(host.querySelector('[data-message-scrollbar-overlay]')).not.toBeNull()
+    expect(container).not.toBeNull()
+    expect(track).not.toBeNull()
+
+    Object.defineProperty(container, 'clientHeight', {
+      configurable: true,
+      value: 100,
+    })
+    Object.defineProperty(container, 'scrollHeight', {
+      configurable: true,
+      value: 300,
+    })
+    track!.getBoundingClientRect = () => ({
+      top: 0,
+      bottom: 100,
+      left: 0,
+      right: 12,
+      width: 12,
+      height: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect
+
+    await act(async () => {
+      container!.dispatchEvent(new Event('scroll'))
+      await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    })
+    await act(async () => {
+      track!.dispatchEvent(new MouseEvent('pointerdown', {
+        bubbles: true,
+        clientY: 80,
+      }))
+    })
+
+    expect(container!.scrollTop).toBeGreaterThan(0)
+    expect(runtime.getDiagnostics().map((record) => record.name)).toContain(
+      'overlay.metricMismatch',
+    )
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
 })
 
 function item(key: string, feedId = 'feed-a'): MessageDataItem<string> {

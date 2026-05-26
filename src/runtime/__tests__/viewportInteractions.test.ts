@@ -55,6 +55,37 @@ describe('MessageList viewport interactions', () => {
     })
   })
 
+  it('treats direct scrollbar writes as edge-capable user input', () => {
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', observers })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const row = createRow('row-1', 0, 120)
+    const after = createMarker(120, 1)
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(row, after)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', row)
+    adapter.registerAfterTriggerElement(after)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    adapter.beginDirectScroll()
+    expect(adapter.writeDirectScrollTop(20)).toBe(true)
+    container.dispatchEvent(new Event('scroll'))
+    observers.intersectionObservers[0]?.trigger(after, true)
+    adapter.endDirectScroll()
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'needMoreAfter',
+      reason: 'near-after',
+    }))
+  })
+
   it('arbitrates short segment underflow to a single edge request', () => {
     const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -159,6 +190,41 @@ describe('MessageList viewport interactions', () => {
     expect(runtime.getDiagnostics().map((record) => record.name)).toContain(
       'measurement.resizeDirty',
     )
+  })
+
+  it('records measurement cache, blank area, frame gap, and latency diagnostics', () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      observers,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const row = createRow('row-1', 0, 80)
+
+    container.append(row)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', row)
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    setElementMetrics(row, { top: 0, height: 90 })
+    observers.resizeObservers[0]?.trigger(row, 90)
+    scheduler.flushFrame()
+
+    const diagnostics = runtime.getDiagnostics()
+    const names = diagnostics.map((record) => record.name)
+    expect(names).toEqual(expect.arrayContaining([
+      'transaction.settle',
+      'measurement.cache.miss',
+      'measurement.cache.hit',
+      'blank-area.sample',
+      'frame-gap.sample',
+    ]))
+    expect(diagnostics.find((record) => record.name === 'transaction.settle'))
+      .toMatchObject({ details: { latencyMs: expect.any(Number) } })
   })
 
   it('requests around messages for outside destination and aligns reset target', () => {

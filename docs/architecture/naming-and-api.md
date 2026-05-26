@@ -172,6 +172,7 @@ type MessageListAdapterRuntime = {
   ): void;
   ackProjectionCommit(token: ProjectionCommitToken): void;
   retryEdgeRequest(edge: 'before' | 'after'): void;
+  reportOverlayMetricMismatch(details: Record<string, unknown>): void;
 
   beginDirectScroll(): void;
   writeDirectScrollTop(scrollTop: number): boolean;

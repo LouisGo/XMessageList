@@ -82,6 +82,14 @@ After extend：
 
 禁止通过 custom overlay 内部状态证明滚动条正确；overlay 只能辅助截图。
 
+## Custom Overlay Oracle
+
+通过条件：
+
+- thumb length 和 position 只由 native `scrollTop` / `clientHeight` / `scrollHeight` 推导。
+- drag / track click 只调用 runtime direct scroll writer，不访问 paging、bottom lock、trim 或 anchor correction 状态。
+- overlay metric mismatch 进入 `overlay.metricMismatch` warning diagnostic。
+
 ## Edge Need Oracle
 
 通过条件：

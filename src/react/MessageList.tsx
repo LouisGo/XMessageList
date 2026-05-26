@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useRef } from 'react'
 import { getMessageListAdapterRuntime } from '../runtime/internal'
 import { MessageFlow } from './MessageFlow'
+import { MessageListScrollbarOverlay } from './MessageListScrollbarOverlay'
 import { useMessageListSnapshot } from './hooks'
 import { ProjectionCommitAck } from './ProjectionCommitAck'
 import type { MessageListProps } from './types'
@@ -16,6 +17,7 @@ export function MessageList<TMessage, TOptimistic>({
   renderScrollToLatest,
   onViewportAnchorChange,
   onViewportObservationChange,
+  scrollbar = 'native',
 }: MessageListProps<TMessage, TOptimistic>) {
   const snapshot = useMessageListSnapshot(runtime)
   const adapterRuntime = getMessageListAdapterRuntime(runtime)
@@ -33,6 +35,7 @@ export function MessageList<TMessage, TOptimistic>({
   return (
     <div
       data-message-list
+      data-scrollbar-mode={scrollbar}
       className={className}
       style={style}
     >
@@ -62,6 +65,15 @@ export function MessageList<TMessage, TOptimistic>({
           token={snapshot.commitToken}
         />
       </div>
+      {scrollbar === 'custom'
+        ? (
+            <MessageListScrollbarOverlay
+              containerRef={containerRef}
+              runtime={adapterRuntime}
+              projectionRevision={snapshot.projectionRevision}
+            />
+          )
+        : null}
     </div>
   )
 }

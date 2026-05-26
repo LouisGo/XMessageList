@@ -72,6 +72,7 @@ Slots 禁止：
 
 - overlay controller 只读 native metrics。
 - drag / track click 调 runtime adapter-private direct scroll API：`beginDirectScroll` / `writeDirectScrollTop` / `endDirectScroll`。
+- overlay metric 与 runtime evidence 的 `clientHeight` / `scrollHeight` 不一致时，必须上报 `overlay.metricMismatch` warning diagnostic。
 - overlay 不进入 core snapshot。
 - overlay 不改变 DOM skeleton。
 

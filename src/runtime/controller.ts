@@ -29,11 +29,7 @@ import type {
 } from './events'
 import type { LoadedSegment } from './segment'
 import { createDefaultScheduler } from './scheduler'
-import {
-  captureVisualAnchor,
-  measureRuntimeDom,
-  type VisualAnchor,
-} from './measurement'
+import { captureVisualAnchor, measureRuntimeDom, type VisualAnchor } from './measurement'
 import type {
   MessageListRuntimeOptions,
   RuntimeObserverFactory,
@@ -56,6 +52,7 @@ type PendingTransaction<TMessage, TOptimistic> = {
   segment: LoadedSegment<TMessage, TOptimistic>
   anchor: VisualAnchor | null
   timeoutHandle: number
+  startedAt: number
 }
 
 export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unknown>
@@ -86,6 +83,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       observerFactory: this.observerFactory,
       registry: this.registry,
       onEdgeIntersect: (edge) => this.handleEdgeIntersection(edge),
+      onDiagnostic: (name, severity, details) => this.pushDiagnostic(name, severity, details),
     })
     this.snapshot = createInitialSnapshot<TMessage, TOptimistic>(options.feedId ?? 'default')
     this.resizeObserver = this.observerFactory?.createResizeObserver(() => {
@@ -183,7 +181,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.startNextQueuedTransaction()
     }, this.options.commitTimeoutMs ?? 120)
 
-    this.pendingTransaction = { token, segment, anchor, timeoutHandle }
+    this.pendingTransaction = { token, segment, anchor, timeoutHandle, startedAt: this.scheduler.now() }
     this.snapshot = createSnapshotFromSegment(segment, {
       previous: this.snapshot,
       projectionRevision,
@@ -227,7 +225,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       )
       this.pendingTransaction = null
       this.setViewportPhase('IDLE')
-      this.pushDiagnostic('transaction.settle', 'info', token)
+      this.pushDiagnostic('transaction.settle', 'info', { ...token, latencyMs: this.scheduler.now() - pending.startedAt })
       this.emitViewportObservation()
       this.emitAnchorChanged('transaction-settle', settledAnchor)
     } finally {
@@ -385,6 +383,8 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.applyInteractionUpdate(update)
     }
   }
+
+  reportOverlayMetricMismatch(details: Record<string, unknown>): void { this.pushDiagnostic('overlay.metricMismatch', 'warn', details) }
 
   private correctAnchor(
     anchor: VisualAnchor | null,
