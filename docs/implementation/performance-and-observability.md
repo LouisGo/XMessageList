@@ -21,6 +21,7 @@ Scroll event 中只允许：
 Scroll rAF 中允许：
 
 - 读 native metrics。
+- 用最近一次 transaction / resize 记录的 row metrics 推导有界 visible-anchor sample。
 - 更新 edge trigger state。
 - 发布 throttled observation。
 - 发布 `viewportAnchorChanged(reason: 'scroll-idle')`，但不发布 React snapshot。
@@ -28,6 +29,7 @@ Scroll rAF 中允许：
 Scroll rAF 中避免：
 
 - 全量 query rows。
+- 遍历全部 row 后读取 DOM rect。
 - React setState。
 - 同步大数组 diff。
 - 写 scrollTop，除非当前 rAF 是 transaction correction。
@@ -40,6 +42,8 @@ Scroll rAF 中避免：
 - ResizeObserver 只作为 dirty signal。
 - IntersectionObserver 只作为 edge / visibility signal。
 - DOM rect read 和 scrollTop write 必须读写分批。
+- ordinary scroll rAF 只能读取 native container metrics 和少量 sampled row rect；完整 row measurement 只属于 transaction commit、resize dirty 或显式 profiling 路径。
+- local programmatic scroll 写入 `scrollTop` 后必须 schedule rAF 刷新 evidence / observation，不能等待下一次用户 scroll 或 resize。
 
 禁止：
 

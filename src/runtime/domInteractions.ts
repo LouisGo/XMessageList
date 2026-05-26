@@ -3,7 +3,7 @@ import {
 } from './controllerHelpers'
 import type { RuntimeDomRegistry } from './domRegistry'
 import type { ViewportDiagnosticRecord } from './events'
-import type { MessageIdentityAnchor } from './identity'
+import type { MessageIdentityAnchor, MessageRuntimeItemKey } from './identity'
 import type { VisualAnchor } from './measurement'
 import type { RuntimeObserverFactory, RuntimeScheduler } from './options'
 import type { MessageListSnapshot } from './snapshot'
@@ -35,7 +35,14 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
 
   private directScrollActive = false
 
-  private readonly rowTopByKey = new Map<string, number>()
+  private readonly rowMetricsByKey = new Map<
+    MessageRuntimeItemKey,
+    RowMetric
+  >()
+
+  private rowMetricOrder: RowMetric[] = []
+
+  private rowMetricsScrollTop = 0
 
   private lastMetricRecordAt: number | null = null
 
@@ -72,6 +79,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     }
     this.scrollFrame = null
     this.directScrollActive = false
+    this.clearRowMetrics()
   }
 
   registerEdgeTrigger(edge: RuntimeEdge, element: HTMLElement | null): void {
@@ -147,6 +155,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
   writeProgrammaticScroll(container: HTMLElement, scrollTop: number): void {
     this.suppressScrollUntil = this.options.scheduler.now() + 200
     container.scrollTop = scrollTop
+    this.scheduleScrollFrame()
   }
 
   preserveVisualAnchor(anchor: VisualAnchor | null): void {
@@ -156,7 +165,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
 
     const row = this.options.registry.getRow(anchor.key)
     const container = this.options.registry.snapshot().scrollContainer
-    const previousTop = this.rowTopByKey.get(anchor.key)
+    const previousTop = this.rowMetricsByKey.get(anchor.key)?.top
 
     if (!row || !container || previousTop === undefined) {
       return
@@ -171,20 +180,30 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
 
   recordRowMetrics(): void {
     const snapshot = this.options.registry.snapshot()
-    const previousKeys = new Set(this.rowTopByKey.keys())
+    const previousKeys = new Set(this.rowMetricsByKey.keys())
     let hits = 0
     let misses = 0
 
-    this.rowTopByKey.clear()
+    this.clearRowMetrics()
+    this.rowMetricsScrollTop = snapshot.scrollContainer?.scrollTop ?? 0
 
     for (const [key, row] of snapshot.rows) {
+      const rect = row.getBoundingClientRect()
       if (previousKeys.delete(key)) {
         hits += 1
       } else {
         misses += 1
       }
-      this.rowTopByKey.set(key, row.getBoundingClientRect().top)
+      const metric: RowMetric = {
+        key,
+        top: rect.top,
+        bottom: rect.bottom,
+        height: rect.height,
+      }
+      this.rowMetricsByKey.set(key, metric)
+      this.rowMetricOrder.push(metric)
     }
+    this.rowMetricOrder.sort((first, second) => first.top - second.top)
 
     this.emitMeasurementCacheDiagnostics({
       hits,
@@ -194,6 +213,80 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     })
     this.emitBlankAreaSample(snapshot)
     this.emitFrameGapSample()
+  }
+
+  getScrollSampleKeys(limit = 32, overscanPx = 160): string[] | undefined {
+    const snapshot = this.options.registry.snapshot()
+    const container = snapshot.scrollContainer
+
+    if (!container || this.rowMetricsByKey.size === 0) {
+      return undefined
+    }
+
+    const containerRect = container.getBoundingClientRect()
+    const scrollDelta = container.scrollTop - this.rowMetricsScrollTop
+    const viewportStart = containerRect.top + scrollDelta
+    const viewportEnd = containerRect.bottom + scrollDelta
+    const sampleStart = viewportStart - overscanPx
+    const sampleEnd = viewportEnd + overscanPx
+    const visibleStartIndex = findFirstMetricEndingAfter(
+      this.rowMetricOrder,
+      viewportStart,
+    )
+    const visibleKeys: string[] = []
+    const nearKeys: string[] = []
+    let visibleEndIndex = visibleStartIndex
+
+    for (let index = visibleStartIndex; index < this.rowMetricOrder.length; index += 1) {
+      const metric = this.rowMetricOrder[index]
+      if (metric.top > viewportEnd) {
+        break
+      }
+
+      visibleKeys.push(metric.key)
+      visibleEndIndex = index + 1
+
+      if (visibleKeys.length >= limit) {
+        return visibleKeys
+      }
+    }
+
+    if (visibleKeys.length === 0) {
+      return collectMetricWindow(this.rowMetricOrder, sampleStart, sampleEnd, limit)
+    }
+
+    for (
+      let index = visibleStartIndex - 1;
+      index >= 0 && visibleKeys.length + nearKeys.length < limit;
+      index -= 1
+    ) {
+      const metric = this.rowMetricOrder[index]
+      if (metric.bottom < sampleStart) {
+        break
+      }
+      nearKeys.unshift(metric.key)
+    }
+
+    for (
+      let index = visibleEndIndex;
+      index < this.rowMetricOrder.length &&
+        visibleKeys.length + nearKeys.length < limit;
+      index += 1
+    ) {
+      const metric = this.rowMetricOrder[index]
+      if (metric.top > sampleEnd) {
+        break
+      }
+      nearKeys.push(metric.key)
+    }
+
+    return [...visibleKeys, ...nearKeys].slice(0, limit)
+  }
+
+  private clearRowMetrics(): void {
+    this.rowMetricsByKey.clear()
+    this.rowMetricOrder = []
+    this.rowMetricsScrollTop = 0
   }
 
   private emitMeasurementCacheDiagnostics(input: {
@@ -299,6 +392,52 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       this.options.onScrollFrame()
     })
   }
+}
+
+type RowMetric = {
+  key: MessageRuntimeItemKey
+  top: number
+  bottom: number
+  height: number
+}
+
+function collectMetricWindow(
+  metrics: RowMetric[],
+  start: number,
+  end: number,
+  limit: number,
+): MessageRuntimeItemKey[] {
+  const keys: MessageRuntimeItemKey[] = []
+  const firstIndex = findFirstMetricEndingAfter(metrics, start)
+
+  for (let index = firstIndex; index < metrics.length; index += 1) {
+    const metric = metrics[index]
+    if (metric.top > end || keys.length >= limit) {
+      break
+    }
+    keys.push(metric.key)
+  }
+
+  return keys
+}
+
+function findFirstMetricEndingAfter(
+  metrics: RowMetric[],
+  threshold: number,
+): number {
+  let low = 0
+  let high = metrics.length
+
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2)
+    if (metrics[mid].bottom < threshold) {
+      low = mid + 1
+    } else {
+      high = mid
+    }
+  }
+
+  return low
 }
 
 function resolveAlignedScrollTop(

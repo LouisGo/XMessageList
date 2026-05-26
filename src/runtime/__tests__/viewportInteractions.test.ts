@@ -163,6 +163,76 @@ describe('MessageList viewport interactions', () => {
     }))
   })
 
+  it('bounds ordinary scroll row rect reads to cached visible samples', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      observers: createFakeObservers(),
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rectReads = { count: 0 }
+    const rows = Array.from({ length: 80 }, (_, index) =>
+      createCountingRow(`row-${index + 1}`, index * 20, 20, rectReads),
+    )
+
+    container.append(...rows)
+    runtime.attachScrollContainer(container)
+    for (const row of rows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+    runtime.applyLoadedSegment(segment(
+      rows.map((row) => item(row.dataset.runtimeKey as string)),
+      1,
+      1,
+    ))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    rectReads.count = 0
+
+    container.scrollTop = 200
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+
+    expect(rectReads.count).toBeLessThan(80)
+    expect(rectReads.count).toBeLessThanOrEqual(32)
+    expect(runtime.getEvidence().scrollTop).toBe(200)
+  })
+
+  it('refreshes evidence after local programmatic scroll writes', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      observers: createFakeObservers(),
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = [
+      createRow('row-1', 0, 50),
+      createRow('row-2', 50, 50),
+      createRow('row-3', 100, 50),
+    ]
+
+    container.append(...rows)
+    runtime.attachScrollContainer(container)
+    for (const row of rows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+    runtime.applyLoadedSegment(segment(rows.map((row) =>
+      item(row.dataset.runtimeKey as string)
+    ), 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    runtime.scrollToLatest()
+    expect(container.scrollTop).toBe(50)
+    expect(runtime.getEvidence().scrollTop).toBe(0)
+
+    scheduler.flushFrame()
+
+    expect(runtime.getEvidence().scrollTop).toBe(50)
+  })
+
   it('arbitrates short segment underflow to a single edge request', () => {
     const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -494,4 +564,19 @@ function createMarker(top: number, height: number): HTMLDivElement {
   const marker = document.createElement('div')
   setElementMetrics(marker, { top, height })
   return marker
+}
+
+function createCountingRow(
+  key: string,
+  top: number,
+  height: number,
+  rectReads: { count: number },
+): HTMLDivElement {
+  const row = createRow(key, top, height)
+  const readRect = row.getBoundingClientRect
+  row.getBoundingClientRect = () => {
+    rectReads.count += 1
+    return readRect()
+  }
+  return row
 }

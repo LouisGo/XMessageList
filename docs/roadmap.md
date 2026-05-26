@@ -262,6 +262,7 @@ Phase 6 evidence：
 - `rg "edgeState|hasMoreBefore|hasMoreAfter|bottomLock|pendingIntent|applyLoadedSegment|needMore|scrollToLatest|restoreToMessage" src/react/MessageListScrollbarOverlay.tsx` 无命中，overlay 未读取 paging / bottom / destination 状态。
 - 2026-05-26 验证：`git diff --check`、`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`npm run build:demo`。
 - 2026-05-26 no-go 回补：普通用户滚动现在由 runtime rAF 更新 native evidence / observation / scroll-idle anchor；direct drag 生命周期从 begin 到 end 保持 user direct manipulation。
+- 2026-05-26 P2 回补：ordinary scroll rAF 使用 transaction / resize 缓存推导出的有界 visible sample，避免全量 row rect measurement；local programmatic scroll 写入后也 schedule rAF 刷新 evidence / observation。
 
 ## Phase 7 Demo And E2E Rewire
 

@@ -466,9 +466,21 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       return
     }
 
-    this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
+    this.lastMeasurement = measureRuntimeDom(this.registry.snapshot(), {
+      rowKeys: this.domInteractions.getScrollSampleKeys(),
+    })
     this.emitViewportObservation()
-    this.emitAnchorChanged('scroll-idle', this.resolveCurrentVisualAnchor())
+    this.emitAnchorChanged(
+      'scroll-idle',
+      this.resolveMeasuredViewportAnchor(),
+    )
+  }
+
+  private resolveMeasuredViewportAnchor(): MessageIdentityAnchor | null {
+    const key = this.lastMeasurement.visibleRows[0]?.key
+    return key
+      ? resolveAnchorFromSnapshot(this.snapshot, key) ?? this.getViewportAnchor()
+      : this.getViewportAnchor()
   }
 
   private setViewportPhase(phase: MessageListSnapshot['viewportPhase']): void {

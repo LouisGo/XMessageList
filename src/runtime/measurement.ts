@@ -19,6 +19,10 @@ export type RuntimeMeasurement = Pick<
   | 'bottomMarker'
 >
 
+export type RuntimeMeasurementOptions = {
+  rowKeys?: MessageRuntimeItemKey[]
+}
+
 export function captureVisualAnchor(
   registry: RuntimeDomRegistrySnapshot,
 ): VisualAnchor | null {
@@ -47,15 +51,23 @@ export function captureVisualAnchor(
 
 export function measureRuntimeDom(
   registry: RuntimeDomRegistrySnapshot,
+  options: RuntimeMeasurementOptions = {},
 ): RuntimeMeasurement {
   const container = registry.scrollContainer
   const empty = createEmptyRect()
+  const rows = options.rowKeys
+    ? options.rowKeys
+        .map((key) => [key, registry.rows.get(key)] as const)
+        .filter((entry): entry is readonly [MessageRuntimeItemKey, HTMLElement] =>
+          Boolean(entry[1]),
+        )
+    : Array.from(registry.rows)
 
   return {
     scrollTop: container?.scrollTop ?? 0,
     clientHeight: container?.clientHeight ?? 0,
     scrollHeight: container?.scrollHeight ?? 0,
-    visibleRows: Array.from(registry.rows, ([key, row]) => {
+    visibleRows: rows.map(([key, row]) => {
       const rect = row.getBoundingClientRect()
       return {
         key,
