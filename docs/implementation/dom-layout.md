@@ -3,7 +3,7 @@
 ## 固定 DOM skeleton
 
 ```html
-<div data-message-viewport>
+<div data-message-list>
   <div data-message-scroll-container>
     <div data-message-flow>
       <div data-edge-trigger="before"></div>
@@ -18,6 +18,7 @@
 
 约束：
 
+- `data-message-list` 是 `MessageList` component 的 root。
 - `data-message-scroll-container` 是唯一 scroll container。
 - rows、triggers、bottom marker 都在正常文档流中。
 - 不存在 top spacer / bottom spacer。
@@ -94,7 +95,7 @@ type EdgeSnapshotState = {
   requestToken?: string;
 };
 
-type MessageViewportSnapshot = {
+type MessageListSnapshot = {
   feedId: string;
   generation: number;
   segmentRevision: number;
@@ -130,6 +131,7 @@ Snapshot 不包含：
 
 Snapshot 规则：
 
+- `MessageListSnapshot` 是 public / React adapter snapshot；runtime 内部可以把同一份发布语义称为 `ProjectionSnapshot`。
 - `hasMoreBefore/After`、`modifier`、`generation`、`segmentRevision`、`projectionRevision` 和 `commitToken` 是 projection / adapter / E2E 的必需合同字段。
 - React slots 和 tests 只能从 snapshot/evidence 读取 segment 边界，不得从 edgeState 或外部 props 反推 `hasMoreAfter`。
 - 同一 segment revision 可以因为 edge state、bottom lock 或 viewport phase 变化产生新的 projection revision；commit ack 必须回传完整 token。

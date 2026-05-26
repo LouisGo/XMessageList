@@ -26,6 +26,35 @@
 
 ## API 迁移方向
 
+旧 public surface：
+
+```ts
+MessageViewport
+MessageViewportRuntime
+MessageViewportSnapshot
+useMessageViewportSnapshot
+useMessageViewportSelector
+runtime.setDataSnapshot(...)
+runtime.dispatch({ type: 'followBottom' | 'jump' | 'restore' })
+```
+
+新 public surface：
+
+```ts
+MessageList
+createMessageListRuntime
+MessageListRuntime
+MessageListSnapshot
+useMessageListSnapshot
+useMessageListSelector
+runtime.applyLoadedSegment(...)
+runtime.scrollToLatest()
+runtime.scrollToMessage(target)
+runtime.restoreToMessage(target)
+```
+
+完整命名对照以 [architecture/naming-and-api.md](../architecture/naming-and-api.md) 为准。
+
 旧 snapshot：
 
 ```ts

@@ -12,7 +12,7 @@
 
 | 目录 | 职责 | 先读 |
 | --- | --- | --- |
-| [architecture](./architecture/README.md) | 模型、所有权、状态边界 | [principles.md](./architecture/principles.md) |
+| [architecture](./architecture/README.md) | 模型、所有权、状态边界、术语和 public API | [principles.md](./architecture/principles.md) |
 | [interaction-specs](./interaction-specs/README.md) | 用户可观察的滚动、滚动条、分页、跳转规格 | [scrolling.md](./interaction-specs/scrolling.md) |
 | [implementation](./implementation/README.md) | DOM、transaction、measurement、React adapter、性能施工图 | [dom-layout.md](./implementation/dom-layout.md) |
 | [testing](./testing/README.md) | E2E 场景、oracle、证据结构 | [oracles.md](./testing/oracles.md) |
@@ -23,15 +23,23 @@
 ## 推荐阅读顺序
 
 1. [architecture/principles.md](./architecture/principles.md)
-2. [architecture/layering-and-ownership.md](./architecture/layering-and-ownership.md)
-3. [architecture/anchor-and-data-window.md](./architecture/anchor-and-data-window.md)
-4. [interaction-specs/scrolling.md](./interaction-specs/scrolling.md)
-5. [interaction-specs/paging.md](./interaction-specs/paging.md)
-6. [interaction-specs/scrollbar.md](./interaction-specs/scrollbar.md)
-7. [implementation/dom-layout.md](./implementation/dom-layout.md)
-8. [implementation/transactions-and-measurement.md](./implementation/transactions-and-measurement.md)
-9. [testing/oracles.md](./testing/oracles.md)
-10. [roadmap.md](./roadmap.md)
+2. [architecture/naming-and-api.md](./architecture/naming-and-api.md)
+3. [architecture/layering-and-ownership.md](./architecture/layering-and-ownership.md)
+4. [architecture/anchor-and-data-window.md](./architecture/anchor-and-data-window.md)
+5. [interaction-specs/scrolling.md](./interaction-specs/scrolling.md)
+6. [interaction-specs/paging.md](./interaction-specs/paging.md)
+7. [interaction-specs/scrollbar.md](./interaction-specs/scrollbar.md)
+8. [implementation/dom-layout.md](./implementation/dom-layout.md)
+9. [implementation/transactions-and-measurement.md](./implementation/transactions-and-measurement.md)
+10. [testing/oracles.md](./testing/oracles.md)
+11. [roadmap.md](./roadmap.md)
+
+## 统一口径
+
+- 对外组件、hooks、runtime facade 和 package export 统一使用 `MessageList` 命名。
+- `Viewport` 只用于描述可视区域、滚动容器、anchor、measurement 和 runtime 内部事件。
+- `Projection` 只用于 runtime 到 React adapter 的 commit / snapshot / transaction 合同。
+- 旧 `MessageViewport*`、`renderWindow`、spacer、`viewportEffect` 只能出现在迁移对照或删除清单里。
 
 ## 非目标
 

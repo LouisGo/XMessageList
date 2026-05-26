@@ -19,6 +19,8 @@ App / Demo Host
   owns feed activation, runtime cache, fake/real data source, logging UI
 ```
 
+对外命名以 `MessageList` 为准：公开组件是 `MessageList`，公开 runtime facade 是 `MessageListRuntime`，公开 snapshot 是 `MessageListSnapshot`。本文件继续使用 `Viewport Runtime` 描述内部所有权，因为 scroll container、visual anchor、measurement 和 correction 都是视口运行时职责。
+
 ## Main / Bridge
 
 Main / Bridge 负责：
@@ -55,6 +57,7 @@ Data runtime 不负责：
 Viewport runtime 负责：
 
 - attach / detach scroll container。
+- 对外 facade 方法命名为 `attachScrollContainer` / `detachScrollContainer`；内部 owner 仍是 viewport runtime。
 - 注册 row、before trigger、after trigger、bottom marker DOM。
 - 捕获 visual anchor。
 - 串行执行 projection transaction：消费 data runtime 发布的 segment modifier，等待 React commit，测量 DOM，执行 scroll correction。

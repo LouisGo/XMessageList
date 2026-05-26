@@ -4,11 +4,11 @@
 
 React adapter 是 projection 层：
 
-- 使用 external store 读取 runtime snapshot。
+- 使用 `useMessageListSnapshot` / `useMessageListSelector` 读取 runtime snapshot。
 - 渲染固定 DOM skeleton。
 - 给每个 row 注册 DOM ref。
 - 在 layout effect 中发送 commit ack。
-- 渲染 slots：before edge、after edge、bottom follow、overlay。
+- 渲染 slots：before edge、after edge、scroll-to-latest、overlay。
 
 ## External Store
 
@@ -28,7 +28,7 @@ React adapter 是 projection 层：
 render
 -> row refs registered
 -> layout effect
--> runtime.ackCommit(commitToken)
+-> runtime.ackProjectionCommit(commitToken)
 ```
 
 StrictMode 下可能出现 attach/detach/attach，ack 必须带 feedId/generation/segmentRevision/projectionRevision，runtime 只接受当前 token。
@@ -38,7 +38,7 @@ StrictMode 下可能出现 attach/detach/attach，ack 必须带 feedId/generatio
 Row wrapper 必须：
 
 - 使用 runtime item key 作为 React key。
-- ref callback register/unregister DOM。
+- ref callback 调用 `registerRowElement(key, element)` register/unregister DOM。
 - 保留 `data-runtime-key`、`data-row-kind` 和可选的 `data-message-stable-id` / `data-message-server-id` testing attribute。
 - 不读写 scrollTop。
 
@@ -52,10 +52,10 @@ Row wrapper 可以：
 
 Slots 接收 runtime semantic state，不接收 raw DOM metrics：
 
-- `renderBeforeEdge(edgeState)`
-- `renderAfterEdge(edgeState)`
-- `renderBottomFollow(bottomLockState, snapshot.segmentMeta.hasMoreAfter)`
-- `renderOverlay(snapshot)`
+- `renderBeforeEdge(input)`
+- `renderAfterEdge(input)`
+- `renderScrollToLatest(input)`
+- `renderOverlay(input)`
 
 Slots 禁止：
 
@@ -69,7 +69,7 @@ Slots 禁止：
 如果 adapter 提供 overlay：
 
 - overlay controller 只读 native metrics。
-- drag / track click 调 runtime direct scroll API。
+- drag / track click 调 runtime adapter-private direct scroll API：`beginDirectScroll` / `writeDirectScrollTop` / `endDirectScroll`。
 - overlay 不进入 core snapshot。
 - overlay 不改变 DOM skeleton。
 

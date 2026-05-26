@@ -1,6 +1,6 @@
 # 实现施工图
 
-本目录回答“怎么落地”。交互正确性以前置 [interaction-specs](../interaction-specs/README.md) 为准，架构边界以前置 [architecture](../architecture/README.md) 为准。
+本目录回答“怎么落地”。交互正确性以前置 [interaction-specs](../interaction-specs/README.md) 为准，架构边界以前置 [architecture](../architecture/README.md) 为准，术语和 API 命名以前置 [naming-and-api.md](../architecture/naming-and-api.md) 为准。
 
 ## 文件职责
 
