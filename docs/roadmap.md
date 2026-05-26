@@ -4,9 +4,9 @@
 
 ## 进度规则
 
-- [ ] 每个 phase 的任务和退出标准都用 markdown checkbox 追踪。
-- [ ] 只有完成实现、文档同步和验证证据后，才能把对应 checkbox 改成 `[x]`。
-- [ ] 每个 phase 结束都更新本文档状态，并用退出标准决定能否进入下一 phase。
+- [x] 每个 phase 的任务和退出标准都用 markdown checkbox 追踪。
+- [x] 只有完成实现、文档同步和验证证据后，才能把对应 checkbox 改成 `[x]`。
+- [x] 每个 phase 结束都更新本文档状态，并用退出标准决定能否进入下一 phase。
 
 ## 重写边界
 
@@ -34,24 +34,30 @@
 
 目标：
 
-- [ ] 确认 architecture / interaction / implementation / testing 文档都以 loaded segment native scroll 为唯一正向机制。
-- [ ] 冻结术语与 public API 命名，统一采用 `MessageList` / `MessageListRuntime` / `MessageListSnapshot` 口径。
-- [ ] 明确 `src/runtime/` 和 `src/react/` 是 rewrite targets，不是 migration sources。
-- [ ] 明确保留 demo / e2e 请求模型的边界。
+- [x] 确认 architecture / interaction / implementation / testing 文档都以 loaded segment native scroll 为唯一正向机制。
+- [x] 冻结术语与 public API 命名，统一采用 `MessageList` / `MessageListRuntime` / `MessageListSnapshot` 口径。
+- [x] 明确 `src/runtime/` 和 `src/react/` 是 rewrite targets，不是 migration sources。
+- [x] 明确保留 demo / e2e 请求模型的边界。
 
 任务：
 
-- [ ] 复核 projection snapshot / evidence shape 是否包含 hasMoreBefore/After、modifier、generation、revision/token、bottomLockState、pendingIntent。
-- [ ] 复核 [architecture/naming-and-api.md](./architecture/naming-and-api.md) 是否覆盖组件名、hooks、runtime facade、adapter-private API、events、main 分支 API 对照和禁止词。
-- [ ] 复核 short segment underflow、identity-remap、local-to-server remap、destination restore、bottom follow 的合同和 oracle。
-- [ ] 在 roadmap 中锁定删除旧实现的 phase gate。
+- [x] 复核 projection snapshot / evidence shape 是否包含 hasMoreBefore/After、modifier、generation、revision/token、bottomLockState、pendingIntent。
+- [x] 复核 [architecture/naming-and-api.md](./architecture/naming-and-api.md) 是否覆盖组件名、hooks、runtime facade、adapter-private API、events、main 分支 API 对照和禁止词。
+- [x] 复核 short segment underflow、identity-remap、local-to-server remap、destination restore、bottom follow 的合同和 oracle。
+- [x] 在 roadmap 中锁定删除旧实现的 phase gate。
 
 退出标准：
 
-- [ ] 文档中不存在把 spacer、global estimated range、renderWindow 作为正向机制的描述。
-- [ ] 所有 public API 文档使用 `MessageList` 口径；`MessageViewport*` 只作为迁移对照或删除清单出现。
-- [ ] roadmap 明确禁止保留 `src/runtime/`、`src/react/` 旧实现。
-- [ ] demo / e2e 保留项只限请求形态、mock data、evidence/oracle，不含 runtime ownership。
+- [x] 文档中不存在把 spacer、global estimated range、renderWindow 作为正向机制的描述。
+- [x] 所有 public API 文档使用 `MessageList` 口径；`MessageViewport*` 只作为迁移对照或删除清单出现。
+- [x] roadmap 明确禁止保留 `src/runtime/`、`src/react/` 旧实现。
+- [x] demo / e2e 保留项只限请求形态、mock data、evidence/oracle，不含 runtime ownership。
+
+验证证据（2026-05-26）：
+
+- `docs/README.md`、`docs/architecture/naming-and-api.md`、`docs/architecture/layering-and-ownership.md`、`docs/architecture/anchor-and-data-window.md`、`docs/implementation/dom-layout.md`、`docs/implementation/react-adapter.md`、`docs/testing/oracles.md` 已复核。
+- `rg "MessageViewport|MessageViewportRuntime|MessageViewportSnapshot|renderWindow|topSpacer|bottomSpacer|spacerEngine|virtual range|virtualRange|estimatedTotalHeight|globalOffset|viewportEffect|dispatch\\(\\{ type|registerTopSpacer|registerBottomSpacer|registerTopSentinel|registerBottomSentinel|DataWindow|RenderWindow" docs --glob '!docs/research/virtual-list-ecosystem-research.md'` 的命中均为迁移对照、删除清单或禁止事项；implementation README 已改为从零建立 loaded segment projection snapshot。
+- 删除旧实现的 phase gate：Phase 1 不允许保留、搬运或兼容 `src/runtime/` / `src/react/` 旧实现；Phase 1 退出前必须证明旧 public surface 与 spacer/renderWindow/viewportEffect 正向路径已消失。
 
 ## Phase 1 Legacy Removal And Empty Shell
 
@@ -61,6 +67,8 @@
 
 - [ ] 一次性删除旧 `src/runtime/` 和 `src/react/` 实现。
 - [ ] 建立全新的、最小可编译合同骨架。
+
+Phase gate：Phase 1 必须把 `src/runtime/` 与 `src/react/` 旧实现整体删除后重建；禁止保留、搬运、兼容旧 runtime，也禁止用 demo/e2e 代码接管 scroll、measurement、transaction 或 anchor correction。
 
 任务：
 
