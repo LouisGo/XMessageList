@@ -1,3 +1,4 @@
+import { correctTransactionAnchor } from './anchorCorrection'
 import { DiagnosticRingBuffer } from './diagnostics'
 import { RuntimeDomRegistry } from './domRegistry'
 import { createViewportEvidence } from './evidence'
@@ -9,9 +10,7 @@ import {
   createSnapshotFromSegment,
   isSameToken,
   isSameSegmentToken,
-  resolveAnchorFromKey,
   resolveAnchorFromSnapshot,
-  resolveRemappedAnchorKey,
   withNextProjectionRevision,
 } from './controllerHelpers'
 import { RuntimeDomInteractions } from './domInteractions'
@@ -83,6 +82,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       observerFactory: this.observerFactory,
       registry: this.registry,
       onEdgeIntersect: (edge) => this.handleEdgeIntersection(edge),
+      onScrollFrame: () => this.handleScrollFrame(),
       onDiagnostic: (name, severity, details) => this.pushDiagnostic(name, severity, details),
     })
     this.snapshot = createInitialSnapshot<TMessage, TOptimistic>(options.feedId ?? 'default')
@@ -370,7 +370,9 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     return this.domInteractions.writeDirectScrollTop(scrollTop)
   }
 
-  endDirectScroll(): void {}
+  endDirectScroll(): void {
+    this.domInteractions.endDirectScroll()
+  }
 
   reportEdgeRequestFailure(edge: RuntimeEdge, requestToken: string): void {
     this.snapshot = this.interactions.reportEdgeError(this.snapshot, edge, requestToken)
@@ -390,41 +392,16 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     anchor: VisualAnchor | null,
     segment: LoadedSegment<TMessage, TOptimistic>,
   ): MessageIdentityAnchor | null {
-    if (!anchor) {
-      return segment.anchor ?? null
-    }
-
-    const key = resolveRemappedAnchorKey(anchor.key, segment)
-    const row = this.registry.getRow(key)
-    const container = this.registry.snapshot().scrollContainer
-    const resolvedAnchor = resolveAnchorFromKey(segment, key) ?? segment.anchor ?? null
-
-    if (!row || !container) {
-      this.pushDiagnostic('correction.anchorMissing', 'warn', { key })
-      this.emitRuntimeEvent({
-        type: 'viewportError',
-        feedId: this.snapshot.feedId,
-        code: 'anchor-missing',
-        message: 'Anchor row was not available after projection commit.',
-      })
-      return resolvedAnchor
-    }
-
-    const nextTop = row.getBoundingClientRect().top
-    const delta = nextTop - anchor.rectTopBeforeCommit
-
-    if (delta !== 0) {
-      this.domInteractions.writeProgrammaticScroll(
-        container,
-        container.scrollTop + delta,
-      )
-    }
-
-    this.pushDiagnostic('correction.anchorPreserved', 'info', {
-      key,
-      delta,
+    return correctTransactionAnchor({
+      anchor,
+      segment,
+      snapshot: this.snapshot,
+      registry: this.registry,
+      domInteractions: this.domInteractions,
+      pushDiagnostic: (name, severity, details) =>
+        this.pushDiagnostic(name, severity, details),
+      emitRuntimeEvent: (event) => this.emitRuntimeEvent(event),
     })
-    return resolvedAnchor
   }
 
   private resolveCurrentVisualAnchor(): MessageIdentityAnchor | null {
@@ -482,6 +459,16 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.emitViewportObservation()
       this.evaluateUnderflow()
     })
+  }
+
+  private handleScrollFrame(): void {
+    if (this.pendingTransaction || this.snapshot.viewportPhase !== 'IDLE') {
+      return
+    }
+
+    this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
+    this.emitViewportObservation()
+    this.emitAnchorChanged('scroll-idle', this.resolveCurrentVisualAnchor())
   }
 
   private setViewportPhase(phase: MessageListSnapshot['viewportPhase']): void {

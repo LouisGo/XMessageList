@@ -23,6 +23,7 @@ Scroll rAF 中允许：
 - 读 native metrics。
 - 更新 edge trigger state。
 - 发布 throttled observation。
+- 发布 `viewportAnchorChanged(reason: 'scroll-idle')`，但不发布 React snapshot。
 
 Scroll rAF 中避免：
 

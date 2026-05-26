@@ -14,6 +14,7 @@ export type RuntimeDomInteractionsOptions = {
   observerFactory: RuntimeObserverFactory | null
   registry: RuntimeDomRegistry
   onEdgeIntersect: (edge: RuntimeEdge) => void
+  onScrollFrame: () => void
   onDiagnostic: (
     name: string,
     severity: ViewportDiagnosticRecord['severity'],
@@ -30,6 +31,10 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
 
   private suppressScrollUntil = 0
 
+  private scrollFrame: number | null = null
+
+  private directScrollActive = false
+
   private readonly rowTopByKey = new Map<string, number>()
 
   private lastMetricRecordAt: number | null = null
@@ -41,7 +46,8 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       return
     }
 
-    this.edgeSourceActiveUntil = now + 200
+    this.markEdgeSourceActive(now)
+    this.scheduleScrollFrame()
   }
 
   constructor(private readonly options: RuntimeDomInteractionsOptions) {}
@@ -61,6 +67,11 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       this.handleScroll,
     )
     this.disconnectEdgeObservers()
+    if (this.scrollFrame !== null) {
+      this.options.scheduler.cancelAnimationFrame(this.scrollFrame)
+    }
+    this.scrollFrame = null
+    this.directScrollActive = false
   }
 
   registerEdgeTrigger(edge: RuntimeEdge, element: HTMLElement | null): void {
@@ -75,7 +86,8 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
   }
 
   beginDirectScroll(): void {
-    this.edgeSourceActiveUntil = this.options.scheduler.now() + 200
+    this.directScrollActive = true
+    this.markEdgeSourceActive(this.options.scheduler.now())
   }
 
   writeDirectScrollTop(scrollTop: number): boolean {
@@ -85,8 +97,18 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       return false
     }
 
+    if (this.directScrollActive) {
+      this.markEdgeSourceActive(this.options.scheduler.now())
+    }
     container.scrollTop = scrollTop
+    this.scheduleScrollFrame()
     return true
+  }
+
+  endDirectScroll(): void {
+    this.directScrollActive = false
+    this.markEdgeSourceActive(this.options.scheduler.now())
+    this.scheduleScrollFrame()
   }
 
   alignToMessage(
@@ -239,7 +261,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     const observer = this.options.observerFactory.createIntersectionObserver((entries) => {
       if (
         entries.some((entry) => entry.isIntersecting) &&
-        this.options.scheduler.now() <= this.edgeSourceActiveUntil
+        this.isEdgeSourceActive()
       ) {
         this.options.onEdgeIntersect(edge)
       }
@@ -256,6 +278,26 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     this.afterIntersectionObserver?.disconnect()
     this.beforeIntersectionObserver = null
     this.afterIntersectionObserver = null
+  }
+
+  private markEdgeSourceActive(now: number): void {
+    this.edgeSourceActiveUntil = now + 200
+  }
+
+  private isEdgeSourceActive(): boolean {
+    return this.directScrollActive ||
+      this.options.scheduler.now() <= this.edgeSourceActiveUntil
+  }
+
+  private scheduleScrollFrame(): void {
+    if (this.scrollFrame !== null) {
+      return
+    }
+
+    this.scrollFrame = this.options.scheduler.requestAnimationFrame(() => {
+      this.scrollFrame = null
+      this.options.onScrollFrame()
+    })
   }
 }
 

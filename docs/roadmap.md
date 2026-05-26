@@ -224,11 +224,12 @@ Phase gate：Phase 1 必须把 `src/runtime/` 与 `src/react/` 旧实现整体�
 
 Phase 5 evidence：
 
-- `src/runtime/__tests__/viewportInteractions.test.ts` 覆盖 edge latch/error/retry、underflow 单边仲裁、bottom follow latest reset、dynamic height anchor stabilization、destination around reset 和 restore local align。
+- `src/runtime/__tests__/viewportInteractions.test.ts` 覆盖 edge latch/error/retry、underflow 单边仲裁、reset-around anchor protection 选边、普通中间态 underflow 交替补齐、bottom follow latest reset、dynamic height anchor stabilization、destination around reset 和 restore local align。
 - `src/react/__tests__/messageListAdapter.test.tsx` 覆盖 feed runtime 切换时旧 runtime 收到 detach checkpoint，slots 通过 runtime retry edge。
 - `src/runtime/data/__tests__/dataRuntime.test.ts` 覆盖 viewport semantic edge request token 采用。
 - `src/demo/useDemoMessageScenario.ts` 只响应 runtime semantic events 后调用 demo request API / data runtime，不读取 projection DOM 或 raw scroll。
 - 2026-05-26 验证：`git diff --check`、`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`npm run build:demo`。
+- 2026-05-26 no-go 回补：修复 underflow 固定 before 偏向，保留 reset-around target 方向用于短 segment 选边，并补充普通中间态两侧交替测试。
 
 ## Phase 6 Scrollbar And Observability
 
@@ -257,9 +258,10 @@ Phase 6 evidence：
 
 - `src/react/MessageListScrollbarOverlay.tsx` 只读取 native `scrollTop` / `clientHeight` / `scrollHeight`，drag / track click 只调用 adapter-private direct scroll API。
 - `src/react/__tests__/messageListAdapter.test.tsx` 覆盖 custom overlay 渲染、track click 写入 runtime direct scroll writer、overlay metric mismatch diagnostic。
-- `src/runtime/__tests__/viewportInteractions.test.ts` 覆盖 direct scrollbar write 作为 edge-capable user input，以及 measurement cache、blank-area、frame-gap、transaction latency diagnostics。
+- `src/runtime/__tests__/viewportInteractions.test.ts` 覆盖 ordinary scroll 后 evidence / observation / `viewportAnchorChanged(scroll-idle)` rAF 更新、direct scrollbar write 与长时间 drag 作为 edge-capable user input，以及 measurement cache、blank-area、frame-gap、transaction latency diagnostics。
 - `rg "edgeState|hasMoreBefore|hasMoreAfter|bottomLock|pendingIntent|applyLoadedSegment|needMore|scrollToLatest|restoreToMessage" src/react/MessageListScrollbarOverlay.tsx` 无命中，overlay 未读取 paging / bottom / destination 状态。
 - 2026-05-26 验证：`git diff --check`、`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`npm run build:demo`。
+- 2026-05-26 no-go 回补：普通用户滚动现在由 runtime rAF 更新 native evidence / observation / scroll-idle anchor；direct drag 生命周期从 begin 到 end 保持 user direct manipulation。
 
 ## Phase 7 Demo And E2E Rewire
 

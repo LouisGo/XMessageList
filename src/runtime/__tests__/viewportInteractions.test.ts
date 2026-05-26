@@ -86,6 +86,83 @@ describe('MessageList viewport interactions', () => {
     }))
   })
 
+  it('keeps long direct scrollbar drags edge-capable until end', () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      observers,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const row = createRow('row-1', 0, 120)
+    const after = createMarker(120, 1)
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(row, after)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', row)
+    adapter.registerAfterTriggerElement(after)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    adapter.beginDirectScroll()
+    expect(adapter.writeDirectScrollTop(20)).toBe(true)
+    scheduler.flushFrames(20)
+    observers.intersectionObservers[0]?.trigger(after, true)
+    adapter.endDirectScroll()
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'needMoreAfter',
+      reason: 'near-after',
+    }))
+  })
+
+  it('updates evidence, observation, and scroll-idle anchor on ordinary scroll', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      observers: createFakeObservers(),
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rowA = createRow('row-1', 0, 60)
+    const rowB = createRow('row-2', 60, 60)
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(rowA, rowB)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', rowA)
+    adapter.registerRowElement('row-2', rowB)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1'), item('row-2')], 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    container.scrollTop = 35
+    setElementMetrics(rowA, { top: -35, height: 60 })
+    setElementMetrics(rowB, { top: 25, height: 60 })
+    container.dispatchEvent(new Event('scroll'))
+    expect(runtime.getEvidence().scrollTop).toBe(0)
+
+    scheduler.flushFrame()
+
+    expect(runtime.getEvidence().scrollTop).toBe(35)
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'viewportObservationChanged',
+      visibleKeys: ['row-1', 'row-2'],
+    }))
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'viewportAnchorChanged',
+      reason: 'scroll-idle',
+      anchor: expect.objectContaining({ stableId: 'row-1' }),
+    }))
+  })
+
   it('arbitrates short segment underflow to a single edge request', () => {
     const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -114,6 +191,79 @@ describe('MessageList viewport interactions', () => {
       pendingIntent: 'underflow-fill',
       segmentMeta: { underflow: 'fillable' },
     })
+  })
+
+  it('uses reset-around anchor protection to choose the thin underflow side', () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rowA = createRow('row-1', 0, 20)
+    const rowB = createRow('row-2', 20, 20)
+    const rowC = createRow('row-3', 40, 20)
+    const target = { feedId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(rowA, rowB, rowC)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', rowA)
+    adapter.registerRowElement('row-2', rowB)
+    adapter.registerRowElement('row-3', rowC)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1'), item('row-2'), item('row-3')], 1, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      modifier: { type: 'reset-around', target },
+      anchor: target,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'needMoreAfter',
+      reason: 'underflow-fill',
+    }))
+    expect(events.some((event) => event.type === 'needMoreBefore')).toBe(false)
+  })
+
+  it('alternates middle underflow fills across anchor sides', () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rowA = createRow('row-1', 0, 20)
+    const rowB = createRow('row-2', 20, 20)
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(rowA)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', rowA)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    const beforeEvent = events.find((event) => event.type === 'needMoreBefore')
+    expect(beforeEvent).toEqual(expect.objectContaining({
+      type: 'needMoreBefore',
+      reason: 'underflow-fill',
+    }))
+
+    container.prepend(rowB)
+    adapter.registerRowElement('row-2', rowB)
+    runtime.applyLoadedSegment(segment([item('row-2'), item('row-1')], 1, 2, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      modifier: {
+        type: 'extend-before',
+        requestToken: beforeEvent?.requestToken ?? '',
+      },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'needMoreAfter',
+      reason: 'underflow-fill',
+    }))
   })
 
   it('follows latest via reset and locks bottom only at feed latest', () => {

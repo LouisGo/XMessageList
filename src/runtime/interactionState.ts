@@ -36,12 +36,18 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
 
   private pendingDestination: DestinationIntent | null = null
 
+  private lastDestinationDirection: RuntimeEdge | null = null
+
+  private lastUnderflowEdge: RuntimeEdge | null = null
+
   private readonly underflowRequests = new Set<string>()
 
   resetForGeneration(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
   ): MessageListSnapshot<TMessage, TOptimistic> {
     this.pendingDestination = null
+    this.lastDestinationDirection = null
+    this.lastUnderflowEdge = null
     this.underflowRequests.clear()
     return {
       ...snapshot,
@@ -164,6 +170,7 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     intent: DestinationIntent,
   ): InteractionUpdate<TMessage, TOptimistic> {
     this.pendingDestination = intent
+    this.lastDestinationDirection = resolveDestinationDirection(intent)
     const requestToken = this.nextRequestToken(snapshot.feedId, 'around')
     const event: NeedMessagesAroundEvent = {
       type: 'needMessagesAround',
@@ -243,7 +250,7 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
       return null
     }
 
-    const edge = chooseUnderflowEdge(snapshot)
+    const edge = this.chooseUnderflowEdge(snapshot)
 
     if (!edge) {
       return {
@@ -264,6 +271,7 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     }
 
     this.underflowRequests.add(requestKey)
+    this.lastUnderflowEdge = edge
     const update = this.startEdgeNeed(
       snapshot,
       edge,
@@ -290,6 +298,42 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
   private nextRequestToken(feedId: string, kind: string): string {
     this.requestSequence += 1
     return `${feedId}:${kind}:${this.requestSequence}`
+  }
+
+  private chooseUnderflowEdge(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+  ): RuntimeEdge | null {
+    const canBefore = canRequestEdge(snapshot, 'before')
+    const canAfter = canRequestEdge(snapshot, 'after')
+
+    if (
+      snapshot.bottomLockState === 'LOCKED' ||
+      snapshot.segmentMeta.modifier.type === 'reset-latest'
+    ) {
+      return canBefore ? 'before' : null
+    }
+
+    if (canBefore && !canAfter) {
+      return 'before'
+    }
+
+    if (canAfter && !canBefore) {
+      return 'after'
+    }
+
+    if (!canBefore || !canAfter) {
+      return null
+    }
+
+    if (snapshot.segmentMeta.modifier.type === 'reset-around') {
+      return resolveResetAroundUnderflowEdge(
+        snapshot,
+        this.lastDestinationDirection,
+        this.lastUnderflowEdge,
+      )
+    }
+
+    return this.lastUnderflowEdge === 'before' ? 'after' : 'before'
   }
 }
 
@@ -340,27 +384,6 @@ function canRequestEdge<TMessage, TOptimistic>(
     snapshot.pendingIntent !== 'destination'
 }
 
-function chooseUnderflowEdge<TMessage, TOptimistic>(
-  snapshot: MessageListSnapshot<TMessage, TOptimistic>,
-): RuntimeEdge | null {
-  if (
-    (snapshot.bottomLockState === 'LOCKED' || snapshot.pendingIntent === 'follow-bottom') &&
-    snapshot.segmentMeta.hasMoreBefore
-  ) {
-    return 'before'
-  }
-
-  if (snapshot.segmentMeta.hasMoreBefore) {
-    return 'before'
-  }
-
-  if (snapshot.segmentMeta.hasMoreAfter && snapshot.pendingIntent !== 'follow-bottom') {
-    return 'after'
-  }
-
-  return null
-}
-
 function settleEdge<TMessage, TOptimistic>(
   snapshot: MessageListSnapshot<TMessage, TOptimistic>,
   edge: RuntimeEdge,
@@ -405,4 +428,59 @@ function createLatchToken<TMessage, TOptimistic>(
   edge: RuntimeEdge,
 ): string {
   return `${snapshot.feedId}:${snapshot.generation}:${snapshot.segmentRevision}:${edge}`
+}
+
+function resolveResetAroundUnderflowEdge<TMessage, TOptimistic>(
+  snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+  destinationDirection: RuntimeEdge | null,
+  lastUnderflowEdge: RuntimeEdge | null,
+): RuntimeEdge {
+  const target = snapshot.segmentMeta.modifier.type === 'reset-around'
+    ? snapshot.segmentMeta.modifier.target
+    : null
+  const targetIndex = target ? findAnchorIndex(snapshot, target) : -1
+
+  if (targetIndex >= 0) {
+    const beforeCount = targetIndex
+    const afterCount = snapshot.items.length - targetIndex - 1
+
+    if (beforeCount < afterCount) {
+      return 'before'
+    }
+
+    if (afterCount < beforeCount) {
+      return 'after'
+    }
+  }
+
+  return destinationDirection ?? (lastUnderflowEdge === 'before' ? 'after' : 'before')
+}
+
+function resolveDestinationDirection(intent: DestinationIntent): RuntimeEdge | null {
+  if (intent.align === 'start') {
+    return 'before'
+  }
+
+  if (intent.align === 'end') {
+    return 'after'
+  }
+
+  return null
+}
+
+function findAnchorIndex<TMessage, TOptimistic>(
+  snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+  anchor: MessageIdentityAnchor,
+): number {
+  return snapshot.items.findIndex((item) => {
+    const identity = item.identity
+
+    return identity &&
+      identity.feedId === anchor.feedId &&
+      (
+        identity.stableId === anchor.stableId ||
+        Boolean(identity.serverId && identity.serverId === anchor.serverId) ||
+        Boolean(identity.localId && identity.localId === anchor.localId)
+      )
+  })
 }
