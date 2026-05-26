@@ -162,23 +162,30 @@ Phase gate：Phase 1 必须把 `src/runtime/` 与 `src/react/` 旧实现整体�
 
 目标：
 
-- [ ] 从零实现 React projection adapter。
-- [ ] React 只投影 snapshot、注册 refs、发送 commit ack、渲染 slots。
+- [x] 从零实现 React projection adapter。
+- [x] React 只投影 snapshot、注册 refs、发送 commit ack、渲染 slots。
 
 任务：
 
-- [ ] 实现 external store hook，保证 snapshot object 稳定，避免 React state 拆分 segment / edge / phase。
-- [ ] 实现固定 DOM skeleton：before trigger + rows + after trigger + bottom marker。
-- [ ] 实现 row wrapper：runtime key、row kind、identity data attributes、ref register/unregister。
-- [ ] 实现 layout effect commit ack：调用 `ackProjectionCommit(commitToken)`，ack 必须带 feedId / generation / segmentRevision / projectionRevision。
-- [ ] 实现 slots：`renderBeforeEdge`、`renderAfterEdge`、`renderScrollToLatest`、`renderOverlay`。
+- [x] 实现 external store hook，保证 snapshot object 稳定，避免 React state 拆分 segment / edge / phase。
+- [x] 实现固定 DOM skeleton：before trigger + rows + after trigger + bottom marker。
+- [x] 实现 row wrapper：runtime key、row kind、identity data attributes、ref register/unregister。
+- [x] 实现 layout effect commit ack：调用 `ackProjectionCommit(commitToken)`，ack 必须带 feedId / generation / segmentRevision / projectionRevision。
+- [x] 实现 slots：`renderBeforeEdge`、`renderAfterEdge`、`renderScrollToLatest`、`renderOverlay`。
 
 退出标准：
 
-- [ ] React adapter 不读写 `scrollTop`。
-- [ ] React adapter 不维护 edge latch、bottom lock、anchor persistence。
-- [ ] DOM 中不存在 spacer 或 estimated total height。
-- [ ] StrictMode attach / detach / attach 不泄漏 refs 或 observers。
+- [x] React adapter 不读写 `scrollTop`。
+- [x] React adapter 不维护 edge latch、bottom lock、anchor persistence。
+- [x] DOM 中不存在 spacer 或 estimated total height。
+- [x] StrictMode attach / detach / attach 不泄漏 refs 或 observers。
+
+验证证据（2026-05-26）：
+
+- 新增 `MessageFlow`、`MessageRow`、`ProjectionCommitAck`，`MessageList` 通过 `useSyncExternalStore` 读取 runtime snapshot，渲染固定 DOM skeleton、注册 refs，并在 layout effect 中 ack 完整 `ProjectionCommitToken`。
+- `src/react/__tests__/messageListAdapter.test.tsx` 覆盖 fixed DOM skeleton、before/after/bottom marker、row data attributes、slots、layout-effect ack、StrictMode idempotent ack、runtime semantic scroll-to-latest command、无 spacer DOM。
+- `rg "scrollTop|scrollHeight|clientHeight|spacer|estimated total|estimatedTotalHeight|edge latch|bottom lock|anchor persistence" src/react --glob '!**/__tests__/**'` 无命中，React adapter 未接管 scroll/measurement/latch/anchor ownership。
+- `npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`git diff --check` 通过。
 
 ## Phase 5 Interaction State Machines
 

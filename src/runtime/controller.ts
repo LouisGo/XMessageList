@@ -116,6 +116,10 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     const pending = this.pendingTransaction
 
     if (!pending || !isSameToken(pending.token, token)) {
+      if (!pending && isSameToken(this.snapshot.commitToken, token)) {
+        return
+      }
+
       this.pushDiagnostic('transaction.staleCommitAck', 'warn', token)
       return
     }
