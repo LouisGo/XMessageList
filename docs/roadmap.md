@@ -100,23 +100,30 @@ Phase gate：Phase 1 必须把 `src/runtime/` 与 `src/react/` 旧实现整体�
 
 目标：
 
-- [ ] 从零实现 Renderer Data Runtime 的纯数据层合同。
-- [ ] 保持 demo/e2e 的请求方式不变，但返回值适配 next loaded segment。
+- [x] 从零实现 Renderer Data Runtime 的纯数据层合同。
+- [x] 保持 demo/e2e 的请求方式不变，但返回值适配 next loaded segment。
 
 任务：
 
-- [ ] 实现 `MessageIdentity`、`MessageRuntimeItemKey`、`MessageDataItem`、`LoadedSegment`、`SegmentModifier`。
-- [ ] 实现 before / after merge、reset-latest、reset-around、patch、identity-remap、trim decision 的纯数据逻辑。
-- [ ] 实现 requestToken、generation、segmentRevision、dedupe、stale response drop。
-- [ ] 把 demo/e2e 的 `getLatestMessages`、`getMessagesAround` 接到 data runtime adapter，不让 demo 读写 DOM 或 scrollTop。
-- [ ] 建立 data runtime 单元测试，覆盖 optimistic id -> server id、deleted / unavailable fallback、duplicate server message、segment trim policy。
+- [x] 实现 `MessageIdentity`、`MessageRuntimeItemKey`、`MessageDataItem`、`LoadedSegment`、`SegmentModifier`。
+- [x] 实现 before / after merge、reset-latest、reset-around、patch、identity-remap、trim decision 的纯数据逻辑。
+- [x] 实现 requestToken、generation、segmentRevision、dedupe、stale response drop。
+- [x] 把 demo/e2e 的 `getLatestMessages`、`getMessagesAround` 接到 data runtime adapter，不让 demo 读写 DOM 或 scrollTop。
+- [x] 建立 data runtime 单元测试，覆盖 optimistic id -> server id、deleted / unavailable fallback、duplicate server message、segment trim policy。
 
 退出标准：
 
-- [ ] data runtime 不依赖 DOM、React、scroll metrics。
-- [ ] 所有 item merge / trim / remap 都由 data runtime 产出 immutable next segment。
-- [ ] demo/e2e mock request shape 保持稳定。
-- [ ] 单元测试证明 data modifier 分类正确。
+- [x] data runtime 不依赖 DOM、React、scroll metrics。
+- [x] 所有 item merge / trim / remap 都由 data runtime 产出 immutable next segment。
+- [x] demo/e2e mock request shape 保持稳定。
+- [x] 单元测试证明 data modifier 分类正确。
+
+验证证据（2026-05-26）：
+
+- 新增 `src/runtime/data/`，data runtime 覆盖 reset-latest、reset-around、extend-before/after、patch、identity-remap、trim、request token、generation 和 stale response drop。
+- demo/e2e shell 保留 `getLatestMessages` / `getMessagesAround` 请求形态，响应结果先进入 `createMessageListDataRuntime()`，再由 data runtime 的 immutable `LoadedSegment` 交给 viewport runtime。
+- `rg "document|HTMLElement|scrollTop|scrollHeight|clientHeight|React|from 'react'|from \"react\"" src/runtime/data` 无命中。
+- `npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`git diff --check` 通过；`src/runtime/data/__tests__/dataRuntime.test.ts` 覆盖 optimistic id -> server id、deleted fallback、duplicate server message、trim/stale response。
 
 ## Phase 3 Viewport Runtime Kernel
 

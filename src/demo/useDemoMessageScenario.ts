@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
-  LoadedSegment,
   MessageListRuntime,
   ViewportAnchorChangedEvent,
 } from '../runtime'
+import {
+  createMessageListDataRuntime,
+  type MessageListDataRuntime,
+} from '../runtime/data'
 import {
   createNewestMessage,
   toDemoMessageDataItem,
@@ -65,32 +68,38 @@ export function useDemoMessageScenario(
   const [messages, setMessages] = useState<DemoMessage[]>([])
   const [lastEvent, setLastEvent] = useState('bootstrapping latest segment')
   const [feedLoading, setFeedLoading] = useState(true)
-  const revisionRef = useRef(0)
+  const dataRuntimesRef = useRef(new Map<string, MessageListDataRuntime<DemoMessage>>())
   const runtime = runtimeCache.getRuntime(activeFeedId)
   const activeFeed = useMemo(
     () => getDemoFeedDefinition(activeFeedId),
     [activeFeedId],
   )
 
-  const publish = useCallback((
-    nextMessages: DemoMessage[],
-    modifier: LoadedSegment<DemoMessage>['modifier'],
-    hasMoreBefore: boolean,
-    hasMoreAfter: boolean,
-  ) => {
-    const nextRevision = revisionRef.current + 1
-    revisionRef.current = nextRevision
-    setMessages(nextMessages)
-    runtime.applyLoadedSegment({
-      feedId: activeFeedId,
-      generation: 1,
-      segmentRevision: nextRevision,
-      items: nextMessages.map(toDemoMessageDataItem),
-      hasMoreBefore,
-      hasMoreAfter,
-      modifier,
+  const getDataRuntime = useCallback((feedId: string) => {
+    const existing = dataRuntimesRef.current.get(feedId)
+
+    if (existing) {
+      return existing
+    }
+
+    const next = createMessageListDataRuntime<DemoMessage>({
+      feedId,
+      itemBudget: 120,
     })
-  }, [activeFeedId, runtime])
+    dataRuntimesRef.current.set(feedId, next)
+    return next
+  }, [])
+
+  const publishSegment = useCallback((
+    dataRuntime: MessageListDataRuntime<DemoMessage>,
+  ) => {
+    const segment = dataRuntime.getSegment()
+    const nextMessages = segment.items
+      .map((item) => item.message)
+      .filter((message): message is DemoMessage => Boolean(message))
+    setMessages(nextMessages)
+    runtime.applyLoadedSegment(segment)
+  }, [runtime])
 
   useEffect(() => {
     let cancelled = false
@@ -99,7 +108,21 @@ export function useDemoMessageScenario(
         if (cancelled || !resp.ok) {
           return
         }
-        publish(resp.messages, { type: 'bootstrap' }, resp.hasMoreBefore, false)
+        const dataRuntime = getDataRuntime(activeFeedId)
+        dataRuntime.resetLatest({
+          items: resp.messages.map(toDemoMessageDataItem),
+          hasMoreBefore: resp.hasMoreBefore,
+          hasMoreAfter: resp.hasMoreAfter,
+          anchor: resp.anchor.messageId
+            ? {
+                feedId: resp.feedId,
+                stableId: resp.anchor.messageId,
+                serverId: resp.anchor.messageId,
+              }
+            : undefined,
+          anchorStatus: resp.anchorStatus,
+        })
+        publishSegment(dataRuntime)
         setLastEvent(`loaded ${resp.messages.length} latest messages`)
       })
       .finally(() => {
@@ -110,7 +133,7 @@ export function useDemoMessageScenario(
     return () => {
       cancelled = true
     }
-  }, [activeFeedId, publish])
+  }, [activeFeedId, getDataRuntime, publishSegment])
 
   useEffect(() => runtime.subscribeRuntimeEvent((event) => {
     if (event.type === 'needLatestMessages') {
@@ -128,9 +151,11 @@ export function useDemoMessageScenario(
       createNewestMessage(activeFeedId, sequence, 'Appended demo message'),
     ]
     replaceDemoFeedMessages(activeFeedId, nextMessages)
-    publish(nextMessages, { type: 'patch', changedKeys: [] }, false, false)
+    const dataRuntime = getDataRuntime(activeFeedId)
+    dataRuntime.patchItems(nextMessages.map(toDemoMessageDataItem))
+    publishSegment(dataRuntime)
     setLastEvent('appended message')
-  }, [activeFeedId, messages, publish])
+  }, [activeFeedId, getDataRuntime, messages, publishSegment])
 
   return {
     feeds: DEMO_FEEDS,
@@ -175,19 +200,44 @@ export function useDemoMessageScenario(
     jumpToQuote: () => {
       const first = messages[0]
       if (first) {
+        const target = {
+          feedId: activeFeedId,
+          stableId: first.id,
+          serverId: first.id,
+        }
         void getMessagesAround({
           feedId: activeFeedId,
           anchor: { messageId: first.id, position: first.sequence },
           before: 5,
           after: 5,
+        }).then((resp) => {
+          if (!resp.ok) {
+            return
+          }
+          const dataRuntime = getDataRuntime(activeFeedId)
+          dataRuntime.resetAround({
+            target,
+            items: resp.messages.map(toDemoMessageDataItem),
+            hasMoreBefore: resp.hasMoreBefore,
+            hasMoreAfter: resp.hasMoreAfter,
+            anchor: target,
+            anchorStatus: resp.anchorStatus,
+          })
+          publishSegment(dataRuntime)
         })
       }
-      setLastEvent('jump request kept semantic; viewport wiring is later')
+      setLastEvent('jump request entered data runtime')
     },
     clearFeed(feedId) {
       replaceDemoFeedMessages(feedId, [])
       if (feedId === activeFeedId) {
-        publish([], { type: 'reset-latest' }, false, false)
+        const dataRuntime = getDataRuntime(feedId)
+        dataRuntime.resetLatest({
+          items: [],
+          hasMoreBefore: false,
+          hasMoreAfter: false,
+        })
+        publishSegment(dataRuntime)
       }
       setLastEvent(`cleared ${feedId}`)
     },
