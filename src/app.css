@@ -265,8 +265,11 @@ h1 {
 
 .message-viewport {
   position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   height: 100%;
+  overflow: hidden;
   background:
     linear-gradient(rgb(241 246 248 / 0.92), rgb(241 246 248 / 0.92)),
     repeating-linear-gradient(
@@ -278,8 +281,39 @@ h1 {
     );
 }
 
-[data-message-window] {
+[data-message-scroll-container] {
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+}
+
+[data-message-flow] {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
   padding: 12px 22px;
+}
+
+[data-message-flow][data-short-align="start"] {
+  justify-content: flex-start;
+}
+
+[data-message-flow][data-short-align="center"] {
+  justify-content: center;
+}
+
+[data-message-flow][data-short-align="end"] {
+  justify-content: flex-end;
+}
+
+[data-edge-trigger],
+[data-bottom-marker] {
+  flex: 0 0 auto;
+  min-height: 1px;
 }
 
 .message-row {

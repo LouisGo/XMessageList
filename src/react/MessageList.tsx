@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 import { getMessageListAdapterRuntime } from '../runtime/internal'
 import { MessageFlow } from './MessageFlow'
 import { useMessageListSnapshot } from './hooks'
@@ -14,6 +14,8 @@ export function MessageList<TMessage, TOptimistic>({
   renderOverlay,
   renderRow,
   renderScrollToLatest,
+  onViewportAnchorChange,
+  onViewportObservationChange,
 }: MessageListProps<TMessage, TOptimistic>) {
   const snapshot = useMessageListSnapshot(runtime)
   const adapterRuntime = getMessageListAdapterRuntime(runtime)
@@ -38,6 +40,11 @@ export function MessageList<TMessage, TOptimistic>({
         ref={attachContainer}
         data-message-scroll-container
       >
+        <RuntimeEventBridge
+          runtime={runtime}
+          onViewportAnchorChange={onViewportAnchorChange}
+          onViewportObservationChange={onViewportObservationChange}
+        />
         <MessageFlow
           runtime={adapterRuntime}
           snapshot={snapshot}
@@ -57,4 +64,43 @@ export function MessageList<TMessage, TOptimistic>({
       </div>
     </div>
   )
+}
+
+type RuntimeEventBridgeProps<TMessage, TOptimistic> = Pick<
+  MessageListProps<TMessage, TOptimistic>,
+  | 'runtime'
+  | 'onViewportAnchorChange'
+  | 'onViewportObservationChange'
+>
+
+function RuntimeEventBridge<TMessage, TOptimistic>({
+  runtime,
+  onViewportAnchorChange,
+  onViewportObservationChange,
+}: RuntimeEventBridgeProps<TMessage, TOptimistic>) {
+  useLayoutEffect(() => {
+    const unsubscribers: Array<() => void> = []
+
+    if (onViewportAnchorChange) {
+      unsubscribers.push(runtime.subscribeRuntimeEvent((event) => {
+        if (event.type === 'viewportAnchorChanged') {
+          onViewportAnchorChange(event)
+        }
+      }))
+    }
+
+    if (onViewportObservationChange) {
+      unsubscribers.push(
+        runtime.subscribeViewportObservation(onViewportObservationChange),
+      )
+    }
+
+    return () => {
+      for (const unsubscribe of unsubscribers) {
+        unsubscribe()
+      }
+    }
+  }, [runtime, onViewportAnchorChange, onViewportObservationChange])
+
+  return null
 }

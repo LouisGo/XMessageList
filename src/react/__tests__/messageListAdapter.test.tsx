@@ -5,6 +5,8 @@ import {
   createMessageListRuntime,
   type LoadedSegment,
   type MessageDataItem,
+  type ViewportAnchorChangedEvent,
+  type ViewportObservationChangedEvent,
 } from '../../runtime'
 import { MessageList } from '../MessageList'
 
@@ -91,6 +93,47 @@ describe('MessageList React adapter', () => {
     })
   })
 
+  it('forwards viewport anchor and observation events to public callbacks', async () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const anchorEvents: ViewportAnchorChangedEvent[] = []
+    const observationEvents: ViewportObservationChangedEvent[] = []
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    runtime.applyLoadedSegment(segment([item('row-1')], {
+      anchor: {
+        feedId: 'feed-a',
+        stableId: 'row-1',
+        serverId: 'row-1',
+      },
+    }))
+
+    await act(async () => {
+      root.render(
+        <MessageList
+          runtime={runtime}
+          renderRow={(nextItem) => <span>{nextItem.message}</span>}
+          onViewportAnchorChange={(event) => anchorEvents.push(event)}
+          onViewportObservationChange={(event) => {
+            observationEvents.push(event)
+          }}
+        />,
+      )
+    })
+
+    expect(anchorEvents).toContainEqual(expect.objectContaining({
+      reason: 'transaction-settle',
+      anchor: expect.objectContaining({ stableId: 'row-1' }),
+    }))
+    expect(observationEvents).toContainEqual(expect.objectContaining({
+      visibleKeys: ['row-1'],
+    }))
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
   it('keeps StrictMode double commit ack idempotent', async () => {
     const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
     const host = document.createElement('div')
@@ -134,7 +177,10 @@ function item(key: string): MessageDataItem<string> {
   }
 }
 
-function segment(items: MessageDataItem<string>[]): LoadedSegment<string> {
+function segment(
+  items: MessageDataItem<string>[],
+  overrides: Partial<LoadedSegment<string>> = {},
+): LoadedSegment<string> {
   return {
     feedId: 'feed-a',
     generation: 1,
@@ -143,5 +189,6 @@ function segment(items: MessageDataItem<string>[]): LoadedSegment<string> {
     hasMoreBefore: false,
     hasMoreAfter: false,
     modifier: { type: 'bootstrap' },
+    ...overrides,
   }
 }

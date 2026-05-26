@@ -3,6 +3,8 @@ import type {
   MessageDataItem,
   MessageListRuntime,
   MessageListSnapshot,
+  ViewportAnchorChangedEvent,
+  ViewportObservationChangedEvent,
 } from '../runtime'
 
 export type EdgeSlotInput = {
@@ -35,7 +37,7 @@ export type MessageListProps<TMessage = unknown, TOptimistic = unknown> = {
   renderAfterEdge?: (input: EdgeSlotInput) => ReactNode
   renderScrollToLatest?: (input: ScrollToLatestSlotInput) => ReactNode
   renderOverlay?: (input: MessageListOverlayInput) => ReactNode
-  onViewportAnchorChange?: () => void
-  onViewportObservationChange?: () => void
+  onViewportAnchorChange?: (event: ViewportAnchorChangedEvent) => void
+  onViewportObservationChange?: (event: ViewportObservationChangedEvent) => void
   scrollbar?: 'native' | 'custom'
 }

@@ -187,6 +187,15 @@ Phase gate：Phase 1 必须把 `src/runtime/` 与 `src/react/` 旧实现整体�
 - `rg "scrollTop|scrollHeight|clientHeight|spacer|estimated total|estimatedTotalHeight|edge latch|bottom lock|anchor persistence" src/react --glob '!**/__tests__/**'` 无命中，React adapter 未接管 scroll/measurement/latch/anchor ownership。
 - `npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`git diff --check` 通过。
 
+复核修复证据（2026-05-26）：
+
+- Phase 4 no-go 复核后补齐 runtime transaction 串行队列、token-scoped commit timeout、settle/timeout event 重入队列保护、identity-remap anchor key 解析、`viewportAnchorChanged(transaction-settle|detach)`、`viewportObservationChanged` 与 `viewportError(code: 'commit-timeout')`。
+- 补齐 `MessageList` public callback 合同，`onViewportAnchorChange(event)` / `onViewportObservationChange(event)` 只转发 runtime 事件；React 仍只 projection + refs + ack。
+- demo CSS 已把 `[data-message-scroll-container]` 落为唯一 native scroll root，并由 `[data-message-flow]` 负责 short alignment；移除旧 `[data-message-window]` 布局 selector。
+- `src/runtime/__tests__/viewportKernel.test.ts` 覆盖 active transaction FIFO、event-triggered publish 重入、commit timeout event、timeout 后队列推进、identity-remap anchor correction、settle checkpoint、detach 前 capture 当前可视 anchor 与 observation。
+- `src/react/__tests__/messageListAdapter.test.tsx` 覆盖 public viewport callbacks 能收到 runtime settle observation/anchor event。
+- `npm run test -- src/runtime/__tests__/viewportKernel.test.ts`、`npm run test -- src/react/__tests__/messageListAdapter.test.tsx`、`git diff --check`、`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`npm run build:demo` 通过。
+
 ## Phase 5 Interaction State Machines
 
 依赖：Phase 4。
