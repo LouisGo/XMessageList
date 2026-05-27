@@ -200,6 +200,78 @@ export function expectVisibleIdentity(
   }
 }
 
+export function expectIdentityRemapModifierContract(
+  evidence: E2EEvidence,
+): E2EOracleResult {
+  const remap = firstIdentityRemap(evidence)
+  const ok = Boolean(
+    remap?.previousKey &&
+    remap.nextKey &&
+    remap.from.stableId &&
+    remap.to.stableId &&
+    (remap.from.localId || remap.from.serverId) &&
+    remap.to.serverId,
+  )
+
+  return {
+    oracleId: 'identity-remap-modifier-contract',
+    ok,
+    message: remap
+      ? `previousKey=${remap.previousKey ?? 'missing'} nextKey=${remap.nextKey}`
+      : `modifier=${evidence.segment.modifier.type}`,
+  }
+}
+
+export function expectRemappedAnchorPreserved(
+  before: E2EEvidence,
+  after: E2EEvidence,
+  options: { tolerancePx: number },
+): E2EOracleResult {
+  const remap = firstIdentityRemap(after)
+  const beforeRow = remap
+    ? findRemapRow(before, remap.previousKey, remap.from)
+    : null
+  const afterRow = remap
+    ? findRemapRow(after, remap.nextKey, remap.to)
+    : null
+  const delta = beforeRow && afterRow
+    ? Math.abs(beforeRow.top - afterRow.top)
+    : Number.POSITIVE_INFINITY
+
+  return {
+    oracleId: 'identity-remap-anchor-preserved',
+    ok: Boolean(beforeRow && afterRow) && delta <= options.tolerancePx,
+    message: beforeRow && afterRow
+      ? `previousKey=${remap?.previousKey} nextKey=${remap?.nextKey} delta=${delta}`
+      : `beforeRow=${beforeRow ? 'yes' : 'no'} afterRow=${afterRow ? 'yes' : 'no'}`,
+  }
+}
+
+export function expectRemappedViewportAnchor(
+  evidence: E2EEvidence,
+): E2EOracleResult {
+  const remap = firstIdentityRemap(evidence)
+  const anchorEvent = [...evidence.events]
+    .reverse()
+    .find((event) => event.type === 'viewportAnchorChanged' && event.anchor)
+  const anchor = anchorEvent?.anchor ?? null
+  const matchesCommitted = Boolean(remap && anchor && matchesIdentity(anchor, remap.to))
+  const localOnly = Boolean(
+    remap &&
+    anchor?.localId &&
+    anchor.localId === remap.from.localId &&
+    !anchor.serverId,
+  )
+
+  return {
+    oracleId: 'identity-remap-viewport-anchor',
+    ok: matchesCommitted && !localOnly,
+    message: anchor
+      ? `stableId=${anchor.stableId} serverId=${anchor.serverId ?? 'none'} localOnly=${localOnly}`
+      : 'viewport anchor event missing',
+  }
+}
+
 export function expectOverlayMirrorsNative(
   evidence: E2EEvidence,
   options: { tolerancePx: number },
@@ -262,6 +334,53 @@ export function expectDiagnosticsBounded(evidence: E2EEvidence): E2EOracleResult
     ok: evidence.diagnostics.length <= 120,
     message: `diagnostics=${evidence.diagnostics.length}`,
   }
+}
+
+type IdentityRemap = Extract<
+  E2EEvidence['segment']['modifier'],
+  { type: 'identity-remap' }
+>['remaps'][number]
+
+type VisibleRow = E2EEvidence['visibleRows'][number]
+
+function firstIdentityRemap(evidence: E2EEvidence): IdentityRemap | null {
+  const modifier = evidence.segment.modifier
+
+  if (modifier.type !== 'identity-remap') {
+    return null
+  }
+
+  return modifier.remaps[0] ?? null
+}
+
+function findRemapRow(
+  evidence: E2EEvidence,
+  key: string | undefined,
+  identity: IdentityRemap['from'] | IdentityRemap['to'],
+): VisibleRow | null {
+  return evidence.visibleRows.find((row) =>
+    (Boolean(key) && row.key === key) ||
+    matchesIdentity(row, identity)
+  ) ?? null
+}
+
+function matchesIdentity(
+  candidate: {
+    stableId?: string
+    serverId?: string
+    localId?: string
+  },
+  identity: {
+    stableId?: string
+    serverId?: string
+    localId?: string
+  },
+): boolean {
+  return Boolean(
+    (identity.serverId && candidate.serverId === identity.serverId) ||
+    (identity.stableId && candidate.stableId === identity.stableId) ||
+    (identity.localId && candidate.localId === identity.localId),
+  )
 }
 
 function findFirstCommonVisibleRow(

@@ -76,6 +76,7 @@ type E2EEvidence = ViewportEvidence & {
     requestToken?: string;
     reason?: string;
     edge?: 'before' | 'after';
+    anchor?: MessageIdentityAnchor | null;
   }>;
   diagnostics: ViewportDiagnosticRecord[];
   overlay: {
@@ -88,6 +89,8 @@ type E2EEvidence = ViewportEvidence & {
   } | null;
 };
 ```
+
+`E2EActionResult` may include named `checkpoints` when a single user action needs to prove pre-settle and post-settle state, for example before-edge trigger evidence captured after `needMoreBefore` but before the delayed mock response applies.
 
 E2E bridge 只能用这些字段判定场景；失败报告必须带 action result、event log、diagnostics 和必要截图，不能通过读取 runtime private object 补答案。
 
@@ -188,10 +191,10 @@ After extend：
 
 通过条件：
 
-- local optimistic row 获得 server id 后，visible row key 保持稳定；若 key 改变，evidence / diagnostics 带 `previousKey -> nextKey`。
-- 当前 visual anchor 经 remap 后仍能解析到 committed DOM row。
+- local optimistic row 获得 server id 后，`identity-remap` modifier 显式携带 `from` / `to` identity 与 `previousKey -> nextKey`。
+- 当前 visual anchor 经 remap 后仍能从 `previousKey` 解析到 committed DOM row `nextKey`。
 - anchor top delta <= 1px。
-- `viewportAnchorChanged` 发布 remap 后的 stable/server identity，不继续持久化 local-only id。
+- `viewportAnchorChanged(transaction-settle)` 发布 remap 后的 stable/server identity，不继续持久化 local-only id。
 - duplicate / deleted / permission fallback 由 data modifier 解释，不由 viewport 猜测。
 
 ## Performance Oracle

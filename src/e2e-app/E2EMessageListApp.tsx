@@ -31,6 +31,8 @@ const E2E_ACTIONS: E2EActionDescriptor[] = [
   { id: 'jump_to_oldest', label: 'Jump oldest', enabled: true },
   { id: 'toggle_dynamic_height', label: 'Dynamic height', enabled: true },
   { id: 'stream_current_row', label: 'Stream row', enabled: true },
+  { id: 'send_optimistic_message', label: 'Send optimistic', enabled: true },
+  { id: 'resolve_optimistic_remap', label: 'Resolve remap', enabled: true },
   { id: 'optimistic_server_remap', label: 'Remap optimistic', enabled: true },
   { id: 'switch_feed_roundtrip', label: 'Feed roundtrip', enabled: true },
   { id: 'remount_viewport', label: 'Remount viewport', enabled: true },
@@ -82,6 +84,12 @@ export function E2EMessageListApp() {
     payload: Record<string, unknown> = {},
   ): Promise<E2EActionResult> => {
     const before = readEvidence('before')
+    const checkpoints: Record<string, E2EEvidence> = {}
+    const captureCheckpoint = (checkpointId: string): E2EEvidence => {
+      const evidence = readEvidence(checkpointId)
+      checkpoints[checkpointId] = evidence
+      return evidence
+    }
 
     try {
       await runBridgeAction({
@@ -91,6 +99,7 @@ export function E2EMessageListApp() {
         scenario,
         remountViewport: () => setViewportRemountKey((key) => key + 1),
         readEvidence,
+        captureCheckpoint,
       })
       const checkpointId = typeof payload.checkpointId === 'string'
         ? payload.checkpointId
@@ -103,6 +112,7 @@ export function E2EMessageListApp() {
         message: `${actionId} ok`,
         before,
         after,
+        checkpoints: Object.keys(checkpoints).length > 0 ? checkpoints : undefined,
       }
     } catch (error) {
       return {
@@ -111,6 +121,7 @@ export function E2EMessageListApp() {
         message: error instanceof Error ? error.message : String(error),
         before,
         after: readEvidence('error'),
+        checkpoints: Object.keys(checkpoints).length > 0 ? checkpoints : undefined,
         error: {
           code: error instanceof E2EActionError ? error.code : 'action_failed',
           details: {
@@ -176,6 +187,7 @@ type BridgeActionContext = {
   scenario: ReturnType<typeof useDemoMessageScenario>
   remountViewport: () => void
   readEvidence: (checkpointId: string) => E2EEvidence
+  captureCheckpoint: (checkpointId: string) => E2EEvidence
 }
 
 async function runBridgeAction({
@@ -185,6 +197,7 @@ async function runBridgeAction({
   scenario,
   remountViewport,
   readEvidence,
+  captureCheckpoint,
 }: BridgeActionContext): Promise<void> {
   switch (actionId) {
     case 'wait_for_ready':
@@ -201,12 +214,40 @@ async function runBridgeAction({
       await waitForRuntimeIdle(readEvidence, 1_500)
       return
     case 'scroll_to_history_top':
-    case 'trigger_before_edge':
       await wait(240)
       scrollContainer(root, 'top')
       await wait(120)
       await waitForRuntimeIdle(readEvidence, 2_000)
       return
+    case 'trigger_before_edge': {
+      await wait(240)
+      const beforeCount = countRuntimeEvents(readEvidence('before-edge-trigger'), 'needMoreBefore')
+      const beforeCheckpointId = typeof payload.beforeCheckpointId === 'string'
+        ? payload.beforeCheckpointId
+        : null
+      const responseDelayMs = Number.isFinite(Number(payload.responseDelayMs))
+        ? Math.max(0, Number(payload.responseDelayMs))
+        : beforeCheckpointId
+          ? 120
+          : 0
+      if (responseDelayMs > 0) {
+        scenario.deferNextEdgeResponse(responseDelayMs)
+      }
+      scrollContainer(root, 'top')
+      if (beforeCheckpointId) {
+        await waitForRuntimeEventCount(
+          readEvidence,
+          'needMoreBefore',
+          beforeCount + 1,
+          Math.max(600, responseDelayMs),
+        )
+        await waitForAnimationFrame()
+        captureCheckpoint(beforeCheckpointId)
+      }
+      await wait(120)
+      await waitForRuntimeIdle(readEvidence, 2_000)
+      return
+    }
     case 'scroll_to_bottom':
     case 'trigger_after_edge':
       await wait(240)
@@ -244,6 +285,16 @@ async function runBridgeAction({
       return
     case 'stream_current_row':
       scenario.streamCurrentRow()
+      await waitForRuntimeIdle(readEvidence, 1_500)
+      return
+    case 'send_optimistic_message':
+      scenario.sendOptimisticMessage()
+      await waitForRuntimeIdle(readEvidence, 1_500)
+      scenario.alignPendingOptimisticAtStart()
+      await waitForRuntimeIdle(readEvidence, 1_500)
+      return
+    case 'resolve_optimistic_remap':
+      scenario.resolveOptimisticRemap()
       await waitForRuntimeIdle(readEvidence, 1_500)
       return
     case 'optimistic_server_remap':
@@ -491,6 +542,35 @@ async function waitForRuntimeIdle(
   }
 
   throw new E2EActionError('wait_timeout', 'runtime did not become idle')
+}
+
+async function waitForRuntimeEventCount(
+  readEvidence: (checkpointId: string) => E2EEvidence,
+  type: E2ERuntimeEventRecord['type'],
+  minCount: number,
+  timeoutMs: number,
+): Promise<void> {
+  const start = performance.now()
+
+  while (performance.now() - start < timeoutMs) {
+    const evidence = readEvidence('event-wait')
+    const count = countRuntimeEvents(evidence, type)
+
+    if (count >= minCount) {
+      return
+    }
+
+    await wait(10)
+  }
+
+  throw new E2EActionError('wait_event_timeout', `runtime event ${type} did not reach ${minCount}`)
+}
+
+function countRuntimeEvents(
+  evidence: E2EEvidence,
+  type: E2ERuntimeEventRecord['type'],
+): number {
+  return evidence.events.filter((event) => event.type === type).length
 }
 
 function wait(ms: number): Promise<void> {

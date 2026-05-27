@@ -1,4 +1,5 @@
 import type {
+  MessageIdentityAnchor,
   MessageListRuntimeEvent,
   MessageListSnapshot,
   ViewportDiagnosticRecord,
@@ -34,6 +35,7 @@ export type E2EActionResult = {
   message: string
   before?: E2EEvidence
   after?: E2EEvidence
+  checkpoints?: Record<string, E2EEvidence>
   error?: {
     code: string
     details?: Record<string, unknown>
@@ -75,7 +77,7 @@ export type E2ERuntimeEventRecord = {
   requestToken?: string
   reason?: string
   edge?: 'before' | 'after'
-  anchor?: unknown
+  anchor?: MessageIdentityAnchor | null
   diagnostic?: ViewportDiagnosticRecord
   error?: {
     code: string

@@ -9,10 +9,10 @@ Target: `/e2e`
 Verify the minimum IM message-list contract without guessing DOM structure:
 
 1. latest bootstrap reaches bottom lock;
-2. prepending history preserves the reading anchor;
+2. before-edge paging emits a real runtime need and preserves the reading anchor;
 3. after paging uses a semantic runtime need event;
 4. underflow does not request both edges in the same revision;
-5. optimistic identity remap preserves visible identity.
+5. optimistic identity remap proves previousKey -> nextKey, anchor delta, and committed anchor identity.
 
 ## Required Scenarios
 
@@ -49,7 +49,10 @@ Allowed actions:
 - `append_message`
 - `prepend_history`
 - `follow_bottom`
+- `trigger_before_edge`
 - `trigger_after_edge`
+- `send_optimistic_message`
+- `resolve_optimistic_remap`
 - `optimistic_server_remap`
 
 Do not set DOM `scrollTop` directly. Use bridge actions or public semantic DOM controls only.
@@ -76,18 +79,16 @@ Success oracle:
 2. Call `getState()` and verify bridge version is `1`.
 3. Call `resetScenario('paging.before-native-thumb-rebound')`.
 4. Call `runAction('wait_for_ready')`.
-5. Call `runAction('scroll_to_middle')`.
-6. Call `runAction('collect_evidence', { checkpointId: 'before' })`.
-7. Call `runAction('prepend_history')`.
-8. Call `runAction('wait_for_idle')`.
-9. Call `runAction('collect_evidence', { checkpointId: 'after' })`.
-10. Save `before` and `after` evidence.
+5. Call `runAction('trigger_before_edge', { beforeCheckpointId: 'before', responseDelayMs: 160 })`.
+6. Save the `before` checkpoint from the action result and the action `after` evidence.
 
 Success oracle:
 
 - `expectRuntimeIdle(after)`
+- `expectNeedEventCount(after, 'needMoreBefore', 1)`
 - `expectAnchorPreserved(before, after, { tolerancePx: 1 })`
 - `expectScrollHeightIncreased(before, after)`
+- `expectScrollTopIncreased(before, after)`
 
 ### `paging.after-native-thumb-rebound`
 
@@ -106,6 +107,26 @@ Success oracle:
 - `expectRuntimeIdle(after)`
 - `expectNeedEventCount(after, 'needMoreAfter', 1)`
 - `expectScrollHeightIncreased(before, after)`
+
+### `identity.optimistic-server-remap`
+
+1. Open `/e2e?scenario=identity.optimistic-server-remap`.
+2. Call `getState()` and verify bridge version is `1`.
+3. Call `resetScenario('identity.optimistic-server-remap')`.
+4. Call `runAction('wait_for_ready')`.
+5. Call `runAction('scroll_to_bottom')`.
+6. Call `runAction('send_optimistic_message')`.
+7. Call `runAction('collect_evidence', { checkpointId: 'before' })`.
+8. Call `runAction('resolve_optimistic_remap')`.
+9. Call `runAction('collect_evidence', { checkpointId: 'after' })`.
+10. Save `before` and `after` evidence.
+
+Success oracle:
+
+- `expectRuntimeIdle(after)`
+- `expectIdentityRemapModifierContract(after)`
+- `expectRemappedAnchorPreserved(before, after, { tolerancePx: 1 })`
+- `expectRemappedViewportAnchor(after)`
 
 ## Evidence Requirements
 

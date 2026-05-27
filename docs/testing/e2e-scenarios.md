@@ -32,7 +32,7 @@
 步骤：
 
 1. 滚到 before trigger。
-2. 记录 anchor rect 和 native metrics。
+2. 真实触发 runtime `needMoreBefore`，并在 mock response settle 前记录 anchor rect 和 native metrics。
 3. 等 before page 返回。
 4. 再采集 anchor rect 和 native metrics。
 
@@ -68,12 +68,19 @@
 
 目的：本地发送消息拿到 server id 后不破坏 anchor 与 row key。
 
+步骤：
+
+1. local optimistic row 进入 segment，后面保留 committed tail rows，确保该 row 可成为 visual anchor。
+2. runtime local-align 到 optimistic row 后记录 before evidence。
+3. server id 返回后发布 `identity-remap`。
+4. 记录 after evidence 并验证 row / anchor / persisted anchor。
+
 期望：
 
-- `identity-remap` modifier 带 old/new identity。
-- visible row key 保持稳定，或 diagnostics 带 `previousKey -> nextKey`。
+- `identity-remap` modifier 带 old/new identity 与 `previousKey -> nextKey`。
+- remapped row 从 `previousKey` 解析到 `nextKey`。
 - anchor top delta <= 1px。
-- persisted anchor 更新为 remap 后的 stable/server identity。
+- `viewportAnchorChanged(transaction-settle)` 更新为 remap 后的 stable/server identity。
 
 ## P1 动态内容
 

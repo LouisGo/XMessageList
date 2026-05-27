@@ -33,11 +33,13 @@ export function captureVisualAnchor(
   }
 
   const containerTop = container.getBoundingClientRect().top
+  const rowRects = Array.from(registry.rows, ([key, row]) => ({
+    key,
+    rect: row.getBoundingClientRect(),
+  })).sort((first, second) => first.rect.top - second.rect.top)
 
-  for (const [key, row] of registry.rows) {
-    const rect = row.getBoundingClientRect()
-
-    if (rect.bottom >= containerTop) {
+  for (const { key, rect } of rowRects) {
+    if (rect.bottom > containerTop + 1) {
       return {
         key,
         offsetWithinMessage: Math.max(0, containerTop - rect.top),

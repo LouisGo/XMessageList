@@ -17,6 +17,7 @@ import {
   expectDetachAnchorCheckpoint,
   expectDiagnosticsBounded,
   expectEvidenceContract,
+  expectIdentityRemapModifierContract,
   expectLocalAlignWithoutAround,
   expectModifier,
   expectNeedEventCount,
@@ -25,6 +26,8 @@ import {
   expectNoWhiteScreen,
   expectOverlayMirrorsNative,
   expectRuntimeIdle,
+  expectRemappedAnchorPreserved,
+  expectRemappedViewportAnchor,
   expectScrollHeightIncreased,
   expectScrollTopIncreased,
   expectUnderflowSingleFlight,
@@ -200,6 +203,11 @@ async function runScenario(input: {
     if (action.saveAs && result.after) {
       evidence.set(action.saveAs, result.after)
     }
+    if (result.checkpoints) {
+      for (const [checkpointId, checkpoint] of Object.entries(result.checkpoints)) {
+        evidence.set(checkpointId, checkpoint)
+      }
+    }
     if (result.after?.checkpointId) {
       evidence.set(result.after.checkpointId, result.after)
     }
@@ -217,6 +225,11 @@ async function runScenario(input: {
     createE2EEvidenceJson(finalEvidence),
     'utf8',
   )
+  await writeEvidenceCheckpoints({
+    artifactDir,
+    scenarioId: scenario.id,
+    evidence,
+  })
 
   const context = { results, evidence, finalEvidence }
   const oracles = failedAction ? [] : scenario.oracles(context)
@@ -246,6 +259,33 @@ async function runScenario(input: {
     screenshotPath,
     failedAction,
   }
+}
+
+async function writeEvidenceCheckpoints(input: {
+  artifactDir: string
+  scenarioId: string
+  evidence: Map<string, E2EEvidence>
+}): Promise<void> {
+  const { artifactDir, evidence, scenarioId } = input
+
+  for (const [checkpointId, checkpoint] of evidence) {
+    if (checkpointId === 'final') {
+      continue
+    }
+
+    await writeFile(
+      resolve(
+        artifactDir,
+        `${scenarioId}.${sanitizeArtifactPart(checkpointId)}.evidence.json`,
+      ),
+      createE2EEvidenceJson(checkpoint),
+      'utf8',
+    )
+  }
+}
+
+function sanitizeArtifactPart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, '_')
 }
 
 function printScenarioResult(result: ScenarioRunResult): void {
@@ -339,16 +379,18 @@ const CORRECTNESS_SCENARIOS: ScenarioSpec[] = [
     priority: 'p0',
     actions: [
       { id: 'wait_for_ready' },
-      { id: 'scroll_to_middle' },
-      { id: 'collect_evidence', payload: { checkpointId: 'before' }, saveAs: 'before' },
-      { id: 'prepend_history' },
-      { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
+      {
+        id: 'trigger_before_edge',
+        payload: { beforeCheckpointId: 'before', responseDelayMs: 160 },
+        saveAs: 'after',
+      },
     ],
     oracles: (context) => {
       const before = mustEvidence(context, 'before')
       const after = mustEvidence(context, 'after')
       return [
         ...BASE_ORACLES(after),
+        expectNeedEventCount(after, 'needMoreBefore', 1),
         expectAnchorPreserved(before, after, { tolerancePx: 1 }),
         expectScrollHeightIncreased(before, after),
         expectScrollTopIncreased(before, after),
@@ -392,14 +434,22 @@ const CORRECTNESS_SCENARIOS: ScenarioSpec[] = [
     actions: [
       { id: 'wait_for_ready' },
       { id: 'scroll_to_bottom' },
-      { id: 'optimistic_server_remap' },
+      { id: 'send_optimistic_message' },
+      { id: 'collect_evidence', payload: { checkpointId: 'before' }, saveAs: 'before' },
+      { id: 'resolve_optimistic_remap' },
       { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
     ],
-    oracles: ({ finalEvidence }) => [
-      ...BASE_ORACLES(finalEvidence),
-      expectModifier(finalEvidence, 'identity-remap'),
-      expectVisibleIdentity(finalEvidence, finalEvidence.segment.lastKey ?? ''),
-    ],
+    oracles: (context) => {
+      const before = mustEvidence(context, 'before')
+      const after = mustEvidence(context, 'after')
+      return [
+        ...BASE_ORACLES(after),
+        expectModifier(after, 'identity-remap'),
+        expectIdentityRemapModifierContract(after),
+        expectRemappedAnchorPreserved(before, after, { tolerancePx: 1 }),
+        expectRemappedViewportAnchor(after),
+      ]
+    },
   },
   {
     id: 'dynamic-height.above-anchor-growth',

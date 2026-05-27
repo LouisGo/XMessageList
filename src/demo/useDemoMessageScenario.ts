@@ -11,7 +11,6 @@ import {
 } from '../runtime/data'
 import {
   createDemoMessages,
-  createDemoMessageId,
   createNewestMessage,
   toDemoMessageDataItem,
   type DemoMessage,
@@ -71,7 +70,18 @@ export type DemoMessageScenario = {
   rememberRuntimeViewportAnchor: (event: ViewportAnchorChangedEvent) => void
   resetE2EScenario: (scenarioId: string) => Promise<void>
   streamCurrentRow: () => void
+  deferNextEdgeResponse: (delayMs: number) => void
+  sendOptimisticMessage: () => void
+  alignPendingOptimisticAtStart: () => void
+  resolveOptimisticRemap: () => void
   sendOptimisticAndRemap: () => Promise<void>
+}
+
+type PendingOptimisticRemap = {
+  feedId: string
+  localId: string
+  serverId: string
+  remap: Parameters<MessageListDataRuntime<DemoMessage>['applyIdentityRemap']>[0][number]
 }
 
 export function useDemoMessageScenario(
@@ -88,6 +98,8 @@ export function useDemoMessageScenario(
   const dataRuntimesRef = useRef(new Map<string, MessageListDataRuntime<DemoMessage>>())
   const savedAnchorsRef = useRef(new Map<string, MessageIdentityAnchor>())
   const dynamicHeightExpandedRef = useRef(false)
+  const deferredEdgeResponseDelayMsRef = useRef(0)
+  const pendingOptimisticRemapRef = useRef<PendingOptimisticRemap | null>(null)
   const runtime = runtimeCache.getRuntime(activeFeedId)
   const activeFeed = useMemo(
     () => getDemoFeedDefinition(activeFeedId),
@@ -169,6 +181,11 @@ export function useDemoMessageScenario(
       return applyAroundRequest({ ...context, event })
     }
     if (event.type === 'needMoreBefore' || event.type === 'needMoreAfter') {
+      const delayMs = consumeDeferredEdgeResponseDelay(deferredEdgeResponseDelayMsRef)
+      if (delayMs > 0) {
+        return wait(delayMs).then(() => applyEdgeRequest({ ...context, event }))
+      }
+
       return applyEdgeRequest({ ...context, event })
     }
     return null
@@ -348,41 +365,36 @@ export function useDemoMessageScenario(
     setLastEvent('streamed current row')
   }, [activeFeedId, getDataRuntime, publishActivePatch, runtime])
 
-  const sendOptimisticAndRemap = useCallback(async () => {
+  const sendOptimisticMessage = useCallback(() => {
     const dataRuntime = getDataRuntime(activeFeedId)
     const allMessages = readDemoFeedMessages(activeFeedId)
     const nextSequence = (allMessages.at(-1)?.sequence ?? 0) + 1
     const localId = `local-${Date.now()}`
-    const serverId = createDemoMessageId(activeFeedId, nextSequence)
+    const committedMessage = createNewestMessage(
+      activeFeedId,
+      nextSequence,
+      'Optimistic send committed by server',
+    )
+    const tailMessages = Array.from({ length: 6 }, (_, index) =>
+      createNewestMessage(
+        activeFeedId,
+        nextSequence + index + 1,
+        'Committed tail message after optimistic send',
+      ),
+    )
+    const serverId = committedMessage.id
     const optimistic: DemoMessage = {
+      ...committedMessage,
       id: localId,
-      feedId: activeFeedId,
-      sequence: nextSequence,
-      author: 'You',
       body: 'Optimistic send awaiting server id',
-      tone: 'self',
-    }
-    const committed: DemoMessage = {
-      ...optimistic,
-      id: serverId,
-      body: 'Optimistic send committed by server',
     }
 
-    appendDemoFeedMessages(activeFeedId, [committed])
-    dataRuntime.patchItems([{
-      ...toDemoMessageDataItem(optimistic),
-      rowKind: 'optimistic',
-      identity: {
-        feedId: activeFeedId,
-        stableId: localId,
-        localId,
-        version: 1,
-      },
-    }])
-    publishSegment(dataRuntime)
-    await Promise.resolve()
-    dataRuntime.applyIdentityRemap([
-      {
+    appendDemoFeedMessages(activeFeedId, [committedMessage, ...tailMessages])
+    pendingOptimisticRemapRef.current = {
+      feedId: activeFeedId,
+      localId,
+      serverId,
+      remap: {
         from: {
           feedId: activeFeedId,
           stableId: localId,
@@ -396,10 +408,64 @@ export function useDemoMessageScenario(
         previousKey: localId,
         nextKey: serverId,
       },
+    }
+    dataRuntime.patchItems([
+      {
+        ...toDemoMessageDataItem(optimistic),
+        rowKind: 'optimistic',
+        identity: {
+          feedId: activeFeedId,
+          stableId: localId,
+          localId,
+          version: 1,
+        },
+      },
+      ...tailMessages.map(toDemoMessageDataItem),
     ])
     publishSegment(dataRuntime)
+    setLastEvent('optimistic local identity published')
+  }, [activeFeedId, getDataRuntime, publishSegment])
+
+  const alignPendingOptimisticAtStart = useCallback(() => {
+    const pending = pendingOptimisticRemapRef.current
+
+    if (!pending || pending.feedId !== activeFeedId) {
+      setLastEvent('no optimistic message to align')
+      return
+    }
+
+    runtime.scrollToMessage({
+      feedId: pending.feedId,
+      stableId: pending.localId,
+      localId: pending.localId,
+    }, { align: 'start' })
+    setLastEvent('aligned optimistic row at viewport start')
+  }, [activeFeedId, runtime])
+
+  const resolveOptimisticRemap = useCallback(() => {
+    const pending = pendingOptimisticRemapRef.current
+
+    if (!pending || pending.feedId !== activeFeedId) {
+      setLastEvent('no optimistic remap pending')
+      return
+    }
+
+    const dataRuntime = getDataRuntime(activeFeedId)
+    dataRuntime.applyIdentityRemap([pending.remap])
+    publishSegment(dataRuntime)
+    pendingOptimisticRemapRef.current = null
     setLastEvent('optimistic identity remapped to server id')
   }, [activeFeedId, getDataRuntime, publishSegment])
+
+  const sendOptimisticAndRemap = useCallback(async () => {
+    sendOptimisticMessage()
+    await wait(0)
+    resolveOptimisticRemap()
+  }, [resolveOptimisticRemap, sendOptimisticMessage])
+
+  const deferNextEdgeResponse = useCallback((delayMs: number) => {
+    deferredEdgeResponseDelayMsRef.current = Math.max(0, delayMs)
+  }, [])
 
   const stopLongRunningMocks = useCallback(() => {
     if (eventStormTimerRef.current !== null) {
@@ -463,6 +529,8 @@ export function useDemoMessageScenario(
     stopLongRunningMocks()
     savedAnchorsRef.current.clear()
     dynamicHeightExpandedRef.current = false
+    deferredEdgeResponseDelayMsRef.current = 0
+    pendingOptimisticRemapRef.current = null
 
     const feedId = DEMO_FEEDS[0].id
     const allMessages = createDemoMessages(resolveScenarioTotalMessages(scenarioId), feedId)
@@ -591,8 +659,22 @@ export function useDemoMessageScenario(
     rememberRuntimeViewportAnchor,
     resetE2EScenario,
     streamCurrentRow,
+    deferNextEdgeResponse,
+    sendOptimisticMessage,
+    alignPendingOptimisticAtStart,
+    resolveOptimisticRemap,
     sendOptimisticAndRemap,
   }
+}
+
+function consumeDeferredEdgeResponseDelay(ref: { current: number }): number {
+  const delayMs = ref.current
+  ref.current = 0
+  return delayMs
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
 function isRuntimeNeedEvent(event: MessageListRuntimeEvent): event is Extract<
