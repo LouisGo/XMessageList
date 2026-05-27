@@ -1,5 +1,18 @@
 import type { MessageDataItem } from '../runtime'
 
+export type DemoViewportEffect =
+  | 'none'
+  | 'prepend'
+  | 'append'
+  | 'items-change'
+  | 'auto-scroll-to-bottom'
+  | 'reset'
+  | 'remove-from-start'
+  | 'item-location'
+  | 'anchor-risk'
+
+export type DemoMessageKind = 'text' | 'longText' | 'image' | 'video' | 'album'
+
 export type DemoMessage = {
   id: string
   feedId: string
@@ -7,39 +20,179 @@ export type DemoMessage = {
   author: string
   body: string
   tone: 'self' | 'peer' | 'system'
+  kind: DemoMessageKind
+  expanded: boolean
+  editedAt?: string
+  reactions: string[]
+  media?: {
+    width: number
+    height: number
+    label: string
+  }
+  quote?: {
+    messageId: string
+    position: number
+    author: string
+    bodyPreview: string
+  }
 }
 
+export type DemoMessageCreateOptions = {
+  feedId?: string
+  sequence?: number
+  beforeSequence?: number
+  quoteCandidates?: DemoMessage[]
+  random?: () => number
+}
+
+const DEFAULT_FEED_ID = 'feed-runtime'
 const AUTHORS = ['Lin', 'Rae', 'Mo', 'Kai', 'Nora', 'Sam']
-const TEXTS = [
-  'Loaded segment 里的真实 DOM 高度就是 scrollHeight。',
-  '这条消息用于验证 MessageList 命名和 projection skeleton。',
-  'Runtime owns scroll / measurement / transaction / anchor correction.',
-  'React adapter 只做 projection、refs 和 commit ack。',
+const SHORT_TEXTS = [
+  '刚刚看了日志，问题大概率在 prepend correction。',
+  '我这边发一条短消息，确认 bottom lock 有没有被误解锁。',
+  '图片 decode 后高度会变，这个场景需要重点压。',
+  '这条消息用于模拟普通聊天里的快速往返。',
 ]
+const LONG_TEXT =
+  '这里模拟一个真实 IM 场景里突然出现的长篇大论：用户可能连续粘贴一段排查记录、会议纪要、错误堆栈、方案说明，甚至把多个上下文合并到一条消息里。消息高度会显著超过普通气泡，且它可能出现在 anchor 上方、下方或刚刚 prepend 进来的历史窗口中。runtime 不能假设消息高度稳定，也不能把 index 当成滚动坐标；它只能依赖 item identity、commit ack 后的同步测量和后续 ResizeObserver dirty batching 来维持视口稳定。'
+const feedCursors = new Map<string, { oldest: number; newest: number }>()
 
 export function createDemoMessages(
   count: number,
-  feedId = 'feed-runtime',
+  feedId = DEFAULT_FEED_ID,
   startSequence = 1,
 ): DemoMessage[] {
-  return Array.from({ length: count }, (_, index) =>
+  const messages = Array.from({ length: count }, (_, index) =>
     createDemoMessage(feedId, startSequence + index),
   )
+
+  syncFeedCursor(feedId, messages)
+  return messages
 }
 
 export function createNewestMessage(
+  options?: DemoMessageCreateOptions,
+): DemoMessage
+export function createNewestMessage(
   feedId: string,
   sequence: number,
-  body = 'New message',
+  body?: string,
+): DemoMessage
+export function createNewestMessage(
+  first: string | DemoMessageCreateOptions = {},
+  sequence?: number,
+  body?: string,
 ): DemoMessage {
-  return {
-    id: createDemoMessageId(feedId, sequence),
-    feedId,
-    sequence,
-    author: 'You',
-    body,
-    tone: 'self',
+  if (typeof first === 'string') {
+    const message = createOutgoingMessage(body ?? 'New message', {
+      feedId: first,
+      sequence,
+    })
+    syncFeedCursor(first, [message])
+    return message
   }
+
+  const feedId = first.feedId ?? DEFAULT_FEED_ID
+  const nextSequence = first.sequence ?? getFallbackNextSequence(feedId)
+  const message = maybeAttachRandomQuote(
+    createDemoMessage(feedId, nextSequence),
+    first.quoteCandidates ?? [],
+    first.random,
+  )
+
+  syncFeedCursor(feedId, [message])
+  return message
+}
+
+export function createOutgoingMessage(
+  body: string,
+  options: DemoMessageCreateOptions = {},
+): DemoMessage {
+  const feedId = options.feedId ?? DEFAULT_FEED_ID
+  const sequence = options.sequence ?? getFallbackNextSequence(feedId)
+  const message = maybeAttachRandomQuote(
+    {
+      id: createDemoMessageId(feedId, sequence),
+      feedId,
+      sequence,
+      author: 'You',
+      body,
+      tone: 'self',
+      kind: body.length > 180 ? 'longText' : 'text',
+      expanded: false,
+      reactions: [],
+    },
+    options.quoteCandidates ?? [],
+    options.random,
+  )
+
+  syncFeedCursor(feedId, [message])
+  return message
+}
+
+export function maybeAttachRandomQuote(
+  message: DemoMessage,
+  candidates: DemoMessage[],
+  random: () => number = Math.random,
+): DemoMessage {
+  const quoteCandidates = candidates.filter(
+    (candidate) =>
+      candidate.feedId === message.feedId &&
+      candidate.sequence < message.sequence,
+  )
+
+  if (quoteCandidates.length === 0 || random() >= 0.6) {
+    return message
+  }
+
+  const quoted =
+    quoteCandidates[
+      Math.floor(random() * quoteCandidates.length) % quoteCandidates.length
+    ]
+
+  if (!quoted) {
+    return message
+  }
+
+  return {
+    ...message,
+    quote: {
+      messageId: quoted.id,
+      position: quoted.sequence,
+      author: quoted.author,
+      bodyPreview: createQuotePreview(quoted.body),
+    },
+  }
+}
+
+export function createOlderMessages(
+  count: number,
+  options: DemoMessageCreateOptions = {},
+): DemoMessage[] {
+  const feedId = options.feedId ?? DEFAULT_FEED_ID
+  const beforeSequence =
+    options.beforeSequence ?? getFallbackPreviousBoundary(feedId)
+  const startSequence = beforeSequence - count
+  const messages = Array.from({ length: count }, (_, index) =>
+    createDemoMessage(feedId, startSequence + index),
+  )
+
+  syncFeedCursor(feedId, messages)
+  return messages
+}
+
+export function getNextMessageSequence(messages: DemoMessage[]): number {
+  return messages.reduce(
+    (next, message) => Math.max(next, message.sequence + 1),
+    1,
+  )
+}
+
+export function getFirstMessageSequence(messages: DemoMessage[]): number {
+  return messages.reduce(
+    (first, message) => Math.min(first, message.sequence),
+    messages[0]?.sequence ?? 1,
+  )
 }
 
 export function toDemoMessageDataItem(
@@ -54,7 +207,7 @@ export function toDemoMessageDataItem(
       serverId: message.id,
       version: 1,
     },
-    renderVersion: 1,
+    renderVersion: getDemoMessageContentVersion(message),
     message,
   }
 }
@@ -63,29 +216,223 @@ export function normalizeDemoMessages(
   feedId: string,
   messages: DemoMessage[],
 ): DemoMessage[] {
-  return messages
-    .map((message, index) => ({
-      ...message,
-      feedId,
-      sequence: Number.isFinite(message.sequence)
-        ? message.sequence
-        : index + 1,
-      id: message.id || createDemoMessageId(feedId, index + 1),
-    }))
+  const normalized = messages
+    .map((message, index) => normalizeDemoMessage(feedId, message, index))
     .sort((left, right) => left.sequence - right.sequence)
+
+  syncFeedCursor(feedId, normalized)
+  return normalized
 }
 
 export function createDemoMessageId(feedId: string, sequence: number): string {
   return `${feedId}-${String(sequence).padStart(4, '0')}`
 }
 
-function createDemoMessage(feedId: string, sequence: number): DemoMessage {
+export function estimateDemoMessageHeight(message: DemoMessage): number {
+  const textHeight = message.kind === 'longText' ? 230 : 76
+  const mediaHeight = message.media ? message.media.height + 28 : 0
+  const expandedHeight = message.expanded ? 78 : 0
+  const quoteHeight = message.quote ? 58 : 0
+  const reactionRows =
+    message.reactions.length > 0
+      ? Math.ceil(message.reactions.length / 6)
+      : 0
+  const reactionHeight = reactionRows * 32
+  return textHeight + quoteHeight + mediaHeight + expandedHeight + reactionHeight
+}
+
+function normalizeDemoMessage(
+  feedId: string,
+  message: DemoMessage,
+  index: number,
+): DemoMessage {
+  const sequence = Number.isFinite(message.sequence)
+    ? message.sequence
+    : index + 1
+  const id = message.id || createDemoMessageId(feedId, sequence)
+  const base = createDemoMessage(feedId, sequence)
+  const body = typeof message.body === 'string' && message.body.length > 0
+    ? message.body
+    : base.body
+  const kind = message.kind ?? (body.length > 180 ? 'longText' : base.kind)
+
   return {
-    id: createDemoMessageId(feedId, sequence),
+    ...base,
+    ...message,
+    id,
+    feedId: message.feedId || feedId,
+    sequence,
+    body,
+    kind,
+    expanded: Boolean(message.expanded),
+    reactions: Array.isArray(message.reactions)
+      ? message.reactions.filter((reaction): reaction is string =>
+          typeof reaction === 'string' && reaction.length > 0,
+        )
+      : [],
+    editedAt:
+      typeof message.editedAt === 'string' && message.editedAt.length > 0
+        ? message.editedAt
+        : undefined,
+    media: message.media ?? createMedia(kind, Math.abs(sequence)),
+    quote: normalizeQuote(message.quote),
+  }
+}
+
+function createDemoMessage(feedId: string, sequence: number): DemoMessage {
+  const feedOffset = Math.abs(hashCode(feedId)) % 23
+  const absolute = Math.abs(sequence) + feedOffset
+  const kind = pickKind(absolute)
+  const id = createDemoMessageId(feedId, sequence)
+
+  return {
+    id,
     feedId,
     sequence,
-    author: AUTHORS[sequence % AUTHORS.length] ?? 'Lin',
-    body: TEXTS[sequence % TEXTS.length] ?? TEXTS[0],
-    tone: sequence % 5 === 0 ? 'self' : 'peer',
+    author: AUTHORS[absolute % AUTHORS.length] ?? 'Lin',
+    body: createBody(kind, id),
+    tone: absolute % 11 === 0 ? 'system' : absolute % 3 === 0 ? 'self' : 'peer',
+    kind,
+    expanded: absolute % 8 === 0,
+    reactions: [],
+    media: createMedia(kind, absolute),
   }
+}
+
+function pickKind(number: number): DemoMessageKind {
+  if (number % 17 === 0) return 'album'
+  if (number % 13 === 0) return 'video'
+  if (number % 7 === 0) return 'image'
+  if (number % 5 === 0) return 'longText'
+  return 'text'
+}
+
+function createBody(kind: DemoMessageKind, id: string): string {
+  if (kind === 'longText') {
+    return `${id} ${LONG_TEXT}`
+  }
+
+  if (kind === 'image') {
+    return '发了一张截图，加载完成后高度可能变化。'
+  }
+
+  if (kind === 'video') {
+    return '发了一个视频，封面和控制条会让 row 高度更复杂。'
+  }
+
+  if (kind === 'album') {
+    return '发了一组图片，真实 IM 中这类消息最容易暴露 spacer 估算问题。'
+  }
+
+  return `${id} ${SHORT_TEXTS[Math.abs(hashCode(id)) % SHORT_TEXTS.length]}`
+}
+
+function createMedia(kind: DemoMessageKind, seed: number): DemoMessage['media'] {
+  if (kind === 'text' || kind === 'longText') {
+    return undefined
+  }
+
+  if (kind === 'video') {
+    return {
+      width: 360,
+      height: 202 + (seed % 3) * 28,
+      label: 'Video preview',
+    }
+  }
+
+  if (kind === 'album') {
+    return {
+      width: 360,
+      height: 248 + (seed % 2) * 44,
+      label: 'Image album',
+    }
+  }
+
+  return {
+    width: 360,
+    height: 180 + (seed % 4) * 42,
+    label: 'Image attachment',
+  }
+}
+
+function getDemoMessageContentVersion(message: DemoMessage): number {
+  return (
+    Math.abs(
+      hashCode(
+        JSON.stringify({
+          body: message.body,
+          kind: message.kind,
+          expanded: message.expanded,
+          editedAt: message.editedAt ?? '',
+          reactions: message.reactions,
+          media: message.media ?? null,
+          quote: message.quote ?? null,
+        }),
+      ),
+    ) + 1
+  )
+}
+
+function normalizeQuote(messageQuote: DemoMessage['quote']): DemoMessage['quote'] {
+  if (
+    !messageQuote ||
+    typeof messageQuote.messageId !== 'string' ||
+    messageQuote.messageId.length === 0 ||
+    !Number.isFinite(messageQuote.position) ||
+    typeof messageQuote.author !== 'string' ||
+    typeof messageQuote.bodyPreview !== 'string'
+  ) {
+    return undefined
+  }
+
+  return {
+    messageId: messageQuote.messageId,
+    position: messageQuote.position,
+    author: messageQuote.author,
+    bodyPreview: messageQuote.bodyPreview,
+  }
+}
+
+function createQuotePreview(body: string): string {
+  const compact = body.replace(/\s+/g, ' ').trim()
+  return compact.length > 96 ? `${compact.slice(0, 96)}...` : compact
+}
+
+function syncFeedCursor(feedId: string, messages: DemoMessage[]): void {
+  if (messages.length === 0) {
+    return
+  }
+
+  const current = feedCursors.get(feedId)
+  const oldest = Math.min(
+    current?.oldest ?? messages[0]?.sequence ?? 1,
+    ...messages.map((message) => message.sequence),
+  )
+  const newest = Math.max(
+    current?.newest ?? messages[0]?.sequence ?? 1,
+    ...messages.map((message) => message.sequence),
+  )
+
+  feedCursors.set(feedId, { oldest, newest })
+}
+
+function getFallbackNextSequence(feedId: string): number {
+  const cursor = feedCursors.get(feedId)
+  return cursor ? cursor.newest + 1 : 1
+}
+
+function getFallbackPreviousBoundary(feedId: string): number {
+  const cursor = feedCursors.get(feedId)
+  return cursor ? cursor.oldest : 1
+}
+
+function hashCode(value: string): number {
+  let hash = 0
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(index)
+    hash |= 0
+  }
+
+  return hash
 }
