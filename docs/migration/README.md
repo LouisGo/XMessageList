@@ -26,6 +26,8 @@
 
 ## API 迁移方向
 
+Phase 1 已将旧 `src/runtime/` 与 `src/react/` 整体删除后按 loaded-segment / native-scroll 架构重建。next 分支不保留旧实现的兼容层，也不承诺旧 package surface 可继续 import。
+
 旧 public surface：
 
 ```ts

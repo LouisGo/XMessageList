@@ -11,7 +11,22 @@ export default defineConfig({
     react(),
     dts({
       entryRoot: 'src',
+      include: [
+        'src/index.ts',
+        'src/react/index.ts',
+        'src/react/MessageList.tsx',
+        'src/react/hooks.ts',
+        'src/react/types.ts',
+        'src/runtime/index.ts',
+        'src/runtime/runtime.ts',
+        'src/runtime/identity.ts',
+        'src/runtime/segment.ts',
+        'src/runtime/snapshot.ts',
+        'src/runtime/events.ts',
+        'src/runtime/options.ts',
+      ],
       insertTypesEntry: true,
+      tsconfigPath: './tsconfig.app.json',
     }),
   ],
   build: {

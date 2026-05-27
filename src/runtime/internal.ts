@@ -2,6 +2,8 @@ import type { MessageRuntimeItemKey } from './identity'
 import type { MessageListRuntime } from './runtime'
 import type { ProjectionCommitToken } from './snapshot'
 
+export type { ProjectionCommitToken } from './snapshot'
+
 export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown> =
   MessageListRuntime<TMessage, TOptimistic> & {
     registerMessageFlowElement(element: HTMLElement | null): void

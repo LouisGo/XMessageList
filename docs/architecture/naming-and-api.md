@@ -19,7 +19,12 @@
 package 根出口只暴露 message-list 语义：
 
 ```ts
-export { MessageList, createMessageListRuntime };
+export {
+  MessageList,
+  createMessageListRuntime,
+  useMessageListSnapshot,
+  useMessageListSelector,
+};
 export type {
   MessageListProps,
   MessageListRuntime,
@@ -29,13 +34,18 @@ export type {
   MessageListRestoreOptions,
   MessageListSnapshot,
   MessageListRuntimeEvent,
+  MessageListRuntimeEventListener,
   MessageListCommands,
+  RuntimeObserverFactory,
+  RuntimeScheduler,
   EdgeSlotInput,
   ScrollToLatestSlotInput,
   MessageListOverlayInput,
   ViewportAnchorChangedEvent,
   ViewportObservationChangedEvent,
+  ViewportObservationListener,
   ViewportDiagnosticEvent,
+  ViewportDiagnosticRecord,
   ViewportEvidence,
   LoadedSegment,
   SegmentModifier,

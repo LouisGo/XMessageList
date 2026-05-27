@@ -1,49 +1,67 @@
 # XMessageList
 
-独立的 IM message viewport runtime 原型。它不是通用 virtual list，而是面向聊天消息流的 deterministic viewport runtime：消息 row 保持正常文档流，runtime 拥有滚动语义、锚点稳定、DOM measurement 和 transaction，React 只做 projection。
+Deterministic IM message-list runtime for TypeX-style chat surfaces. It is not a generic virtual list: the current loaded segment is rendered in normal document flow, while the runtime owns native scroll semantics, visual-anchor correction, DOM measurement, edge requests, diagnostics, and evidence.
+
+React is only the projection adapter. Host/data code merges messages into immutable `LoadedSegment` snapshots, publishes them to the runtime, and responds to semantic need events.
 
 ## Commands
 
 ```bash
 npm install
 npm run dev
-npm run test
 npm run typecheck
+npm run lint
+npm run test
 npm run build
+npm run build:demo
+npm run e2e:correctness
+npm run e2e:perf
 ```
 
 ## Runtime Boundary
 
-- `src/runtime`: framework-independent imperative viewport engine。负责 RenderWindow、spacer、DOM registry、height cache、bottom lock、transaction correction 和 runtime event。
-- `src/react`: React 18 projection adapter。使用 `useSyncExternalStore` 订阅 runtime snapshot，通过 ref callback 注册 row/spacer/sentinel DOM，并在 layout effect 中 attach scroll container 与发送 commit ack；订阅必须先于 attach。
-- `src/demo`: 本地 mock 数据和交互场景，覆盖 latest bootstrap、prepend、append、dynamic height。
-- `src/test`: fake scheduler、fake observers、DOM metric helpers。
-- `docs/architecture` / `docs/viewport-runtime`: 设计文档和外部 research，作为实现约束。
+- `src/runtime`: framework-independent viewport runtime. It consumes already-merged `LoadedSegment` data, serializes projection transactions, owns DOM refs/measurement, writes `scrollTop`, preserves visual anchors, emits need events, and reports diagnostics/evidence.
+- `src/runtime/data`: demo/test data runtime. It owns merge, dedupe, identity remap, trim, request-token, and generation/stale-response rules before publishing immutable segments.
+- `src/react`: React 18 `MessageList` adapter. It subscribes with `useSyncExternalStore`, renders rows/triggers/optional overlay, registers refs, attaches the native scroll container, and acks projection commits in layout effects.
+- `src/demo`: local mock host and scenario wiring for feeds, edge requests, dynamic height, optimistic remap, event storms, and bot push.
+- `src/e2e-app` and `e2e/runner`: real-browser bridge, evidence, oracle, correctness, and perf lanes.
+- `docs`: architecture, interaction specs, implementation constraints, testing contracts, and migration notes.
 
 ## Minimal Usage
 
 ```tsx
 import {
-  MessageViewport,
-  MessageViewportRuntime,
-  type MessageDataSnapshot,
+  MessageList,
+  createMessageListRuntime,
+  type LoadedSegment,
+  type MessageDataItem,
 } from 'x-message-list'
 
-const runtime = new MessageViewportRuntime<MyMessage>({
+const runtime = createMessageListRuntime<MyMessage>({ feedId: 'feed-1' })
+
+runtime.applyLoadedSegment({
   feedId: 'feed-1',
   generation: 1,
-})
+  segmentRevision: 1,
+  items,
+  hasMoreBefore: true,
+  hasMoreAfter: false,
+  modifier: { type: 'reset-latest' },
+} satisfies LoadedSegment<MyMessage>)
 
-runtime.setDataSnapshot(snapshot satisfies MessageDataSnapshot<MyMessage>)
-runtime.dispatch({ type: 'bootstrap', mode: 'latest' })
+runtime.subscribeRuntimeEvent((event) => {
+  if (event.type === 'needMoreBefore') {
+    loadOlderMessages(event.requestToken)
+  }
+})
 
 export function Chat() {
   return (
-    <MessageViewport
+    <MessageList
       runtime={runtime}
-      renderMessage={(item) =>
-        item.kind === 'committed' ? <MessageRow message={item.message} /> : null
-      }
+      renderRow={(item: MessageDataItem<MyMessage>) => (
+        item.message ? <MessageRow message={item.message} /> : null
+      )}
     />
   )
 }
@@ -51,31 +69,10 @@ export function Chat() {
 
 ## Public Contracts
 
-- `MessageViewportRuntime` is feed/generation scoped. `attach`, `detach`, and `destroy` are explicit lifecycle operations.
-- `MessageViewportSnapshot` contains only projection fields: mounted items, RenderWindow, spacer heights, bottom lock state, bootstrap state, and edge state.
-- `ProjectionCommit` must match `feedId + generation + revision`; stale commit acks are ignored.
-- DOM refs are registered by React but owned by runtime. Ref callbacks must not measure, dispatch, or mutate `scrollTop`.
-- `ResizeObserver` is a dirty signal. Runtime coalesces height stabilization in rAF.
-- `IntersectionObserver` is only an edge prefetch / visibility signal. It does not directly mutate window or scroll position.
+- Package root exports `MessageList`, hooks, `createMessageListRuntime`, and message-list/runtime/data contract types only. Internal controller, DOM registry, measurement, transaction, projection ack, and data merge internals are not public package API.
+- `MessageListRuntime` is a feed-scoped facade. Hosts publish data with `applyLoadedSegment(...)`, navigate with `scrollToLatest(...)`, `scrollToMessage(...)`, and `restoreToMessage(...)`, then react to semantic runtime events.
+- `MessageListSnapshot` contains loaded-segment projection state, edge state, bottom-lock state, pending intent, viewport phase, revision counters, and commit token. It does not contain render windows, spacers, estimated total height, global offsets, or raw persisted `scrollTop`.
+- DOM refs are registered by React but owned by the runtime. Ref callbacks must not measure, dispatch, or mutate scroll position.
+- `ResizeObserver` and `IntersectionObserver` are signals only. Runtime batches measurement/correction and arbitrates edge requests.
 
-## Current Scope
-
-Implemented vertical slice:
-
-- latest bootstrap to bottom locked
-- append follow-bottom when locked
-- unlocked append preserving user position
-- prepend anchor rect correction
-- snapshot external store
-- React projection adapter and StrictMode-safe attach/detach
-- unit tests for runtime transaction and adapter contracts
-
-Not implemented yet:
-
-- real SDK / Bridge / data runtime
-- full unread/restored/jump state machines
-- identity rebind and delete fallback
-- sticky secondary anchors
-- browser integration tests
-
-React 版本固定为 `18.3.1`，与 `typex-pc` 当前 render 包保持一致。
+React is pinned to `18.3.1` to match the current TypeX render package.

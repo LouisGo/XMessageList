@@ -1,6 +1,8 @@
 import { useLayoutEffect } from 'react'
-import type { ProjectionCommitToken } from '../runtime'
-import type { MessageListAdapterRuntime } from '../runtime/internal'
+import type {
+  MessageListAdapterRuntime,
+  ProjectionCommitToken,
+} from '../runtime/internal'
 
 export type ProjectionCommitAckProps = {
   runtime: MessageListAdapterRuntime

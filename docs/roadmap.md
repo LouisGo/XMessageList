@@ -304,22 +304,31 @@ Phase 7 evidence：
 
 目标：
 
-- [ ] 清理重写后的包边界和长期维护风险。
+- [x] 清理重写后的包边界和长期维护风险。
 
 任务：
 
-- [ ] 收紧 public exports，避免暴露 internal transaction / DOM registry。
-- [ ] 加 import guards：React adapter 不得导入 data merge internals；demo/e2e 不得导入 viewport private objects。
-- [ ] 建立 no-god-file 检查和 co-located domain organization。
-- [ ] 补齐 README / migration note，说明旧 `src/runtime/`、`src/react/` 已被删除重写。
-- [ ] 运行完整验证 bundle。
+- [x] 收紧 public exports，避免暴露 internal transaction / DOM registry。
+- [x] 加 import guards：React adapter 不得导入 data merge internals；demo/e2e 不得导入 viewport private objects。
+- [x] 建立 no-god-file 检查和 co-located domain organization。
+- [x] 补齐 README / migration note，说明旧 `src/runtime/`、`src/react/` 已被删除重写。
+- [x] 运行完整验证 bundle。
 
 退出标准：
 
-- [ ] `git diff --check`
-- [ ] `npm run typecheck`
-- [ ] `npm run lint`
-- [ ] `npm run test`
-- [ ] `npm run build`
-- [ ] `npm run build:demo`
-- [ ] real-browser e2e correctness lane 通过，perf lane 有独立报告。
+- [x] `git diff --check`
+- [x] `npm run typecheck`
+- [x] `npm run lint`
+- [x] `npm run test`
+- [x] `npm run build`
+- [x] `npm run build:demo`
+- [x] real-browser e2e correctness lane 通过，perf lane 有独立报告。
+
+Phase 8 evidence：
+
+- `src/index.ts` 改为 explicit root export whitelist；不再经由 `export *` 暴露 runtime / React barrel 内部类型。
+- 新增 `tools/checkPublicBoundaries.mjs` 并接入 `npm run lint`：检查 package root 禁止星号导出和 private symbol、全源码 600 行 no-god-file、React adapter 只能导入 runtime public / adapter-private barrel、demo/e2e 只能使用 runtime public barrel 或 data runtime public barrel。
+- `src/runtime/index.ts` 移除 projection token / edge state / pending intent 等 adapter-private 类型导出；`vite.config.ts` 限定 declaration output 为 package root、React public adapter 和 runtime public contract 依赖。
+- demo scenario / advanced mock / e2e runner 按 domain co-location 拆分：`src/demo/scenario/*`、`src/demo/demoAdvancedMockUtils.ts`、`e2e/runner/scenarioSpecs.ts`；当前最大非测试文件不超过 600 行。
+- README 已改为 `MessageList` / loaded segment / native scroll runtime 口径；migration note 明确 Phase 1 删除并重建旧 `src/runtime/` 与 `src/react/`，next 不保留旧兼容层。
+- 2026-05-27 P8 validation：`git diff --check`、`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`npm run build:demo` 通过；真实浏览器 `npm run e2e:correctness` 15/15 scenarios 通过，`npm run e2e:perf` 1/1 scenario 通过。证据目录：`.logs/e2e/2026-05-27T06-07-08-182Z-correctness`、`.logs/e2e/2026-05-27T06-07-44-496Z-perf`。

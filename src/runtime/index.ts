@@ -14,11 +14,6 @@ export type {
 } from './segment'
 export type {
   MessageListSnapshot,
-  ProjectionCommitToken,
-  EdgeSnapshotState,
-  BottomLockState,
-  PendingIntent,
-  ShortSegmentAlignment,
   ViewportEvidence,
 } from './snapshot'
 export type {
