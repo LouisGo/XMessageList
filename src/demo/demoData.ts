@@ -52,9 +52,32 @@ const SHORT_TEXTS = [
   '我这边发一条短消息，确认 bottom lock 有没有被误解锁。',
   '图片 decode 后高度会变，这个场景需要重点压。',
   '这条消息用于模拟普通聊天里的快速往返。',
+  '上滑和下滑来回切的时候，anchor 不能被连续 patch 带偏。',
+  '这个消息模拟用户补充的一句上下文，长度不固定。',
+  '客户端收到服务端回执后，只应该重绑身份，不应该重排已有 DOM。',
+  '这里故意放一行比较平常的话，和长文本混在一起看滚动稳定性。',
 ]
-const LONG_TEXT =
-  '这里模拟一个真实 IM 场景里突然出现的长篇大论：用户可能连续粘贴一段排查记录、会议纪要、错误堆栈、方案说明，甚至把多个上下文合并到一条消息里。消息高度会显著超过普通气泡，且它可能出现在 anchor 上方、下方或刚刚 prepend 进来的历史窗口中。runtime 不能假设消息高度稳定，也不能把 index 当成滚动坐标；它只能依赖 item identity、commit ack 后的同步测量和后续 ResizeObserver dirty batching 来维持视口稳定。'
+const LONG_TEXT_LINES = [
+  '这里模拟一个真实 IM 场景里突然出现的长篇大论。',
+  '用户可能连续粘贴一段排查记录、会议纪要、错误堆栈或方案说明。',
+  '消息高度会显著超过普通气泡，而且可能出现在 anchor 上方或下方。',
+  '如果它刚好 prepend 进历史窗口，runtime 不能假设估算高度一定可靠。',
+  '局部 patch、图片加载和引用块也可能在同一帧里改变 row 高度。',
+  '这类消息会逼近真实聊天里最容易抖动的滚动路径。',
+  'runtime 只能依赖 item identity、commit ack 后的同步测量和 ResizeObserver。',
+  'index 不是滚动坐标，任何 DOM 复用错误都会在这种场景里被放大。',
+  '尾部 arrival、历史分页和 jump settle 都需要保持同一套锚点语义。',
+  '这最后一行用来把多行文本扩到更接近真实用户输入的高度。',
+]
+const MEDIA_CAPTION_LINES = [
+  '发了一张截图，加载完成后高度可能变化。',
+  '附件说明里也可能带多行文字，不能只按一行 caption 估算。',
+  '真实 IM 里图片、视频和相册经常混在连续消息中出现。',
+  '媒体比例差异会让 ResizeObserver 的时机更接近生产环境。',
+  '这一行用于扩大媒体消息自身文本区的高度。',
+]
+const MIN_TEXT_LINE_COUNT = 1
+const MAX_TEXT_LINE_COUNT = 10
 const feedCursors = new Map<string, { oldest: number; newest: number }>()
 
 export function createDemoMessages(
@@ -229,7 +252,15 @@ export function createDemoMessageId(feedId: string, sequence: number): string {
 }
 
 export function estimateDemoMessageHeight(message: DemoMessage): number {
-  const textHeight = message.kind === 'longText' ? 230 : 76
+  const lineEstimate = Math.max(
+    1,
+    message.body.split('\n').length,
+    Math.ceil(message.body.length / 48),
+  )
+  const textHeight = Math.max(
+    message.kind === 'longText' ? 230 : 76,
+    36 + lineEstimate * (message.kind === 'longText' ? 24 : 22),
+  )
   const mediaHeight = message.media ? message.media.height + 28 : 0
   const expandedHeight = message.expanded ? 78 : 0
   const quoteHeight = message.quote ? 58 : 0
@@ -309,22 +340,48 @@ function pickKind(number: number): DemoMessageKind {
 
 function createBody(kind: DemoMessageKind, id: string): string {
   if (kind === 'longText') {
-    return `${id} ${LONG_TEXT}`
+    return createMultilineBody({
+      id,
+      lines: LONG_TEXT_LINES,
+      lineCount: pickLineCount(id, 6, MAX_TEXT_LINE_COUNT),
+    })
   }
 
   if (kind === 'image') {
-    return '发了一张截图，加载完成后高度可能变化。'
+    return createMultilineBody({
+      id,
+      lines: MEDIA_CAPTION_LINES,
+      lineCount: pickLineCount(id, 1, 5),
+    })
   }
 
   if (kind === 'video') {
-    return '发了一个视频，封面和控制条会让 row 高度更复杂。'
+    return createMultilineBody({
+      id,
+      lines: [
+        '发了一个视频，封面和控制条会让 row 高度更复杂。',
+        ...MEDIA_CAPTION_LINES,
+      ],
+      lineCount: pickLineCount(id, 1, 5),
+    })
   }
 
   if (kind === 'album') {
-    return '发了一组图片，真实 IM 中这类消息最容易暴露 spacer 估算问题。'
+    return createMultilineBody({
+      id,
+      lines: [
+        '发了一组图片，真实 IM 中这类消息最容易暴露 spacer 估算问题。',
+        ...MEDIA_CAPTION_LINES,
+      ],
+      lineCount: pickLineCount(id, 2, 6),
+    })
   }
 
-  return `${id} ${SHORT_TEXTS[Math.abs(hashCode(id)) % SHORT_TEXTS.length]}`
+  return createMultilineBody({
+    id,
+    lines: SHORT_TEXTS,
+    lineCount: pickLineCount(id, MIN_TEXT_LINE_COUNT, MAX_TEXT_LINE_COUNT),
+  })
 }
 
 function createMedia(kind: DemoMessageKind, seed: number): DemoMessage['media'] {
@@ -335,7 +392,7 @@ function createMedia(kind: DemoMessageKind, seed: number): DemoMessage['media'] 
   if (kind === 'video') {
     return {
       width: 360,
-      height: 202 + (seed % 3) * 28,
+      height: 180 + (seed % 8) * 48,
       label: 'Video preview',
     }
   }
@@ -343,16 +400,36 @@ function createMedia(kind: DemoMessageKind, seed: number): DemoMessage['media'] 
   if (kind === 'album') {
     return {
       width: 360,
-      height: 248 + (seed % 2) * 44,
+      height: 240 + (seed % 7) * 64,
       label: 'Image album',
     }
   }
 
   return {
     width: 360,
-    height: 180 + (seed % 4) * 42,
+    height: 160 + (seed % 10) * 52,
     label: 'Image attachment',
   }
+}
+
+function createMultilineBody(input: {
+  id: string
+  lines: string[]
+  lineCount: number
+}): string {
+  return Array.from({ length: input.lineCount }, (_, index) => {
+    const line = input.lines[
+      (Math.abs(hashCode(`${input.id}:${index}`)) + index) % input.lines.length
+    ] ?? input.lines[0] ?? ''
+
+    return index === 0 ? `${input.id} ${line}` : line
+  }).join('\n')
+}
+
+function pickLineCount(id: string, min: number, max: number): number {
+  const lower = Math.max(1, Math.min(min, max))
+  const upper = Math.max(lower, max)
+  return lower + (Math.abs(hashCode(`${id}:line-count`)) % (upper - lower + 1))
 }
 
 function getDemoMessageContentVersion(message: DemoMessage): number {

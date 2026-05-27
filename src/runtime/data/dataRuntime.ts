@@ -49,6 +49,15 @@ export type ExtendSegmentInput<TMessage, TOptimistic> =
     requestToken: string
   }
 
+export type ReplaceSegmentInput<TMessage, TOptimistic> = {
+  items: MessageDataItem<TMessage, TOptimistic>[]
+  changedKeys: MessageRuntimeItemKey[]
+  hasMoreBefore?: boolean
+  hasMoreAfter?: boolean
+  anchor?: MessageIdentityAnchor
+  anchorStatus?: LoadedSegment['anchorStatus']
+}
+
 export type IdentityRemapInput = Extract<
   SegmentModifier,
   { type: 'identity-remap' }
@@ -159,6 +168,19 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
         modifier: { type: 'patch', changedKeys: items.map((item) => item.key) },
       },
     )
+    return this.segment
+  }
+
+  replaceItems(
+    input: ReplaceSegmentInput<TMessage, TOptimistic>,
+  ): LoadedSegment<TMessage, TOptimistic> {
+    this.segment = this.createSegment(dedupeItems(input.items), {
+      hasMoreBefore: input.hasMoreBefore ?? this.segment.hasMoreBefore,
+      hasMoreAfter: input.hasMoreAfter ?? this.segment.hasMoreAfter,
+      anchor: input.anchor ?? this.segment.anchor,
+      anchorStatus: input.anchorStatus ?? this.segment.anchorStatus,
+      modifier: { type: 'patch', changedKeys: input.changedKeys },
+    })
     return this.segment
   }
 

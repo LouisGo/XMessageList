@@ -535,11 +535,14 @@ function createStormMessage(
   const base = createNewestMessage({ feedId, sequence })
   const kind = random() < 0.08 ? 'longText' : base.kind
   const body = `${base.id} ${pickOne(STORM_TEXTS, random)}`
+  const lineCount = kind === 'longText'
+    ? pickDeterministicLineCount(`${base.id}:storm`, 6, 10)
+    : pickDeterministicLineCount(`${base.id}:storm`, 1, 10)
 
   return {
     ...base,
     author: pickOne(GROUP_AUTHORS, random),
-    body: kind === 'longText' ? `${body}\n${body}` : body,
+    body: expandMockBodyToLineCount(body, lineCount),
     tone: 'peer',
     kind,
     expanded: random() < 0.1 ? !base.expanded : base.expanded,
@@ -573,24 +576,38 @@ function createBotBody(
 ): string {
   const prefix = `${message.id} ${statusText}`
   const suffix = batchIndex === 0 ? '' : ` #${batchIndex + 1}`
+  const lineCount = pickDeterministicLineCount(
+    `${message.id}:bot:${batchIndex}`,
+    message.kind === 'longText' ? 6 : 1,
+    message.kind === 'album' ? 6 : 10,
+  )
 
   if (message.kind === 'longText') {
-    return `${prefix}${suffix}\n${message.body}`
+    return expandMockBodyToLineCount(`${prefix}${suffix}\n${message.body}`, lineCount)
   }
 
   if (message.kind === 'image') {
-    return `${prefix}${suffix} 附带了一张自动生成的截图。`
+    return expandMockBodyToLineCount(
+      `${prefix}${suffix} 附带了一张自动生成的截图。`,
+      Math.min(lineCount, 5),
+    )
   }
 
   if (message.kind === 'video') {
-    return `${prefix}${suffix} 附带了一个视频预览。`
+    return expandMockBodyToLineCount(
+      `${prefix}${suffix} 附带了一个视频预览。`,
+      Math.min(lineCount, 5),
+    )
   }
 
   if (message.kind === 'album') {
-    return `${prefix}${suffix} 附带了一组图片。`
+    return expandMockBodyToLineCount(
+      `${prefix}${suffix} 附带了一组图片。`,
+      lineCount,
+    )
   }
 
-  return `${prefix}${suffix}`
+  return expandMockBodyToLineCount(`${prefix}${suffix}`, lineCount)
 }
 
 function pickStormEventCount(random: RandomSource): number {
@@ -851,6 +868,23 @@ function pickVisibleTarget(
   return candidates[pickInteger(0, candidates.length - 1, random)] ?? null
 }
 
+function expandMockBodyToLineCount(body: string, lineCount: number): string {
+  const sourceLines = body.split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const lines = sourceLines.length > 0 ? sourceLines : [body]
+
+  return Array.from({ length: Math.max(1, lineCount) }, (_, index) =>
+    lines[index % lines.length] ?? '',
+  ).join('\n')
+}
+
+function pickDeterministicLineCount(id: string, min: number, max: number): number {
+  const lower = Math.max(1, Math.min(min, max))
+  const upper = Math.max(lower, max)
+  return lower + (Math.abs(hashCode(id)) % (upper - lower + 1))
+}
+
 function upsertMessagesBySequence(
   current: DemoMessage[],
   additions: DemoMessage[],
@@ -894,4 +928,15 @@ function pickInteger(
     minInclusive +
     Math.floor(random() * (maxInclusive - minInclusive + 1))
   )
+}
+
+function hashCode(value: string): number {
+  let hash = 0
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(index)
+    hash |= 0
+  }
+
+  return hash
 }

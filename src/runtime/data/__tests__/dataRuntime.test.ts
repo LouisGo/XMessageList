@@ -92,6 +92,30 @@ describe('MessageListDataRuntime', () => {
     ])
   })
 
+  it('replaces the loaded item window for host-owned mock mutations', () => {
+    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
+    runtime.resetLatest({
+      items: [item('row-1'), item('row-2'), item('row-3')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })
+
+    const segment = runtime.replaceItems({
+      items: [item('row-1'), item('row-3')],
+      changedKeys: ['row-2'],
+    })
+
+    expect(segment.items.map((nextItem) => nextItem.key)).toEqual([
+      'row-1',
+      'row-3',
+    ])
+    expect(segment.modifier).toEqual({
+      type: 'patch',
+      changedKeys: ['row-2'],
+    })
+    expect(segment.hasMoreBefore).toBe(true)
+  })
+
   it('drops stale responses after generation reset and trims around anchor', () => {
     const runtime = createMessageListDataRuntime<string>({
       feedId: 'feed-a',
