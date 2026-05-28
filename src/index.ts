@@ -5,6 +5,7 @@ export {
   useMessageListSnapshot,
 } from './react'
 export type {
+  DestinationSettledEvent,
   LoadedSegment,
   MessageDataItem,
   MessageIdentity,
@@ -20,13 +21,19 @@ export type {
   MessageRuntimeItemKey,
   RuntimeObserverFactory,
   RuntimeScheduler,
+  SegmentTrimPressureEvent,
   SegmentModifier,
   ViewportAnchorChangedEvent,
   ViewportDiagnosticEvent,
   ViewportDiagnosticRecord,
   ViewportEvidence,
+  ViewportObservedItem,
+  ViewportObservationActivity,
   ViewportObservationChangedEvent,
   ViewportObservationListener,
+  ViewportObservationReason,
+  ViewportScrollDirection,
+  ViewportVisibleRange,
 } from './runtime'
 export type {
   EdgeSlotInput,

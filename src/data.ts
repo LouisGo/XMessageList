@@ -4,9 +4,9 @@ export {
   type DataRuntimeApplyResult,
   type DataRuntimeRequestKind,
   type DataRuntimeRequestToken,
-  type ExtendSegmentInput,
   type IdentityRemapInput,
   type MessageListDataRuntimeOptions,
   type ReplaceSegmentInput,
   type ResetSegmentInput,
-} from './dataRuntime'
+  type ExtendSegmentInput,
+} from './runtime/data'

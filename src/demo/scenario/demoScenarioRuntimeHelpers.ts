@@ -54,8 +54,8 @@ export async function restoreAroundAnchor(input: {
 
 export function resolveSavedRuntimeAnchor(
   feedId: string,
-  savedAnchors: Map<string, MessageIdentityAnchor>,
-): MessageIdentityAnchor | null {
+  savedAnchors: Map<string, SavedRuntimeAnchor>,
+): SavedRuntimeAnchor | null {
   return savedAnchors.get(feedId) ?? null
 }
 
@@ -101,6 +101,7 @@ export function resolveTrimProtectKey(
 export function toPersistedViewportAnchor(
   anchor: MessageIdentityAnchor,
   feedMessages: DemoMessage[],
+  offsetWithinMessage = 0,
 ): ReturnType<typeof readDemoViewportAnchor> {
   const messageId = anchor.serverId ?? anchor.stableId ?? anchor.localId
 
@@ -113,8 +114,13 @@ export function toPersistedViewportAnchor(
   return {
     messageId,
     position: message?.sequence,
-    offsetWithinMessage: 0,
+    offsetWithinMessage,
   }
+}
+
+export type SavedRuntimeAnchor = {
+  anchor: MessageIdentityAnchor
+  offsetWithinMessage?: number
 }
 
 export function prepareDemoE2EScenario(input: {

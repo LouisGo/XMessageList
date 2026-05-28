@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
-  MessageIdentityAnchor,
   MessageListRuntimeEvent,
   ViewportAnchorChangedEvent,
 } from '../runtime'
@@ -42,6 +41,7 @@ import {
   prepareDemoE2EScenario,
   resolveTrimProtectKey,
   restoreAroundAnchor,
+  type SavedRuntimeAnchor,
   toPersistedViewportAnchor,
 } from './scenario/demoScenarioRuntimeHelpers'
 import { useDemoEdgeBatchLoader } from './scenario/useDemoEdgeBatchLoader'
@@ -76,7 +76,7 @@ export function useDemoMessageScenario(
   const [highlightToken, setHighlightToken] = useState(0)
   const highlightTimerRef = useRef<number | null>(null)
   const dataRuntimesRef = useRef(new Map<string, MessageListDataRuntime<DemoMessage>>())
-  const savedAnchorsRef = useRef(new Map<string, MessageIdentityAnchor>())
+  const savedAnchorsRef = useRef(new Map<string, SavedRuntimeAnchor>())
   const deferredEdgeResponseDelayMsRef = useRef(0)
   const bootstrapTokenRef = useRef(0)
   const { loadingBefore, loadingAfter, setEdgeLoading } = useDemoEdgeLoadingState()
@@ -200,10 +200,20 @@ export function useDemoMessageScenario(
     }
 
     if (event.type === 'needLatestMessages') {
-      return applyLatestRequest({ ...context, feedId: event.feedId, event })
+      const request = async () => {
+        await waitMockDelay(EDGE_LOAD_DELAY_BASE_MS)
+        return applyLatestRequest({ ...context, feedId: event.feedId, event })
+      }
+
+      return request()
     }
     if (event.type === 'needMessagesAround') {
-      return applyAroundRequest({ ...context, event })
+      const request = async () => {
+        await waitMockDelay(EDGE_LOAD_DELAY_BASE_MS)
+        return applyAroundRequest({ ...context, event })
+      }
+
+      return request()
     }
     if (event.type === 'needMoreBefore' || event.type === 'needMoreAfter') {
       const edge = event.type === 'needMoreBefore' ? 'before' : 'after'
@@ -284,7 +294,10 @@ export function useDemoMessageScenario(
           if (cancelled || bootstrapToken !== bootstrapTokenRef.current) {
             return
           }
-          runtime.restoreToMessage(savedAnchor)
+          runtime.restoreToMessage(savedAnchor.anchor, {
+            align: 'start',
+            offsetWithinMessage: savedAnchor.offsetWithinMessage ?? 0,
+          })
         } else {
           runtime.scrollToLatest()
         }
@@ -314,14 +327,20 @@ export function useDemoMessageScenario(
           if (typeof restored.total === 'number') {
             setMessageCount(restored.total)
           }
-          savedAnchorsRef.current.set(activeFeedId, persistedRuntimeAnchor)
+          savedAnchorsRef.current.set(activeFeedId, {
+            anchor: persistedRuntimeAnchor,
+            offsetWithinMessage: persistedAnchor.offsetWithinMessage,
+          })
           setLastEvent(`restored ${activeFeed.title}`)
           setFeedLoading(false)
           await wait(60)
           if (cancelled || bootstrapToken !== bootstrapTokenRef.current) {
             return
           }
-          runtime.restoreToMessage(persistedRuntimeAnchor)
+          runtime.restoreToMessage(persistedRuntimeAnchor, {
+            align: 'start',
+            offsetWithinMessage: persistedAnchor.offsetWithinMessage ?? 0,
+          })
           return
         }
       }
@@ -447,16 +466,34 @@ export function useDemoMessageScenario(
   const rememberRuntimeViewportAnchor = useCallback((
     event: ViewportAnchorChangedEvent,
   ) => {
-    if (event.anchor) {
-      savedAnchorsRef.current.set(event.feedId, event.anchor)
+    const eventRuntime = runtimeCache.getRuntime(event.feedId)
+    const snapshot = eventRuntime.getSnapshot()
+
+    if (
+      snapshot.generation !== event.generation ||
+      snapshot.segmentRevision !== event.segmentRevision
+    ) {
+      return
+    }
+
+    const anchor = event.anchor
+    if (anchor) {
+      savedAnchorsRef.current.set(event.feedId, {
+        anchor,
+        offsetWithinMessage: event.offsetWithinMessage,
+      })
       void loadDemoFeedMessages(event.feedId).then((feedMessages) => {
         saveDemoViewportAnchor(
           event.feedId,
-          toPersistedViewportAnchor(event.anchor, feedMessages),
+          toPersistedViewportAnchor(
+            anchor,
+            feedMessages,
+            event.offsetWithinMessage ?? 0,
+          ),
         )
       })
     }
-  }, [])
+  }, [runtimeCache])
 
   const selectFeed = useCallback((feedId: string) => {
     if (feedId !== activeFeedId) {

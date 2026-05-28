@@ -32,7 +32,12 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
   if (
     destination &&
     segment.modifier.type === 'reset-around' &&
-    domInteractions.alignToMessage(snapshot, destination.target, destination.align)
+    domInteractions.alignToMessage(
+      snapshot,
+      destination.target,
+      destination.align,
+      destination.offsetWithinMessage,
+    )
   ) {
     return destination.target
   }
@@ -54,13 +59,19 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
   }
 
   if (segment.modifier.type === 'reset-around') {
-    const target = segment.modifier.target ?? segment.anchor
+    const target = segment.modifier.target
 
     if (
-      target &&
       domInteractions.alignToMessage(snapshot, target, 'center')
     ) {
       return target
+    }
+
+    if (
+      segment.anchor &&
+      domInteractions.alignToMessage(snapshot, segment.anchor, 'center')
+    ) {
+      return segment.anchor
     }
 
     return segment.anchor ?? getViewportAnchor()

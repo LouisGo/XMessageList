@@ -1,5 +1,9 @@
-import type { MessageIdentityAnchor } from './identity'
+import type {
+  MessageIdentityAnchor,
+  MessageRuntimeItemKey,
+} from './identity'
 import type { ProjectionCommitToken } from './snapshot'
+import type { ScrollSource } from './scrollIntentEngine'
 
 export type NeedEventBase = {
   feedId: string
@@ -31,14 +35,72 @@ export type NeedMessagesAroundEvent = NeedEventBase & {
 export type ViewportAnchorChangedEvent = {
   type: 'viewportAnchorChanged'
   feedId: string
+  generation: number
+  segmentRevision: number
   reason: 'scroll-idle' | 'transaction-settle' | 'detach'
   anchor: MessageIdentityAnchor | null
+  offsetWithinMessage?: number
 }
 
 export type ViewportObservationChangedEvent = {
   type: 'viewportObservationChanged'
   feedId: string
+  generation: number
+  segmentRevision: number
+  reason: ViewportObservationReason
+  scrollSource: ScrollSource | null
+  direction: ViewportScrollDirection
+  activity: ViewportObservationActivity
+  anchor: MessageIdentityAnchor | null
+  offsetWithinMessage?: number
+  visibleRange: ViewportVisibleRange
+  visibleItems: ViewportObservedItem[]
   visibleKeys: string[]
+}
+
+export type ViewportObservationReason =
+  | 'transaction-settle'
+  | 'scroll-idle'
+  | 'resize'
+  | 'detach'
+
+export type ViewportScrollDirection = 'up' | 'down' | 'none'
+
+export type ViewportObservationActivity =
+  | 'scrolling'
+  | 'settling'
+  | 'resizing'
+  | 'detached'
+
+export type ViewportVisibleRange = {
+  firstKey: MessageRuntimeItemKey | null
+  lastKey: MessageRuntimeItemKey | null
+}
+
+export type ViewportObservedItem = {
+  key: MessageRuntimeItemKey
+  visibleRatio: number
+}
+
+export type DestinationSettledEvent = {
+  type: 'destinationSettled'
+  feedId: string
+  generation: number
+  segmentRevision: number
+  intent: 'jump' | 'restore'
+  target: MessageIdentityAnchor
+  resolution: 'target' | 'fallback'
+  resolvedTarget?: MessageIdentityAnchor
+}
+
+export type SegmentTrimPressureEvent = {
+  type: 'segmentTrimPressure'
+  feedId: string
+  generation: number
+  segmentRevision: number
+  itemCount: number
+  anchor: MessageIdentityAnchor | null
+  preferredTrimSide: 'before' | 'after'
 }
 
 export type ViewportDiagnosticEvent = {
@@ -64,6 +126,8 @@ export type MessageListRuntimeEvent =
   | NeedMoreAfterEvent
   | NeedLatestMessagesEvent
   | NeedMessagesAroundEvent
+  | DestinationSettledEvent
+  | SegmentTrimPressureEvent
   | ViewportAnchorChangedEvent
   | ViewportObservationChangedEvent
   | ViewportDiagnosticEvent

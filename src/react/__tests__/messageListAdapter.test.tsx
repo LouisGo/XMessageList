@@ -5,10 +5,12 @@ import {
   createMessageListRuntime,
   type LoadedSegment,
   type MessageDataItem,
+  type MessageListRuntimeEvent,
   type ViewportAnchorChangedEvent,
   type ViewportObservationChangedEvent,
 } from '../../runtime'
 import { MessageList } from '../MessageList'
+import type { MessageListOverlayInput } from '../types'
 
 describe('MessageList React adapter', () => {
   it('projects fixed DOM skeleton, rows, slots, and commit ack', async () => {
@@ -129,7 +131,104 @@ describe('MessageList React adapter', () => {
     }))
     expect(observationEvents).toContainEqual(expect.objectContaining({
       visibleKeys: ['row-1'],
+      visibleItems: [expect.objectContaining({
+        key: 'row-1',
+        visibleRatio: 1,
+      })],
     }))
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('passes observation and limited commands into overlay', async () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const events: MessageListRuntimeEvent[] = []
+    const overlayInputs: MessageListOverlayInput[] = []
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const target = { feedId: 'feed-a', stableId: 'row-9', serverId: 'row-9' }
+
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')]))
+
+    await act(async () => {
+      root.render(
+        <MessageList
+          runtime={runtime}
+          renderRow={(nextItem) => <span>{nextItem.message}</span>}
+          renderOverlay={(input) => {
+            overlayInputs.push(input)
+            return <button type="button" onClick={() => input.commands.scrollToMessage(target)} />
+          }}
+        />,
+      )
+    })
+
+    const latestInput = overlayInputs.at(-1)
+    expect(latestInput?.observation).toEqual(expect.objectContaining({
+      visibleKeys: ['row-1'],
+    }))
+    expect(Object.keys(latestInput?.commands ?? {}).sort()).toEqual([
+      'scrollToLatest',
+      'scrollToMessage',
+    ])
+
+    await act(async () => {
+      host.querySelector('button')?.dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      )
+    })
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'needMessagesAround',
+      target,
+    }))
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('uses getRowRenderVersion for scoped row rerenders', async () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const versions = new Map([
+      ['row-1', 0],
+      ['row-2', 0],
+    ])
+    const renderCounts = new Map<string, number>()
+    const createRenderRow = () => (nextItem: MessageDataItem<string>) => {
+      renderCounts.set(nextItem.key, (renderCounts.get(nextItem.key) ?? 0) + 1)
+      return <span>{versions.get(nextItem.key)}</span>
+    }
+
+    runtime.applyLoadedSegment(segment([item('row-1'), item('row-2')]))
+
+    await act(async () => {
+      root.render(
+        <MessageList
+          runtime={runtime}
+          renderRow={createRenderRow()}
+          getRowRenderVersion={(nextItem) => versions.get(nextItem.key)}
+        />,
+      )
+    })
+    versions.set('row-2', 1)
+    await act(async () => {
+      root.render(
+        <MessageList
+          runtime={runtime}
+          renderRow={createRenderRow()}
+          getRowRenderVersion={(nextItem) => versions.get(nextItem.key)}
+        />,
+      )
+    })
+
+    expect(renderCounts.get('row-1')).toBe(1)
+    expect(renderCounts.get('row-2')).toBe(2)
 
     await act(async () => {
       root.unmount()

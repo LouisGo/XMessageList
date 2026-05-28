@@ -66,7 +66,8 @@ export function usesAroundBootstrap(scenarioId: string): boolean {
   return scenarioId === 'paging.after-native-thumb-rebound' ||
     scenarioId === 'underflow.dual-edge-arbitration' ||
     scenarioId === 'destination.jump-in-segment' ||
-    scenarioId === 'follow-bottom.partial-segment'
+    scenarioId === 'follow-bottom.partial-segment' ||
+    scenarioId === 'scrollbar.drag-edge-after'
 }
 
 export function readLoadedMessages(

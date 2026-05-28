@@ -21,6 +21,8 @@ export type MessageListRuntimeOptions = {
   commitTimeoutMs?: number
   bottomLockThresholdPx?: number
   bottomUnlockThresholdPx?: number
+  edgeActivationMarginPx?: number
+  underflowTolerancePx?: number
 }
 
 export type MessageListScrollOptions = {
@@ -33,4 +35,5 @@ export type MessageListScrollToMessageOptions = MessageListScrollOptions & {
 
 export type MessageListRestoreOptions = {
   align?: 'start' | 'center' | 'end'
+  offsetWithinMessage?: number
 }

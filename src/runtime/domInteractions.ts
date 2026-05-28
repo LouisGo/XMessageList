@@ -18,6 +18,7 @@ export type RuntimeDomInteractionsOptions = {
   onScrollWrite: (source: ScrollSource) => void
   onUserScrollIntent: () => void
   onScrollFrame: () => void
+  edgeActivationMarginPx?: number
   onDiagnostic: (
     name: string,
     severity: ViewportDiagnosticRecord['severity'],
@@ -121,6 +122,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       this.directScrollEdgeIntent = resolveDirectScrollEdgeIntent(
         scrollTop,
         container,
+        this.options.edgeActivationMarginPx,
       )
     }
     container.scrollTop = scrollTop
@@ -144,6 +146,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     target: MessageIdentityAnchor,
     align: DestinationIntent['align'],
+    offsetWithinMessage?: number,
   ): boolean {
     const key = findKeyForAnchor(snapshot, target)
     const container = this.options.registry.snapshot().scrollContainer
@@ -155,7 +158,13 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
 
     const containerRect = container.getBoundingClientRect()
     const rowRect = row.getBoundingClientRect()
-    const nextTop = resolveAlignedScrollTop(container, rowRect, containerRect, align)
+    const nextTop = resolveAlignedScrollTop(
+      container,
+      rowRect,
+      containerRect,
+      align,
+      offsetWithinMessage,
+    )
     this.writeProgrammaticScroll(container, nextTop, 'destination')
     return true
   }
@@ -387,7 +396,10 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       }
     }, {
       root,
-      rootMargin: `${resolveEdgeActivationMargin(root.clientHeight)}px 0px`,
+      rootMargin: `${resolveEdgeActivationMargin(
+        root.clientHeight,
+        this.options.edgeActivationMarginPx,
+      )}px 0px`,
     })
     observer.observe(element)
     return observer
@@ -484,14 +496,22 @@ function resolveAlignedScrollTop(
   rowRect: DOMRect,
   containerRect: DOMRect,
   align: DestinationIntent['align'],
+  offsetWithinMessage?: number,
 ): number {
   const currentTop = container.scrollTop
   const maxTop = Math.max(0, container.scrollHeight - container.clientHeight)
   const start = currentTop + rowRect.top - containerRect.top
+  const offsetStart = typeof offsetWithinMessage === 'number'
+    ? start + Math.max(0, offsetWithinMessage)
+    : null
   const end = currentTop + rowRect.bottom - containerRect.bottom
   const center = currentTop +
     (rowRect.top + rowRect.height / 2) -
     (containerRect.top + containerRect.height / 2)
+
+  if (offsetStart !== null) {
+    return clampScrollTop(offsetStart, maxTop)
+  }
 
   if (align === 'end') {
     return clampScrollTop(end, maxTop)
@@ -522,16 +542,23 @@ function clampScrollTop(scrollTop: number, maxTop: number): number {
   return Math.min(Math.max(0, scrollTop), maxTop)
 }
 
-function resolveEdgeActivationMargin(clientHeight: number): number {
-  return Math.min(Math.max(clientHeight * 0.25, 64), 240)
+function resolveEdgeActivationMargin(
+  clientHeight: number,
+  configuredMarginPx?: number,
+): number {
+  return configuredMarginPx ?? Math.min(Math.max(clientHeight * 0.25, 64), 240)
 }
 
 function resolveDirectScrollEdgeIntent(
   scrollTop: number,
   container: HTMLElement,
+  edgeActivationMarginPx?: number,
 ): RuntimeEdge | null {
   const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
-  const threshold = resolveEdgeActivationMargin(container.clientHeight)
+  const threshold = resolveEdgeActivationMargin(
+    container.clientHeight,
+    edgeActivationMarginPx,
+  )
   const distanceToBefore = scrollTop
   const distanceToAfter = maxScrollTop - scrollTop
 

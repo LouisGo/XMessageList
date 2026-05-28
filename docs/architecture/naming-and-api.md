@@ -36,6 +36,8 @@ export type {
   MessageListRuntimeEvent,
   MessageListRuntimeEventListener,
   MessageListCommands,
+  DestinationSettledEvent,
+  SegmentTrimPressureEvent,
   RuntimeObserverFactory,
   RuntimeScheduler,
   EdgeSlotInput,
@@ -44,6 +46,11 @@ export type {
   ViewportAnchorChangedEvent,
   ViewportObservationChangedEvent,
   ViewportObservationListener,
+  ViewportObservationReason,
+  ViewportVisibleRange,
+  ViewportObservedItem,
+  ViewportScrollDirection,
+  ViewportObservationActivity,
   ViewportDiagnosticEvent,
   ViewportDiagnosticRecord,
   ViewportEvidence,
@@ -54,6 +61,15 @@ export type {
   MessageIdentityAnchor,
   MessageRuntimeItemKey,
 };
+```
+
+data runtime 通过子路径单独暴露，根出口保持干净：
+
+```ts
+import {
+  createMessageListDataRuntime,
+  type MessageListDataRuntime,
+} from 'x-message-list/data';
 ```
 
 不导出 implementation class、DOM registry、transaction controller、measurement engine、projection store 或 data merge internals。实现内部可以有 class，但公开创建入口统一是 `createMessageListRuntime(options)`。
@@ -96,6 +112,8 @@ type MessageListProps<TMessage = unknown, TOptimistic = unknown> = {
   scrollbar?: 'native' | 'custom';
 };
 ```
+
+`renderOverlay(input)` 接收 `{ snapshot, observation, commands }`。`commands` 只允许 `scrollToLatest()` 和 `scrollToMessage(target, options?)`，不暴露 generic dispatch 或 adapter-private direct scroll。
 
 命名取舍：
 
@@ -223,6 +241,8 @@ type MessageListRuntimeEvent =
   | NeedMoreAfterEvent
   | NeedLatestMessagesEvent
   | NeedMessagesAroundEvent
+  | DestinationSettledEvent
+  | SegmentTrimPressureEvent
   | ViewportAnchorChangedEvent
   | ViewportObservationChangedEvent
   | ViewportDiagnosticEvent
@@ -238,6 +258,8 @@ type MessageListRuntimeEvent =
 | `needMoreAfter` | viewport runtime -> host | after edge / underflow 需要更新消息 |
 | `needLatestMessages` | viewport runtime -> host | `scrollToLatest` 需要 latest window |
 | `needMessagesAround` | viewport runtime -> host | jump / restore 需要 around window |
+| `destinationSettled` | viewport runtime -> host / overlay | jump / restore 目标或 fallback 已完成 settle |
+| `segmentTrimPressure` | viewport runtime -> host / data runtime | 当前 segment 可触发 host 按 budget trim，事件携带保护 anchor 和建议方向 |
 | `viewportAnchorChanged` | viewport runtime -> host | 持久化当前阅读 anchor |
 | `viewportObservationChanged` | viewport runtime -> host / overlay | 可见范围、阅读回执、浮层状态 |
 | `viewportDiagnostic` | viewport runtime -> diagnostics | transaction、measurement、correction 诊断 |
@@ -245,6 +267,42 @@ type MessageListRuntimeEvent =
 | `viewportError` | viewport runtime -> host | commit timeout、anchor missing 等错误 |
 
 所有 need events 必须带 `feedId`、`generation`、`segmentRevision`、`requestToken` 和 `reason`。host 只能响应这些 semantic events，不能监听 raw scroll 来补分页。
+
+`viewportObservationChanged` 必须携带 `feedId`、`generation`、`segmentRevision`、`reason`、`scrollSource`、`direction`、`activity`、`anchor`、`visibleRange`、`visibleItems[{ key, visibleRatio }]` 和兼容用的 `visibleKeys`。读回执、sticky time、pinned preview、analytics 都应基于该 observation 和 overlay commands 组合，不进入 core 业务状态。
+
+`destinationSettled` 只在真实目标或 fallback 完成 settle 后发出；被新 generation / timeout / cancellation 打断的 destination motion 不发 settled。`resolution` 为 `target` 或 `fallback`，fallback 场景可携带 `resolvedTarget`。
+
+`segmentTrimPressure` 不包含 budget；budget 属于 `MessageListDataRuntimeOptions.itemBudget`。host 收到 pressure 后决定是否调用 data runtime 的 `trimToBudget(protectKey)` 并把返回的 `trim-before` / `trim-after` segment 交回 viewport runtime。
+
+`MessageListRuntimeOptions` 可以调整 `edgeActivationMarginPx` 和 `underflowTolerancePx`；默认值仍按 interaction specs 使用。data budget 不放入 viewport runtime options。
+
+## Data Runtime 子路径 API
+
+`x-message-list/data` 暴露 data runtime 接入合同：
+
+```ts
+export {
+  createMessageListDataRuntime,
+  MessageListDataRuntime,
+};
+export type {
+  MessageListDataRuntimeOptions,
+  DataRuntimeRequestKind,
+  DataRuntimeRequestToken,
+  DataRuntimeApplyResult,
+  ResetSegmentInput,
+  ExtendSegmentInput,
+  ReplaceSegmentInput,
+  IdentityRemapInput,
+};
+```
+
+合同规则：
+
+- `resetLatest` / `resetAround` 开新 generation，并清理旧 request token。
+- `createRequestToken(kind)` 和 `adoptRequestToken(request)` 是 stale response guard；`extendBefore` / `extendAfter` 只接受当前 generation 的 token。
+- `patchItems` / `replaceItems` / `applyIdentityRemap` 只产出语义 segment，不触碰 DOM 或 scroll。
+- `trimToBudget(protectKey)` 只根据 data runtime 的 `itemBudget` 产出 `trim-before` 或 `trim-after`；viewport runtime 负责 trim 后 anchor correction。
 
 ## Host / BFF Request API
 

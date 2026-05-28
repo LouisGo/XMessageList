@@ -270,7 +270,14 @@ async function runBridgeAction({
       return
     case 'append_many': {
       const count = Math.min(Math.max(1, Number(payload.count ?? 1)), 160)
+      const beforeCount = readEvidence('append-before').segment.itemCount
       scenario.appendMessages(count)
+      await waitForEvidence(
+        readEvidence,
+        (evidence) => evidence.segment.modifier.type === 'trim-before' ||
+          evidence.segment.itemCount > beforeCount,
+        3_000,
+      )
       await waitForRuntimeIdle(readEvidence, 3_000)
       return
     }
@@ -323,6 +330,12 @@ async function runBridgeAction({
       scenario.selectFeed('feed-runtime')
       await wait(120)
       await waitForAnimationFrame()
+      await waitForEvidence(
+        readEvidence,
+        (evidence) => evidence.segment.modifier.type === 'reset-around' ||
+          evidence.events.some((event) => event.type === 'destinationSettled'),
+        2_000,
+      )
       await waitForRuntimeIdle(readEvidence, 2_000)
       return
     case 'remount_viewport':
@@ -351,12 +364,20 @@ async function runBridgeAction({
       return
     case 'drag_scrollbar_to_top':
       await wait(240)
-      dragScrollbarToTop(root)
+      {
+        const beforeCount = countRuntimeEvents(readEvidence('drag-before'), 'needMoreBefore')
+        dragScrollbarToTop(root)
+        await waitForRuntimeEventCount(readEvidence, 'needMoreBefore', beforeCount + 1, 1_000)
+      }
       await waitForRuntimeIdle(readEvidence, 2_000)
       return
     case 'drag_scrollbar_to_bottom':
       await wait(240)
-      dragScrollbarToBottom(root)
+      {
+        const beforeCount = countRuntimeEvents(readEvidence('drag-after'), 'needMoreAfter')
+        dragScrollbarToBottom(root)
+        await waitForRuntimeEventCount(readEvidence, 'needMoreAfter', beforeCount + 1, 1_000)
+      }
       await waitForRuntimeIdle(readEvidence, 2_000)
       return
     case 'track_click_scrollbar':
@@ -516,6 +537,26 @@ async function waitForRuntimeEventCount(
   }
 
   throw new E2EActionError('wait_event_timeout', `runtime event ${type} did not reach ${minCount}`)
+}
+
+async function waitForEvidence(
+  readEvidence: (checkpointId: string) => E2EEvidence,
+  predicate: (evidence: E2EEvidence) => boolean,
+  timeoutMs: number,
+): Promise<void> {
+  const start = performance.now()
+
+  while (performance.now() - start < timeoutMs) {
+    const evidence = readEvidence('evidence-wait')
+
+    if (predicate(evidence)) {
+      return
+    }
+
+    await wait(25)
+  }
+
+  throw new E2EActionError('wait_evidence_timeout', 'evidence predicate timed out')
 }
 
 function countRuntimeEvents(

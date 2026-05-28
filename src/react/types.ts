@@ -1,7 +1,9 @@
 import type { CSSProperties, ReactNode } from 'react'
 import type {
   MessageDataItem,
+  MessageIdentityAnchor,
   MessageListRuntime,
+  MessageListScrollToMessageOptions,
   MessageListSnapshot,
   ViewportAnchorChangedEvent,
   ViewportObservationChangedEvent,
@@ -19,10 +21,16 @@ export type ScrollToLatestSlotInput = {
 
 export type MessageListOverlayInput = {
   snapshot: MessageListSnapshot
+  observation: ViewportObservationChangedEvent | null
+  commands: MessageListCommands
 }
 
 export type MessageListCommands = {
   scrollToLatest: () => void
+  scrollToMessage: (
+    target: MessageIdentityAnchor,
+    options?: MessageListScrollToMessageOptions,
+  ) => void
 }
 
 export type MessageListProps<TMessage = unknown, TOptimistic = unknown> = {

@@ -72,6 +72,8 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
 
   private readonly pendingRequests = new Map<string, DataRuntimeRequestToken>()
 
+  private readonly currentRequestByKind = new Map<DataRuntimeRequestKind, string>()
+
   private segment: LoadedSegment<TMessage, TOptimistic>
 
   constructor(private readonly options: MessageListDataRuntimeOptions) {
@@ -98,6 +100,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
     }
     this.requestSequence += 1
     this.pendingRequests.set(request.requestToken, request)
+    this.currentRequestByKind.set(request.kind, request.requestToken)
     return request
   }
 
@@ -105,7 +108,14 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
     request: DataRuntimeRequestToken,
   ): void {
     if (request.generation === this.generation) {
+      if (request.kind === 'around') {
+        this.currentRequestByKind.delete('latest')
+      }
+      if (request.kind === 'latest') {
+        this.currentRequestByKind.delete('around')
+      }
       this.pendingRequests.set(request.requestToken, request)
+      this.currentRequestByKind.set(request.kind, request.requestToken)
     }
   }
 
@@ -115,12 +125,41 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
     return this.reset(input, { type: 'reset-latest' })
   }
 
+  resetLatestFromRequest(
+    input: ResetSegmentInput<TMessage, TOptimistic> & { requestToken: string },
+  ): DataRuntimeApplyResult<TMessage, TOptimistic> {
+    if (!this.consumeRequest(input.requestToken)) {
+      return this.staleResult()
+    }
+
+    return {
+      applied: true,
+      segment: this.reset(input, { type: 'reset-latest' }),
+    }
+  }
+
   resetAround(
     input: ResetSegmentInput<TMessage, TOptimistic> & {
       target: MessageIdentityAnchor
     },
   ): LoadedSegment<TMessage, TOptimistic> {
     return this.reset(input, { type: 'reset-around', target: input.target })
+  }
+
+  resetAroundFromRequest(
+    input: ResetSegmentInput<TMessage, TOptimistic> & {
+      target: MessageIdentityAnchor
+      requestToken: string
+    },
+  ): DataRuntimeApplyResult<TMessage, TOptimistic> {
+    if (!this.consumeRequest(input.requestToken)) {
+      return this.staleResult()
+    }
+
+    return {
+      applied: true,
+      segment: this.reset(input, { type: 'reset-around', target: input.target }),
+    }
   }
 
   extendBefore(
@@ -224,6 +263,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
   ): LoadedSegment<TMessage, TOptimistic> {
     this.generation += 1
     this.pendingRequests.clear()
+    this.currentRequestByKind.clear()
     this.segment = this.createSegment(dedupeItems(input.items), {
       ...input,
       modifier,
@@ -249,10 +289,15 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
     const request = this.pendingRequests.get(requestToken)
     this.pendingRequests.delete(requestToken)
 
-    if (!request || request.generation !== this.generation) {
+    if (
+      !request ||
+      request.generation !== this.generation ||
+      this.currentRequestByKind.get(request.kind) !== requestToken
+    ) {
       return null
     }
 
+    this.currentRequestByKind.delete(request.kind)
     return request
   }
 

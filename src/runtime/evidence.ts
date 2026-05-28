@@ -24,6 +24,12 @@ export function createViewportEvidence<TMessage, TOptimistic>(
     shortSegmentAlignment: snapshot.segmentMeta.shortSegmentAlignment,
     phase: snapshot.viewportPhase,
     edgeState: snapshot.edgeState,
-    ...measurement,
+    scrollTop: measurement.scrollTop,
+    clientHeight: measurement.clientHeight,
+    scrollHeight: measurement.scrollHeight,
+    visibleRows: measurement.visibleRows,
+    beforeTrigger: measurement.beforeTrigger,
+    afterTrigger: measurement.afterTrigger,
+    bottomMarker: measurement.bottomMarker,
   }
 }

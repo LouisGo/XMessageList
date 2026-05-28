@@ -329,10 +329,12 @@ export function expectDetachAnchorCheckpoint(evidence: E2EEvidence): E2EOracleRe
 }
 
 export function expectRestoreAroundAfterDetach(evidence: E2EEvidence): E2EOracleResult {
+  const settled = evidence.events.some((event) => event.type === 'destinationSettled')
+
   return {
     oracleId: 'restore-around-after-detach',
-    ok: evidence.segment.modifier.type === 'reset-around',
-    message: `modifier=${evidence.segment.modifier.type}`,
+    ok: evidence.segment.modifier.type === 'reset-around' || settled,
+    message: `modifier=${evidence.segment.modifier.type} settled=${settled}`,
   }
 }
 

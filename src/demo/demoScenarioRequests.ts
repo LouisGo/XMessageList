@@ -46,6 +46,13 @@ export async function applyLatestRequest(
   },
 ): Promise<DemoRequestResult> {
   const { dataRuntime, event, feedId, pageSize, publishSegment } = context
+  if (event) {
+    dataRuntime.adoptRequestToken({
+      requestToken: event.requestToken,
+      generation: event.generation,
+      kind: 'latest',
+    })
+  }
   const resp = await getLatestMessages({ feedId, count: pageSize })
 
   if (resp.ok === false) {
@@ -59,13 +66,27 @@ export async function applyLatestRequest(
     return { status: 'stale', message: 'ignored stale latest response' }
   }
 
-  dataRuntime.resetLatest({
+  const input = {
     items: resp.messages.map(toDemoMessageDataItem),
     hasMoreBefore: resp.hasMoreBefore,
     hasMoreAfter: resp.hasMoreAfter,
     anchor: toRuntimeAnchor(resp.feedId, resp.anchor.messageId),
     anchorStatus: resp.anchorStatus,
-  })
+  }
+  const result = event
+    ? dataRuntime.resetLatestFromRequest({
+        ...input,
+        requestToken: event.requestToken,
+      })
+    : {
+        applied: true,
+        segment: dataRuntime.resetLatest(input),
+      }
+
+  if (!result.applied) {
+    return { status: 'stale', message: 'ignored stale latest response' }
+  }
+
   publishSegment(dataRuntime)
   return {
     status: 'applied',
@@ -80,6 +101,11 @@ export async function applyAroundRequest(
   },
 ): Promise<DemoRequestResult> {
   const { dataRuntime, event, pageSize, publishSegment } = context
+  dataRuntime.adoptRequestToken({
+    requestToken: event.requestToken,
+    generation: event.generation,
+    kind: 'around',
+  })
   const targetMessageId = event.target.serverId ??
     event.target.stableId ??
     event.target.localId
@@ -103,7 +129,8 @@ export async function applyAroundRequest(
     return { status: 'stale', message: 'ignored stale around response' }
   }
 
-  dataRuntime.resetAround({
+  const result = dataRuntime.resetAroundFromRequest({
+    requestToken: event.requestToken,
     target: event.target,
     items: resp.messages.map(toDemoMessageDataItem),
     hasMoreBefore: resp.hasMoreBefore,
@@ -111,6 +138,11 @@ export async function applyAroundRequest(
     anchor: toRuntimeAnchor(resp.feedId, resp.anchor.messageId),
     anchorStatus: resp.anchorStatus,
   })
+
+  if (!result.applied) {
+    return { status: 'stale', message: 'ignored stale around response' }
+  }
+
   publishSegment(dataRuntime)
   return {
     status: 'applied',

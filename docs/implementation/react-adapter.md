@@ -57,6 +57,12 @@ Slots 接收 runtime semantic state，不接收 raw DOM metrics：
 - `renderScrollToLatest(input)`
 - `renderOverlay(input)`
 
+`renderOverlay(input)` 接收：
+
+- `snapshot`：当前 `MessageListSnapshot`。
+- `observation`：最近一次 `ViewportObservationChangedEvent`，无事件时为 `null`。
+- `commands`：仅包含 `scrollToLatest()` 和 `scrollToMessage(target, options?)`。
+
 `renderBeforeEdge` / `renderAfterEdge` 的 `retry()` 只能回调 adapter-private `retryEdgeRequest(edge)`；slot 不持有 request token，不直接请求 SDK。
 
 Slots 禁止：
@@ -84,6 +90,8 @@ App 只通过 runtime events 接入：
 - `needMoreAfter`
 - `needLatestMessages`
 - `needMessagesAround`
+- `destinationSettled`
+- `segmentTrimPressure`
 - `viewportAnchorChanged`
 - `viewportObservationChanged`
 - diagnostics

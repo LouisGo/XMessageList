@@ -12,6 +12,7 @@ export default defineConfig({
     dts({
       entryRoot: 'src',
       include: [
+        'src/data.ts',
         'src/index.ts',
         'src/react/index.ts',
         'src/react/MessageList.tsx',
@@ -24,6 +25,8 @@ export default defineConfig({
         'src/runtime/snapshot.ts',
         'src/runtime/events.ts',
         'src/runtime/options.ts',
+        'src/runtime/data/index.ts',
+        'src/runtime/data/dataRuntime.ts',
       ],
       insertTypesEntry: true,
       tsconfigPath: './tsconfig.app.json',
@@ -31,9 +34,19 @@ export default defineConfig({
   ],
   build: {
     lib: {
-      entry: fileURLToPath(new URL('./src/index.ts', import.meta.url)),
+      entry: {
+        index: fileURLToPath(new URL('./src/index.ts', import.meta.url)),
+        data: fileURLToPath(new URL('./src/data.ts', import.meta.url)),
+      },
+      formats: ['es', 'cjs'],
       name: 'XMessageList',
-      fileName: 'x-message-list',
+      fileName: (format, entryName) => {
+        if (entryName === 'data') {
+          return format === 'es' ? 'data.js' : 'data.cjs'
+        }
+
+        return format === 'es' ? 'x-message-list.js' : 'x-message-list.cjs'
+      },
     },
     rollupOptions: {
       external: ['react', 'react-dom', 'react/jsx-runtime'],

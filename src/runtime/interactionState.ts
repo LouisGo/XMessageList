@@ -1,74 +1,78 @@
-import type {
-  MessageIdentityAnchor,
-} from './identity'
-import type {
-  MessageListRuntimeEvent,
-  NeedMessagesAroundEvent,
-} from './events'
-import { FollowBottomIntentTracker } from './followBottomIntentTracker'
+import { DestinationCoordinator } from './destinationCoordinator'
+import { EdgeNeedCoordinator } from './edgeNeedCoordinator'
+import { FollowBottomCoordinator } from './followBottomCoordinator'
 import type { LoadedSegment } from './segment'
-import type {
-  EdgeSnapshotState,
-  MessageListSnapshot,
-  PendingIntent,
-} from './snapshot'
+import type { MessageListSnapshot } from './snapshot'
 import type { ScrollSource } from './scrollIntentEngine'
+import { UnderflowCoordinator } from './underflowCoordinator'
+import type { RuntimeStateAxes } from './runtimeStateAxes'
+import type {
+  DestinationIntent,
+  EdgeNeedOptions,
+  InteractionUpdate,
+  RuntimeEdge,
+  UnderflowInput,
+} from './interactionTypes'
 
-export type RuntimeEdge = 'before' | 'after'
-
-export type DestinationIntent = {
-  target: MessageIdentityAnchor
-  reason: 'jump' | 'restore'
-  align: 'start' | 'center' | 'end' | 'nearest'
-}
-
-export type InteractionUpdate<TMessage, TOptimistic> = {
-  snapshot: MessageListSnapshot<TMessage, TOptimistic>
-  event?: MessageListRuntimeEvent
-}
-
-export type UnderflowInput<TMessage, TOptimistic> = {
-  snapshot: MessageListSnapshot<TMessage, TOptimistic>
-  scrollHeight: number
-  clientHeight: number
-}
-
-type EdgeNeedOptions = {
-  source?: ScrollSource | null
-  ignoreScrollSource?: boolean
-}
+export type {
+  DestinationIntent,
+  EdgeNeedOptions,
+  InteractionUpdate,
+  RuntimeEdge,
+  UnderflowInput,
+} from './interactionTypes'
 
 export class RuntimeInteractionState<TMessage, TOptimistic> {
   private requestSequence = 0
 
-  private pendingDestination: DestinationIntent | null = null
+  private readonly edge: EdgeNeedCoordinator<TMessage, TOptimistic>
 
-  private readonly followBottom = new FollowBottomIntentTracker<TMessage, TOptimistic>()
+  private readonly followBottom: FollowBottomCoordinator<TMessage, TOptimistic>
 
-  private lastDestinationDirection: RuntimeEdge | null = null
+  private readonly destination: DestinationCoordinator<TMessage, TOptimistic>
 
-  private lastUnderflowEdge: RuntimeEdge | null = null
+  private readonly underflow: UnderflowCoordinator<TMessage, TOptimistic>
 
-  private readonly underflowRequests = new Set<string>()
+  constructor(
+    private readonly axes: RuntimeStateAxes,
+    underflowTolerancePx = 2,
+  ) {
+    this.edge = new EdgeNeedCoordinator((kind) => this.nextRequestToken(kind))
+    this.followBottom = new FollowBottomCoordinator(
+      this.axes,
+      (kind) => this.nextRequestToken(kind),
+    )
+    this.destination = new DestinationCoordinator(
+      this.axes,
+      (kind) => this.nextRequestToken(kind),
+    )
+    this.underflow = new UnderflowCoordinator(this.axes, underflowTolerancePx)
+  }
 
   resetForGeneration(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
   ): MessageListSnapshot<TMessage, TOptimistic> {
-    this.pendingDestination = null
-    this.followBottom.clear()
-    this.lastDestinationDirection = null
-    this.lastUnderflowEdge = null
-    this.underflowRequests.clear()
+    this.followBottom.reset()
+    this.destination.reset()
+    this.underflow.reset()
+    this.axes.resetIntentAxes()
     return {
-      ...snapshot,
-      edgeState: createIdleEdgeState(),
+      ...this.edge.reset(snapshot),
       pendingIntent: null,
       bottomLockState: 'UNLOCKED',
     }
   }
 
   getPendingDestination(): DestinationIntent | null {
-    return this.pendingDestination
+    return this.destination.getPending()
+  }
+
+  markPendingDestinationResolvingDom(): void {
+    this.destination.markResolvingDom()
+  }
+
+  markLocalDestinationSettled(): void {
+    this.destination.markLocalSettled()
   }
 
   clearFollowBottom(): void {
@@ -79,55 +83,38 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     edge: RuntimeEdge,
     reason: string,
-    pendingIntent: PendingIntent,
+    pendingIntent: MessageListSnapshot['pendingIntent'],
     options: EdgeNeedOptions = {},
   ): InteractionUpdate<TMessage, TOptimistic> | null {
-    if (
-      !canRequestEdge(snapshot, edge) ||
-      !canEmitEdgeNeedForSource(options.source, options.ignoreScrollSource)
-    ) {
+    if (!pendingIntent) {
       return null
     }
 
-    const latchToken = createLatchToken(snapshot, edge)
-    const requestToken = this.nextRequestToken(snapshot.feedId, edge)
-    const edgeState = {
-      ...snapshot.edgeState,
-      [edge]: {
-        status: 'loading',
-        latchToken,
-        requestToken,
-      } satisfies EdgeSnapshotState,
+    const update = this.edge.start(snapshot, edge, reason, pendingIntent, options)
+
+    if (!update) {
+      return null
     }
 
-    return {
-      snapshot: {
-        ...snapshot,
-        edgeState,
-        pendingIntent,
-      },
-      event: edge === 'before'
-        ? createNeedMoreBefore(snapshot, requestToken, reason)
-        : createNeedMoreAfter(snapshot, requestToken, reason),
-    }
+    this.axes.setReadySubstate(
+      pendingIntent === 'underflow-fill'
+        ? 'READY_UNDERFLOW_PENDING'
+        : 'READY_EDGE_PENDING',
+    )
+    return update
   }
 
   retryEdge(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     edge: RuntimeEdge,
   ): InteractionUpdate<TMessage, TOptimistic> | null {
-    if (snapshot.edgeState[edge].status !== 'error') {
-      return null
+    const update = this.edge.retry(snapshot, edge)
+
+    if (update) {
+      this.axes.setReadySubstate('READY_EDGE_PENDING')
     }
 
-    const cleared = setEdgeState(snapshot, edge, { status: 'idle' })
-    return this.startEdgeNeed(
-      cleared,
-      edge,
-      edge === 'before' ? 'retry-before' : 'retry-after',
-      edge === 'before' ? 'edge-before' : 'edge-after',
-      { ignoreScrollSource: true },
-    )
+    return update
   }
 
   reportEdgeError(
@@ -135,84 +122,29 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     edge: RuntimeEdge,
     requestToken: string,
   ): MessageListSnapshot<TMessage, TOptimistic> {
-    if (snapshot.edgeState[edge].requestToken !== requestToken) {
-      return snapshot
+    const next = this.edge.reportError(snapshot, edge, requestToken)
+
+    if (next !== snapshot) {
+      this.axes.setReadySubstate('READY_IDLE')
     }
 
-    return {
-      ...setEdgeState(snapshot, edge, {
-        status: 'error',
-        latchToken: snapshot.edgeState[edge].latchToken,
-        requestToken,
-      }),
-      pendingIntent: null,
-    }
+    return next
   }
 
   startFollowBottom(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     scrollTop = 0,
   ): InteractionUpdate<TMessage, TOptimistic> {
-    this.followBottom.ensure(snapshot, scrollTop)
-
-    if (!snapshot.segmentMeta.hasMoreAfter) {
-      return {
-        snapshot: {
-          ...snapshot,
-          bottomLockState: 'LOCKED',
-          pendingIntent: null,
-          segmentMeta: {
-            ...snapshot.segmentMeta,
-            shortSegmentAlignment: 'end',
-          },
-        },
-      }
-    }
-
-    const requestToken = this.nextRequestToken(snapshot.feedId, 'latest')
-    return {
-      snapshot: {
-        ...snapshot,
-        bottomLockState: 'UNLOCKED',
-        pendingIntent: 'follow-bottom',
-      },
-      event: {
-        type: 'needLatestMessages',
-        feedId: snapshot.feedId,
-        generation: snapshot.generation,
-        segmentRevision: snapshot.segmentRevision,
-        requestToken,
-        reason: 'bottom-follow',
-      },
-    }
+    this.destination.clear()
+    return this.followBottom.start(snapshot, scrollTop)
   }
 
   startDestination(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     intent: DestinationIntent,
   ): InteractionUpdate<TMessage, TOptimistic> {
-    this.pendingDestination = intent
     this.followBottom.clear()
-    this.lastDestinationDirection = resolveDestinationDirection(intent)
-    const requestToken = this.nextRequestToken(snapshot.feedId, 'around')
-    const event: NeedMessagesAroundEvent = {
-      type: 'needMessagesAround',
-      feedId: snapshot.feedId,
-      generation: snapshot.generation,
-      segmentRevision: snapshot.segmentRevision,
-      requestToken,
-      reason: intent.reason,
-      target: intent.target,
-    }
-
-    return {
-      snapshot: {
-        ...snapshot,
-        pendingIntent: 'destination',
-        bottomLockState: 'UNLOCKED',
-      },
-      event,
-    }
+    return this.destination.start(snapshot, intent)
   }
 
   settleSegment(
@@ -222,57 +154,24 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     let next = snapshot
 
     if (isSegmentReset(segment)) {
-      next = {
-        ...next,
-        edgeState: createIdleEdgeState(),
-      }
+      next = this.edge.reset(next)
     }
 
-    if (segment.modifier.type === 'extend-before') {
-      next = settleEdge(next, 'before', segment.modifier.requestToken)
-      if (next.pendingIntent === 'edge-before') {
-        next = { ...next, pendingIntent: null }
-      }
+    next = this.edge.settleSegment(next, segment)
+    next = this.destination.settleSegment(next, segment)
+    next = this.followBottom.settleSegment(next, segment)
+    next = this.underflow.settlePending(next)
+
+    if (!this.followBottom.hasActive(next)) {
+      this.followBottom.reset()
     }
 
-    if (segment.modifier.type === 'extend-after') {
-      next = settleEdge(next, 'after', segment.modifier.requestToken)
-      if (next.pendingIntent === 'edge-after') {
-        next = { ...next, pendingIntent: null }
-      }
-    }
-
-    if (segment.modifier.type === 'reset-around' && this.pendingDestination) {
-      this.pendingDestination = null
-      this.followBottom.clear()
-      next = {
-        ...next,
-        pendingIntent: null,
-        bottomLockState: 'UNLOCKED',
-      }
-    }
-
-    if (segment.modifier.type === 'reset-latest' && next.pendingIntent === 'follow-bottom') {
-      next = {
-        ...next,
-        pendingIntent: segment.hasMoreAfter ? 'follow-bottom' : null,
-        bottomLockState: segment.hasMoreAfter ? 'UNLOCKED' : 'LOCKED',
-        segmentMeta: {
-          ...next.segmentMeta,
-          shortSegmentAlignment: segment.hasMoreAfter ? 'start' : 'end',
-        },
-      }
-    }
-
-    if (!this.followBottom.has(next)) {
-      this.followBottom.clear()
-    }
-
-    if (next.pendingIntent === 'underflow-fill') {
-      next = {
-        ...next,
-        pendingIntent: null,
-      }
+    if (
+      !next.pendingIntent &&
+      this.axes.getReadySubstate() !== 'READY_DESTINATION_PENDING' &&
+      this.axes.getReadySubstate() !== 'READY_FOLLOW_BOTTOM_PENDING'
+    ) {
+      this.axes.setReadySubstate('READY_IDLE')
     }
 
     return next
@@ -281,107 +180,23 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
   evaluateUnderflow(
     input: UnderflowInput<TMessage, TOptimistic>,
   ): InteractionUpdate<TMessage, TOptimistic> | null {
-    const { snapshot, scrollHeight, clientHeight } = input
-
-    if (
-      snapshot.viewportPhase !== 'IDLE' ||
-      snapshot.pendingIntent ||
-      scrollHeight > clientHeight + 2
-    ) {
-      return null
-    }
-
-    const edge = this.chooseUnderflowEdge(snapshot)
-
-    if (!edge) {
-      return {
-        snapshot: {
-          ...snapshot,
-          segmentMeta: {
-            ...snapshot.segmentMeta,
-            underflow: 'settled',
-          },
-        },
-      }
-    }
-
-    const requestKey = createLatchToken(snapshot, edge)
-
-    if (this.underflowRequests.has(requestKey)) {
-      return null
-    }
-
-    this.underflowRequests.add(requestKey)
-    this.lastUnderflowEdge = edge
-    const update = this.startEdgeNeed(
-      snapshot,
-      edge,
-      'underflow-fill',
-      'underflow-fill',
-      { ignoreScrollSource: true },
+    return this.underflow.evaluate(
+      input,
+      (edge, reason) => this.edge.start(
+        input.snapshot,
+        edge,
+        reason,
+        'underflow-fill',
+        { ignoreScrollSource: true },
+      ),
+      this.destination.getLastDirection(),
     )
-
-    if (!update) {
-      return null
-    }
-
-    return {
-      ...update,
-      snapshot: {
-        ...update.snapshot,
-        segmentMeta: {
-          ...update.snapshot.segmentMeta,
-          underflow: 'fillable',
-        },
-      },
-    }
-  }
-
-  private nextRequestToken(feedId: string, kind: string): string {
-    this.requestSequence += 1
-    return `${feedId}:${kind}:${this.requestSequence}`
-  }
-
-  private chooseUnderflowEdge(
-    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
-  ): RuntimeEdge | null {
-    const canBefore = canRequestEdge(snapshot, 'before')
-    const canAfter = canRequestEdge(snapshot, 'after')
-
-    if (
-      snapshot.bottomLockState === 'LOCKED' ||
-      snapshot.segmentMeta.modifier.type === 'reset-latest'
-    ) {
-      return canBefore ? 'before' : null
-    }
-
-    if (canBefore && !canAfter) {
-      return 'before'
-    }
-
-    if (canAfter && !canBefore) {
-      return 'after'
-    }
-
-    if (!canBefore || !canAfter) {
-      return null
-    }
-
-    if (snapshot.segmentMeta.modifier.type === 'reset-around') {
-      return resolveResetAroundUnderflowEdge(
-        snapshot,
-        this.lastDestinationDirection,
-        this.lastUnderflowEdge,
-      )
-    }
-
-    return this.lastUnderflowEdge === 'before' ? 'after' : 'before'
   }
 
   hasActiveFollowBottom(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
   ): boolean {
-    return this.followBottom.has(snapshot)
+    return this.followBottom.hasActive(snapshot)
   }
 
   updateActiveFollowBottomForScroll(
@@ -391,6 +206,11 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
   ): MessageListSnapshot<TMessage, TOptimistic> {
     return this.followBottom.updateForScroll(snapshot, scrollTop, source)
   }
+
+  private nextRequestToken(feedIdOrKind: string): string {
+    this.requestSequence += 1
+    return `${feedIdOrKind}:${this.requestSequence}`
+  }
 }
 
 function isSegmentReset<TMessage, TOptimistic>(
@@ -399,163 +219,4 @@ function isSegmentReset<TMessage, TOptimistic>(
   return segment.modifier.type === 'bootstrap' ||
     segment.modifier.type === 'reset-around' ||
     segment.modifier.type === 'reset-latest'
-}
-
-function createNeedMoreBefore<TMessage, TOptimistic>(
-  snapshot: MessageListSnapshot<TMessage, TOptimistic>,
-  requestToken: string,
-  reason: string,
-): MessageListRuntimeEvent {
-  return {
-    type: 'needMoreBefore',
-    edge: 'before',
-    feedId: snapshot.feedId,
-    generation: snapshot.generation,
-    segmentRevision: snapshot.segmentRevision,
-    requestToken,
-    reason,
-  }
-}
-
-function createNeedMoreAfter<TMessage, TOptimistic>(
-  snapshot: MessageListSnapshot<TMessage, TOptimistic>,
-  requestToken: string,
-  reason: string,
-): MessageListRuntimeEvent {
-  return {
-    type: 'needMoreAfter',
-    edge: 'after',
-    feedId: snapshot.feedId,
-    generation: snapshot.generation,
-    segmentRevision: snapshot.segmentRevision,
-    requestToken,
-    reason,
-  }
-}
-
-function canRequestEdge<TMessage, TOptimistic>(
-  snapshot: MessageListSnapshot<TMessage, TOptimistic>,
-  edge: RuntimeEdge,
-): boolean {
-  const hasMore = edge === 'before'
-    ? snapshot.segmentMeta.hasMoreBefore
-    : snapshot.segmentMeta.hasMoreAfter
-
-  return hasMore &&
-    snapshot.viewportPhase === 'IDLE' &&
-    snapshot.edgeState[edge].status === 'idle' &&
-    snapshot.pendingIntent !== 'follow-bottom' &&
-    snapshot.pendingIntent !== 'destination'
-}
-
-function canEmitEdgeNeedForSource(
-  source: ScrollSource | null | undefined,
-  ignoreScrollSource = false,
-): boolean {
-  if (ignoreScrollSource) {
-    return true
-  }
-
-  return source === 'user' || source === 'momentum'
-}
-
-function settleEdge<TMessage, TOptimistic>(
-  snapshot: MessageListSnapshot<TMessage, TOptimistic>,
-  edge: RuntimeEdge,
-  requestToken: string,
-): MessageListSnapshot<TMessage, TOptimistic> {
-  if (snapshot.edgeState[edge].requestToken !== requestToken) {
-    return snapshot
-  }
-
-  const hasMore = edge === 'before'
-    ? snapshot.segmentMeta.hasMoreBefore
-    : snapshot.segmentMeta.hasMoreAfter
-
-  return setEdgeState(snapshot, edge, {
-    status: hasMore ? 'idle' : 'exhausted',
-  })
-}
-
-function setEdgeState<TMessage, TOptimistic>(
-  snapshot: MessageListSnapshot<TMessage, TOptimistic>,
-  edge: RuntimeEdge,
-  state: EdgeSnapshotState,
-): MessageListSnapshot<TMessage, TOptimistic> {
-  return {
-    ...snapshot,
-    edgeState: {
-      ...snapshot.edgeState,
-      [edge]: state,
-    },
-  }
-}
-
-function createIdleEdgeState(): MessageListSnapshot['edgeState'] {
-  return {
-    before: { status: 'idle' },
-    after: { status: 'idle' },
-  }
-}
-
-function createLatchToken<TMessage, TOptimistic>(
-  snapshot: MessageListSnapshot<TMessage, TOptimistic>,
-  edge: RuntimeEdge,
-): string {
-  return `${snapshot.feedId}:${snapshot.generation}:${snapshot.segmentRevision}:${edge}`
-}
-
-function resolveResetAroundUnderflowEdge<TMessage, TOptimistic>(
-  snapshot: MessageListSnapshot<TMessage, TOptimistic>,
-  destinationDirection: RuntimeEdge | null,
-  lastUnderflowEdge: RuntimeEdge | null,
-): RuntimeEdge {
-  const target = snapshot.segmentMeta.modifier.type === 'reset-around'
-    ? snapshot.segmentMeta.modifier.target
-    : null
-  const targetIndex = target ? findAnchorIndex(snapshot, target) : -1
-
-  if (targetIndex >= 0) {
-    const beforeCount = targetIndex
-    const afterCount = snapshot.items.length - targetIndex - 1
-
-    if (beforeCount < afterCount) {
-      return 'before'
-    }
-
-    if (afterCount < beforeCount) {
-      return 'after'
-    }
-  }
-
-  return destinationDirection ?? (lastUnderflowEdge === 'before' ? 'after' : 'before')
-}
-
-function resolveDestinationDirection(intent: DestinationIntent): RuntimeEdge | null {
-  if (intent.align === 'start') {
-    return 'before'
-  }
-
-  if (intent.align === 'end') {
-    return 'after'
-  }
-
-  return null
-}
-
-function findAnchorIndex<TMessage, TOptimistic>(
-  snapshot: MessageListSnapshot<TMessage, TOptimistic>,
-  anchor: MessageIdentityAnchor,
-): number {
-  return snapshot.items.findIndex((item) => {
-    const identity = item.identity
-
-    return identity &&
-      identity.feedId === anchor.feedId &&
-      (
-        identity.stableId === anchor.stableId ||
-        Boolean(identity.serverId && identity.serverId === anchor.serverId) ||
-        Boolean(identity.localId && identity.localId === anchor.localId)
-      )
-  })
 }

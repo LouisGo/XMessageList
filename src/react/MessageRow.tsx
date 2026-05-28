@@ -6,6 +6,8 @@ export type MessageRowProps<TMessage, TOptimistic> = {
   item: MessageDataItem<TMessage, TOptimistic>
   runtime: MessageListAdapterRuntime<TMessage, TOptimistic>
   renderRow: (item: MessageDataItem<TMessage, TOptimistic>) => ReactNode
+  rowRenderVersion?: unknown
+  usesRowRenderVersion: boolean
 }
 
 function MessageRowInner<TMessage, TOptimistic>({
@@ -31,4 +33,23 @@ function MessageRowInner<TMessage, TOptimistic>({
   )
 }
 
-export const MessageRow = memo(MessageRowInner) as typeof MessageRowInner
+function areMessageRowPropsEqual<TMessage, TOptimistic>(
+  previous: MessageRowProps<TMessage, TOptimistic>,
+  next: MessageRowProps<TMessage, TOptimistic>,
+): boolean {
+  const renderRowEqual = next.usesRowRenderVersion
+    ? true
+    : previous.renderRow === next.renderRow
+
+  return previous.runtime === next.runtime &&
+    previous.item.key === next.item.key &&
+    previous.item.renderVersion === next.item.renderVersion &&
+    previous.usesRowRenderVersion === next.usesRowRenderVersion &&
+    Object.is(previous.rowRenderVersion, next.rowRenderVersion) &&
+    renderRowEqual
+}
+
+export const MessageRow = memo(
+  MessageRowInner,
+  areMessageRowPropsEqual,
+) as typeof MessageRowInner

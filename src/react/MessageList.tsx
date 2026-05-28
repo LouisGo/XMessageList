@@ -1,5 +1,6 @@
-import { useCallback, useLayoutEffect, useRef } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getMessageListAdapterRuntime } from '../runtime/internal'
+import type { ViewportObservationChangedEvent } from '../runtime'
 import { MessageFlow } from './MessageFlow'
 import { MessageListScrollbarOverlay } from './MessageListScrollbarOverlay'
 import { useMessageListSnapshot } from './hooks'
@@ -15,6 +16,7 @@ export function MessageList<TMessage, TOptimistic>({
   renderOverlay,
   renderRow,
   renderScrollToLatest,
+  getRowRenderVersion,
   onViewportAnchorChange,
   onViewportObservationChange,
   scrollbar = 'native',
@@ -22,6 +24,12 @@ export function MessageList<TMessage, TOptimistic>({
   const snapshot = useMessageListSnapshot(runtime)
   const adapterRuntime = getMessageListAdapterRuntime(runtime)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const [observation, setObservation] =
+    useState<ViewportObservationChangedEvent | null>(null)
+  const commands = useMemo(() => ({
+    scrollToLatest: () => runtime.scrollToLatest(),
+    scrollToMessage: runtime.scrollToMessage.bind(runtime),
+  }), [runtime])
   const attachContainer = useCallback((element: HTMLDivElement | null) => {
     containerRef.current = element
     if (element) {
@@ -47,11 +55,13 @@ export function MessageList<TMessage, TOptimistic>({
           runtime={runtime}
           onViewportAnchorChange={onViewportAnchorChange}
           onViewportObservationChange={onViewportObservationChange}
+          onViewportObservationForOverlay={renderOverlay ? setObservation : undefined}
         />
         <MessageFlow
           runtime={adapterRuntime}
           snapshot={snapshot}
           renderRow={renderRow}
+          getRowRenderVersion={getRowRenderVersion}
           renderBeforeEdge={renderBeforeEdge}
           renderAfterEdge={renderAfterEdge}
         />
@@ -59,7 +69,7 @@ export function MessageList<TMessage, TOptimistic>({
           visible: snapshot.bottomLockState === 'UNLOCKED',
           scrollToLatest: () => runtime.scrollToLatest(),
         })}
-        {renderOverlay?.({ snapshot })}
+        {renderOverlay?.({ snapshot, observation, commands })}
         <ProjectionCommitAck
           runtime={adapterRuntime}
           token={snapshot.commitToken}
@@ -83,12 +93,17 @@ type RuntimeEventBridgeProps<TMessage, TOptimistic> = Pick<
   | 'runtime'
   | 'onViewportAnchorChange'
   | 'onViewportObservationChange'
->
+> & {
+  onViewportObservationForOverlay?: (
+    event: ViewportObservationChangedEvent,
+  ) => void
+}
 
 function RuntimeEventBridge<TMessage, TOptimistic>({
   runtime,
   onViewportAnchorChange,
   onViewportObservationChange,
+  onViewportObservationForOverlay,
 }: RuntimeEventBridgeProps<TMessage, TOptimistic>) {
   useLayoutEffect(() => {
     const unsubscribers: Array<() => void> = []
@@ -101,9 +116,12 @@ function RuntimeEventBridge<TMessage, TOptimistic>({
       }))
     }
 
-    if (onViewportObservationChange) {
+    if (onViewportObservationChange || onViewportObservationForOverlay) {
       unsubscribers.push(
-        runtime.subscribeViewportObservation(onViewportObservationChange),
+        runtime.subscribeViewportObservation((event) => {
+          onViewportObservationChange?.(event)
+          onViewportObservationForOverlay?.(event)
+        }),
       )
     }
 
@@ -112,7 +130,12 @@ function RuntimeEventBridge<TMessage, TOptimistic>({
         unsubscribe()
       }
     }
-  }, [runtime, onViewportAnchorChange, onViewportObservationChange])
+  }, [
+    runtime,
+    onViewportAnchorChange,
+    onViewportObservationChange,
+    onViewportObservationForOverlay,
+  ])
 
   return null
 }

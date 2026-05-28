@@ -17,7 +17,10 @@ export type RuntimeMeasurement = Pick<
   | 'beforeTrigger'
   | 'afterTrigger'
   | 'bottomMarker'
->
+> & {
+  viewportTop: number
+  viewportBottom: number
+}
 
 export type RuntimeMeasurementOptions = {
   rowKeys?: MessageRuntimeItemKey[]
@@ -57,6 +60,7 @@ export function measureRuntimeDom(
 ): RuntimeMeasurement {
   const container = registry.scrollContainer
   const empty = createEmptyRect()
+  const viewportRect = container?.getBoundingClientRect() ?? empty
   const rows = options.rowKeys
     ? options.rowKeys
         .map((key) => [key, registry.rows.get(key)] as const)
@@ -69,6 +73,8 @@ export function measureRuntimeDom(
     scrollTop: container?.scrollTop ?? 0,
     clientHeight: container?.clientHeight ?? 0,
     scrollHeight: container?.scrollHeight ?? 0,
+    viewportTop: viewportRect.top,
+    viewportBottom: viewportRect.bottom,
     visibleRows: rows.map(([key, row]) => {
       const rect = row.getBoundingClientRect()
       return {

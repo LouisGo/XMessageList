@@ -6,7 +6,7 @@ import type { EdgeSlotInput, MessageListProps } from './types'
 
 export type MessageFlowProps<TMessage, TOptimistic> = Pick<
   MessageListProps<TMessage, TOptimistic>,
-  'renderAfterEdge' | 'renderBeforeEdge' | 'renderRow'
+  'getRowRenderVersion' | 'renderAfterEdge' | 'renderBeforeEdge' | 'renderRow'
 > & {
   runtime: MessageListAdapterRuntime<TMessage, TOptimistic>
   snapshot: MessageListSnapshot<TMessage, TOptimistic>
@@ -17,6 +17,7 @@ export function MessageFlow<TMessage, TOptimistic>({
   snapshot,
   renderAfterEdge,
   renderBeforeEdge,
+  getRowRenderVersion,
   renderRow,
 }: MessageFlowProps<TMessage, TOptimistic>) {
   const registerFlow = useCallback((element: HTMLDivElement | null) => {
@@ -52,6 +53,8 @@ export function MessageFlow<TMessage, TOptimistic>({
           item={item}
           runtime={runtime}
           renderRow={renderRow}
+          rowRenderVersion={getRowRenderVersion?.(item)}
+          usesRowRenderVersion={Boolean(getRowRenderVersion)}
         />
       ))}
       <div ref={registerAfter} data-edge-trigger="after">
