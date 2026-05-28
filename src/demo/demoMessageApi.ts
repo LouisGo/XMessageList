@@ -20,6 +20,7 @@ import type {
 
 const DEFAULT_LATEST_LIMIT = 40
 const feedStore = new Map<string, PersistedDemoFeed>()
+const hydratedFeeds = new Set<string>()
 const pendingWrites = new Map<string, Promise<void>>()
 
 export async function getLatestMessages(
@@ -124,12 +125,50 @@ export function getDemoRespAnchor(
 export function replaceDemoFeedMessages(
   feedId: string,
   messages: DemoMessage[],
-): void {
-  writeFeedMessages(feedId, messages)
+): DemoMessage[] {
+  return writeFeedMessages(feedId, messages).messages
 }
 
 export function readDemoFeedMessages(feedId: string): DemoMessage[] {
   return [...ensureFeedSync(feedId).messages]
+}
+
+export async function loadDemoFeedMessages(feedId: string): Promise<DemoMessage[]> {
+  return [...(await ensureFeed(feedId)).messages]
+}
+
+export function readDemoViewportAnchor(
+  feedId: string,
+): PersistedDemoFeed['lastViewportAnchor'] | undefined {
+  return feedStore.get(feedId)?.lastViewportAnchor
+}
+
+export async function loadDemoViewportAnchor(
+  feedId: string,
+): Promise<PersistedDemoFeed['lastViewportAnchor'] | undefined> {
+  return (await ensureFeed(feedId)).lastViewportAnchor
+}
+
+export function saveDemoViewportAnchor(
+  feedId: string,
+  anchor: PersistedDemoFeed['lastViewportAnchor'] | undefined,
+): void {
+  const current = feedStore.get(feedId)
+
+  if (!current) {
+    return
+  }
+
+  const nextFeed = normalizePersistedFeed(feedId, {
+    ...current,
+    lastViewportAnchor: anchor,
+    updatedAt: new Date().toISOString(),
+  })
+
+  feedStore.set(feedId, nextFeed)
+  if (hydratedFeeds.has(feedId)) {
+    void persistFeed(nextFeed)
+  }
 }
 
 export function appendDemoFeedMessages(
@@ -144,10 +183,19 @@ export function appendDemoFeedMessages(
   return next
 }
 
+export async function flushDemoFeedPersistence(feedId?: string): Promise<void> {
+  if (feedId) {
+    await pendingWrites.get(feedId)
+    return
+  }
+
+  await Promise.all(pendingWrites.values())
+}
+
 async function ensureFeed(feedId: string): Promise<PersistedDemoFeed> {
   const existing = feedStore.get(feedId)
 
-  if (existing) {
+  if (existing && hydratedFeeds.has(feedId)) {
     return existing
   }
 
@@ -156,11 +204,13 @@ async function ensureFeed(feedId: string): Promise<PersistedDemoFeed> {
   if (persisted) {
     const normalized = normalizePersistedFeed(feedId, persisted)
     feedStore.set(feedId, normalized)
+    hydratedFeeds.add(feedId)
     return normalized
   }
 
-  const seeded = createSeedFeed(feedId)
+  const seeded = existing ?? createSeedFeed(feedId)
   feedStore.set(feedId, seeded)
+  hydratedFeeds.add(feedId)
   await persistFeed(seeded)
   return seeded
 }
@@ -174,7 +224,6 @@ function ensureFeedSync(feedId: string): PersistedDemoFeed {
 
   const seeded = createSeedFeed(feedId)
   feedStore.set(feedId, seeded)
-  void persistFeed(seeded)
   return seeded
 }
 
@@ -191,6 +240,7 @@ function writeFeedMessages(feedId: string, messages: DemoMessage[]): PersistedDe
   })
 
   feedStore.set(feedId, nextFeed)
+  hydratedFeeds.add(feedId)
   void persistFeed(nextFeed)
   return nextFeed
 }

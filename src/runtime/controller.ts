@@ -1,5 +1,4 @@
 import { correctTransactionAnchor } from './anchorCorrection'
-import { resolveObservedBottomLockState } from './bottomLock'
 import { DiagnosticRingBuffer } from './diagnostics'
 import { RuntimeDomRegistry } from './domRegistry'
 import { createViewportEvidence } from './evidence'
@@ -15,6 +14,7 @@ import {
   withNextProjectionRevision,
 } from './controllerHelpers'
 import { RuntimeDomInteractions } from './domInteractions'
+import { RuntimeScrollIntentCoordinator } from './runtimeScrollIntent'
 import {
   RuntimeInteractionState,
   type DestinationIntent,
@@ -41,6 +41,7 @@ import type {
   ProjectionCommitToken,
   ViewportEvidence,
 } from './snapshot'
+import { createPostCommitInteractionUpdates } from './postCommitInteractions'
 import {
   isStaleLoadedSegment,
   removeQueuedSegmentsBeforeGeneration,
@@ -62,6 +63,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   private readonly registry = new RuntimeDomRegistry()
   private readonly diagnostics: DiagnosticRingBuffer
   private readonly interactions = new RuntimeInteractionState<TMessage, TOptimistic>()
+  private readonly scrollIntent: RuntimeScrollIntentCoordinator
   private readonly domInteractions: RuntimeDomInteractions<TMessage, TOptimistic>
   private readonly snapshotListeners = new Set<MessageListSnapshotListener>()
   private readonly eventListeners = new Set<MessageListRuntimeEventListener>()
@@ -78,11 +80,14 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.scheduler = options.scheduler ?? createDefaultScheduler()
     this.observerFactory = options.observers ?? createBrowserObserverFactory()
     this.diagnostics = new DiagnosticRingBuffer(this.scheduler)
+    this.scrollIntent = new RuntimeScrollIntentCoordinator(options)
     this.domInteractions = new RuntimeDomInteractions({
       scheduler: this.scheduler,
       observerFactory: this.observerFactory,
       registry: this.registry,
       onEdgeIntersect: (edge) => this.handleEdgeIntersection(edge),
+      onScrollWrite: (source) => this.scrollIntent.markScrollWrite(source),
+      onUserScrollIntent: () => this.scrollIntent.markUserScrollIntent(),
       onScrollFrame: () => this.handleScrollFrame(),
       onDiagnostic: (name, severity, details) => this.pushDiagnostic(name, severity, details),
     })
@@ -92,9 +97,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     }) ?? null
   }
 
-  attachScrollContainer(container: HTMLElement): void {
-    this.domInteractions.attachScrollContainer(container)
-  }
+  attachScrollContainer(container: HTMLElement): void { this.domInteractions.attachScrollContainer(container) }
 
   detachScrollContainer(): void {
     this.emitAnchorChanged('detach', this.resolveCurrentVisualAnchor())
@@ -206,6 +209,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.scheduler.clearTimeout(pending.timeoutHandle)
     this.isAdvancingTransactionQueue = true
     try {
+      this.scrollIntent.incrementFrame()
       this.setViewportPhase('MEASURING')
       this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
       this.setViewportPhase('CORRECTING')
@@ -214,6 +218,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
         segment: pending.segment,
         capturedAnchor: pending.anchor,
         destination: this.interactions.getPendingDestination(),
+        activeFollowBottom: this.interactions.hasActiveFollowBottom(this.snapshot),
         domInteractions: this.domInteractions,
         correctAnchor: (anchor, segment) => this.correctAnchor(anchor, segment),
         getViewportAnchor: () => this.getViewportAnchor(),
@@ -224,6 +229,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
         this.snapshot,
         pending.segment,
       )
+      this.syncScrollIntentBottomLock()
       this.pendingTransaction = null
       this.setViewportPhase('IDLE')
       this.pushDiagnostic('transaction.settle', 'info', { ...token, latencyMs: this.scheduler.now() - pending.startedAt })
@@ -233,11 +239,14 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.isAdvancingTransactionQueue = false
     }
     this.startNextQueuedTransaction()
-    this.evaluateUnderflow()
+    this.applyPostCommitInteractionUpdates(this.domInteractions.getDirectScrollEdgeIntent())
   }
 
   scrollToLatest(): void {
-    const update = this.interactions.startFollowBottom(this.snapshot)
+    const update = this.interactions.startFollowBottom(
+      this.snapshot,
+      this.readCurrentScrollTop(),
+    )
     this.applyInteractionUpdate(update)
 
     if (!update.event) {
@@ -283,29 +292,23 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       return false
     }
 
+    this.interactions.clearFollowBottom()
     this.snapshot = {
       ...this.snapshot,
       bottomLockState: 'UNLOCKED',
       pendingIntent: null,
     }
+    this.syncScrollIntentBottomLock()
     this.emitSnapshot()
     this.emitAnchorChanged('transaction-settle', target)
     return true
   }
 
-  getSnapshot(): MessageListSnapshot<TMessage, TOptimistic> {
-    return this.snapshot
-  }
+  getSnapshot(): MessageListSnapshot<TMessage, TOptimistic> { return this.snapshot }
 
-  subscribeSnapshot(listener: MessageListSnapshotListener): () => void {
-    this.snapshotListeners.add(listener)
-    return () => this.snapshotListeners.delete(listener)
-  }
+  subscribeSnapshot(listener: MessageListSnapshotListener): () => void { this.snapshotListeners.add(listener); return () => this.snapshotListeners.delete(listener) }
 
-  subscribeRuntimeEvent(listener: MessageListRuntimeEventListener): () => void {
-    this.eventListeners.add(listener)
-    return () => this.eventListeners.delete(listener)
-  }
+  subscribeRuntimeEvent(listener: MessageListRuntimeEventListener): () => void { this.eventListeners.add(listener); return () => this.eventListeners.delete(listener) }
 
   subscribeViewportObservation(listener: ViewportObservationListener): () => void {
     return this.subscribeRuntimeEvent((event) => {
@@ -315,13 +318,9 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     })
   }
 
-  getViewportAnchor(): MessageIdentityAnchor | null {
-    return this.lastAnchor ?? this.snapshot.segmentMeta.anchor ?? null
-  }
+  getViewportAnchor(): MessageIdentityAnchor | null { return this.lastAnchor ?? this.snapshot.segmentMeta.anchor ?? null }
 
-  getDiagnostics(): import('./events').ViewportDiagnosticRecord[] {
-    return this.diagnostics.getRecords()
-  }
+  getDiagnostics(): import('./events').ViewportDiagnosticRecord[] { return this.diagnostics.getRecords() }
 
   getEvidence(): ViewportEvidence {
     return createViewportEvidence(
@@ -331,23 +330,13 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     )
   }
 
-  registerMessageFlowElement(element: HTMLElement | null): void {
-    this.registry.setMessageFlow(element)
-  }
+  registerMessageFlowElement(element: HTMLElement | null): void { this.registry.setMessageFlow(element) }
 
-  registerBeforeTriggerElement(element: HTMLElement | null): void {
-    this.registry.setBeforeTrigger(element)
-    this.domInteractions.registerEdgeTrigger('before', element)
-  }
+  registerBeforeTriggerElement(element: HTMLElement | null): void { this.registry.setBeforeTrigger(element); this.domInteractions.registerEdgeTrigger('before', element) }
 
-  registerAfterTriggerElement(element: HTMLElement | null): void {
-    this.registry.setAfterTrigger(element)
-    this.domInteractions.registerEdgeTrigger('after', element)
-  }
+  registerAfterTriggerElement(element: HTMLElement | null): void { this.registry.setAfterTrigger(element); this.domInteractions.registerEdgeTrigger('after', element) }
 
-  registerBottomMarkerElement(element: HTMLElement | null): void {
-    this.registry.setBottomMarker(element)
-  }
+  registerBottomMarkerElement(element: HTMLElement | null): void { this.registry.setBottomMarker(element) }
 
   registerRowElement(key: MessageRuntimeItemKey, element: HTMLElement | null): void {
     const previous = this.registry.getRow(key)
@@ -363,29 +352,15 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     }
   }
 
-  beginDirectScroll(): void {
-    this.domInteractions.beginDirectScroll()
-  }
+  beginDirectScroll(): void { this.domInteractions.beginDirectScroll() }
 
-  writeDirectScrollTop(scrollTop: number): boolean {
-    return this.domInteractions.writeDirectScrollTop(scrollTop)
-  }
+  writeDirectScrollTop(scrollTop: number): boolean { return this.domInteractions.writeDirectScrollTop(scrollTop) }
 
-  endDirectScroll(): void {
-    this.domInteractions.endDirectScroll()
-  }
+  endDirectScroll(): void { this.domInteractions.endDirectScroll() }
 
-  reportEdgeRequestFailure(edge: RuntimeEdge, requestToken: string): void {
-    this.snapshot = this.interactions.reportEdgeError(this.snapshot, edge, requestToken)
-    this.emitSnapshot()
-  }
+  reportEdgeRequestFailure(edge: RuntimeEdge, requestToken: string): void { this.snapshot = this.interactions.reportEdgeError(this.snapshot, edge, requestToken); this.emitSnapshot() }
 
-  retryEdgeRequest(edge: RuntimeEdge): void {
-    const update = this.interactions.retryEdge(this.snapshot, edge)
-    if (update) {
-      this.applyInteractionUpdate(update)
-    }
-  }
+  retryEdgeRequest(edge: RuntimeEdge): void { const update = this.interactions.retryEdge(this.snapshot, edge); if (update) this.applyInteractionUpdate(update) }
 
   reportOverlayMetricMismatch(details: Record<string, unknown>): void { this.pushDiagnostic('overlay.metricMismatch', 'warn', details) }
 
@@ -425,6 +400,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     update: InteractionUpdate<TMessage, TOptimistic>,
   ): void {
     this.snapshot = withNextProjectionRevision(update.snapshot)
+    this.syncScrollIntentBottomLock()
     this.emitSnapshot()
 
     if (update.event) {
@@ -433,11 +409,13 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   }
 
   private handleEdgeIntersection(edge: RuntimeEdge): void {
+    const source = this.scrollIntent.classifyCurrentScroll()
     const update = this.interactions.startEdgeNeed(
       this.snapshot,
       edge,
       edge === 'before' ? 'near-before' : 'near-after',
       edge === 'before' ? 'edge-before' : 'edge-after',
+      { source },
     )
 
     if (update) {
@@ -450,6 +428,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       return
     }
     this.resizeFrame = this.scheduler.requestAnimationFrame(() => {
+      this.scrollIntent.incrementFrame()
       this.resizeFrame = null
       this.domInteractions.preserveVisualAnchor(captureVisualAnchor(this.registry.snapshot()))
       this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
@@ -458,7 +437,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
         rowCount: this.lastMeasurement.visibleRows.length,
       })
       this.emitViewportObservation()
-      this.evaluateUnderflow()
+      this.applyPostCommitInteractionUpdates()
     })
   }
   private handleScrollFrame(): void {
@@ -466,12 +445,23 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       return
     }
 
+    const scrollSource = this.scrollIntent.classifyFrameScroll()
     this.lastMeasurement = measureRuntimeDom(this.registry.snapshot(), {
       rowKeys: this.domInteractions.getScrollSampleKeys(),
     })
-    const bottomLockState = resolveObservedBottomLockState(this.snapshot, this.lastMeasurement)
-    if (bottomLockState !== this.snapshot.bottomLockState) {
-      this.snapshot = { ...this.snapshot, bottomLockState }
+    this.snapshot = this.interactions.updateActiveFollowBottomForScroll(
+      this.snapshot,
+      this.lastMeasurement.scrollTop,
+      scrollSource,
+    )
+    const bottomLockUpdate = this.scrollIntent.updateBottomLock(
+      this.snapshot,
+      this.lastMeasurement,
+      scrollSource,
+    )
+    this.snapshot = bottomLockUpdate.snapshot
+    if (bottomLockUpdate.changed) {
+      this.emitSnapshot()
     }
     this.emitViewportObservation()
     this.emitAnchorChanged('scroll-idle', this.resolveMeasuredViewportAnchor())
@@ -492,11 +482,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.emitSnapshot()
   }
 
-  private emitSnapshot(): void {
-    for (const listener of this.snapshotListeners) {
-      listener()
-    }
-  }
+  private emitSnapshot(): void { for (const listener of this.snapshotListeners) listener() }
 
   private startNextQueuedTransaction(): void {
     if (this.pendingTransaction || this.isAdvancingTransactionQueue) {
@@ -525,6 +511,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       !this.shouldPreservePendingIntentFor(segment)
     ) {
       this.snapshot = this.interactions.resetForGeneration(this.snapshot)
+      this.syncScrollIntentBottomLock()
     }
   }
 
@@ -586,15 +573,27 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     })
   }
 
-  private evaluateUnderflow(): void {
-    const update = this.interactions.evaluateUnderflow({
+  private applyPostCommitInteractionUpdates(
+    directScrollEdgeIntent: RuntimeEdge | null = null,
+  ): void {
+    for (const update of createPostCommitInteractionUpdates({
+      interactions: this.interactions,
       snapshot: this.snapshot,
-      scrollHeight: this.lastMeasurement.scrollHeight,
-      clientHeight: this.lastMeasurement.clientHeight,
-    })
-
-    if (update) {
+      measurement: this.lastMeasurement,
+      directScrollEdgeIntent,
+      scrollSource: this.scrollIntent.getLastScrollSource(),
+      allowDirectScrollEdge: !this.pendingTransaction && this.snapshot.viewportPhase === 'IDLE',
+    })) {
       this.applyInteractionUpdate(update)
     }
+  }
+
+  private syncScrollIntentBottomLock(): void {
+    this.scrollIntent.syncBottomLock(this.snapshot)
+  }
+
+  private readCurrentScrollTop(): number {
+    return this.registry.snapshot().scrollContainer?.scrollTop ??
+      this.lastMeasurement.scrollTop
   }
 }

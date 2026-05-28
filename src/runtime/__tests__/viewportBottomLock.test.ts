@@ -40,11 +40,9 @@ describe('MessageList bottom lock observation', () => {
     })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
-    const rows = [
-      createRow('row-1', 0, 50),
-      createRow('row-2', 50, 50),
-      createRow('row-3', 100, 50),
-    ]
+    const rows = Array.from({ length: 6 }, (_, index) =>
+      createRow(`row-${index + 1}`, index * 50, 50),
+    )
 
     container.append(...rows)
     runtime.attachScrollContainer(container)

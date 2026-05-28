@@ -31,6 +31,7 @@ export type DemoMessageScenario = {
   loadHistoryBatch: () => void
   loadFutureBatch: () => void
   appendMessage: () => void
+  appendMessages: (count: number) => void
   appendLongBurst: () => void
   toggleEventStorm: () => void
   toggleBotPush: () => void
@@ -70,7 +71,7 @@ export type DemoLoadedMessagesReplacer = (input: {
   messages: DemoMessage[]
   changedKeys: string[]
   eventText: string
-}) => void
+}) => Promise<void>
 
 export type PendingOptimisticRemap = {
   feedId: string

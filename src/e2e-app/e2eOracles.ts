@@ -328,6 +328,25 @@ export function expectDetachAnchorCheckpoint(evidence: E2EEvidence): E2EOracleRe
   }
 }
 
+export function expectRestoreAroundAfterDetach(evidence: E2EEvidence): E2EOracleResult {
+  return {
+    oracleId: 'restore-around-after-detach',
+    ok: evidence.segment.modifier.type === 'reset-around',
+    message: `modifier=${evidence.segment.modifier.type}`,
+  }
+}
+
+export function expectSegmentItemCountAtMost(
+  evidence: E2EEvidence,
+  maxItems: number,
+): E2EOracleResult {
+  return {
+    oracleId: 'segment-item-budget',
+    ok: evidence.segment.itemCount <= maxItems,
+    message: `items=${evidence.segment.itemCount} max=${maxItems}`,
+  }
+}
+
 export function expectDiagnosticsBounded(evidence: E2EEvidence): E2EOracleResult {
   return {
     oracleId: 'diagnostics-bounded',

@@ -14,6 +14,13 @@ import {
   type E2ESegmentEvidence,
   type XMessageListE2EBridge,
 } from './e2eBridge'
+import {
+  clickScrollbarTrack,
+  dragScrollbarToBottom,
+  dragScrollbarToTop,
+  E2EActionError,
+  scrollContainer,
+} from './e2eDomActions'
 
 const E2E_ACTIONS: E2EActionDescriptor[] = [
   { id: 'wait_for_ready', label: 'Wait ready', enabled: true },
@@ -25,6 +32,7 @@ const E2E_ACTIONS: E2EActionDescriptor[] = [
   { id: 'trigger_before_edge', label: 'Trigger before', enabled: true },
   { id: 'trigger_after_edge', label: 'Trigger after', enabled: true },
   { id: 'append_message', label: 'Append', enabled: true },
+  { id: 'append_many', label: 'Append many', enabled: true },
   { id: 'prepend_history', label: 'Prepend history', enabled: true },
   { id: 'follow_bottom', label: 'Follow bottom', enabled: true },
   { id: 'jump_to_first_loaded', label: 'Jump loaded', enabled: true },
@@ -41,6 +49,7 @@ const E2E_ACTIONS: E2EActionDescriptor[] = [
   { id: 'start_bot_push', label: 'Start bot', enabled: true },
   { id: 'stop_bot_push', label: 'Stop bot', enabled: true },
   { id: 'drag_scrollbar_to_top', label: 'Drag top', enabled: true },
+  { id: 'drag_scrollbar_to_bottom', label: 'Drag bottom', enabled: true },
   { id: 'track_click_scrollbar', label: 'Track click', enabled: true },
 ]
 
@@ -259,6 +268,12 @@ async function runBridgeAction({
       scenario.appendMessage()
       await waitForRuntimeIdle(readEvidence, 1_500)
       return
+    case 'append_many': {
+      const count = Math.min(Math.max(1, Number(payload.count ?? 1)), 160)
+      scenario.appendMessages(count)
+      await waitForRuntimeIdle(readEvidence, 3_000)
+      return
+    }
     case 'prepend_history':
       scenario.loadHistoryBatch()
       await waitForRuntimeIdle(readEvidence, 1_500)
@@ -339,6 +354,11 @@ async function runBridgeAction({
       dragScrollbarToTop(root)
       await waitForRuntimeIdle(readEvidence, 2_000)
       return
+    case 'drag_scrollbar_to_bottom':
+      await wait(240)
+      dragScrollbarToBottom(root)
+      await waitForRuntimeIdle(readEvidence, 2_000)
+      return
     case 'track_click_scrollbar':
       await wait(240)
       clickScrollbarTrack(root, Number(payload.ratio ?? 0.5))
@@ -410,74 +430,6 @@ function toEventRecord(event: MessageListRuntimeEvent): E2ERuntimeEventRecord {
     edge: 'edge' in event ? event.edge : undefined,
     anchor: 'anchor' in event ? event.anchor : undefined,
   }
-}
-
-function findScrollContainer(root: HTMLElement | null): HTMLElement {
-  const container = root?.querySelector<HTMLElement>('[data-message-scroll-container]')
-
-  if (!container) {
-    throw new E2EActionError('missing_scroll_container', 'scroll container not found')
-  }
-
-  return container
-}
-
-function scrollContainer(root: HTMLElement | null, target: 'top' | 'middle' | 'bottom'): void {
-  const container = findScrollContainer(root)
-  const maxTop = Math.max(0, container.scrollHeight - container.clientHeight)
-  const nextTop = target === 'top'
-    ? 0
-    : target === 'bottom'
-      ? maxTop
-      : maxTop / 2
-
-  container.scrollTop = nextTop
-  container.dispatchEvent(new Event('scroll', { bubbles: true }))
-}
-
-function dragScrollbarToTop(root: HTMLElement | null): void {
-  const thumb = root?.querySelector<HTMLElement>('[data-message-scrollbar-thumb]')
-
-  if (!thumb) {
-    throw new E2EActionError('missing_scrollbar_thumb', 'scrollbar thumb not found')
-  }
-
-  const rect = thumb.getBoundingClientRect()
-  dispatchPointer(thumb, 'pointerdown', rect.left + rect.width / 2, rect.top + rect.height / 2)
-  dispatchPointer(thumb, 'pointermove', rect.left + rect.width / 2, 0)
-  dispatchPointer(thumb, 'pointerup', rect.left + rect.width / 2, 0)
-}
-
-function clickScrollbarTrack(root: HTMLElement | null, ratio: number): void {
-  const track = root?.querySelector<HTMLElement>('[data-message-scrollbar-track]')
-
-  if (!track) {
-    throw new E2EActionError('missing_scrollbar_track', 'scrollbar track not found')
-  }
-
-  const rect = track.getBoundingClientRect()
-  dispatchPointer(
-    track,
-    'pointerdown',
-    rect.left + rect.width / 2,
-    rect.top + rect.height * Math.min(Math.max(ratio, 0), 1),
-  )
-}
-
-function dispatchPointer(
-  target: HTMLElement,
-  type: string,
-  clientX: number,
-  clientY: number,
-): void {
-  target.dispatchEvent(new PointerEvent(type, {
-    bubbles: true,
-    cancelable: true,
-    clientX,
-    clientY,
-    pointerId: 1,
-    pointerType: 'mouse',
-  }))
 }
 
 function readOverlayEvidence(
@@ -579,13 +531,4 @@ function wait(ms: number): Promise<void> {
 
 function waitForAnimationFrame(): Promise<void> {
   return new Promise((resolve) => window.requestAnimationFrame(() => resolve()))
-}
-
-class E2EActionError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message)
-  }
 }

@@ -19,6 +19,8 @@ export type MessageListRuntimeOptions = {
   scheduler?: RuntimeScheduler
   observers?: RuntimeObserverFactory
   commitTimeoutMs?: number
+  bottomLockThresholdPx?: number
+  bottomUnlockThresholdPx?: number
 }
 
 export type MessageListScrollOptions = {

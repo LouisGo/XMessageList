@@ -1,0 +1,197 @@
+import { useCallback } from 'react'
+import type { MessageListRuntime } from '../../runtime'
+import {
+  createOutgoingMessage,
+  toDemoMessageDataItem,
+  type DemoMessage,
+} from '../demoData'
+import {
+  appendDemoFeedMessages,
+  flushDemoFeedPersistence,
+  loadDemoFeedMessages,
+  replaceDemoFeedMessages,
+  saveDemoViewportAnchor,
+} from '../demoMessageApi'
+import {
+  createDemoRequestId,
+  writeDemoLog,
+} from '../demoLocalStoreClient'
+import {
+  highlightMessage,
+  readLoadedMessages,
+  waitMockDelay,
+} from './demoScenarioHelpers'
+import type {
+  DemoDataRuntimeGetter,
+  DemoHighlightState,
+  DemoSegmentPublisher,
+} from './demoScenarioTypes'
+
+export type DemoMessageCommandActions = {
+  sendMessage: (body: string) => boolean
+  followBottom: () => void
+  jumpToQuote: (input?: {
+    origin: { messageId: string; position?: number }
+    target: { messageId: string; position?: number }
+  }) => void
+  clearFeed: (feedId: string) => void
+}
+
+export function useDemoMessageCommands(input: {
+  activeFeedId: string
+  runtime: MessageListRuntime<DemoMessage>
+  getDataRuntime: DemoDataRuntimeGetter
+  publishSegment: DemoSegmentPublisher
+  pageSize: number
+  sendDelayBaseMs: number
+  setMessageCount: (messageCount: number) => void
+  setLastEvent: (eventText: string) => void
+  highlightState: DemoHighlightState
+}): DemoMessageCommandActions {
+  const {
+    activeFeedId,
+    getDataRuntime,
+    highlightState,
+    publishSegment,
+    pageSize,
+    runtime,
+    sendDelayBaseMs,
+    setLastEvent,
+    setMessageCount,
+  } = input
+
+  const sendMessage = useCallback((body: string): boolean => {
+    const trimmed = body.trim()
+
+    if (!trimmed) {
+      return false
+    }
+
+    void (async () => {
+      await waitMockDelay(sendDelayBaseMs)
+
+      const allMessages = await loadDemoFeedMessages(activeFeedId)
+      const dataRuntime = getDataRuntime(activeFeedId)
+      const shouldRebuildLatest = dataRuntime.getSegment().hasMoreAfter
+      const message = createOutgoingMessage(trimmed, {
+        feedId: activeFeedId,
+        sequence: (allMessages.at(-1)?.sequence ?? 0) + 1,
+        quoteCandidates: allMessages,
+      })
+      const persistedMessages = appendDemoFeedMessages(activeFeedId, [message])
+
+      saveDemoViewportAnchor(activeFeedId, undefined)
+      await flushDemoFeedPersistence(activeFeedId)
+      setMessageCount(persistedMessages.length)
+
+      if (shouldRebuildLatest) {
+        const latest = persistedMessages.slice(
+          Math.max(0, persistedMessages.length - pageSize),
+        )
+        const latestMessage = latest.at(-1)
+        dataRuntime.resetLatest({
+          items: latest.map(toDemoMessageDataItem),
+          hasMoreBefore: persistedMessages.length > pageSize,
+          hasMoreAfter: false,
+          anchor: latestMessage
+            ? {
+                feedId: activeFeedId,
+                stableId: latestMessage.id,
+                serverId: latestMessage.id,
+              }
+            : undefined,
+          anchorStatus: 'normal',
+        })
+        publishSegment(dataRuntime)
+        setLastEvent(`sent ${message.id} and rebuilt latest`)
+        return
+      }
+
+      runtime.scrollToLatest()
+      dataRuntime.patchItems([toDemoMessageDataItem(message)])
+      publishSegment(dataRuntime)
+      setLastEvent(`sent ${message.id}`)
+    })()
+    return true
+  }, [
+    activeFeedId,
+    getDataRuntime,
+    pageSize,
+    publishSegment,
+    runtime,
+    sendDelayBaseMs,
+    setLastEvent,
+    setMessageCount,
+  ])
+
+  const jumpToQuote = useCallback((input?: {
+    origin: { messageId: string; position?: number }
+    target: { messageId: string; position?: number }
+  }) => {
+    const target = input?.target
+
+    if (target) {
+      void writeDemoLog({
+        requestId: createDemoRequestId('runtime.command.quoteJump'),
+        operation: 'runtime.command.quoteJump',
+        phase: 'info',
+        feedId: activeFeedId,
+        details: {
+          origin: input?.origin,
+          target,
+        },
+      })
+      runtime.scrollToMessage({
+        feedId: activeFeedId,
+        stableId: target.messageId,
+        serverId: target.messageId,
+      })
+      highlightMessage(target.messageId, highlightState)
+      setLastEvent(`jump to quote ${target.messageId}`)
+      return
+    }
+
+    const first = readLoadedMessages(getDataRuntime(activeFeedId))[0]
+    if (!first) {
+      setLastEvent('no loaded quote target')
+      return
+    }
+
+    runtime.scrollToMessage({
+      feedId: activeFeedId,
+      stableId: first.id,
+      serverId: first.id,
+    })
+    highlightMessage(first.id, highlightState)
+    setLastEvent('jump command sent to runtime')
+  }, [activeFeedId, getDataRuntime, highlightState, runtime, setLastEvent])
+
+  const clearFeed = useCallback((feedId: string) => {
+    replaceDemoFeedMessages(feedId, [])
+    if (feedId === activeFeedId) {
+      setMessageCount(0)
+      const dataRuntime = getDataRuntime(feedId)
+      dataRuntime.resetLatest({
+        items: [],
+        hasMoreBefore: false,
+        hasMoreAfter: false,
+      })
+      publishSegment(dataRuntime)
+    }
+    void flushDemoFeedPersistence(feedId)
+    setLastEvent(`cleared ${feedId}`)
+  }, [
+    activeFeedId,
+    getDataRuntime,
+    publishSegment,
+    setLastEvent,
+    setMessageCount,
+  ])
+
+  return {
+    sendMessage,
+    followBottom: () => runtime.scrollToLatest(),
+    jumpToQuote,
+    clearFeed,
+  }
+}

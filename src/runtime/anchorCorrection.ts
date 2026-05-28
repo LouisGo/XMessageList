@@ -56,7 +56,11 @@ export function correctTransactionAnchor<TMessage, TOptimistic>(options: {
   const delta = row.getBoundingClientRect().top - anchor.rectTopBeforeCommit
 
   if (delta !== 0) {
-    domInteractions.writeProgrammaticScroll(container, container.scrollTop + delta)
+    domInteractions.writeProgrammaticScroll(
+      container,
+      container.scrollTop + delta,
+      'recovery',
+    )
   }
 
   pushDiagnostic('correction.anchorPreserved', 'info', { key, delta })

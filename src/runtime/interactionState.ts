@@ -5,12 +5,14 @@ import type {
   MessageListRuntimeEvent,
   NeedMessagesAroundEvent,
 } from './events'
+import { FollowBottomIntentTracker } from './followBottomIntentTracker'
 import type { LoadedSegment } from './segment'
 import type {
   EdgeSnapshotState,
   MessageListSnapshot,
   PendingIntent,
 } from './snapshot'
+import type { ScrollSource } from './scrollIntentEngine'
 
 export type RuntimeEdge = 'before' | 'after'
 
@@ -31,10 +33,17 @@ export type UnderflowInput<TMessage, TOptimistic> = {
   clientHeight: number
 }
 
+type EdgeNeedOptions = {
+  source?: ScrollSource | null
+  ignoreScrollSource?: boolean
+}
+
 export class RuntimeInteractionState<TMessage, TOptimistic> {
   private requestSequence = 0
 
   private pendingDestination: DestinationIntent | null = null
+
+  private readonly followBottom = new FollowBottomIntentTracker<TMessage, TOptimistic>()
 
   private lastDestinationDirection: RuntimeEdge | null = null
 
@@ -46,6 +55,7 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
   ): MessageListSnapshot<TMessage, TOptimistic> {
     this.pendingDestination = null
+    this.followBottom.clear()
     this.lastDestinationDirection = null
     this.lastUnderflowEdge = null
     this.underflowRequests.clear()
@@ -61,13 +71,21 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     return this.pendingDestination
   }
 
+  clearFollowBottom(): void {
+    this.followBottom.clear()
+  }
+
   startEdgeNeed(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     edge: RuntimeEdge,
     reason: string,
     pendingIntent: PendingIntent,
+    options: EdgeNeedOptions = {},
   ): InteractionUpdate<TMessage, TOptimistic> | null {
-    if (!canRequestEdge(snapshot, edge)) {
+    if (
+      !canRequestEdge(snapshot, edge) ||
+      !canEmitEdgeNeedForSource(options.source, options.ignoreScrollSource)
+    ) {
       return null
     }
 
@@ -108,6 +126,7 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
       edge,
       edge === 'before' ? 'retry-before' : 'retry-after',
       edge === 'before' ? 'edge-before' : 'edge-after',
+      { ignoreScrollSource: true },
     )
   }
 
@@ -132,7 +151,10 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
 
   startFollowBottom(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+    scrollTop = 0,
   ): InteractionUpdate<TMessage, TOptimistic> {
+    this.followBottom.ensure(snapshot, scrollTop)
+
     if (!snapshot.segmentMeta.hasMoreAfter) {
       return {
         snapshot: {
@@ -170,6 +192,7 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     intent: DestinationIntent,
   ): InteractionUpdate<TMessage, TOptimistic> {
     this.pendingDestination = intent
+    this.followBottom.clear()
     this.lastDestinationDirection = resolveDestinationDirection(intent)
     const requestToken = this.nextRequestToken(snapshot.feedId, 'around')
     const event: NeedMessagesAroundEvent = {
@@ -198,6 +221,13 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
   ): MessageListSnapshot<TMessage, TOptimistic> {
     let next = snapshot
 
+    if (isSegmentReset(segment)) {
+      next = {
+        ...next,
+        edgeState: createIdleEdgeState(),
+      }
+    }
+
     if (segment.modifier.type === 'extend-before') {
       next = settleEdge(next, 'before', segment.modifier.requestToken)
       if (next.pendingIntent === 'edge-before') {
@@ -214,6 +244,7 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
 
     if (segment.modifier.type === 'reset-around' && this.pendingDestination) {
       this.pendingDestination = null
+      this.followBottom.clear()
       next = {
         ...next,
         pendingIntent: null,
@@ -231,6 +262,10 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
           shortSegmentAlignment: segment.hasMoreAfter ? 'start' : 'end',
         },
       }
+    }
+
+    if (!this.followBottom.has(next)) {
+      this.followBottom.clear()
     }
 
     if (next.pendingIntent === 'underflow-fill') {
@@ -283,6 +318,7 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
       edge,
       'underflow-fill',
       'underflow-fill',
+      { ignoreScrollSource: true },
     )
 
     if (!update) {
@@ -341,6 +377,28 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
 
     return this.lastUnderflowEdge === 'before' ? 'after' : 'before'
   }
+
+  hasActiveFollowBottom(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+  ): boolean {
+    return this.followBottom.has(snapshot)
+  }
+
+  updateActiveFollowBottomForScroll(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+    scrollTop: number,
+    source: ScrollSource,
+  ): MessageListSnapshot<TMessage, TOptimistic> {
+    return this.followBottom.updateForScroll(snapshot, scrollTop, source)
+  }
+}
+
+function isSegmentReset<TMessage, TOptimistic>(
+  segment: LoadedSegment<TMessage, TOptimistic>,
+): boolean {
+  return segment.modifier.type === 'bootstrap' ||
+    segment.modifier.type === 'reset-around' ||
+    segment.modifier.type === 'reset-latest'
 }
 
 function createNeedMoreBefore<TMessage, TOptimistic>(
@@ -388,6 +446,17 @@ function canRequestEdge<TMessage, TOptimistic>(
     snapshot.edgeState[edge].status === 'idle' &&
     snapshot.pendingIntent !== 'follow-bottom' &&
     snapshot.pendingIntent !== 'destination'
+}
+
+function canEmitEdgeNeedForSource(
+  source: ScrollSource | null | undefined,
+  ignoreScrollSource = false,
+): boolean {
+  if (ignoreScrollSource) {
+    return true
+  }
+
+  return source === 'user' || source === 'momentum'
 }
 
 function settleEdge<TMessage, TOptimistic>(

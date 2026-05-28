@@ -75,6 +75,11 @@ const MEDIA_CAPTION_LINES = [
   '真实 IM 里图片、视频和相册经常混在连续消息中出现。',
   '媒体比例差异会让 ResizeObserver 的时机更接近生产环境。',
   '这一行用于扩大媒体消息自身文本区的高度。',
+  '用户可能在图片下面补充操作步骤、复现路径和额外说明。',
+  '连续媒体消息会放大边缘分页时的锚点误差。',
+  '媒体还可能夹着引用、回执和反应状态一起更新。',
+  '长 caption 可以模拟设计评审或问题反馈中的真实输入。',
+  '这行继续把媒体消息推到更高的滚动压力场景。',
 ]
 const MIN_TEXT_LINE_COUNT = 1
 const MAX_TEXT_LINE_COUNT = 10
@@ -351,7 +356,7 @@ function createBody(kind: DemoMessageKind, id: string): string {
     return createMultilineBody({
       id,
       lines: MEDIA_CAPTION_LINES,
-      lineCount: pickLineCount(id, 1, 5),
+      lineCount: pickLineCount(id, 1, 10),
     })
   }
 
@@ -362,7 +367,7 @@ function createBody(kind: DemoMessageKind, id: string): string {
         '发了一个视频，封面和控制条会让 row 高度更复杂。',
         ...MEDIA_CAPTION_LINES,
       ],
-      lineCount: pickLineCount(id, 1, 5),
+      lineCount: pickLineCount(id, 1, 10),
     })
   }
 
@@ -373,7 +378,7 @@ function createBody(kind: DemoMessageKind, id: string): string {
         '发了一组图片，真实 IM 中这类消息最容易暴露 spacer 估算问题。',
         ...MEDIA_CAPTION_LINES,
       ],
-      lineCount: pickLineCount(id, 2, 6),
+      lineCount: pickLineCount(id, 2, 10),
     })
   }
 
@@ -392,7 +397,7 @@ function createMedia(kind: DemoMessageKind, seed: number): DemoMessage['media'] 
   if (kind === 'video') {
     return {
       width: 360,
-      height: 180 + (seed % 8) * 48,
+      height: 200 + (seed % 10) * 58,
       label: 'Video preview',
     }
   }
@@ -400,14 +405,14 @@ function createMedia(kind: DemoMessageKind, seed: number): DemoMessage['media'] 
   if (kind === 'album') {
     return {
       width: 360,
-      height: 240 + (seed % 7) * 64,
+      height: 240 + (seed % 12) * 56,
       label: 'Image album',
     }
   }
 
   return {
     width: 360,
-    height: 160 + (seed % 10) * 52,
+    height: 180 + (seed % 12) * 52,
     label: 'Image attachment',
   }
 }

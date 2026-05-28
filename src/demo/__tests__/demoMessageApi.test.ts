@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createDemoMessages, createNewestMessage } from '../demoData'
 import type { PersistedDemoFeed } from '../demoLocalStoreClient'
@@ -17,9 +17,14 @@ import {
   appendDemoFeedMessages,
   getLatestMessages,
   getMessagesAround,
+  readDemoViewportAnchor,
 } from '../demoMessageApi'
 
 describe('demoMessageApi persistence', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
   it('seeds and persists a missing feed before serving latest messages', async () => {
     const feedId = 'feed-api-seed'
     localStoreMocks.loadPersistedDemoFeed.mockResolvedValueOnce(null)
@@ -89,6 +94,33 @@ describe('demoMessageApi persistence', () => {
         }),
       )
     })
+  })
+
+  it('does not seed over persisted feeds before async hydration', async () => {
+    const feedId = 'feed-api-hydrate'
+    const feed = {
+      ...createPersistedFeed(feedId, 205),
+      revision: 7,
+      lastViewportAnchor: {
+        messageId: `${feedId}-0200`,
+        position: 200,
+        offsetWithinMessage: 12,
+      },
+    }
+    localStoreMocks.loadPersistedDemoFeed.mockResolvedValueOnce(feed)
+    localStoreMocks.savePersistedDemoFeed.mockResolvedValue(undefined)
+
+    expect(readDemoViewportAnchor(feedId)).toBeUndefined()
+    expect(localStoreMocks.savePersistedDemoFeed).not.toHaveBeenCalled()
+
+    const resp = await getLatestMessages({ feedId, count: 20 })
+
+    expect(resp.ok).toBe(true)
+    if (resp.ok) {
+      expect(resp.total).toBe(205)
+      expect(resp.messages.at(-1)?.id).toBe(`${feedId}-0205`)
+    }
+    expect(localStoreMocks.savePersistedDemoFeed).not.toHaveBeenCalled()
   })
 })
 

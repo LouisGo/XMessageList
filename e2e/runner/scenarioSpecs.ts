@@ -16,8 +16,10 @@ import {
   expectRuntimeIdle,
   expectRemappedAnchorPreserved,
   expectRemappedViewportAnchor,
+  expectRestoreAroundAfterDetach,
   expectScrollHeightIncreased,
   expectScrollTopIncreased,
+  expectSegmentItemCountAtMost,
   expectUnderflowSingleFlight,
   expectVisibleIdentity,
   type E2EOracleResult,
@@ -237,6 +239,7 @@ export const CORRECTNESS_SCENARIOS: ScenarioSpec[] = [
     oracles: ({ finalEvidence }) => [
       ...BASE_ORACLES(finalEvidence),
       expectDetachAnchorCheckpoint(finalEvidence),
+      expectRestoreAroundAfterDetach(finalEvidence),
     ],
   },
   {
@@ -251,6 +254,21 @@ export const CORRECTNESS_SCENARIOS: ScenarioSpec[] = [
     oracles: ({ finalEvidence }) => [
       ...BASE_ORACLES(finalEvidence),
       expectDiagnosticsBounded(finalEvidence),
+    ],
+  },
+  {
+    id: 'segment-budget.trim-after-appends',
+    priority: 'p2',
+    actions: [
+      { id: 'wait_for_ready' },
+      { id: 'append_many', payload: { count: 105 } },
+      { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
+    ],
+    oracles: ({ finalEvidence }) => [
+      ...BASE_ORACLES(finalEvidence),
+      expectSegmentItemCountAtMost(finalEvidence, 120),
+      expectModifier(finalEvidence, 'trim-before'),
+      expectBottomLocked(finalEvidence, { thresholdPx: 2 }),
     ],
   },
   {
@@ -276,6 +294,20 @@ export const CORRECTNESS_SCENARIOS: ScenarioSpec[] = [
     oracles: ({ finalEvidence }) => [
       ...BASE_ORACLES(finalEvidence),
       expectNeedEventCount(finalEvidence, 'needMoreBefore', 1),
+      expectOverlayMirrorsNative(finalEvidence, { tolerancePx: 2 }),
+    ],
+  },
+  {
+    id: 'scrollbar.drag-edge-after',
+    priority: 'p4',
+    actions: [
+      { id: 'wait_for_ready' },
+      { id: 'drag_scrollbar_to_bottom' },
+      { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
+    ],
+    oracles: ({ finalEvidence }) => [
+      ...BASE_ORACLES(finalEvidence),
+      expectNeedEventCount(finalEvidence, 'needMoreAfter', 1),
       expectOverlayMirrorsNative(finalEvidence, { tolerancePx: 2 }),
     ],
   },

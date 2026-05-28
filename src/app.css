@@ -329,6 +329,12 @@ h1 {
   min-height: 1px;
 }
 
+[data-edge-trigger] {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0;
+}
+
 .message-row {
   width: min(720px, calc(100% - 24px));
   margin: 8px 0;

@@ -10,6 +10,7 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
   segment: LoadedSegment<TMessage, TOptimistic>
   capturedAnchor: VisualAnchor | null
   destination: DestinationIntent | null
+  activeFollowBottom: boolean
   domInteractions: RuntimeDomInteractions<TMessage, TOptimistic>
   correctAnchor: (
     anchor: VisualAnchor | null,
@@ -22,6 +23,7 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
     segment,
     capturedAnchor,
     destination,
+    activeFollowBottom,
     domInteractions,
     correctAnchor,
     getViewportAnchor,
@@ -64,7 +66,10 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
     return segment.anchor ?? getViewportAnchor()
   }
 
-  if (snapshot.bottomLockState === 'LOCKED' && !segment.hasMoreAfter) {
+  if (
+    (snapshot.bottomLockState === 'LOCKED' || activeFollowBottom) &&
+    !segment.hasMoreAfter
+  ) {
     domInteractions.scrollToNativeBottom()
     return segment.anchor ?? getViewportAnchor()
   }

@@ -74,7 +74,7 @@ export function useDemoMessageMutations(input: {
       return nextMessage ? [nextMessage] : []
     })
 
-    replaceLoadedMessages({
+    void replaceLoadedMessages({
       feedId: activeFeedId,
       feedMessages: nextFeedMessages,
       messages: nextMessages,

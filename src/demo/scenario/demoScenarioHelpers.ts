@@ -24,6 +24,23 @@ export function wait(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
+export function getMockDelayMs(
+  baseMs: number,
+  random: () => number = Math.random,
+): number {
+  const normalizedBase = Math.max(0, baseMs)
+  const factor = 0.5 + random()
+
+  return Math.round(normalizedBase * factor)
+}
+
+export function waitMockDelay(
+  baseMs: number,
+  random?: () => number,
+): Promise<void> {
+  return wait(getMockDelayMs(baseMs, random))
+}
+
 export function isRuntimeNeedEvent(event: MessageListRuntimeEvent): event is Extract<
   MessageListRuntimeEvent,
   | { type: 'needLatestMessages' }

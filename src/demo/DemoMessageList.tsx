@@ -340,7 +340,7 @@ export function DemoMessageListContent({
             <dd>{scenario.feedLoading ? 'loading' : 'ready'}</dd>
           </div>
           <div>
-            <dt>Status</dt>
+            <dt>Pending</dt>
             <dd>{scenario.pendingOperation}</dd>
           </div>
           <div>
@@ -400,7 +400,7 @@ export function DemoMessageListContent({
           className="message-viewport"
           renderRow={renderDemoItem}
           renderBeforeEdge={({ status, retry }) =>
-            status === 'loading' ? (
+            scenario.loadingBefore ? (
               <div className="history-loading">Loading older messages...</div>
             ) : status === 'error' ? (
               <button type="button" className="history-loading" onClick={retry}>
@@ -409,7 +409,7 @@ export function DemoMessageListContent({
             ) : null
           }
           renderAfterEdge={({ status, retry }) =>
-            status === 'loading' ? (
+            scenario.loadingAfter ? (
               <div className="history-loading history-loading-bottom">
                 Loading newer messages...
               </div>

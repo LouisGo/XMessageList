@@ -7,6 +7,7 @@ import {
 } from '../demoData'
 import {
   appendDemoFeedMessages,
+  flushDemoFeedPersistence,
   readDemoFeedMessages,
 } from '../demoMessageApi'
 import {
@@ -33,6 +34,7 @@ export function useDemoOptimisticRemap(input: {
   getDataRuntime: DemoDataRuntimeGetter
   publishSegment: DemoSegmentPublisher
   setLastEvent: (eventText: string) => void
+  onMessageCountChange: (messageCount: number) => void
 }): DemoOptimisticRemapActions {
   const {
     activeFeedId,
@@ -40,6 +42,7 @@ export function useDemoOptimisticRemap(input: {
     publishSegment,
     runtime,
     setLastEvent,
+    onMessageCountChange,
   } = input
   const pendingOptimisticRemapRef = useRef<PendingOptimisticRemap | null>(null)
 
@@ -70,7 +73,11 @@ export function useDemoOptimisticRemap(input: {
       body: 'Optimistic send awaiting server id',
     }
 
-    appendDemoFeedMessages(activeFeedId, [committedMessage, ...tailMessages])
+    const persistedMessages = appendDemoFeedMessages(activeFeedId, [
+      committedMessage,
+      ...tailMessages,
+    ])
+    onMessageCountChange(persistedMessages.length)
     pendingOptimisticRemapRef.current = {
       feedId: activeFeedId,
       localId,
@@ -104,8 +111,9 @@ export function useDemoOptimisticRemap(input: {
       ...tailMessages.map(toDemoMessageDataItem),
     ])
     publishSegment(dataRuntime)
+    void flushDemoFeedPersistence(activeFeedId)
     setLastEvent('optimistic local identity published')
-  }, [activeFeedId, getDataRuntime, publishSegment, setLastEvent])
+  }, [activeFeedId, getDataRuntime, onMessageCountChange, publishSegment, setLastEvent])
 
   const alignPendingOptimisticAtStart = useCallback(() => {
     const pending = pendingOptimisticRemapRef.current

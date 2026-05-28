@@ -517,7 +517,13 @@ class ChromePage {
       expression,
       returnByValue: true,
     }) as {
-      exceptionDetails?: { text: string }
+      exceptionDetails?: {
+        text: string
+        exception?: {
+          description?: string
+          value?: unknown
+        }
+      }
       result: {
         value?: T
         description?: string
@@ -525,7 +531,10 @@ class ChromePage {
     }
 
     if (result.exceptionDetails) {
-      throw new Error(result.exceptionDetails.text)
+      throw new Error(
+        result.exceptionDetails.exception?.description ??
+          String(result.exceptionDetails.exception?.value ?? result.exceptionDetails.text),
+      )
     }
 
     return result.result.value as T

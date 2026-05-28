@@ -8,12 +8,15 @@ import type { VisualAnchor } from './measurement'
 import type { RuntimeObserverFactory, RuntimeScheduler } from './options'
 import type { MessageListSnapshot } from './snapshot'
 import type { DestinationIntent, RuntimeEdge } from './interactionState'
+import type { ScrollSource } from './scrollIntentEngine'
 
 export type RuntimeDomInteractionsOptions = {
   scheduler: RuntimeScheduler
   observerFactory: RuntimeObserverFactory | null
   registry: RuntimeDomRegistry
   onEdgeIntersect: (edge: RuntimeEdge) => void
+  onScrollWrite: (source: ScrollSource) => void
+  onUserScrollIntent: () => void
   onScrollFrame: () => void
   onDiagnostic: (
     name: string,
@@ -35,6 +38,8 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
 
   private directScrollActive = false
 
+  private directScrollEdgeIntent: RuntimeEdge | null = null
+
   private readonly rowMetricsByKey = new Map<
     MessageRuntimeItemKey,
     RowMetric
@@ -54,6 +59,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     }
 
     this.markEdgeSourceActive(now)
+    this.options.onUserScrollIntent()
     this.scheduleScrollFrame()
   }
 
@@ -97,6 +103,8 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
 
   beginDirectScroll(): void {
     this.directScrollActive = true
+    this.directScrollEdgeIntent = null
+    this.options.onUserScrollIntent()
     this.markEdgeSourceActive(this.options.scheduler.now())
   }
 
@@ -108,7 +116,12 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     }
 
     if (this.directScrollActive) {
+      this.options.onUserScrollIntent()
       this.markEdgeSourceActive(this.options.scheduler.now())
+      this.directScrollEdgeIntent = resolveDirectScrollEdgeIntent(
+        scrollTop,
+        container,
+      )
     }
     container.scrollTop = scrollTop
     this.scheduleScrollFrame()
@@ -117,8 +130,14 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
 
   endDirectScroll(): void {
     this.directScrollActive = false
+    this.directScrollEdgeIntent = null
+    this.options.onUserScrollIntent()
     this.markEdgeSourceActive(this.options.scheduler.now())
     this.scheduleScrollFrame()
+  }
+
+  getDirectScrollEdgeIntent(): RuntimeEdge | null {
+    return this.directScrollActive ? this.directScrollEdgeIntent : null
   }
 
   alignToMessage(
@@ -137,11 +156,11 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     const containerRect = container.getBoundingClientRect()
     const rowRect = row.getBoundingClientRect()
     const nextTop = resolveAlignedScrollTop(container, rowRect, containerRect, align)
-    this.writeProgrammaticScroll(container, nextTop)
+    this.writeProgrammaticScroll(container, nextTop, 'destination')
     return true
   }
 
-  scrollToNativeBottom(): void {
+  scrollToNativeBottom(source: ScrollSource = 'followBottom'): void {
     const container = this.options.registry.snapshot().scrollContainer
 
     if (!container) {
@@ -151,10 +170,16 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     this.writeProgrammaticScroll(
       container,
       Math.max(0, container.scrollHeight - container.clientHeight),
+      source,
     )
   }
 
-  writeProgrammaticScroll(container: HTMLElement, scrollTop: number): void {
+  writeProgrammaticScroll(
+    container: HTMLElement,
+    scrollTop: number,
+    source: ScrollSource = 'programmatic',
+  ): void {
+    this.options.onScrollWrite(source)
     this.suppressScrollUntil = this.options.scheduler.now() + 200
     container.scrollTop = scrollTop
     this.scheduleScrollFrame()
@@ -176,7 +201,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     const delta = row.getBoundingClientRect().top - previousTop
 
     if (delta !== 0) {
-      this.writeProgrammaticScroll(container, container.scrollTop + delta)
+      this.writeProgrammaticScroll(container, container.scrollTop + delta, 'recovery')
     }
   }
 
@@ -499,4 +524,27 @@ function clampScrollTop(scrollTop: number, maxTop: number): number {
 
 function resolveEdgeActivationMargin(clientHeight: number): number {
   return Math.min(Math.max(clientHeight * 0.25, 64), 240)
+}
+
+function resolveDirectScrollEdgeIntent(
+  scrollTop: number,
+  container: HTMLElement,
+): RuntimeEdge | null {
+  const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+  const threshold = resolveEdgeActivationMargin(container.clientHeight)
+  const distanceToBefore = scrollTop
+  const distanceToAfter = maxScrollTop - scrollTop
+
+  if (
+    distanceToBefore <= threshold &&
+    distanceToBefore <= distanceToAfter
+  ) {
+    return 'before'
+  }
+
+  if (distanceToAfter <= threshold) {
+    return 'after'
+  }
+
+  return null
 }

@@ -28,6 +28,7 @@ type NeedMessagesAroundEvent = Extract<
 export type DemoRequestResult = {
   status: 'applied' | 'failed' | 'stale'
   message: string
+  total?: number
 }
 
 export type DemoRequestContext = {
@@ -35,6 +36,7 @@ export type DemoRequestContext = {
   runtime: MessageListRuntime<DemoMessage>
   publishSegment: (dataRuntime: MessageListDataRuntime<DemoMessage>) => void
   pageSize: number
+  isStale?: () => boolean
 }
 
 export async function applyLatestRequest(
@@ -50,7 +52,10 @@ export async function applyLatestRequest(
     return { status: 'failed', message: resp.errorMessage }
   }
 
-  if (event && dataRuntime.getSegment().generation !== event.generation) {
+  if (
+    context.isStale?.() ||
+    (event && dataRuntime.getSegment().generation !== event.generation)
+  ) {
     return { status: 'stale', message: 'ignored stale latest response' }
   }
 
@@ -65,6 +70,7 @@ export async function applyLatestRequest(
   return {
     status: 'applied',
     message: `loaded ${resp.messages.length} latest messages`,
+    total: resp.total,
   }
 }
 
@@ -93,7 +99,7 @@ export async function applyAroundRequest(
     return { status: 'failed', message: resp.errorMessage }
   }
 
-  if (dataRuntime.getSegment().generation !== event.generation) {
+  if (context.isStale?.() || dataRuntime.getSegment().generation !== event.generation) {
     return { status: 'stale', message: 'ignored stale around response' }
   }
 
@@ -109,6 +115,7 @@ export async function applyAroundRequest(
   return {
     status: 'applied',
     message: `loaded around ${targetMessageId}`,
+    total: resp.total,
   }
 }
 
@@ -151,6 +158,11 @@ export async function applyEdgeRequest(
     return { status: 'failed', message: resp.errorMessage }
   }
 
+  if (context.isStale?.()) {
+    runtime.reportEdgeRequestFailure(edge, event.requestToken)
+    return { status: 'stale', message: `ignored stale ${edge} response` }
+  }
+
   const currentSegment = dataRuntime.getSegment()
   const applyInput = {
     requestToken: event.requestToken,
@@ -169,6 +181,7 @@ export async function applyEdgeRequest(
     : dataRuntime.extendAfter(applyInput)
 
   if (!result.applied) {
+    runtime.reportEdgeRequestFailure(edge, event.requestToken)
     return { status: 'stale', message: `ignored stale ${edge} response` }
   }
 
@@ -176,6 +189,7 @@ export async function applyEdgeRequest(
   return {
     status: 'applied',
     message: `loaded ${resp.messages.length} ${edge} messages`,
+    total: resp.total,
   }
 }
 
