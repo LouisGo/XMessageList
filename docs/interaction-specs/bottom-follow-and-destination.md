@@ -4,11 +4,11 @@
 
 Trigger：用户点击 bottom-follow，且 `hasMoreAfter=false`。
 
-Runtime behavior：
+Acceptance：
 
-- 如果 bottom marker 已在阈值内，进入 LOCKED。
-- 否则启动 bounded motion 到 native bottom。
-- motion settle 后发 `viewportAnchorChanged(transaction-settle)`。
+- 如果已经接近真实底部，列表进入追底状态。
+- 如果尚未接近真实底部，列表移动到真实底部。
+- 移动完成后，后续新消息保持追底。
 
 User-visible result：
 
@@ -23,12 +23,12 @@ Forbidden：
 
 Trigger：用户点击 bottom-follow，且 `hasMoreAfter=true`。
 
-Runtime behavior：
+Acceptance：
 
-- 发 `needLatestMessages(reason: 'bottom-follow')`。
-- pending 期间禁用普通 after edge。
-- data runtime 返回 `reset-latest` segment，且 `hasMoreAfter=false`。
-- commit 后滚到底并进入 LOCKED；若返回仍是 partial segment，保持 UNLOCKED 并继续 pending/error 处理。
+- 直接加载最新消息区域。
+- pending 期间不通过普通 after 翻页逐页追底。
+- 最新消息区域展示完成后，滚动到真实底部并进入追底状态。
+- 如果最新消息区域加载失败，当前阅读位置保持不变，并展示可重试或错误状态。
 
 User-visible result：
 
@@ -43,30 +43,46 @@ Forbidden：
 
 Trigger：当前 segment 已是 latest，收到新消息。
 
-Runtime behavior：
+Acceptance：
 
-- LOCKED：extend after 或 patch 后滚到底。
-- UNLOCKED：保留 visual anchor，不自动追底。
-- 如果新消息来自本地发送，可显式建立 follow intent。
+- 具体交互遵循 [实时事件交互规格](./live-events.md#l1-他人新消息到达用户处于追底) 和 [实时事件交互规格](./live-events.md#l2-他人新消息到达用户正在阅读历史)。
 
 User-visible result：
 
-- 正在读旧消息时不会被拉走。
-- 自己发送或主动 follow 时才追到底部。
+- 追底时保持底部，非追底时保持当前阅读位置。
 
 Forbidden：
 
-- 不允许只因为 DOM bottom 可见就认为 feed latest locked。
+- 不允许收到新消息后打断当前阅读或伪装成历史跳转。
 
-## D4 Jump 到消息
+## D4 任意位置发送消息
+
+Trigger：用户在当前会话任意阅读位置发送消息。
+
+Acceptance：
+
+- 列表直接进入 latest 目标。
+- 如果当前画面不是 latest，不能通过普通 after 翻页逐页追到 latest。
+- 发送完成后，用户看到自己的消息和最新上下文。
+- 如果发送前正在阅读历史、定位目标或等待边缘加载，发送行为优先于这些未完成状态。
+- 发送后的稳定画面进入追底状态。
+
+User-visible result：
+
+- 发送后回到最新消息附近，并看到自己的消息和最新上下文。
+
+Forbidden：
+
+- 不允许发送后仍停留在历史阅读位置。
+- 不允许通过连续 after paging 慢慢追到 latest。
+
+## D5 Jump 到消息
 
 Trigger：用户点击引用、搜索结果或外部定位。
 
-Runtime behavior：
+Acceptance：
 
-- 若目标在当前 segment，执行 local align / bounded motion。
-- 若目标不在当前 segment，发 `needMessagesAround(reason: 'jump')`。
-- around segment commit 后对齐目标或 deleted fallback。
+- 具体交互遵循 [目标消息定位规格](./destination-jumps.md)。
 
 User-visible result：
 
@@ -77,15 +93,13 @@ Forbidden：
 
 - 不允许把 jump 映射成百分比滚动。
 
-## D5 Restore
+## D6 Restore
 
-Trigger：feed 激活时存在已持久化 identity anchor。
+Trigger：会话激活时存在已持久化阅读记忆。
 
-Runtime behavior：
+Acceptance：
 
-- 请求 around segment。
-- commit 后按 stored identity 解析 visual target。
-- 如果目标删除，使用 data 层 fallback。
+- 具体交互遵循 [会话激活与恢复规格](./activation-and-restore.md#a2-首次进入有阅读记忆) 和 [会话激活与恢复规格](./activation-and-restore.md#a3-阅读记忆目标不可用)。
 
 User-visible result：
 

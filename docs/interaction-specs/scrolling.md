@@ -6,16 +6,14 @@ Trigger：用户使用 wheel、touch、trackpad 或 native scrollbar 在 loaded 
 
 Preconditions：
 
-- runtime lifecycle 为 READY。
-- 无 active segment transaction。
-- 当前 DOM rows 与 snapshot revision 已 commit。
+- 消息列表已完成当前会话的首屏展示。
+- 当前没有正在改变消息集合的 loading 或切换过程。
 
-Runtime behavior：
+Acceptance：
 
-- 读取 native `scrollTop/clientHeight/scrollHeight`。
-- 更新 scroll direction、activity、visible range 和 visual anchor。
-- 只在 rAF 中合并 observation，不在每个 scroll event 发布 React snapshot。
-- 不写 `scrollTop`。
+- 内容必须直接跟随用户的 wheel、touch、trackpad 或 scrollbar 操作移动。
+- 普通滚动期间，列表不能主动拉回、跳转或改写用户滚动方向。
+- 当前可见阅读位置必须随用户滚动自然变化。
 
 User-visible result：
 
@@ -25,18 +23,18 @@ User-visible result：
 Forbidden：
 
 - 不允许用未加载消息估算高度改变 scroll range。
-- 不允许 React 层监听 raw scroll 后自行触发分页。
+- 不允许把非用户操作或非用户惯性造成的位置变化当作普通分页触发。
 
 ## S2 短列表吸底
 
 Trigger：当前 segment 总高度小于 viewport 高度。
 
-Runtime behavior：
+Acceptance：
 
-- DOM container 仍是正常滚动容器。
-- message container 使用 snapshot 的 `shortSegmentAlignment` 决定短内容布局：latest / locked bottom 用 `end`，around restore / jump 可用 `center` 或 `start`。
-- `scrollHeight` 不通过 bottom placeholder 扩大。
-- 如果短 segment 仍有可加载边，进入 paging 的 underflow auto-fill，而不是等待用户制造不存在的 scroll range。
+- latest / 追底状态下，短列表内容贴近底部。
+- restore / jump 状态下，目标消息按目标位置展示，不能被强制贴底。
+- 短列表不能出现为了制造滚动范围而加入的空白底部区域。
+- 如果短列表仍有可加载历史，列表可以继续自动补足上下文，直到形成合理阅读区域或达到边界。
 
 User-visible result：
 
@@ -54,15 +52,14 @@ Trigger：图片 decode、markdown 渲染、代码块折行、AI streaming 或�
 
 Preconditions：
 
-- runtime 能判断 dirty row 位于 visual anchor 上方、内部或下方。
+- 用户正在阅读的消息或其附近消息可见。
 
-Runtime behavior：
+Acceptance：
 
-- ResizeObserver 只记录 dirty signal。
-- 稳定 rAF 中读取 affected rect。
-- 如果变化发生在 visual anchor 上方，写 `scrollTop += delta` 保持 anchor。
-- 如果变化发生在 anchor 内部，按 offsetWithinMessage 保持阅读位置。
-- 如果变化在 anchor 下方，只更新 measurement cache 和 observation。
+- 当前阅读位置上方的内容变高或变矮时，用户正在看的消息应保持在原屏幕位置附近。
+- 当前阅读消息自身变高或变矮时，用户正在看的相对段落位置应保持稳定。
+- 当前阅读位置下方的内容变化时，用户正在看的消息不能被拉动。
+- 滚动条比例可以随真实内容高度变化产生自然变化。
 
 User-visible result：
 
@@ -71,19 +68,19 @@ User-visible result：
 
 Forbidden：
 
-- ResizeObserver callback 不能直接写 `scrollTop`。
 - 不能把动态高度修正转成 segment reset。
+- 不允许图片、代码块或 streaming 内容加载后造成当前阅读消息明显跳动。
 
 ## S4 惯性连续
 
 Trigger：用户快速滚向 before / after edge，浏览器仍有 wheel / touch momentum。
 
-Runtime behavior：
+Acceptance：
 
-- edge need 发出后 latch 当前 edge。
-- 请求未完成时不阻止原生滚动，不反复发同一请求。
-- 数据 commit 后执行 anchor correction，source 标记为 recovery。
-- correction 后如果仍有新的用户 / momentum scroll frame，允许继续触发下一次 edge need。
+- 触边 loading 出现后，用户的惯性滚动不能被硬性中断。
+- 当前 loading 未完成前，同一方向不能重复 loading。
+- loading 完成后，如果浏览器惯性仍在继续，列表可以继续沿原方向滚动并再次抵达加载点。
+- 每次加载完成后，当前阅读位置保持稳定。
 
 User-visible result：
 
@@ -92,25 +89,26 @@ User-visible result：
 
 Forbidden：
 
-- 不允许在 edge pending 期间用 synthetic scroll loop 模拟惯性。
-- 不允许 correction scroll event 触发下一页请求。
+- 不允许在 edge pending 期间用自动反复滚动伪装成用户惯性。
+- 不允许加载完成后为保持画面稳定产生的位置调整，立刻表现为下一页加载。
 
-## S5 Feed 切换恢复
+## S5 会话离开时的阅读位置
 
-Trigger：用户从 feed A 切到 feed B，再切回 A。
+Trigger：用户离开当前会话、切换会话或关闭消息列表。
 
-Runtime behavior：
+Acceptance：
 
-- detach A 前发 `viewportAnchorChanged(reason: 'detach')`。
-- host 保存 A 的 identity anchor。
-- 切回 A 时，data runtime 返回围绕 anchor 的 segment。
-- runtime reset around 并按 visual target 对齐。
+- 离开前应记录当前稳定阅读位置。
+- 记录目标必须能在下次进入时恢复到同一消息附近。
+- 如果当前画面处于稳定状态，记录位置应来自当前可见阅读区域。
+- 如果正在分页、修正、跳转或切换中，最终记录位置应来自完成后的稳定画面。
 
 User-visible result：
 
-- 回到接近离开前的阅读位置。
-- 不依赖旧 `scrollTop` 在新 segment 中复用。
+- 用户切回会话时，能回到接近离开前的阅读位置。
+- 用户不会因为离开时正在加载而丢失阅读上下文。
 
 Forbidden：
 
-- 不允许把旧 feed 的 scroll event 或 edge latch 带到新 feed。
+- 不允许保存空白区域、loading slot 或不可恢复的瞬时位置作为阅读记忆。
+- 不允许把旧会话的原始滚动距离作为另一个会话的初始位置。
