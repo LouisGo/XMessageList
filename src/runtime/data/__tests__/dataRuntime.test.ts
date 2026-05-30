@@ -200,6 +200,77 @@ describe('MessageListDataRuntime', () => {
     ])
   })
 
+  it('keeps a newer current token after an older same-kind token is rejected', () => {
+    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
+    runtime.resetLatest({
+      items: [item('row-1')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })
+    const first = runtime.createRequestToken('before')
+    const second = runtime.createRequestToken('before')
+
+    expect(runtime.extendBefore({
+      requestToken: first.requestToken,
+      items: [item('stale-before')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })).toMatchObject({
+      applied: false,
+      reason: 'stale-request',
+    })
+    expect(runtime.extendBefore({
+      requestToken: second.requestToken,
+      items: [item('row-0')],
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+    })).toMatchObject({ applied: true })
+    expect(runtime.getSegment().items.map((nextItem) => nextItem.key)).toEqual([
+      'row-0',
+      'row-1',
+    ])
+  })
+
+  it('clears request registry state on reset and accepts new generation tokens', () => {
+    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
+    runtime.resetLatest({
+      items: [item('row-1')],
+      hasMoreBefore: false,
+      hasMoreAfter: true,
+    })
+    const stale = runtime.createRequestToken('latest')
+
+    runtime.resetAround({
+      target: { feedId: 'feed-a', stableId: 'row-9' },
+      items: [item('row-9')],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    })
+
+    expect(runtime.resetLatestFromRequest({
+      requestToken: stale.requestToken,
+      items: [item('stale-latest')],
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+    })).toMatchObject({
+      applied: false,
+      reason: 'stale-request',
+    })
+
+    const current = runtime.createRequestToken('latest')
+    const applied = runtime.resetLatestFromRequest({
+      requestToken: current.requestToken,
+      items: [item('row-10')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(applied.segment.items.map((nextItem) => nextItem.key)).toEqual([
+      'row-10',
+    ])
+  })
+
   it('replaces the loaded item window for host-owned mock mutations', () => {
     const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
     runtime.resetLatest({

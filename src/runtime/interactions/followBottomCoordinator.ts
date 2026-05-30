@@ -20,11 +20,11 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
 
   clear(): void {
     this.active.clear()
-    if (this.axes.getReadySubstate() === 'READY_FOLLOW_BOTTOM_PENDING') {
-      this.axes.setReadySubstate('READY_IDLE')
+    if (this.axes.isReadySubstate('READY_FOLLOW_BOTTOM_PENDING')) {
+      this.axes.markReadyIdle()
     }
     if (this.axes.getDestinationState() === 'pendingData') {
-      this.axes.setDestinationState('idle')
+      this.axes.markDestinationIdle()
     }
   }
 
@@ -41,8 +41,8 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
     this.active.ensure(snapshot, scrollTop)
 
     if (!snapshot.segmentMeta.hasMoreAfter) {
-      this.axes.setReadySubstate('READY_IDLE')
-      this.axes.setDestinationState('settled')
+      this.axes.markReadyIdle()
+      this.axes.markDestinationSettled()
       return {
         snapshot: {
           ...snapshot,
@@ -57,8 +57,8 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
     }
 
     const requestToken = this.nextRequestToken('latest')
-    this.axes.setReadySubstate('READY_FOLLOW_BOTTOM_PENDING')
-    this.axes.setDestinationState('pendingData')
+    this.axes.markFollowBottomPending()
+    this.axes.markDestinationPendingData()
     return {
       snapshot: {
         ...snapshot,
@@ -79,11 +79,11 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
     }
 
     if (segment.hasMoreAfter) {
-      this.axes.setReadySubstate('READY_FOLLOW_BOTTOM_PENDING')
-      this.axes.setDestinationState('pendingData')
+      this.axes.markFollowBottomPending()
+      this.axes.markDestinationPendingData()
     } else {
-      this.axes.setReadySubstate('READY_IDLE')
-      this.axes.setDestinationState('settled')
+      this.axes.markReadyIdle()
+      this.axes.markDestinationSettled()
     }
 
     return {
@@ -105,9 +105,9 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
     const next = this.active.updateForScroll(snapshot, scrollTop, source)
 
     if (next.pendingIntent !== 'follow-bottom' &&
-      this.axes.getReadySubstate() === 'READY_FOLLOW_BOTTOM_PENDING') {
-      this.axes.setReadySubstate('READY_IDLE')
-      this.axes.setDestinationState('interrupted')
+      this.axes.isReadySubstate('READY_FOLLOW_BOTTOM_PENDING')) {
+      this.axes.markReadyIdle()
+      this.axes.markDestinationInterrupted()
     }
 
     return next

@@ -4,7 +4,6 @@ import type { DestinationIntent } from '../state/interactionTypes'
 import type { VisualAnchor } from '../dom/measurement'
 import type { LoadedSegment } from '../contracts/segment'
 import type { MessageListSnapshot, ProjectionCommitToken } from '../contracts/snapshot'
-import type { TransactionState } from '../state/runtimeStateAxes'
 import type { ScrollSource } from '../scroll/scrollIntentEngine'
 
 export type PendingTransaction<TMessage, TOptimistic> = {
@@ -33,24 +32,6 @@ export function resolvePendingAnchorKey<TMessage, TOptimistic>(
   pending: PendingTransaction<TMessage, TOptimistic>,
 ): string {
   return resolveRemappedAnchorKey(pending.anchor?.key ?? '', pending.segment)
-}
-
-export function resolveTransactionStateForPhase(
-  phase: MessageListSnapshot['viewportPhase'],
-): TransactionState {
-  if (phase === 'PROJECTING' || phase === 'MOTION') {
-    return 'active'
-  }
-
-  if (phase === 'MEASURING') {
-    return 'measuring'
-  }
-
-  if (phase === 'CORRECTING') {
-    return 'correcting'
-  }
-
-  return 'idle'
 }
 
 export function resolveTransactionScrollSource<TMessage, TOptimistic>(

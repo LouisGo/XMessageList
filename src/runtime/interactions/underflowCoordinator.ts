@@ -58,7 +58,7 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
     const edge = this.chooseEdge(snapshot, destinationDirection)
 
     if (!edge) {
-      this.axes.setReadySubstate('READY_IDLE')
+      this.axes.markReadyIdle()
       return {
         snapshot: {
           ...snapshot,
@@ -84,7 +84,7 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
       return null
     }
 
-    this.axes.setReadySubstate('READY_UNDERFLOW_PENDING')
+    this.axes.markUnderflowPending()
     return {
       ...update,
       snapshot: {
@@ -104,7 +104,7 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
       return snapshot
     }
 
-    this.axes.setReadySubstate('READY_IDLE')
+    this.axes.markReadyIdle()
     return {
       ...snapshot,
       pendingIntent: null,

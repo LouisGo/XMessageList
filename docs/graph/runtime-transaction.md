@@ -17,39 +17,57 @@ sequenceDiagram
 
   alt stale segment
     Runtime-->>Events: viewportDiagnostic(transaction.staleSegment)
-  else active transaction or advancing queue
-    Runtime->>Runtime: enqueue segment and mark transaction queued
-  else start projection transaction
+  else newer generation segment
+    Runtime->>Runtime: cancel older pending transaction
+    Runtime->>Runtime: remove queued segments before generation
+    Runtime->>Runtime: reset intents unless matching follow-bottom or destination reset
     Runtime->>DOM: captureVisualAnchor()
     Runtime->>Runtime: create ProjectionCommitToken
     Runtime-->>React: snapshot with viewportPhase PROJECTING
     React->>DOM: render rows, triggers, bottom marker
-    React->>Runtime: ackProjectionCommit(token)
+  else same-generation active transaction or advancing queue
+    Runtime->>Runtime: enqueue segment and mark transaction queued
+  else idle start projection transaction
+    Runtime->>DOM: captureVisualAnchor()
+    Runtime->>Runtime: create ProjectionCommitToken
+    Runtime-->>React: snapshot with viewportPhase PROJECTING
+    React->>DOM: render rows, triggers, bottom marker
+  end
 
-    alt token mismatch
-      Runtime-->>Events: viewportDiagnostic(transaction.staleCommitAck)
-    else matching token
-      Runtime->>DOM: measureRuntimeDom()
-      opt anchor ref is missing on first pass
-        Runtime->>Runtime: wait one animation frame
-        Runtime->>DOM: measureRuntimeDom()
-      end
-      Runtime->>DOM: correct anchor, align destination, or scroll to bottom
-      Runtime->>DOM: measureRuntimeDom()
-      Runtime->>Runtime: record row metrics
-      Runtime->>Runtime: settle interaction state and edge latches
-      Runtime-->>React: snapshot with viewportPhase IDLE
-      Runtime-->>Events: viewportReady once per generation
-      Runtime-->>Events: viewportObservationChanged(transaction-settle)
-      Runtime-->>Events: viewportAnchorChanged(transaction-settle)
-      opt reset-around destination
-        Runtime-->>Events: destinationSettled
-      end
-      opt segment has trim pressure
-        Runtime-->>Events: segmentTrimPressure
-      end
+  opt projection transaction is active
+    alt commit timeout before ack
+      Runtime->>Runtime: clear pending transaction and set phase IDLE
+      Runtime-->>Events: viewportError(commit-timeout)
       Runtime->>Runtime: start next queued transaction
-      Runtime->>Runtime: evaluate underflow and direct-scroll edge intent
+    else React commit ack arrives
+      React->>Runtime: ackProjectionCommit(token)
+      alt token mismatch
+        Runtime-->>Events: viewportDiagnostic(transaction.staleCommitAck)
+      else matching token
+        Runtime->>DOM: measureRuntimeDom()
+        opt anchor ref is missing on first pass
+          Runtime->>Runtime: wait one animation frame
+          Runtime->>DOM: measureRuntimeDom()
+        end
+        Runtime->>DOM: correct anchor, align destination, or scroll to bottom
+        Runtime->>DOM: measureRuntimeDom()
+        Runtime->>Runtime: record row metrics
+        Runtime->>Runtime: settle interaction state and edge latches
+        Runtime-->>React: snapshot with viewportPhase IDLE
+        Runtime-->>Events: viewportReady once per generation
+        Runtime-->>Events: viewportObservationChanged(transaction-settle)
+        Runtime-->>Events: viewportAnchorChanged(transaction-settle)
+        opt reset-around destination
+          Runtime-->>Events: destinationSettled
+        end
+        opt segment has trim pressure
+          Runtime-->>Events: segmentTrimPressure
+        end
+        Runtime->>Runtime: start next queued transaction
+        opt no queued transaction started and phase is IDLE
+          Runtime->>Runtime: evaluate underflow and direct-scroll edge intent
+        end
+      end
     end
   end
 ```

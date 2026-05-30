@@ -31,11 +31,11 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
   clear(): void {
     this.pending = null
     this.lastDirection = null
-    if (this.axes.getReadySubstate() === 'READY_DESTINATION_PENDING') {
-      this.axes.setReadySubstate('READY_IDLE')
+    if (this.axes.isReadySubstate('READY_DESTINATION_PENDING')) {
+      this.axes.markReadyIdle()
     }
     if (this.axes.getDestinationState() !== 'settled') {
-      this.axes.setDestinationState('idle')
+      this.axes.markDestinationIdle()
     }
   }
 
@@ -45,8 +45,8 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
   ): InteractionUpdate<TMessage, TOptimistic> {
     this.pending = intent
     this.lastDirection = resolveDestinationDirection(intent)
-    this.axes.setReadySubstate('READY_DESTINATION_PENDING')
-    this.axes.setDestinationState('pendingData')
+    this.axes.markDestinationPending()
+    this.axes.markDestinationPendingData()
     const requestToken = this.nextRequestToken('around')
     const event: NeedMessagesAroundEvent = {
       type: 'needMessagesAround',
@@ -71,13 +71,13 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
   markLocalSettled(): void {
     this.pending = null
     this.lastDirection = null
-    this.axes.setReadySubstate('READY_IDLE')
-    this.axes.setDestinationState('settled')
+    this.axes.markReadyIdle()
+    this.axes.markDestinationSettled()
   }
 
   markResolvingDom(): void {
     if (this.pending) {
-      this.axes.setDestinationState('resolvingDom')
+      this.axes.markDestinationResolvingDom()
     }
   }
 
@@ -91,8 +91,8 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
 
     this.pending = null
     this.lastDirection = null
-    this.axes.setReadySubstate('READY_IDLE')
-    this.axes.setDestinationState('settled')
+    this.axes.markReadyIdle()
+    this.axes.markDestinationSettled()
     return {
       ...snapshot,
       pendingIntent: null,

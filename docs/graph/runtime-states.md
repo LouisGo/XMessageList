@@ -23,7 +23,7 @@ stateDiagram-v2
   Measuring --> Correcting: resize measurement complete
 ```
 
-`settling` 是 internal transaction axis state，不是 public `viewportPhase`。
+`settling` 是 internal transaction axis state，不是 public `viewportPhase`。`MOTION` 是当前 contract 保留值；现有 controller 不会 emit，所以不作为真实运行节点绘制。当前实现已预留 internal motion slot，但仍是 no-op，不改变 snapshot phase 或事件。
 
 ## Edge Slot State
 
@@ -40,45 +40,37 @@ stateDiagram-v2
   Loading --> Exhausted: matching extend segment and edge exhausted
   Loading --> Error: reportEdgeRequestFailure with matching token
   Error --> Loading: retryEdgeRequest
-  Idle --> Idle: trim-before or trim-after clears matching edge
+  Exhausted --> Idle: trim-before or trim-after clears matching edge
+  Loading --> Idle: reset or generation reset clears latch
+  Error --> Idle: reset or generation reset clears latch
+  Exhausted --> Idle: reset clears latch
 ```
 
 ## Pending Intent Arbitration
 
 ```mermaid
-flowchart TD
-  Ready["Runtime IDLE with no pendingIntent"]
-  EdgeHit["before/after trigger intersects"]
-  SourceCheck{"scroll source is user or momentum?"}
-  EdgePending["pendingIntent=edge-before or edge-after"]
-  UnderflowCheck["post-commit underflow evaluation"]
-  Fillable{"scroll range too short and fillable edge exists?"}
-  UnderflowPending["pendingIntent=underflow-fill"]
-  FollowCmd["scrollToLatest"]
-  HasAfter{"hasMoreAfter?"}
-  FollowPending["pendingIntent=follow-bottom"]
-  NativeBottom["write native bottom and LOCKED"]
-  DestinationCmd["scrollToMessage or restoreToMessage"]
-  LocalTarget{"target is in current segment?"}
-  LocalAlign["align local row and emit destinationSettled"]
-  DestinationPending["pendingIntent=destination"]
+stateDiagram-v2
+  [*] --> ReadyIdle
+  ReadyIdle: IDLE phase, no pendingIntent
+  EdgePending: pendingIntent=edge-before or edge-after
+  UnderflowPending: pendingIntent=underflow-fill
+  FollowBottomPending: pendingIntent=follow-bottom
+  DestinationPending: pendingIntent=destination
 
-  Ready --> EdgeHit --> SourceCheck
-  SourceCheck -->|yes| EdgePending
-  SourceCheck -->|no| Ready
+  ReadyIdle --> EdgePending: edge trigger intersects with user or momentum source
+  ReadyIdle --> UnderflowPending: post-commit underflow fillable edge
+  ReadyIdle --> FollowBottomPending: scrollToLatest with hasMoreAfter
+  ReadyIdle --> ReadyIdle: scrollToLatest with no hasMoreAfter writes native bottom and LOCKED
+  ReadyIdle --> DestinationPending: scrollToMessage or restoreToMessage target outside segment
+  ReadyIdle --> ReadyIdle: local destination align emits destinationSettled
 
-  Ready --> UnderflowCheck --> Fillable
-  Fillable -->|yes| UnderflowPending
-  Fillable -->|no| Ready
-  Ready --> FollowCmd --> HasAfter
-  HasAfter -->|yes| FollowPending
-  HasAfter -->|no| NativeBottom
-  Ready --> DestinationCmd --> LocalTarget
-  LocalTarget -->|yes| LocalAlign
-  LocalTarget -->|no| DestinationPending
-
-  EdgePending -->|"matching extend segment settles"| Ready
-  UnderflowPending -->|"one fill segment settles; re-evaluate"| Ready
-  FollowPending -->|"reset-latest settles or user scroll interrupts"| Ready
-  DestinationPending -->|"reset-around settles"| Ready
+  EdgePending --> ReadyIdle: matching extend segment settles
+  EdgePending --> ReadyIdle: matching failure or generation reset
+  UnderflowPending --> ReadyIdle: one fill segment settles
+  ReadyIdle --> UnderflowPending: re-evaluation still sees underflow
+  FollowBottomPending --> FollowBottomPending: reset-latest settles with hasMoreAfter
+  FollowBottomPending --> ReadyIdle: reset-latest settles with no hasMoreAfter and LOCKED
+  FollowBottomPending --> ReadyIdle: user scroll, destination, or generation reset interrupts
+  DestinationPending --> ReadyIdle: reset-around settles
+  DestinationPending --> ReadyIdle: new generation or follow-bottom clears destination
 ```

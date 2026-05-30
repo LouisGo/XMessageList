@@ -16,22 +16,20 @@ import {
   patchSegmentItems,
   trimAroundKey,
 } from './segmentOperations'
+import {
+  DataRuntimeRequestTokenRegistry,
+  type DataRuntimeRequestKind,
+  type DataRuntimeRequestToken,
+} from './requestTokenRegistry'
+
+export type {
+  DataRuntimeRequestKind,
+  DataRuntimeRequestToken,
+} from './requestTokenRegistry'
 
 export type MessageListDataRuntimeOptions = {
   feedId: string
   itemBudget?: number
-}
-
-export type DataRuntimeRequestKind =
-  | 'before'
-  | 'after'
-  | 'latest'
-  | 'around'
-
-export type DataRuntimeRequestToken = {
-  requestToken: string
-  generation: number
-  kind: DataRuntimeRequestKind
 }
 
 export type DataRuntimeApplyResult<TMessage, TOptimistic> = {
@@ -72,15 +70,12 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
 
   private segmentRevision = 0
 
-  private requestSequence = 0
-
-  private readonly pendingRequests = new Map<string, DataRuntimeRequestToken>()
-
-  private readonly currentRequestByKind = new Map<DataRuntimeRequestKind, string>()
+  private readonly requestTokens: DataRuntimeRequestTokenRegistry
 
   private segment: LoadedSegment<TMessage, TOptimistic>
 
   constructor(private readonly options: MessageListDataRuntimeOptions) {
+    this.requestTokens = new DataRuntimeRequestTokenRegistry(this.options.feedId)
     this.segment = {
       feedId: this.options.feedId,
       generation: this.generation,
@@ -97,30 +92,13 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
   }
 
   createRequestToken(kind: DataRuntimeRequestKind): DataRuntimeRequestToken {
-    const request = {
-      requestToken: `${this.options.feedId}:${kind}:${this.requestSequence + 1}`,
-      generation: this.generation,
-      kind,
-    }
-    this.requestSequence += 1
-    this.pendingRequests.set(request.requestToken, request)
-    this.currentRequestByKind.set(request.kind, request.requestToken)
-    return request
+    return this.requestTokens.create(kind, this.generation)
   }
 
   adoptRequestToken(
     request: DataRuntimeRequestToken,
   ): void {
-    if (request.generation === this.generation) {
-      if (request.kind === 'around') {
-        this.currentRequestByKind.delete('latest')
-      }
-      if (request.kind === 'latest') {
-        this.currentRequestByKind.delete('around')
-      }
-      this.pendingRequests.set(request.requestToken, request)
-      this.currentRequestByKind.set(request.kind, request.requestToken)
-    }
+    this.requestTokens.adopt(request, this.generation)
   }
 
   resetLatest(
@@ -280,8 +258,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
     modifier: SegmentModifier,
   ): LoadedSegment<TMessage, TOptimistic> {
     this.generation += 1
-    this.pendingRequests.clear()
-    this.currentRequestByKind.clear()
+    this.requestTokens.reset()
     this.segment = this.createSegment(dedupeItems(input.items), {
       ...input,
       modifier,
@@ -307,20 +284,11 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
     requestToken: string,
     expectedKind: DataRuntimeRequestKind,
   ): DataRuntimeRequestToken | null {
-    const request = this.pendingRequests.get(requestToken)
-    this.pendingRequests.delete(requestToken)
-
-    if (
-      !request ||
-      request.kind !== expectedKind ||
-      request.generation !== this.generation ||
-      this.currentRequestByKind.get(request.kind) !== requestToken
-    ) {
-      return null
-    }
-
-    this.currentRequestByKind.delete(request.kind)
-    return request
+    return this.requestTokens.consume(
+      requestToken,
+      expectedKind,
+      this.generation,
+    )
   }
 
   private staleResult(): DataRuntimeApplyResult<TMessage, TOptimistic> {

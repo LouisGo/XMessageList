@@ -101,11 +101,11 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
       return null
     }
 
-    this.axes.setReadySubstate(
-      pendingIntent === 'underflow-fill'
-        ? 'READY_UNDERFLOW_PENDING'
-        : 'READY_EDGE_PENDING',
-    )
+    if (pendingIntent === 'underflow-fill') {
+      this.axes.markUnderflowPending()
+    } else {
+      this.axes.markEdgePending()
+    }
     return update
   }
 
@@ -116,7 +116,7 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     const update = this.edge.retry(snapshot, edge)
 
     if (update) {
-      this.axes.setReadySubstate('READY_EDGE_PENDING')
+      this.axes.markEdgePending()
     }
 
     return update
@@ -130,7 +130,7 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     const next = this.edge.reportError(snapshot, edge, requestToken)
 
     if (next !== snapshot) {
-      this.axes.setReadySubstate('READY_IDLE')
+      this.axes.markReadyIdle()
     }
 
     return next
@@ -173,10 +173,12 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
 
     if (
       !next.pendingIntent &&
-      this.axes.getReadySubstate() !== 'READY_DESTINATION_PENDING' &&
-      this.axes.getReadySubstate() !== 'READY_FOLLOW_BOTTOM_PENDING'
+      !this.axes.isReadySubstate(
+        'READY_DESTINATION_PENDING',
+        'READY_FOLLOW_BOTTOM_PENDING',
+      )
     ) {
-      this.axes.setReadySubstate('READY_IDLE')
+      this.axes.markReadyIdle()
     }
 
     return next

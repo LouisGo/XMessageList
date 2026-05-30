@@ -1,3 +1,5 @@
+import type { ViewportPhase } from '../contracts/snapshot'
+
 export type ReadySubstate =
   | 'READY_IDLE'
   | 'READY_EDGE_PENDING'
@@ -38,29 +40,108 @@ export class RuntimeStateAxes {
     return this.readySubstate
   }
 
-  setReadySubstate(state: ReadySubstate): void {
-    this.readySubstate = state
+  isReadySubstate(...states: ReadySubstate[]): boolean {
+    return states.includes(this.readySubstate)
+  }
+
+  markReadyIdle(): void {
+    this.readySubstate = 'READY_IDLE'
+  }
+
+  markEdgePending(): void {
+    this.readySubstate = 'READY_EDGE_PENDING'
+  }
+
+  markFollowBottomPending(): void {
+    this.readySubstate = 'READY_FOLLOW_BOTTOM_PENDING'
+  }
+
+  markDestinationPending(): void {
+    this.readySubstate = 'READY_DESTINATION_PENDING'
+  }
+
+  markUnderflowPending(): void {
+    this.readySubstate = 'READY_UNDERFLOW_PENDING'
+  }
+
+  markViewportCompactionPending(): void {
+    this.readySubstate = 'READY_VIEWPORT_COMPACTION_PENDING'
   }
 
   getTransactionState(): TransactionState {
     return this.transactionState
   }
 
-  setTransactionState(state: TransactionState): void {
-    this.transactionState = state
+  markTransactionIdle(): void {
+    this.transactionState = 'idle'
+  }
+
+  markTransactionQueued(): void {
+    this.transactionState = 'queued'
+  }
+
+  markTransactionActive(): void {
+    this.transactionState = 'active'
+  }
+
+  markTransactionMeasuring(): void {
+    this.transactionState = 'measuring'
+  }
+
+  markTransactionCorrecting(): void {
+    this.transactionState = 'correcting'
+  }
+
+  markTransactionSettling(): void {
+    this.transactionState = 'settling'
+  }
+
+  markTransactionForViewportPhase(phase: ViewportPhase): void {
+    if (phase === 'PROJECTING' || phase === 'MOTION') {
+      this.markTransactionActive()
+      return
+    }
+
+    if (phase === 'MEASURING') {
+      this.markTransactionMeasuring()
+      return
+    }
+
+    if (phase === 'CORRECTING') {
+      this.markTransactionCorrecting()
+      return
+    }
+
+    this.markTransactionIdle()
   }
 
   getDestinationState(): DestinationState {
     return this.destinationState
   }
 
-  setDestinationState(state: DestinationState): void {
-    this.destinationState = state
+  markDestinationIdle(): void {
+    this.destinationState = 'idle'
+  }
+
+  markDestinationPendingData(): void {
+    this.destinationState = 'pendingData'
+  }
+
+  markDestinationResolvingDom(): void {
+    this.destinationState = 'resolvingDom'
+  }
+
+  markDestinationSettled(): void {
+    this.destinationState = 'settled'
+  }
+
+  markDestinationInterrupted(): void {
+    this.destinationState = 'interrupted'
   }
 
   resetIntentAxes(): void {
-    this.readySubstate = 'READY_IDLE'
-    this.destinationState = 'idle'
+    this.markReadyIdle()
+    this.markDestinationIdle()
   }
 
   getSnapshot(): RuntimeStateAxesSnapshot {

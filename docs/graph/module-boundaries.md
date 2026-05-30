@@ -29,7 +29,7 @@ flowchart LR
   E2E -->|"stable evidence API"| Runtime
 ```
 
-## Runtime Domain Map
+## Runtime Ownership Map
 
 ```mermaid
 flowchart TD
@@ -61,12 +61,17 @@ flowchart TD
   Interactions --> Contracts
   Interactions --> State
   Interactions --> Scroll
+  Interactions -.->|"measurement input types"| DOMDomain
   Events --> Contracts
   Events --> Shared
   Events --> DOMDomain
+  Scroll -.->|"RuntimeMeasurement type"| DOMDomain
   Transactions --> Contracts
   Transactions --> DOMDomain
   Transactions --> Interactions
 ```
 
+Legend: solid arrows describe ownership, orchestration, or collaboration. Dashed arrows describe type/helper dependencies that are not ownership edges.
+
 `controller/` 是唯一 orchestration owner；跨域复用的纯 identity/snapshot helper 应留在 `shared/`，避免 DOM、events、interactions 反向依赖 controller。
+本图不是完整 import graph；它只标出理解当前 runtime 分域时最容易误判的边界。

@@ -84,6 +84,45 @@ describe('MessageList viewport kernel', () => {
     )).toHaveLength(2)
   })
 
+  it('defers post-commit underflow evaluation while a queued transaction starts', () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rowA = createRow('row-1', 0, 20)
+    const rowB = createRow('row-2', 20, 20)
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(rowA)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', rowA)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    }))
+    const firstToken = runtime.getSnapshot().commitToken
+    runtime.applyLoadedSegment(segment([item('row-1'), item('row-2')], 1, 2, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    }))
+
+    adapter.ackProjectionCommit(firstToken)
+
+    expect(runtime.getSnapshot().segmentRevision).toBe(2)
+    expect(runtime.getSnapshot().viewportPhase).toBe('PROJECTING')
+    expect(events.some((event) =>
+      event.type === 'needMoreBefore' || event.type === 'needMoreAfter'
+    )).toBe(false)
+
+    container.append(rowB)
+    adapter.registerRowElement('row-2', rowB)
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(events.some((event) =>
+      event.type === 'needMoreBefore' || event.type === 'needMoreAfter'
+    )).toBe(true)
+  })
+
   it('uses generation changes as the transaction cancellation boundary', () => {
     const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -187,6 +226,19 @@ describe('MessageList viewport kernel', () => {
     }))
   })
 
+  it('keeps the reserved motion slot no-op for committed projections', () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const phases: string[] = []
+
+    runtime.subscribeSnapshot(() => { phases.push(runtime.getSnapshot().viewportPhase) })
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
+    expect(phases).not.toContain('MOTION')
+  })
+
   it('keeps stale timeout callbacks from clearing the current transaction', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
@@ -194,6 +246,7 @@ describe('MessageList viewport kernel', () => {
       scheduler,
       commitTimeoutMs: 5,
     })
+    const adapter = getMessageListAdapterRuntime(runtime)
     const events: MessageListRuntimeEvent[] = []
 
     runtime.subscribeRuntimeEvent((event) => {
@@ -209,6 +262,13 @@ describe('MessageList viewport kernel', () => {
     expect(runtime.getEvidence().commitToken.segmentRevision).toBe(2)
     expect(events.filter((event) =>
       event.type === 'viewportError' && event.code === 'commit-timeout'
+    )).toHaveLength(1)
+
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
+    expect(runtime.getDiagnostics().filter((record) =>
+      record.name === 'transaction.settle'
     )).toHaveLength(1)
   })
 

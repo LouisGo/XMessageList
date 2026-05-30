@@ -5,7 +5,7 @@ import { createViewportEvidence } from '../events/evidence'
 import type { MessageIdentityAnchor, MessageRuntimeItemKey } from '../contracts/identity'
 import type { MessageListAdapterRuntime } from '../internal'
 import { createBrowserObserverFactory, createInitialSnapshot, createSnapshotFromSegment, isSameSegmentToken, isSameToken } from './controllerHelpers'
-import { resolvePendingAnchorKey, resolveTransactionScrollSource, resolveTransactionStateForPhase, shouldWaitForAnchorRef, type PendingTransaction } from './controllerTransactionHelpers'
+import { resolvePendingAnchorKey, resolveTransactionScrollSource, shouldWaitForAnchorRef } from './controllerTransactionHelpers'
 import { withNextProjectionRevision } from '../shared/snapshotIdentity'
 import { RuntimeDomInteractions } from '../dom/domInteractions'
 import { RuntimeScrollIntentCoordinator } from '../scroll/runtimeScrollIntent'
@@ -19,9 +19,10 @@ import type { MessageListRuntimeOptions, RuntimeObserverFactory, RuntimeSchedule
 import type { MessageListSnapshot, MessageListSnapshotListener, ProjectionCommitToken, ViewportEvidence } from '../contracts/snapshot'
 import { createPostCommitInteractionUpdates } from '../interactions/postCommitInteractions'
 import { createDestinationSettledEvent, createSegmentTrimPressureEvent, createViewportObservationEvent } from '../events/runtimePublicEvents'
-import { isStaleLoadedSegment, removeQueuedSegmentsBeforeGeneration } from './transactionQueue'
+import { ProjectionTransactionQueue } from './transactionQueue'
 import { settleTransactionScrollPosition } from '../transactions/transactionSettlement'
 import { resolveCurrentViewportAnchor, resolveMeasuredViewportAnchor, resolveViewportAnchorEventInput, type ResolvedViewportAnchor, type ViewportAnchorEventInput } from '../dom/viewportAnchorEvents'
+import { MotionCoordinator } from '../motion/motionCoordinator'
 export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unknown>
   implements MessageListAdapterRuntime<TMessage, TOptimistic> {
   private readonly scheduler: RuntimeScheduler
@@ -32,12 +33,11 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   private readonly stateAxes = new RuntimeStateAxes()
   private readonly scrollIntent: RuntimeScrollIntentCoordinator
   private readonly domInteractions: RuntimeDomInteractions<TMessage, TOptimistic>
+  private readonly transactions = new ProjectionTransactionQueue<TMessage, TOptimistic>()
+  private readonly motion = new MotionCoordinator()
   private readonly snapshotListeners = new Set<MessageListSnapshotListener>()
   private readonly eventListeners = new Set<MessageListRuntimeEventListener>()
   private snapshot: MessageListSnapshot<TMessage, TOptimistic>
-  private pendingTransaction: PendingTransaction<TMessage, TOptimistic> | null = null
-  private readonly transactionQueue: Array<LoadedSegment<TMessage, TOptimistic>> = []
-  private isAdvancingTransactionQueue = false
   private lastMeasurement = measureRuntimeDom(this.registry.snapshot())
   private lastObservationScrollTop = 0
   private lastAnchor: MessageIdentityAnchor | null = null
@@ -80,13 +80,14 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     }
   }
   destroy(): void {
-    if (this.pendingTransaction) this.scheduler.clearTimeout(this.pendingTransaction.timeoutHandle)
+    const pending = this.transactions.getPending()
+    if (pending) this.scheduler.clearTimeout(pending.timeoutHandle)
     if (this.resizeFrame !== null) this.scheduler.cancelAnimationFrame(this.resizeFrame)
     this.resizeObserver?.disconnect()
     this.domInteractions.detachScrollContainer()
     this.registry.clearAll()
-    this.pendingTransaction = null
-    this.transactionQueue.length = 0
+    this.transactions.clear()
+    this.motion.reset()
     this.resizeFrame = null
     this.snapshotListeners.clear()
     this.eventListeners.clear()
@@ -102,14 +103,14 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       return
     }
     this.cancelTransactionsBeforeGeneration(segment)
-    if (this.pendingTransaction || this.isAdvancingTransactionQueue) {
-      this.transactionQueue.push(segment)
-      this.stateAxes.setTransactionState('queued')
+    if (this.transactions.shouldQueue()) {
+      const queueLength = this.transactions.enqueue(segment)
+      this.stateAxes.markTransactionQueued()
       this.pushDiagnostic('transaction.queued', 'info', {
         feedId: segment.feedId,
         generation: segment.generation,
         segmentRevision: segment.segmentRevision,
-        queueLength: this.transactionQueue.length,
+        queueLength,
       })
       return
     }
@@ -124,36 +125,21 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       projectionRevision,
     }
     const anchor = captureVisualAnchor(this.registry.snapshot())
-    const timeoutHandle = this.scheduler.setTimeout(() => {
-      if (!this.pendingTransaction || !isSameToken(this.pendingTransaction.token, token)) {
-        return
-      }
-      this.isAdvancingTransactionQueue = true
-      try {
-        this.pendingTransaction = null
-        this.stateAxes.setTransactionState('idle')
-        this.setViewportPhase('IDLE')
-        this.pushDiagnostic('transaction.commitTimeout', 'error', token)
-        this.emitRuntimeEvent({ type: 'viewportError', feedId: token.feedId, code: 'commit-timeout', message: 'Projection commit timed out.' })
-      } finally {
-        this.isAdvancingTransactionQueue = false
-      }
-      this.startNextQueuedTransaction()
-    }, this.options.commitTimeoutMs ?? 120)
-    this.pendingTransaction = {
+    const timeoutHandle = this.scheduler.setTimeout(() => this.handleCommitTimeout(token), this.options.commitTimeoutMs ?? 120)
+    this.transactions.setPending({
       token,
       segment,
       anchor,
       timeoutHandle,
       startedAt: this.scheduler.now(),
       anchorRetryCount: 0,
-    }
-    this.stateAxes.setTransactionState('active')
+    })
+    this.stateAxes.markTransactionActive()
     this.snapshot = createSnapshotFromSegment(segment, { previous: this.snapshot, projectionRevision, viewportPhase: 'PROJECTING' })
     this.emitSnapshot()
   }
   ackProjectionCommit(token: ProjectionCommitToken): void {
-    const pending = this.pendingTransaction
+    const pending = this.transactions.getPending()
     if (!pending || !isSameToken(pending.token, token)) {
       if (!pending && isSameSegmentToken(this.snapshot.commitToken, token)) {
         return
@@ -165,15 +151,15 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.continueCommittedTransaction(token)
   }
   private continueCommittedTransaction(token: ProjectionCommitToken): void {
-    const pending = this.pendingTransaction
+    const pending = this.transactions.getPending()
     if (!pending || !isSameToken(pending.token, token)) {
       return
     }
-    this.isAdvancingTransactionQueue = true
+    this.transactions.beginAdvancing()
     let settled = false
     try {
       this.scrollIntent.incrementFrame()
-      this.stateAxes.setTransactionState('measuring')
+      this.stateAxes.markTransactionMeasuring()
       this.setViewportPhase('MEASURING')
       this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
       if (shouldWaitForAnchorRef(pending, this.registry)) {
@@ -187,7 +173,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
         })
         return
       }
-      this.stateAxes.setTransactionState('correcting')
+      this.stateAxes.markTransactionCorrecting()
       this.setViewportPhase('CORRECTING')
       const destination = this.interactions.getPendingDestination()
       const transactionScrollSource = resolveTransactionScrollSource({
@@ -210,15 +196,15 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       })
       this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
       this.domInteractions.recordRowMetrics()
-      this.stateAxes.setTransactionState('settling')
+      this.stateAxes.markTransactionSettling()
       this.snapshot = this.interactions.settleSegment(
         this.snapshot,
         pending.segment,
       )
       this.domInteractions.settleDirectScrollSegment(pending.segment.modifier)
       this.syncScrollIntentBottomLock()
-      this.pendingTransaction = null
-      this.stateAxes.setTransactionState('idle')
+      this.transactions.clearPending()
+      this.stateAxes.markTransactionIdle()
       this.setViewportPhase('IDLE')
       this.pushDiagnostic('transaction.settle', 'info', { ...token, latencyMs: this.scheduler.now() - pending.startedAt })
       this.emitViewportReadyOnce(token)
@@ -230,10 +216,34 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.emitSegmentTrimPressure(pending.segment, settledAnchor)
       settled = true
     } finally {
-      this.isAdvancingTransactionQueue = false
+      this.transactions.endAdvancing()
     }
     if (settled) {
-      this.startNextQueuedTransaction()
+      this.applySettledTransactionContinuations()
+    }
+  }
+  private handleCommitTimeout(token: ProjectionCommitToken): void {
+    const pending = this.transactions.clearPendingToken(token)
+    if (!pending) return
+    this.transactions.beginAdvancing()
+    try {
+      this.stateAxes.markTransactionIdle()
+      this.setViewportPhase('IDLE')
+      this.pushDiagnostic('transaction.commitTimeout', 'error', token)
+      this.emitRuntimeEvent({ type: 'viewportError', feedId: token.feedId, code: 'commit-timeout', message: 'Projection commit timed out.' })
+    } finally {
+      this.transactions.endAdvancing()
+    }
+    this.startNextQueuedTransaction()
+  }
+  private applySettledTransactionContinuations(): void {
+    const startedQueuedTransaction = this.startNextQueuedTransaction()
+    if (startedQueuedTransaction) return
+    this.motion.reservePostCommitOpportunity()
+    if (
+      !this.motion.consumePostCommitOpportunity() &&
+      this.snapshot.viewportPhase === 'IDLE'
+    ) {
       this.applyPostCommitInteractionUpdates(this.domInteractions.getDirectScrollEdgeIntent())
     }
   }
@@ -309,7 +319,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   subscribeViewportObservation(listener: ViewportObservationListener): () => void { return this.subscribeRuntimeEvent((event) => { if (event.type === 'viewportObservationChanged') listener(event) }) }
   getViewportAnchor(): MessageIdentityAnchor | null { return this.lastAnchor ?? this.snapshot.segmentMeta.anchor ?? null }
   getDiagnostics(): import('../contracts/events').ViewportDiagnosticRecord[] { return this.diagnostics.getRecords() }
-  getEvidence(): ViewportEvidence { return createViewportEvidence(this.snapshot, this.lastMeasurement, this.pendingTransaction?.token ?? null) }
+  getEvidence(): ViewportEvidence { return createViewportEvidence(this.snapshot, this.lastMeasurement, this.transactions.getPending()?.token ?? null) }
   registerMessageFlowElement(element: HTMLElement | null): void { this.registry.setMessageFlow(element) }
   registerBeforeTriggerElement(element: HTMLElement | null): void { this.registry.setBeforeTrigger(element); this.domInteractions.registerEdgeTrigger('before', element) }
   registerAfterTriggerElement(element: HTMLElement | null): void { this.registry.setAfterTrigger(element); this.domInteractions.registerEdgeTrigger('after', element) }
@@ -391,7 +401,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.resizeFrame = this.scheduler.requestAnimationFrame(() => {
       this.scrollIntent.incrementFrame()
       this.resizeFrame = null
-      if (this.pendingTransaction || this.snapshot.viewportPhase !== 'IDLE') {
+      if (this.transactions.hasPending() || this.snapshot.viewportPhase !== 'IDLE') {
         this.scheduleResizeMeasurement()
         return
       }
@@ -402,7 +412,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.domInteractions.preserveVisualAnchor(anchor)
       this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
       this.domInteractions.recordRowMetrics()
-      this.stateAxes.setTransactionState('settling')
+      this.stateAxes.markTransactionSettling()
       this.pushDiagnostic('measurement.resizeDirty', 'info', {
         rowCount: this.lastMeasurement.visibleRows.length,
       })
@@ -412,7 +422,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     })
   }
   private handleScrollFrame(): void {
-    if (this.pendingTransaction || this.snapshot.viewportPhase !== 'IDLE') {
+    if (this.transactions.hasPending() || this.snapshot.viewportPhase !== 'IDLE') {
       return
     }
     const scrollSource = this.scrollIntent.classifyFrameScroll()
@@ -444,7 +454,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     })
   }
   private setViewportPhase(phase: MessageListSnapshot['viewportPhase']): void {
-    this.stateAxes.setTransactionState(resolveTransactionStateForPhase(phase))
+    this.stateAxes.markTransactionForViewportPhase(phase)
     this.snapshot = {
       ...this.snapshot,
       viewportPhase: phase,
@@ -452,32 +462,27 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.emitSnapshot()
   }
   private emitSnapshot(): void { for (const listener of this.snapshotListeners) listener() }
-  private startNextQueuedTransaction(): void {
-    if (this.pendingTransaction || this.isAdvancingTransactionQueue) {
-      return
-    }
-    const next = this.transactionQueue.shift()
+  private startNextQueuedTransaction(): boolean {
+    const next = this.transactions.dequeueReady()
     if (next) {
       this.startTransaction(next)
-      return
+      return true
     }
-    if (!this.pendingTransaction) {
-      this.stateAxes.setTransactionState('idle')
+    if (!this.transactions.hasPending()) {
+      this.stateAxes.markTransactionIdle()
     }
+    return false
   }
   private cancelTransactionsBeforeGeneration(
     segment: LoadedSegment<TMessage, TOptimistic>,
   ): void {
     const generation = segment.generation
-    if (
-      this.pendingTransaction &&
-      this.pendingTransaction.segment.generation < generation
-    ) {
-      this.scheduler.clearTimeout(this.pendingTransaction.timeoutHandle)
-      this.pendingTransaction = null
-      this.stateAxes.setTransactionState('idle')
+    const cancelled = this.transactions.cancelPendingBeforeGeneration(generation)
+    if (cancelled) {
+      this.scheduler.clearTimeout(cancelled.timeoutHandle)
+      this.stateAxes.markTransactionIdle()
     }
-    removeQueuedSegmentsBeforeGeneration(this.transactionQueue, generation)
+    this.transactions.removeQueuedBeforeGeneration(generation)
     if (
       generation > this.snapshot.generation &&
       !this.shouldPreservePendingIntentFor(segment)
@@ -500,11 +505,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   private isStaleSegment(
     segment: LoadedSegment<TMessage, TOptimistic>,
   ): boolean {
-    return isStaleLoadedSegment(
-      segment,
-      this.transactionQueue.at(-1) ?? this.pendingTransaction?.segment,
-      this.snapshot,
-    )
+    return this.transactions.isStaleSegment(segment, this.snapshot)
   }
   private pushDiagnostic(
     name: string,
@@ -584,7 +585,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       measurement: this.lastMeasurement,
       directScrollEdgeIntent,
       scrollSource: this.scrollIntent.getLastScrollSource(),
-      allowDirectScrollEdge: !this.pendingTransaction && this.snapshot.viewportPhase === 'IDLE',
+      allowDirectScrollEdge: !this.transactions.hasPending() && this.snapshot.viewportPhase === 'IDLE',
     })) {
       this.applyInteractionUpdate(update)
     }
