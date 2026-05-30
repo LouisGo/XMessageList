@@ -5,7 +5,7 @@ import { createViewportEvidence } from '../events/evidence'
 import type { MessageIdentityAnchor, MessageRuntimeItemKey } from '../contracts/identity'
 import type { MessageListAdapterRuntime } from '../internal'
 import { createBrowserObserverFactory, createInitialSnapshot, createSnapshotFromSegment, isSameSegmentToken, isSameToken } from './controllerHelpers'
-import { resolvePendingAnchorKey, resolveTransactionScrollSource, shouldPreservePendingIntentForSegment, shouldWaitForAnchorRef } from './controllerTransactionHelpers'
+import { resolvePendingAnchorKey, resolveTransactionScrollSource, shouldPreservePendingIntentForSegment, shouldWaitForAnchorRef, type PendingRuntimeMotion } from './controllerTransactionHelpers'
 import { withNextProjectionRevision } from '../shared/snapshotIdentity'
 import { RuntimeDomInteractions } from '../dom/domInteractions'
 import { RuntimeScrollIntentCoordinator } from '../scroll/runtimeScrollIntent'
@@ -20,7 +20,7 @@ import type { MessageListSnapshot, MessageListSnapshotListener, ProjectionCommit
 import { createPostCommitInteractionUpdates } from '../interactions/postCommitInteractions'
 import { createDestinationSettledEvent, createSegmentTrimPressureEvent, createViewportObservationEvent } from '../events/runtimePublicEvents'
 import { ProjectionTransactionQueue } from './transactionQueue'
-import { settleTransactionScrollPosition, type TransactionScrollResolution } from '../transactions/transactionSettlement'
+import { settleTransactionScrollPosition } from '../transactions/transactionSettlement'
 import { resolveCurrentViewportAnchor, resolveMeasuredViewportAnchor, resolveViewportAnchorEventInput, type ResolvedViewportAnchor, type ViewportAnchorEventInput } from '../dom/viewportAnchorEvents'
 import { ControllerMotionCoordinator } from './controllerMotionCoordinator'
 export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unknown>
@@ -42,6 +42,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   private lastAnchor: MessageIdentityAnchor | null = null
   private lastAnchorOffsetWithinMessage: number | undefined
   private readyGenerationKey: string | null = null
+  private pendingRuntimeMotion: PendingRuntimeMotion<TMessage, TOptimistic> | null = null
   private readonly resizeObserver: ResizeObserver | null = null
   private resizeFrame: number | null = null
   constructor(private readonly options: MessageListRuntimeOptions) {
@@ -173,11 +174,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     }
     this.transactions.beginAdvancing()
     let settled = false
-    let pendingMotion: {
-      settlement: Extract<TransactionScrollResolution, { kind: 'motion' }>
-      scrollSource: ReturnType<typeof resolveTransactionScrollSource>
-      segment: LoadedSegment<TMessage, TOptimistic>
-    } | null = null
     try {
       this.scrollIntent.incrementFrame()
       this.stateAxes.markTransactionMeasuring()
@@ -229,7 +225,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.pushDiagnostic('transaction.settle', 'info', { ...token, latencyMs: this.scheduler.now() - pending.startedAt })
       this.emitViewportReadyOnce(token)
       if (scrollSettlement.kind === 'motion') {
-        pendingMotion = { settlement: scrollSettlement, scrollSource: transactionScrollSource, segment: pending.segment }
+        this.pendingRuntimeMotion = { settlement: scrollSettlement, scrollSource: transactionScrollSource, segment: pending.segment }
         settled = true
       } else {
         this.setViewportPhase('IDLE')
@@ -245,20 +241,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.transactions.endAdvancing()
     }
     if (settled) {
-      if (pendingMotion) {
-        if (this.startNextQueuedTransaction()) return
-        if (this.motion.startResolution(pendingMotion.settlement, pendingMotion.scrollSource)) {
-          this.emitSegmentTrimPressure(pendingMotion.segment, pendingMotion.settlement.anchor)
-          return
-        }
-        this.setViewportPhase('IDLE')
-        this.emitViewportObservation('transaction-settle', pendingMotion.scrollSource, pendingMotion.settlement.anchor)
-        this.emitAnchorChanged('transaction-settle', pendingMotion.settlement.anchor)
-        if (pendingMotion.settlement.destination) {
-          this.emitDestinationSettled(pendingMotion.settlement.destination, pendingMotion.settlement.anchor)
-        }
-        this.emitSegmentTrimPressure(pendingMotion.segment, pendingMotion.settlement.anchor)
-      }
       this.applySettledTransactionContinuations()
     }
   }
@@ -274,11 +256,12 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     } finally {
       this.transactions.endAdvancing()
     }
-    this.startNextQueuedTransaction()
+    this.applySettledTransactionContinuations({ evaluatePostCommitInteractions: false })
   }
-  private applySettledTransactionContinuations(): void {
-    const startedQueuedTransaction = this.startNextQueuedTransaction()
-    if (startedQueuedTransaction) return
+  private applySettledTransactionContinuations(options: { evaluatePostCommitInteractions?: boolean } = {}): void {
+    if (this.startNextQueuedTransaction()) return
+    if (this.startPendingRuntimeMotion()) return
+    if (options.evaluatePostCommitInteractions === false) return
     this.motion.reservePostCommitOpportunity()
     if (
       !this.motion.consumePostCommitOpportunity() &&
@@ -288,6 +271,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     }
   }
   scrollToLatest(): void {
+    this.cancelCommandMotion()
     const update = this.interactions.startFollowBottom(
       this.snapshot,
       this.readCurrentScrollTop(),
@@ -301,6 +285,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     target: MessageIdentityAnchor,
     options: import('../contracts/options').MessageListScrollToMessageOptions = {},
   ): void {
+    this.cancelCommandMotion()
     const align = options.align ?? 'center'
     if (this.motion.alignLocalDestination(target, align, undefined, 'jump', options.motion)) return
     this.startDestination({ target, reason: 'jump', align, motion: options.motion })
@@ -309,14 +294,8 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     target: MessageIdentityAnchor,
     options: import('../contracts/options').MessageListRestoreOptions = {},
   ): void {
-    if (this.motion.alignLocalDestination(
-      target,
-      options.align ?? 'center',
-      options.offsetWithinMessage,
-      'restore',
-    )) {
-      return
-    }
+    this.cancelCommandMotion()
+    if (this.motion.alignLocalDestination(target, options.align ?? 'center', options.offsetWithinMessage, 'restore')) return
     this.startDestination({
       target,
       reason: 'restore',
@@ -325,6 +304,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     })
   }
   private handleUserScrollIntent(): void {
+    this.pendingRuntimeMotion = null
     this.motion.cancel('user-interrupt')
     this.scrollIntent.markUserScrollIntent()
   }
@@ -378,6 +358,25 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   }
   private startDestination(intent: DestinationIntent): void {
     this.applyInteractionUpdate(this.interactions.startDestination(this.snapshot, intent))
+  }
+  private cancelCommandMotion(): void {
+    this.pendingRuntimeMotion = null
+    this.motion.cancel('command-supersede')
+  }
+  private startPendingRuntimeMotion(): boolean {
+    const pendingMotion = this.pendingRuntimeMotion
+    if (!pendingMotion) return false
+    this.pendingRuntimeMotion = null
+    if (this.motion.startResolution(pendingMotion.settlement, pendingMotion.scrollSource)) {
+      this.emitSegmentTrimPressure(pendingMotion.segment, pendingMotion.settlement.anchor)
+      return true
+    }
+    this.setViewportPhase('IDLE')
+    this.emitViewportObservation('transaction-settle', pendingMotion.scrollSource, pendingMotion.settlement.anchor)
+    this.emitAnchorChanged('transaction-settle', pendingMotion.settlement.anchor)
+    if (pendingMotion.settlement.destination) this.emitDestinationSettled(pendingMotion.settlement.destination, pendingMotion.settlement.anchor)
+    this.emitSegmentTrimPressure(pendingMotion.segment, pendingMotion.settlement.anchor)
+    return false
   }
   private applyInteractionUpdate(
     update: InteractionUpdate<TMessage, TOptimistic>,
@@ -502,6 +501,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       generation > this.snapshot.generation &&
       !shouldPreservePendingIntentForSegment(this.snapshot, segment)
     ) {
+      this.pendingRuntimeMotion = null
       this.snapshot = this.interactions.resetForGeneration(this.snapshot)
       this.syncScrollIntentBottomLock()
     }

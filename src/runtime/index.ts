@@ -35,9 +35,12 @@ export type {
 } from './contracts/events'
 export type {
   MessageListRuntimeOptions,
+  MessageListMotionDirection,
   MessageListScrollOptions,
+  MessageListScrollMotionHint,
   MessageListScrollToMessageOptions,
   MessageListRestoreOptions,
   RuntimeObserverFactory,
   RuntimeScheduler,
+  ScrollMotionOptions,
 } from './contracts/options'

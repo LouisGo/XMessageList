@@ -165,6 +165,103 @@ describe('MessageList viewport motion', () => {
     )).toBe(false)
   })
 
+  it('cancels active motion before opening a remote destination intent', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(6, 50)
+    const remoteRows = createRows(8, 50)
+    const events: MessageListRuntimeEvent[] = []
+    const localTarget = anchor('row-1')
+    const remoteTarget = anchor('row-7')
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    container.scrollTop = 200
+    positionRows(rows, 200)
+    runtime.scrollToMessage(localTarget, { align: 'start' })
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+
+    runtime.scrollToMessage(remoteTarget, { align: 'start' })
+    scheduler.flushFrames(40)
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'IDLE',
+      pendingIntent: 'destination',
+    })
+    expect(events.some((event) =>
+      event.type === 'destinationSettled' && event.target.stableId === 'row-1'
+    )).toBe(false)
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'destinationMotion.cancel',
+      details: expect.objectContaining({ reason: 'command-supersede' }),
+    }))
+
+    replaceRows(adapter, container, remoteRows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(remoteRows), 2, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      modifier: { type: 'reset-around', target: remoteTarget },
+      anchor: remoteTarget,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    scheduler.flushFrames(40)
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'destinationSettled',
+      target: remoteTarget,
+      resolvedTarget: remoteTarget,
+    }))
+  })
+
+  it('cancels active motion before opening a remote follow-bottom intent', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(6, 50)
+    const latestRows = createRows(8, 50)
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      hasMoreAfter: true,
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    container.scrollTop = 200
+    positionRows(rows, 200)
+    runtime.scrollToMessage(anchor('row-1'), { align: 'start' })
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+
+    runtime.scrollToLatest()
+    scheduler.flushFrames(40)
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'IDLE',
+      pendingIntent: 'follow-bottom',
+      bottomLockState: 'UNLOCKED',
+    })
+
+    replaceRows(adapter, container, latestRows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(latestRows), 2, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    scheduler.flushFrames(40)
+
+    expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
+    expect(container.scrollTop).toBe(300)
+  })
+
   it('starts queued transactions before opening a post-commit motion opportunity', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
@@ -212,6 +309,110 @@ describe('MessageList viewport motion', () => {
     })
   })
 
+  it('carries destination motion until queued transactions drain', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const initialRows = createRows(1, 50)
+    const targetRows = createRows(5, 50)
+    const events: MessageListRuntimeEvent[] = []
+    const target = anchor('row-4')
+
+    mountRows(runtime, adapter, container, initialRows)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment(itemsFromRows(initialRows), 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    runtime.scrollToMessage(target, { align: 'start' })
+
+    replaceRows(adapter, container, targetRows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(targetRows), 2, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      modifier: { type: 'reset-around', target },
+      anchor: target,
+    }))
+    const resetToken = runtime.getSnapshot().commitToken
+    runtime.applyLoadedSegment(segment(itemsFromRows(targetRows), 2, 2, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      modifier: { type: 'patch', changedKeys: ['row-2'] },
+      anchor: target,
+    }))
+
+    adapter.ackProjectionCommit(resetToken)
+    expect(runtime.getSnapshot()).toMatchObject({
+      segmentRevision: 2,
+      viewportPhase: 'PROJECTING',
+    })
+    expect(events.some((event) => event.type === 'destinationSettled')).toBe(false)
+
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    scheduler.flushFrames(40)
+
+    expect(container.scrollTop).toBe(150)
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'destinationSettled',
+      target,
+      resolvedTarget: target,
+    }))
+  })
+
+  it('carries destination motion through a queued transaction timeout', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      commitTimeoutMs: 5,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const initialRows = createRows(1, 50)
+    const targetRows = createRows(5, 50)
+    const events: MessageListRuntimeEvent[] = []
+    const target = anchor('row-4')
+
+    mountRows(runtime, adapter, container, initialRows)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment(itemsFromRows(initialRows), 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    runtime.scrollToMessage(target, { align: 'start' })
+
+    replaceRows(adapter, container, targetRows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(targetRows), 2, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      modifier: { type: 'reset-around', target },
+      anchor: target,
+    }))
+    const resetToken = runtime.getSnapshot().commitToken
+    runtime.applyLoadedSegment(segment(itemsFromRows(targetRows), 2, 2, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      modifier: { type: 'patch', changedKeys: ['row-2'] },
+      anchor: target,
+    }))
+
+    adapter.ackProjectionCommit(resetToken)
+    scheduler.flushTimers()
+
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'viewportError',
+      code: 'commit-timeout',
+    }))
+
+    scheduler.flushFrames(40)
+
+    expect(container.scrollTop).toBe(150)
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'destinationSettled',
+      target,
+      resolvedTarget: target,
+    }))
+  })
+
   it('uses follow-bottom motion for send-style latest rebuilds', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
@@ -232,10 +433,7 @@ describe('MessageList viewport motion', () => {
       bottomLockState: 'UNLOCKED',
     })
 
-    container.replaceChildren(...latestRows)
-    for (const row of latestRows) {
-      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
-    }
+    replaceRows(adapter, container, latestRows)
     runtime.applyLoadedSegment(segment(itemsFromRows(latestRows), 2, 1, {
       hasMoreBefore: true,
       hasMoreAfter: false,
@@ -283,10 +481,7 @@ describe('MessageList viewport motion', () => {
       motion: { crossFeed: true },
     })
 
-    container.replaceChildren(...targetRows)
-    for (const row of targetRows) {
-      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
-    }
+    replaceRows(adapter, container, targetRows)
     runtime.applyLoadedSegment(segment(itemsFromRows(targetRows), 2, 1, {
       hasMoreBefore: true,
       hasMoreAfter: true,
@@ -330,6 +525,11 @@ function mountRows(
   for (const row of rows) {
     adapter.registerRowElement(row.dataset.runtimeKey as string, row)
   }
+}
+
+function replaceRows(adapter: MessageListAdapterRuntime<string>, container: HTMLElement, rows: HTMLDivElement[]): void {
+  container.replaceChildren(...rows)
+  for (const row of rows) adapter.registerRowElement(row.dataset.runtimeKey as string, row)
 }
 
 function createRows(count: number, height: number): HTMLDivElement[] {

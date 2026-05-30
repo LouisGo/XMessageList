@@ -159,7 +159,8 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
   ): boolean {
     const container = this.host.getScrollContainer()
     if (!container) return false
-    this.cancel('command-supersede')
+    this.cancel('restart')
+    const targetTop = this.resolveCurrentTargetTop(resolution)
     this.prepareSnapshotForMotion(resolution)
     this.host.stateAxes.markMotionActive()
     this.host.stateAxes.markDestinationMotionActive()
@@ -167,17 +168,34 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     this.motion.start({
       container,
       source: resolution.source,
-      targetTop: resolution.targetTop,
+      targetTop,
       allowPreposition: resolution.allowPreposition,
       directionHint: resolution.destination?.motion?.direction,
       writeScrollTop: (scrollTop, source) =>
         this.host.writeProgrammaticScroll(container, scrollTop, source),
-      onSettle: () => this.finish(resolution, scrollSource ?? resolution.source),
+      onSettle: () => this.finish(resolution, scrollSource ?? resolution.source, targetTop),
       onCancel: (reason, source) => this.handleCancel(reason, source),
       onDiagnostic: (name, severity, details) =>
         this.host.pushDiagnostic(name, severity, details),
     })
     return true
+  }
+
+  private resolveCurrentTargetTop(resolution: MotionResolution): number {
+    if (resolution.destination && resolution.anchor) {
+      return this.host.resolveAlignedScrollTarget(
+        this.host.getSnapshot(),
+        resolution.anchor,
+        resolution.destination.align,
+        resolution.destination.offsetWithinMessage,
+      )?.scrollTop ?? resolution.targetTop
+    }
+
+    if (!resolution.destination) {
+      return this.host.getBottomTargetTop() ?? resolution.targetTop
+    }
+
+    return resolution.targetTop
   }
 
   private prepareSnapshotForMotion(resolution: MotionResolution): void {
@@ -195,6 +213,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
   private finish(
     resolution: MotionResolution,
     scrollSource: ScrollSource,
+    targetTop: number,
   ): void {
     this.host.measureRuntimeDom()
     this.host.recordRowMetrics()
@@ -209,7 +228,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     this.host.setViewportPhase('IDLE')
     this.host.pushDiagnostic('destinationMotion.settle', 'info', {
       source: resolution.source,
-      targetTop: resolution.targetTop,
+      targetTop,
       scrollTop: this.host.readCurrentScrollTop(),
       bottomLockState: resolution.bottomLockState,
     })
@@ -238,7 +257,6 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     this.host.stateAxes.markReadyIdle()
     if (
       reason === 'transaction-supersede' ||
-      reason === 'command-supersede' ||
       reason === 'restart'
     ) {
       return

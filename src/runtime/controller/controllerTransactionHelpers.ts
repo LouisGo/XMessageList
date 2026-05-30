@@ -5,6 +5,7 @@ import type { VisualAnchor } from '../dom/measurement'
 import type { LoadedSegment } from '../contracts/segment'
 import type { MessageListSnapshot, ProjectionCommitToken } from '../contracts/snapshot'
 import type { ScrollSource } from '../scroll/scrollIntentEngine'
+import type { TransactionScrollResolution } from '../transactions/transactionSettlement'
 
 export type PendingTransaction<TMessage, TOptimistic> = {
   token: ProjectionCommitToken
@@ -13,6 +14,12 @@ export type PendingTransaction<TMessage, TOptimistic> = {
   timeoutHandle: number
   startedAt: number
   anchorRetryCount: number
+}
+
+export type PendingRuntimeMotion<TMessage, TOptimistic> = {
+  settlement: Extract<TransactionScrollResolution, { kind: 'motion' }>
+  scrollSource: ScrollSource
+  segment: LoadedSegment<TMessage, TOptimistic>
 }
 
 export function shouldWaitForAnchorRef<TMessage, TOptimistic>(

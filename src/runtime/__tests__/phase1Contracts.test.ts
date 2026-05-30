@@ -2,6 +2,9 @@ import {
   createMessageListRuntime,
   type LoadedSegment,
   type MessageDataItem,
+  type MessageListMotionDirection,
+  type MessageListScrollMotionHint,
+  type ScrollMotionOptions,
 } from '../index'
 import { expect, it } from 'vitest'
 
@@ -30,8 +33,13 @@ it('exposes MessageList runtime contracts without legacy viewport names', () => 
   }
 
   runtime.applyLoadedSegment(segment)
+  const motionDirection: MessageListMotionDirection = 'before'
+  const motionHint: MessageListScrollMotionHint = { direction: motionDirection }
+  const scrollMotion: ScrollMotionOptions = { enabled: true }
 
   expect(runtime.getSnapshot().items).toEqual([item])
+  expect(motionHint.direction).toBe('before')
+  expect(scrollMotion.enabled).toBe(true)
   expect(runtime.getEvidence()).toMatchObject({
     feedId: 'feed-a',
     modifier: 'bootstrap',
