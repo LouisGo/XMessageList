@@ -17,6 +17,7 @@ const CHECKED_ROOTS = [
 const RUNTIME_ROOT = path.join(ROOT, 'src', 'runtime')
 const RUNTIME_INDEX = path.join(RUNTIME_ROOT, 'index.ts')
 const RUNTIME_INTERNAL = path.join(RUNTIME_ROOT, 'internal.ts')
+const RUNTIME_CONTROLLER_ROOT = path.join(RUNTIME_ROOT, 'controller')
 const DATA_RUNTIME_INDEX = path.join(RUNTIME_ROOT, 'data', 'index.ts')
 const FORBIDDEN_ROOT_EXPORTS = [
   'ProjectionCommitToken',
@@ -37,6 +38,7 @@ const violations = []
 await checkRootExports()
 await checkNoGodFiles()
 await checkImportGuards()
+await checkRuntimeImportDirections()
 
 if (violations.length > 0) {
   console.error('Public boundary violations:')
@@ -111,6 +113,47 @@ async function checkImportGuards() {
       guardDemoOrE2EImport(file, target)
     }
   }
+}
+
+async function checkRuntimeImportDirections() {
+  const files = await collectCodeFiles([RUNTIME_ROOT])
+
+  for (const file of files) {
+    if (isGeneratedOrBuildOutput(file) || isTestFile(file)) {
+      continue
+    }
+
+    const source = await readFile(file, 'utf8')
+    const specifiers = readModuleSpecifiers(source)
+
+    for (const specifier of specifiers) {
+      const target = await resolveLocalImport(file, specifier)
+
+      if (!target) {
+        continue
+      }
+
+      guardRuntimeImport(file, target)
+    }
+  }
+}
+
+function guardRuntimeImport(file, target) {
+  if (!isUnder(target, RUNTIME_CONTROLLER_ROOT)) {
+    return
+  }
+
+  if (
+    isUnder(file, RUNTIME_CONTROLLER_ROOT) ||
+    file === RUNTIME_INDEX ||
+    file === RUNTIME_INTERNAL
+  ) {
+    return
+  }
+
+  violations.push(
+    `${relative(file)} must not import controller-domain module ${relative(target)}`,
+  )
 }
 
 function guardReactImport(file, target) {

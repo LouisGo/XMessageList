@@ -1,6 +1,6 @@
 import {
   findKeyForAnchor,
-} from '../controller/controllerHelpers'
+} from '../shared/snapshotIdentity'
 import type { RuntimeDomRegistry } from './domRegistry'
 import { DirectScrollSession } from '../scroll/directScrollSession'
 import type { ViewportDiagnosticRecord } from '../contracts/events'

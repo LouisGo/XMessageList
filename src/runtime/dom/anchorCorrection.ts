@@ -1,7 +1,7 @@
 import {
   resolveAnchorFromKey,
   resolveRemappedAnchorKey,
-} from '../controller/controllerHelpers'
+} from '../shared/snapshotIdentity'
 import type { RuntimeDomRegistry } from './domRegistry'
 import type { RuntimeDomInteractions } from './domInteractions'
 import type { MessageListRuntimeEvent } from '../contracts/events'

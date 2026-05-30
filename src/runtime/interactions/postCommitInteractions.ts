@@ -1,4 +1,4 @@
-import { withNextProjectionRevision } from '../controller/controllerHelpers'
+import { withNextProjectionRevision } from '../shared/snapshotIdentity'
 import type { RuntimeInteractionState, RuntimeEdge, InteractionUpdate } from './interactionState'
 import type { RuntimeMeasurement } from '../dom/measurement'
 import type { ScrollSource } from '../scroll/scrollIntentEngine'

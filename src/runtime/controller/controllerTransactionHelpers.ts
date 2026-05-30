@@ -1,4 +1,4 @@
-import { resolveRemappedAnchorKey } from './controllerHelpers'
+import { resolveRemappedAnchorKey } from '../shared/snapshotIdentity'
 import type { RuntimeDomRegistry } from '../dom/domRegistry'
 import type { DestinationIntent } from '../state/interactionTypes'
 import type { VisualAnchor } from '../dom/measurement'

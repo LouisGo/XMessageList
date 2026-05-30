@@ -1,4 +1,4 @@
-import { findKeyForAnchor } from '../controller/controllerHelpers'
+import { findKeyForAnchor } from '../shared/snapshotIdentity'
 import type {
   DestinationSettledEvent,
   SegmentTrimPressureEvent,

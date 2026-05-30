@@ -1,6 +1,6 @@
 import {
   resolveAnchorFromSnapshot,
-} from '../controller/controllerHelpers'
+} from '../shared/snapshotIdentity'
 import type { RuntimeDomRegistry } from './domRegistry'
 import type { MessageIdentityAnchor } from '../contracts/identity'
 import {

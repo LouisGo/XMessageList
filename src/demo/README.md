@@ -12,6 +12,7 @@ runtime ownership of scroll, measurement, paging latches or anchor correction.
 - `runtime/` owns per-feed runtime cache helpers.
 - `scenario/` owns scenario orchestration hooks, segment publishing, runtime event handling and command wiring.
 - `styles/` owns CSS entry files used by the demo and E2E app.
+- `utils/` owns small generic demo utilities that do not imply runtime or data ownership.
 
 Demo code should respond to semantic runtime events and publish data runtime
 segments back to the viewport runtime. It should not inspect projection DOM to

@@ -14,6 +14,7 @@ does not own data fetching, React rendering, feed selection, or demo behavior.
 - Put diagnostics/evidence/event builders in `events/`.
 - Put commit/settlement/correction flows in `transactions/`.
 - Keep data merge, trim and token logic in `data/`.
+- Put cross-domain stateless helpers in `shared/`; other domains should not import from `controller/`.
 
 Runtime code must not import React. Viewport runtime consumes immutable
 `LoadedSegment` snapshots and must not merge, dedupe or reorder business items.
