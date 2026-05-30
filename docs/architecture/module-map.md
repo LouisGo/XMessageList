@@ -28,6 +28,7 @@
 - `events/`：diagnostics、evidence 和 runtime public event builders。
 - `transactions/`：commit 后 settlement / correction 流程。
 - `data/`：data runtime，负责 merge、dedupe、identity remap、trim 和 request token。
+- `shared/`：跨 runtime 域复用的无状态 helper；不能持有 controller orchestration 或 DOM ownership。
 
 ## React Adapter
 
@@ -38,7 +39,8 @@
 - `scrollbar/`：custom scrollbar overlay、geometry、metric reading 和 styles。
 - `types.ts` / `index.ts`：public adapter types 和 exports。
 
-React adapter 不读写 raw `scrollTop`，不维护 edge latch，不持久化 anchor。
+React adapter 不拥有 scroll correction、edge latch 或 anchor persistence。
+custom scrollbar overlay 只可镜像 native metrics，并通过 adapter-private runtime direct-scroll API 写入。
 
 ## Demo And E2E
 
@@ -71,4 +73,5 @@ React adapter 不读写 raw `scrollTop`，不维护 edge latch，不持久化 an
 
 - Moving files must preserve `src/index.ts`, `src/data.ts`, package exports and generated declaration shape.
 - React/demo/e2e must not import runtime private modules except the approved public, data, or adapter-private barrels.
+- Runtime non-controller domains must not import from `runtime/controller/`; move cross-domain pure helpers to `runtime/shared/`.
 - Source files should stay below the repository file budget; split by stable ownership rather than by arbitrary line count.
