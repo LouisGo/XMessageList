@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createDemoMessages, createNewestMessage } from '../demoData'
-import type { PersistedDemoFeed } from '../demoLocalStoreClient'
+import { createDemoMessages, createNewestMessage } from '../data/demoData'
+import type { PersistedDemoFeed } from '../data/demoLocalStoreClient'
 
 const localStoreMocks = vi.hoisted(() => ({
   loadPersistedDemoFeed: vi.fn(),
   savePersistedDemoFeed: vi.fn(),
 }))
 
-vi.mock('../demoLocalStoreClient', () => ({
+vi.mock('../data/demoLocalStoreClient', () => ({
   loadPersistedDemoFeed: localStoreMocks.loadPersistedDemoFeed,
   savePersistedDemoFeed: localStoreMocks.savePersistedDemoFeed,
 }))
@@ -18,7 +18,7 @@ import {
   getLatestMessages,
   getMessagesAround,
   readDemoViewportAnchor,
-} from '../demoMessageApi'
+} from '../data/demoMessageApi'
 
 describe('demoMessageApi persistence', () => {
   beforeEach(() => {

@@ -1,16 +1,16 @@
 import { useEffect } from 'react'
-import type { MessageListDataRuntime } from '../../runtime/data'
-import type { DemoMessage } from '../demoData'
+import type { MessageListDataRuntime } from '../../runtime/data/index'
+import type { DemoMessage } from '../data/demoData'
 import {
   loadDemoFeedMessages,
   loadDemoViewportAnchor,
-} from '../demoMessageApi'
+} from '../data/demoMessageApi'
 import {
   applyLatestRequest,
   toRuntimeAnchor,
-} from '../demoScenarioRequests'
-import type { DemoFeedRuntimeCache } from '../useDemoFeedRuntimeCache'
-import { getDemoFeedDefinition } from '../demoFeeds'
+} from '../data/demoScenarioRequests'
+import type { DemoFeedRuntimeCache } from '../runtime/useDemoFeedRuntimeCache'
+import { getDemoFeedDefinition } from '../data/demoFeeds'
 import {
   wait,
 } from './demoScenarioHelpers'

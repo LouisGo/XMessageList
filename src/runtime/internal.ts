@@ -1,8 +1,8 @@
-import type { MessageRuntimeItemKey } from './identity'
-import type { MessageListRuntime } from './runtime'
-import type { ProjectionCommitToken } from './snapshot'
+import type { MessageRuntimeItemKey } from './contracts/identity'
+import type { MessageListRuntime } from './controller/runtime'
+import type { ProjectionCommitToken } from './contracts/snapshot'
 
-export type { ProjectionCommitToken } from './snapshot'
+export type { ProjectionCommitToken } from './contracts/snapshot'
 
 export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown> =
   MessageListRuntime<TMessage, TOptimistic> & {

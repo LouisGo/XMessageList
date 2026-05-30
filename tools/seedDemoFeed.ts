@@ -2,7 +2,7 @@ import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises
 import { dirname, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
-import { createDemoMessages } from '../src/demo/demoData.ts'
+import { createDemoMessages } from '../src/demo/data/demoData'
 
 type PersistedDemoFeed = {
   version: 1

@@ -1,21 +1,21 @@
 import { useCallback } from 'react'
-import type { MessageListRuntime } from '../../runtime'
+import type { MessageListRuntime } from '../../runtime/index'
 import {
   createOutgoingMessage,
   toDemoMessageDataItem,
   type DemoMessage,
-} from '../demoData'
+} from '../data/demoData'
 import {
   appendDemoFeedMessages,
   flushDemoFeedPersistence,
   loadDemoFeedMessages,
   replaceDemoFeedMessages,
   saveDemoViewportAnchor,
-} from '../demoMessageApi'
+} from '../data/demoMessageApi'
 import {
   createDemoRequestId,
   writeDemoLog,
-} from '../demoLocalStoreClient'
+} from '../data/demoLocalStoreClient'
 import {
   highlightMessage,
   readLoadedMessages,

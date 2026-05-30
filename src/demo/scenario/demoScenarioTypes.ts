@@ -2,10 +2,10 @@ import type {
   MessageIdentityAnchor,
   MessageListRuntime,
   ViewportAnchorChangedEvent,
-} from '../../runtime'
-import type { MessageListDataRuntime } from '../../runtime/data'
-import type { DemoMessage } from '../demoData'
-import { DEMO_FEEDS, getDemoFeedDefinition } from '../demoFeeds'
+} from '../../runtime/index'
+import type { MessageListDataRuntime } from '../../runtime/data/index'
+import type { DemoMessage } from '../data/demoData'
+import { DEMO_FEEDS, getDemoFeedDefinition } from '../data/demoFeeds'
 
 export type DemoMessageScenario = {
   feeds: typeof DEMO_FEEDS

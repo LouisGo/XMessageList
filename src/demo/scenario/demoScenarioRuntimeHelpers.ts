@@ -4,25 +4,25 @@ import type {
   MessageListRuntime,
   MessageRuntimeItemKey,
   ResetAroundAlign,
-} from '../../runtime'
-import type { MessageListDataRuntime } from '../../runtime/data'
+} from '../../runtime/index'
+import type { MessageListDataRuntime } from '../../runtime/data/index'
 import {
   createDemoMessages,
   toDemoMessageDataItem,
   type DemoMessage,
-} from '../demoData'
-import { DEMO_FEEDS, getDemoFeedDefinition } from '../demoFeeds'
+} from '../data/demoData'
+import { DEMO_FEEDS, getDemoFeedDefinition } from '../data/demoFeeds'
 import {
   readDemoViewportAnchor,
   readDemoFeedMessages,
   replaceDemoFeedMessages,
   saveDemoViewportAnchor,
-} from '../demoMessageApi'
+} from '../data/demoMessageApi'
 import {
   applyAroundRequest,
   toRuntimeAnchor,
-} from '../demoScenarioRequests'
-import type { DemoFeedRuntimeCache } from '../useDemoFeedRuntimeCache'
+} from '../data/demoScenarioRequests'
+import type { DemoFeedRuntimeCache } from '../runtime/useDemoFeedRuntimeCache'
 import {
   resolveScenarioTotalMessages,
   usesAroundBootstrap,

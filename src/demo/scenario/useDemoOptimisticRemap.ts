@@ -1,15 +1,15 @@
 import { useCallback, useRef } from 'react'
-import type { MessageListRuntime } from '../../runtime'
+import type { MessageListRuntime } from '../../runtime/index'
 import {
   createNewestMessage,
   toDemoMessageDataItem,
   type DemoMessage,
-} from '../demoData'
+} from '../data/demoData'
 import {
   appendDemoFeedMessages,
   flushDemoFeedPersistence,
   readDemoFeedMessages,
-} from '../demoMessageApi'
+} from '../data/demoMessageApi'
 import {
   createMockNewestMessages,
   wait,

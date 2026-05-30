@@ -227,7 +227,7 @@ Phase 5 evidence：
 - `src/runtime/__tests__/viewportInteractions.test.ts` 覆盖 edge latch/error/retry、underflow 单边仲裁、reset-around anchor protection 选边、普通中间态 underflow 交替补齐、bottom follow latest reset、dynamic height anchor stabilization、destination around reset 和 restore local align。
 - `src/react/__tests__/messageListAdapter.test.tsx` 覆盖 feed runtime 切换时旧 runtime 收到 detach checkpoint，slots 通过 runtime retry edge。
 - `src/runtime/data/__tests__/dataRuntime.test.ts` 覆盖 viewport semantic edge request token 采用。
-- `src/demo/useDemoMessageScenario.ts` 只响应 runtime semantic events 后调用 demo request API / data runtime，不读取 projection DOM 或 raw scroll。
+- `src/demo/scenario/useDemoMessageScenario.ts` 只响应 runtime semantic events 后调用 demo request API / data runtime，不读取 projection DOM 或 raw scroll。
 - 2026-05-26 验证：`git diff --check`、`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`npm run build:demo`。
 - 2026-05-26 no-go 回补：修复 underflow 固定 before 偏向，保留 reset-around target 方向用于短 segment 选边，并补充普通中间态两侧交替测试。
 
@@ -256,10 +256,10 @@ Phase 5 evidence：
 
 Phase 6 evidence：
 
-- `src/react/MessageListScrollbarOverlay.tsx` 只读取 native `scrollTop` / `clientHeight` / `scrollHeight`，drag / track click 只调用 adapter-private direct scroll API。
+- `src/react/scrollbar/MessageListScrollbarOverlay.tsx` 只读取 native `scrollTop` / `clientHeight` / `scrollHeight`，drag / track click 只调用 adapter-private direct scroll API。
 - `src/react/__tests__/messageListAdapter.test.tsx` 覆盖 custom overlay 渲染、track click 写入 runtime direct scroll writer、overlay metric mismatch diagnostic。
 - `src/runtime/__tests__/viewportInteractions.test.ts` 覆盖 ordinary scroll 后 evidence / observation / `viewportAnchorChanged(scroll-idle)` rAF 更新、direct scrollbar write 与长时间 drag 作为 edge-capable user input，以及 measurement cache、blank-area、frame-gap、transaction latency diagnostics。
-- `rg "edgeState|hasMoreBefore|hasMoreAfter|bottomLock|pendingIntent|applyLoadedSegment|needMore|scrollToLatest|restoreToMessage" src/react/MessageListScrollbarOverlay.tsx` 无命中，overlay 未读取 paging / bottom / destination 状态。
+- `rg "edgeState|hasMoreBefore|hasMoreAfter|bottomLock|pendingIntent|applyLoadedSegment|needMore|scrollToLatest|restoreToMessage" src/react/scrollbar/MessageListScrollbarOverlay.tsx` 无命中，overlay 未读取 paging / bottom / destination 状态。
 - 2026-05-26 验证：`git diff --check`、`npm run typecheck`、`npm run lint`、`npm run test`、`npm run build`、`npm run build:demo`。
 - 2026-05-26 no-go 回补：普通用户滚动现在由 runtime rAF 更新 native evidence / observation / scroll-idle anchor；direct drag 生命周期从 begin 到 end 保持 user direct manipulation。
 - 2026-05-26 P2 回补：ordinary scroll rAF 使用 transaction / resize 缓存推导出的有界 visible sample，避免全量 row rect measurement；local programmatic scroll 写入后也 schedule rAF 刷新 evidence / observation。
@@ -290,8 +290,8 @@ Phase 6 evidence：
 
 Phase 7 evidence：
 
-- `src/demo/useDemoMessageScenario.ts` 通过 runtime semantic events 调用保留的 `getLatestMessages` / `getMessagesAround` mock request，并只把返回数据交给 data runtime 后发布 immutable loaded segment。
-- `src/e2e-app/e2eBridge.ts` / `src/e2e-app/E2EMessageListApp.tsx` 暴露 bridge v1 action/evidence surface；evidence 包含 segment boundary、完整 modifier、event log、diagnostics、overlay metrics，不包含 spacer 字段。
+- `src/demo/scenario/useDemoMessageScenario.ts` 通过 runtime semantic events 调用保留的 `getLatestMessages` / `getMessagesAround` mock request，并只把返回数据交给 data runtime 后发布 immutable loaded segment。
+- `src/e2e-app/bridge/e2eBridge.ts` / `src/e2e-app/app/E2EMessageListApp.tsx` 暴露 bridge v1 action/evidence surface；evidence 包含 segment boundary、完整 modifier、event log、diagnostics、overlay metrics，不包含 spacer 字段。
 - `e2e/runner/runScenario.ts` 启动 demo preview + headless Chrome DevTools Protocol，分别提供 `npm run e2e:p0`、`npm run e2e:correctness`、`npm run e2e:perf`。
 - 2026-05-27 no-go 回补后真实浏览器验证：`npm run e2e:p0` 5/5 scenarios 通过；`npm run e2e:correctness` P0-P4 15/15 scenarios 通过；`npm run e2e:perf` 1/1 scenario 通过。证据目录：`.logs/e2e/2026-05-27T02-45-34-454Z-correctness`、`.logs/e2e/2026-05-27T02-45-48-011Z-correctness`、`.logs/e2e/2026-05-27T02-46-07-719Z-perf`。
 - Phase 7 修复回补：reset transaction 不再拿旧 visual anchor 硬修 latest/around；ordinary scroll 会更新 bottom lock observation；scroll container attach 会重连已注册 edge triggers；edge settle 会清理对应 pending intent；custom overlay track 高度与 native clientHeight 对齐。

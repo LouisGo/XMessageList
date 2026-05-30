@@ -2,12 +2,12 @@ import type {
   MessageDataItem,
   MessageIdentityAnchor,
   MessageRuntimeItemKey,
-} from '../identity'
+} from '../contracts/identity'
 import type {
   LoadedSegment,
   ResetAroundAlign,
   SegmentModifier,
-} from '../segment'
+} from '../contracts/segment'
 import {
   applyIdentityRemaps,
   dedupeItems,

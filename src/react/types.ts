@@ -7,7 +7,7 @@ import type {
   MessageListSnapshot,
   ViewportAnchorChangedEvent,
   ViewportObservationChangedEvent,
-} from '../runtime'
+} from '../runtime/index'
 
 export type EdgeSlotInput = {
   status: 'idle' | 'loading' | 'error' | 'exhausted'

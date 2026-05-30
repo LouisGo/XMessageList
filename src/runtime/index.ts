@@ -1,22 +1,22 @@
 export {
   createMessageListRuntime,
   type MessageListRuntime,
-} from './runtime'
+} from './controller/runtime'
 export type {
   MessageIdentity,
   MessageIdentityAnchor,
   MessageRuntimeItemKey,
   MessageDataItem,
-} from './identity'
+} from './contracts/identity'
 export type {
   LoadedSegment,
   ResetAroundAlign,
   SegmentModifier,
-} from './segment'
+} from './contracts/segment'
 export type {
   MessageListSnapshot,
   ViewportEvidence,
-} from './snapshot'
+} from './contracts/snapshot'
 export type {
   DestinationSettledEvent,
   MessageListRuntimeEvent,
@@ -32,7 +32,7 @@ export type {
   ViewportObservationReason,
   ViewportScrollDirection,
   ViewportVisibleRange,
-} from './events'
+} from './contracts/events'
 export type {
   MessageListRuntimeOptions,
   MessageListScrollOptions,
@@ -40,4 +40,4 @@ export type {
   MessageListRestoreOptions,
   RuntimeObserverFactory,
   RuntimeScheduler,
-} from './options'
+} from './contracts/options'

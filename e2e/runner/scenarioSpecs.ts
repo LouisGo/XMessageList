@@ -1,4 +1,4 @@
-import type { E2EActionResult, E2EEvidence } from '../../src/e2e-app/e2eBridge.ts'
+import type { E2EActionResult, E2EEvidence } from '../../src/e2e-app/bridge/e2eBridge.ts'
 import {
   expectAnchorPreserved,
   expectBottomLocked,
@@ -28,7 +28,7 @@ import {
   expectVisibleIdentity,
   expectVisibleIdentityNearCenter,
   type E2EOracleResult,
-} from '../../src/e2e-app/e2eOracles.ts'
+} from '../../src/e2e-app/oracles/e2eOracles.ts'
 
 export type { E2EOracleResult }
 

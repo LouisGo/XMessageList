@@ -8,8 +8,8 @@ import {
   type MessageListRuntimeEvent,
   type ViewportAnchorChangedEvent,
   type ViewportObservationChangedEvent,
-} from '../../runtime'
-import { MessageList } from '../MessageList'
+} from '../../runtime/index'
+import { MessageList } from '../components/MessageList'
 import type { MessageListOverlayInput } from '../types'
 
 describe('MessageList React adapter', () => {

@@ -8,8 +8,8 @@ import {
   flushEventStormBuffer,
   getNextBotPushDelayMs,
   getNextEventStormDelayMs,
-} from '../demoAdvancedMockScenarios'
-import { loadDemoFeedMessages } from '../demoMessageApi'
+} from '../mocks/demoAdvancedMockScenarios'
+import { loadDemoFeedMessages } from '../data/demoMessageApi'
 import { readLoadedMessages } from './demoScenarioHelpers'
 import type {
   DemoDataRuntimeGetter,

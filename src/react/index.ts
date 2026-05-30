@@ -1,8 +1,8 @@
-export { MessageList } from './MessageList'
+export { MessageList } from './components/MessageList'
 export {
   useMessageListSelector,
   useMessageListSnapshot,
-} from './hooks'
+} from './hooks/useMessageListSnapshot'
 export type {
   EdgeSlotInput,
   MessageListCommands,

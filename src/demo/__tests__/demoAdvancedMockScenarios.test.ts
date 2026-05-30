@@ -5,14 +5,14 @@ import {
   applyEventStormTick,
   createEventStormState,
   flushEventStormBuffer,
-} from '../demoAdvancedMockScenarios'
+} from '../mocks/demoAdvancedMockScenarios'
 import {
   createDemoMessageId,
   createDemoMessages,
   createNewestMessage,
   createOutgoingMessage,
   type DemoMessage,
-} from '../demoData'
+} from '../data/demoData'
 
 describe('demoAdvancedMockScenarios', () => {
   it('deletes a single message from the last loaded hot window', () => {

@@ -11,6 +11,7 @@
 | [layering-and-ownership.md](./layering-and-ownership.md) | main、data runtime、viewport runtime、React、host 的边界 | 单个事务时序 |
 | [anchor-and-data-window.md](./anchor-and-data-window.md) | identity anchor、visual anchor、loaded segment、数据窗口关系 | DOM class 细节 |
 | [runtime-state-machine.md](./runtime-state-machine.md) | runtime 的生命周期、transaction、pending intent、edge latch 状态轴 | E2E 场景列表 |
+| [module-map.md](./module-map.md) | 当前源码目录地图和新增文件归属 | 行为合同或交互验收 |
 
 ## 新基座一句话
 

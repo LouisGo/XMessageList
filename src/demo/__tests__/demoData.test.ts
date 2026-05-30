@@ -4,7 +4,7 @@ import {
   createDemoMessages,
   createNewestMessage,
   getNextMessageSequence,
-} from '../demoData'
+} from '../data/demoData'
 
 describe('demoData', () => {
   it('uses generic mock shapes for appended messages', () => {

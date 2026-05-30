@@ -2,7 +2,7 @@ import type {
   MessageDataItem,
   MessageIdentityAnchor,
   MessageRuntimeItemKey,
-} from '../identity'
+} from '../contracts/identity'
 import type { IdentityRemapInput } from './dataRuntime'
 
 export function mergeBeforeItems<TMessage, TOptimistic>(

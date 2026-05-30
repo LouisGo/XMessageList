@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
-import { toDemoMessageDataItem } from '../demoData'
-import { loadDemoFeedMessages } from '../demoMessageApi'
+import { toDemoMessageDataItem } from '../data/demoData'
+import { loadDemoFeedMessages } from '../data/demoMessageApi'
 import { waitMockDelay } from './demoScenarioHelpers'
 import type {
   DemoDataRuntimeGetter,

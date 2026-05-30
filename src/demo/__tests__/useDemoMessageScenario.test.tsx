@@ -1,7 +1,7 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MessageList } from '../../react/MessageList'
+import { MessageList } from '../../react/components/MessageList'
 import type { DemoMessageScenario } from '../scenario/demoScenarioTypes'
 import {
   RANDOM_CHAT_FEED_ID,
@@ -10,8 +10,8 @@ import {
 import {
   createDemoFeedRuntimeCache,
   type DemoFeedRuntimeCache,
-} from '../useDemoFeedRuntimeCache'
-import { useDemoMessageScenario } from '../useDemoMessageScenario'
+} from '../runtime/useDemoFeedRuntimeCache'
+import { useDemoMessageScenario } from '../scenario/useDemoMessageScenario'
 
 describe('useDemoMessageScenario feed switching', () => {
   let cache: DemoFeedRuntimeCache | null = null

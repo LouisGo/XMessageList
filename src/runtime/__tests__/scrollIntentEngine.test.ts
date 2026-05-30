@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ScrollIntentEngine } from '../scrollIntentEngine'
+import { ScrollIntentEngine } from '../scroll/scrollIntentEngine'
 
 describe('ScrollIntentEngine', () => {
   it('keeps manual bottom intent when a runtime write token covers the scroll frame', () => {

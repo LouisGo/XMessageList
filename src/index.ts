@@ -1,9 +1,9 @@
-export { createMessageListRuntime } from './runtime'
+export { createMessageListRuntime } from './runtime/index'
 export {
   MessageList,
   useMessageListSelector,
   useMessageListSnapshot,
-} from './react'
+} from './react/index'
 export type {
   DestinationSettledEvent,
   LoadedSegment,
@@ -34,11 +34,11 @@ export type {
   ViewportObservationReason,
   ViewportScrollDirection,
   ViewportVisibleRange,
-} from './runtime'
+} from './runtime/index'
 export type {
   EdgeSlotInput,
   MessageListCommands,
   MessageListOverlayInput,
   MessageListProps,
   ScrollToLatestSlotInput,
-} from './react'
+} from './react/index'

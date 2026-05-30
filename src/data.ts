@@ -9,4 +9,4 @@ export {
   type ReplaceSegmentInput,
   type ResetSegmentInput,
   type ExtendSegmentInput,
-} from './runtime/data'
+} from './runtime/data/index'

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { MessageDataItem } from '../../identity'
+import type { MessageDataItem } from '../../contracts/identity'
 import { createMessageListDataRuntime } from '../index'
 
 describe('MessageListDataRuntime', () => {

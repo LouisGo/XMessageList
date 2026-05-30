@@ -1,11 +1,11 @@
 import type { Dispatch, SetStateAction } from 'react'
-import type { MessageListRuntimeEvent } from '../../runtime'
-import type { MessageListDataRuntime } from '../../runtime/data'
+import type { MessageListRuntimeEvent } from '../../runtime/index'
+import type { MessageListDataRuntime } from '../../runtime/data/index'
 import {
   createNewestMessage,
   getNextMessageSequence,
   type DemoMessage,
-} from '../demoData'
+} from '../data/demoData'
 import type { DemoHighlightState } from './demoScenarioTypes'
 
 const JUMP_HIGHLIGHT_DURATION_MS = 1_400

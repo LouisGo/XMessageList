@@ -1,7 +1,7 @@
 import { useCallback, useRef } from 'react'
-import type { MessageListRuntime } from '../../runtime'
-import type { DemoMessage } from '../demoData'
-import { readDemoFeedMessages } from '../demoMessageApi'
+import type { MessageListRuntime } from '../../runtime/index'
+import type { DemoMessage } from '../data/demoData'
+import { readDemoFeedMessages } from '../data/demoMessageApi'
 import {
   readLoadedMessages,
 } from './demoScenarioHelpers'

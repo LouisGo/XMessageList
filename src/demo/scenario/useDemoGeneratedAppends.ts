@@ -3,8 +3,8 @@ import {
   appendDemoFeedMessages,
   flushDemoFeedPersistence,
   loadDemoFeedMessages,
-} from '../demoMessageApi'
-import type { DemoMessage } from '../demoData'
+} from '../data/demoMessageApi'
+import type { DemoMessage } from '../data/demoData'
 import {
   applyLongBurstShape,
   createMockNewestMessages,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { MessageDataItem } from '../identity'
-import type { LoadedSegment } from '../segment'
-import { createMessageListRuntime } from '../runtime'
+import type { MessageDataItem } from '../contracts/identity'
+import type { LoadedSegment } from '../contracts/segment'
+import { createMessageListRuntime } from '../controller/runtime'
 import { getMessageListAdapterRuntime } from '../internal'
 import {
   createContainer,
