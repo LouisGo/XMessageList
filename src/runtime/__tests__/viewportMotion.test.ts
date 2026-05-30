@@ -211,6 +211,112 @@ describe('MessageList viewport motion', () => {
       bottomLockState: 'LOCKED',
     })
   })
+
+  it('uses follow-bottom motion for send-style latest rebuilds', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const previousRows = createRows(2, 50)
+    const latestRows = createRows(7, 50)
+
+    mountRows(runtime, adapter, container, previousRows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(previousRows), 1, 1, {
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    runtime.scrollToLatest()
+    expect(runtime.getSnapshot()).toMatchObject({
+      pendingIntent: 'follow-bottom',
+      bottomLockState: 'UNLOCKED',
+    })
+
+    container.replaceChildren(...latestRows)
+    for (const row of latestRows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+    runtime.applyLoadedSegment(segment(itemsFromRows(latestRows), 2, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'MOTION',
+      pendingIntent: null,
+      bottomLockState: 'UNLOCKED',
+    })
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'destinationMotion.start',
+      details: expect.objectContaining({ source: 'followBottom' }),
+    }))
+
+    scheduler.flushFrames(40)
+
+    expect(container.scrollTop).toBe(250)
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'IDLE',
+      bottomLockState: 'LOCKED',
+    })
+  })
+
+  it('does not apply direction hints or far preposition for cross-feed jumps', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      scrollMotion: { maxDistancePx: 80 },
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const initialRows = createRows(2, 50)
+    const targetRows = createRows(24, 50)
+    const target = anchor('row-22')
+
+    mountRows(runtime, adapter, container, initialRows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(initialRows), 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    runtime.scrollToMessage(target, {
+      align: 'start',
+      motion: { crossFeed: true },
+    })
+
+    container.replaceChildren(...targetRows)
+    for (const row of targetRows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+    runtime.applyLoadedSegment(segment(itemsFromRows(targetRows), 2, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      modifier: { type: 'reset-around', target },
+      anchor: target,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    expect(container.scrollTop).toBe(0)
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'destinationMotion.start',
+      details: expect.objectContaining({
+        source: 'jump',
+        directionHint: null,
+      }),
+    }))
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'scrollMotion.decision',
+      details: expect.objectContaining({
+        decision: 'bounded-animate',
+        prepositionTop: null,
+      }),
+    }))
+
+    scheduler.flushFrames(40)
+
+    expect(container.scrollTop).toBe(1_050)
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
+  })
 })
 
 function mountRows(

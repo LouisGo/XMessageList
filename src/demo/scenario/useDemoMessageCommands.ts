@@ -89,6 +89,7 @@ export function useDemoMessageCommands(input: {
       }
 
       if (shouldRebuildLatest) {
+        runtime.scrollToLatest()
         const latest = persistedMessages.slice(
           Math.max(0, persistedMessages.length - pageSize),
         )
