@@ -47,10 +47,12 @@ export type E2EEvidence = ViewportEvidence & {
   scenarioId: string
   checkpointId: string
   timestamp: number
+  scrollContainerTop: number
   segment: E2ESegmentEvidence
   events: E2ERuntimeEventRecord[]
   diagnostics: ViewportDiagnosticRecord[]
   overlay: E2EOverlayEvidence | null
+  sessionOverlay: E2ESessionOverlayEvidence
 }
 
 export type E2ESegmentEvidence = {
@@ -92,6 +94,11 @@ export type E2EOverlayEvidence = {
   expectedThumbTop: number
   expectedThumbHeight: number
   trackHeight: number
+}
+
+export type E2ESessionOverlayEvidence = {
+  visible: boolean
+  inScrollContainer: boolean
 }
 
 export type XMessageListE2EBridge = {

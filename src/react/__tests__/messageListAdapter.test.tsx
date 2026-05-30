@@ -49,6 +49,10 @@ describe('MessageList React adapter', () => {
     expect(host.querySelector('[data-testid="before-slot"]')).not.toBeNull()
     expect(host.querySelector('[data-testid="after-slot"]')).not.toBeNull()
     expect(host.querySelector('[data-testid="overlay"]')).not.toBeNull()
+    expect(host.querySelector('[data-message-list-overlay-layer]')).not.toBeNull()
+    expect(host.querySelector('[data-message-scroll-container]')?.contains(
+      host.querySelector('[data-testid="overlay"]'),
+    )).toBe(false)
     expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
     expect(runtime.getDiagnostics().map((record) => record.name)).toContain(
       'transaction.settle',
@@ -372,6 +376,96 @@ describe('MessageList React adapter', () => {
     expect(container!.scrollTop).toBeGreaterThan(0)
     expect(runtime.getDiagnostics().map((record) => record.name)).toContain(
       'overlay.metricMismatch',
+    )
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('rebases an active custom scrollbar drag after native range changes', async () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    runtime.applyLoadedSegment(segment([item('row-1'), item('row-2')]))
+
+    await act(async () => {
+      root.render(
+        <MessageList
+          runtime={runtime}
+          renderRow={(nextItem) => <span>{nextItem.message}</span>}
+          scrollbar="custom"
+        />,
+      )
+    })
+
+    const container = host.querySelector<HTMLElement>('[data-message-scroll-container]')
+    const track = host.querySelector<HTMLElement>('[data-message-scrollbar-track]')
+    const thumb = host.querySelector<HTMLElement>('[data-message-scrollbar-thumb]')
+
+    expect(container).not.toBeNull()
+    expect(track).not.toBeNull()
+    expect(thumb).not.toBeNull()
+
+    Object.defineProperty(container, 'clientHeight', {
+      configurable: true,
+      value: 100,
+    })
+    Object.defineProperty(container, 'scrollHeight', {
+      configurable: true,
+      value: 300,
+    })
+    track!.getBoundingClientRect = () => ({
+      top: 0,
+      bottom: 100,
+      left: 0,
+      right: 12,
+      width: 12,
+      height: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect
+
+    await act(async () => {
+      container!.dispatchEvent(new Event('scroll'))
+      await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    })
+    await act(async () => {
+      thumb!.dispatchEvent(new MouseEvent('pointerdown', {
+        bubbles: true,
+        clientY: 0,
+      }))
+      thumb!.dispatchEvent(new MouseEvent('pointermove', {
+        bubbles: true,
+        clientY: 60,
+      }))
+    })
+
+    expect(container!.scrollTop).toBeGreaterThan(170)
+
+    Object.defineProperty(container, 'scrollHeight', {
+      configurable: true,
+      value: 500,
+    })
+    await act(async () => {
+      runtime.applyLoadedSegment(segment([item('row-1'), item('row-2')], {
+        segmentRevision: 2,
+        modifier: { type: 'patch', changedKeys: ['row-1'] },
+      }))
+      await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    })
+    await act(async () => {
+      thumb!.dispatchEvent(new MouseEvent('pointermove', {
+        bubbles: true,
+        clientY: 78,
+      }))
+    })
+
+    expect(container!.scrollTop).toBeGreaterThan(260)
+    expect(runtime.getDiagnostics().map((record) => record.name)).toContain(
+      'directScroll.rebased',
     )
 
     await act(async () => {

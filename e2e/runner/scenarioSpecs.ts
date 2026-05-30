@@ -13,15 +13,20 @@ import {
   expectNoViewportErrors,
   expectNoWhiteScreen,
   expectOverlayMirrorsNative,
+  expectOverlayThumbRebounded,
   expectRuntimeIdle,
   expectRemappedAnchorPreserved,
   expectRemappedViewportAnchor,
   expectRestoreAroundAfterDetach,
+  expectScrollHeightUnchanged,
   expectScrollHeightIncreased,
   expectScrollTopIncreased,
   expectSegmentItemCountAtMost,
+  expectSessionOverlayOutsideScrollContainer,
+  expectSessionOverlayVisible,
   expectUnderflowSingleFlight,
   expectVisibleIdentity,
+  expectVisibleIdentityNearCenter,
   type E2EOracleResult,
 } from '../../src/e2e-app/e2eOracles.ts'
 
@@ -187,7 +192,7 @@ export const CORRECTNESS_SCENARIOS: ScenarioSpec[] = [
     actions: [
       { id: 'wait_for_ready' },
       { id: 'collect_evidence', payload: { checkpointId: 'before' }, saveAs: 'before' },
-      { id: 'jump_to_first_loaded' },
+      { id: 'jump_to_identity', payload: { stableId: 'feed-runtime-0041' } },
       { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
     ],
     oracles: (context) => [
@@ -196,7 +201,9 @@ export const CORRECTNESS_SCENARIOS: ScenarioSpec[] = [
         mustEvidence(context, 'before'),
         mustEvidence(context, 'after'),
       ),
-      expectVisibleIdentity(context.finalEvidence, context.finalEvidence.segment.firstKey ?? ''),
+      expectVisibleIdentityNearCenter(context.finalEvidence, 'feed-runtime-0041', {
+        tolerancePx: 18,
+      }),
     ],
   },
   {
@@ -211,6 +218,9 @@ export const CORRECTNESS_SCENARIOS: ScenarioSpec[] = [
       ...BASE_ORACLES(finalEvidence),
       expectNeedEventCount(finalEvidence, 'needMessagesAround', 1),
       expectVisibleIdentity(finalEvidence, 'feed-runtime-0001'),
+      expectVisibleIdentityNearCenter(finalEvidence, 'feed-runtime-0001', {
+        tolerancePx: 28,
+      }),
     ],
   },
   {
@@ -312,6 +322,53 @@ export const CORRECTNESS_SCENARIOS: ScenarioSpec[] = [
     ],
   },
   {
+    id: 'scrollbar.held-drag-no-repeat-before',
+    priority: 'p4',
+    actions: [
+      { id: 'wait_for_ready' },
+      { id: 'held_scrollbar_top_no_repeat', payload: { responseDelayMs: 420 } },
+      { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
+    ],
+    oracles: (context) => {
+      const pending = mustEvidence(context, 'pending')
+      const stillPending = mustEvidence(context, 'still-pending')
+
+      return [
+        ...BASE_ORACLES(context.finalEvidence),
+        expectNeedEventCount(pending, 'needMoreBefore', 1),
+        expectNeedEventCount(stillPending, 'needMoreBefore', 1),
+        expectNeedEventCount(context.finalEvidence, 'needMoreBefore', 1),
+        expectOverlayMirrorsNative(context.finalEvidence, { tolerancePx: 2 }),
+      ]
+    },
+  },
+  {
+    id: 'scrollbar.held-drag-rebound-continuity',
+    priority: 'p4',
+    actions: [
+      { id: 'wait_for_ready' },
+      { id: 'held_scrollbar_top_rebound', payload: { responseDelayMs: 180 } },
+      { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
+    ],
+    oracles: (context) => {
+      const pending = mustEvidence(context, 'pending')
+      const rebound = mustEvidence(context, 'rebound')
+      const stable = mustEvidence(context, 'rebound-stable')
+
+      return [
+        ...BASE_ORACLES(context.finalEvidence),
+        expectNeedEventCount(rebound, 'needMoreBefore', 1),
+        expectNeedEventCount(stable, 'needMoreBefore', 1),
+        expectNeedEventCount(context.finalEvidence, 'needMoreBefore', 2),
+        expectOverlayThumbRebounded(pending, rebound, {
+          edge: 'before',
+          tolerancePx: 1,
+        }),
+        expectOverlayMirrorsNative(context.finalEvidence, { tolerancePx: 2 }),
+      ]
+    },
+  },
+  {
     id: 'scrollbar.track-click-no-global-jump',
     priority: 'p4',
     actions: [
@@ -325,6 +382,49 @@ export const CORRECTNESS_SCENARIOS: ScenarioSpec[] = [
       expectNoViewportErrors(context.finalEvidence),
       expectOverlayMirrorsNative(context.finalEvidence, { tolerancePx: 2 }),
     ],
+  },
+  {
+    id: 'loading-overlay.cold-session-delay',
+    priority: 'p4',
+    actions: [
+      { id: 'wait_for_ready' },
+      {
+        id: 'switch_feed_slow_session_overlay',
+        payload: { feedId: 'feed-design', responseDelayMs: 340 },
+      },
+      { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
+    ],
+    oracles: (context) => {
+      const preOverlay = mustEvidence(context, 'pre-overlay')
+      const overlay = mustEvidence(context, 'overlay-visible')
+
+      return [
+        ...BASE_ORACLES(context.finalEvidence),
+        expectSessionOverlayVisible(preOverlay, false),
+        expectSessionOverlayVisible(overlay, true),
+        expectSessionOverlayOutsideScrollContainer(overlay),
+        expectScrollHeightUnchanged(preOverlay, overlay, { tolerancePx: 1 }),
+        expectSessionOverlayVisible(context.finalEvidence, false),
+      ]
+    },
+  },
+  {
+    id: 'loading-overlay.fast-session-no-overlay',
+    priority: 'p4',
+    actions: [
+      { id: 'wait_for_ready' },
+      { id: 'switch_feed_fast_session_overlay', payload: { feedId: 'feed-design' } },
+      { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
+    ],
+    oracles: (context) => {
+      const overlayFinal = mustEvidence(context, 'overlay-final')
+
+      return [
+        ...BASE_ORACLES(context.finalEvidence),
+        expectSessionOverlayVisible(overlayFinal, false),
+        expectSessionOverlayOutsideScrollContainer(overlayFinal),
+      ]
+    },
   },
 ]
 

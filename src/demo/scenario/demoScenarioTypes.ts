@@ -21,6 +21,7 @@ export type DemoMessageScenario = {
   loadingBefore: boolean
   loadingAfter: boolean
   feedLoading: boolean
+  sessionLoadingOverlayVisible: boolean
   eventStormRunning: boolean
   botPushActive: boolean
   highlightedMessageId: string | null
@@ -51,6 +52,7 @@ export type DemoMessageScenario = {
   resetE2EScenario: (scenarioId: string) => Promise<void>
   streamCurrentRow: () => void
   deferNextEdgeResponse: (delayMs: number) => void
+  deferNextSessionResponse: (delayMs: number) => void
   sendOptimisticMessage: () => void
   alignPendingOptimisticAtStart: () => void
   resolveOptimisticRemap: () => void

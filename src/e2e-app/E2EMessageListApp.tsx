@@ -15,12 +15,10 @@ import {
   type XMessageListE2EBridge,
 } from './e2eBridge'
 import {
-  clickScrollbarTrack,
-  dragScrollbarToBottom,
-  dragScrollbarToTop,
-  E2EActionError,
-  scrollContainer,
-} from './e2eDomActions'
+  runBridgeAction,
+  waitForRuntimeIdle,
+} from './e2eActions'
+import { E2EActionError } from './e2eDomActions'
 
 const E2E_ACTIONS: E2EActionDescriptor[] = [
   { id: 'wait_for_ready', label: 'Wait ready', enabled: true },
@@ -36,6 +34,7 @@ const E2E_ACTIONS: E2EActionDescriptor[] = [
   { id: 'prepend_history', label: 'Prepend history', enabled: true },
   { id: 'follow_bottom', label: 'Follow bottom', enabled: true },
   { id: 'jump_to_first_loaded', label: 'Jump loaded', enabled: true },
+  { id: 'jump_to_identity', label: 'Jump identity', enabled: true },
   { id: 'jump_to_oldest', label: 'Jump oldest', enabled: true },
   { id: 'toggle_dynamic_height', label: 'Dynamic height', enabled: true },
   { id: 'stream_current_row', label: 'Stream row', enabled: true },
@@ -51,6 +50,10 @@ const E2E_ACTIONS: E2EActionDescriptor[] = [
   { id: 'drag_scrollbar_to_top', label: 'Drag top', enabled: true },
   { id: 'drag_scrollbar_to_bottom', label: 'Drag bottom', enabled: true },
   { id: 'track_click_scrollbar', label: 'Track click', enabled: true },
+  { id: 'held_scrollbar_top_no_repeat', label: 'Hold top once', enabled: true },
+  { id: 'held_scrollbar_top_rebound', label: 'Hold top rebound', enabled: true },
+  { id: 'switch_feed_slow_session_overlay', label: 'Slow feed overlay', enabled: true },
+  { id: 'switch_feed_fast_session_overlay', label: 'Fast feed overlay', enabled: true },
 ]
 
 export function E2EMessageListApp() {
@@ -81,10 +84,12 @@ export function E2EMessageListApp() {
       scenarioId,
       checkpointId,
       timestamp: Date.now(),
+      scrollContainerTop: readScrollContainerTop(rootRef.current),
       segment: createSegmentEvidence(snapshot),
       events: [...eventLogRef.current],
       diagnostics: [...scenario.activeRuntime.getDiagnostics()],
       overlay: readOverlayEvidence(rootRef.current, scenario.activeRuntime.getEvidence()),
+      sessionOverlay: readSessionOverlayEvidence(rootRef.current),
     }
   }, [scenario.activeRuntime, scenarioId])
 
@@ -189,207 +194,6 @@ export function E2EMessageListApp() {
   )
 }
 
-type BridgeActionContext = {
-  actionId: string
-  payload: Record<string, unknown>
-  root: HTMLElement | null
-  scenario: ReturnType<typeof useDemoMessageScenario>
-  remountViewport: () => void
-  readEvidence: (checkpointId: string) => E2EEvidence
-  captureCheckpoint: (checkpointId: string) => E2EEvidence
-}
-
-async function runBridgeAction({
-  actionId,
-  payload,
-  root,
-  scenario,
-  remountViewport,
-  readEvidence,
-  captureCheckpoint,
-}: BridgeActionContext): Promise<void> {
-  switch (actionId) {
-    case 'wait_for_ready':
-    case 'wait_for_idle':
-      await waitForRuntimeIdle(readEvidence, 3_000)
-      return
-    case 'collect_evidence':
-      await waitForAnimationFrame()
-      await waitForAnimationFrame()
-      return
-    case 'scroll_to_middle':
-      await wait(240)
-      scrollContainer(root, 'middle')
-      await waitForRuntimeIdle(readEvidence, 1_500)
-      return
-    case 'scroll_to_history_top':
-      await wait(240)
-      scrollContainer(root, 'top')
-      await wait(120)
-      await waitForRuntimeIdle(readEvidence, 2_000)
-      return
-    case 'trigger_before_edge': {
-      await wait(240)
-      const beforeCount = countRuntimeEvents(readEvidence('before-edge-trigger'), 'needMoreBefore')
-      const beforeCheckpointId = typeof payload.beforeCheckpointId === 'string'
-        ? payload.beforeCheckpointId
-        : null
-      const responseDelayMs = Number.isFinite(Number(payload.responseDelayMs))
-        ? Math.max(0, Number(payload.responseDelayMs))
-        : beforeCheckpointId
-          ? 120
-          : 0
-      if (responseDelayMs > 0) {
-        scenario.deferNextEdgeResponse(responseDelayMs)
-      }
-      scrollContainer(root, 'top')
-      if (beforeCheckpointId) {
-        await waitForRuntimeEventCount(
-          readEvidence,
-          'needMoreBefore',
-          beforeCount + 1,
-          Math.max(600, responseDelayMs),
-        )
-        await waitForAnimationFrame()
-        captureCheckpoint(beforeCheckpointId)
-      }
-      await wait(120)
-      await waitForRuntimeIdle(readEvidence, 2_000)
-      return
-    }
-    case 'scroll_to_bottom':
-    case 'trigger_after_edge':
-      await wait(240)
-      scrollContainer(root, 'bottom')
-      await wait(120)
-      await waitForRuntimeIdle(readEvidence, 2_000)
-      return
-    case 'append_message':
-      scenario.appendMessage()
-      await waitForRuntimeIdle(readEvidence, 1_500)
-      return
-    case 'append_many': {
-      const count = Math.min(Math.max(1, Number(payload.count ?? 1)), 160)
-      const beforeCount = readEvidence('append-before').segment.itemCount
-      scenario.appendMessages(count)
-      await waitForEvidence(
-        readEvidence,
-        (evidence) => evidence.segment.modifier.type === 'trim-before' ||
-          evidence.segment.itemCount > beforeCount,
-        3_000,
-      )
-      await waitForRuntimeIdle(readEvidence, 3_000)
-      return
-    }
-    case 'prepend_history':
-      scenario.loadHistoryBatch()
-      await waitForRuntimeIdle(readEvidence, 1_500)
-      return
-    case 'follow_bottom':
-      scenario.followBottom()
-      await waitForRuntimeIdle(readEvidence, 2_000)
-      return
-    case 'jump_to_first_loaded':
-      scenario.jumpToQuote()
-      await waitForRuntimeIdle(readEvidence, 1_500)
-      return
-    case 'jump_to_oldest':
-      scenario.activeRuntime.scrollToMessage({
-        feedId: scenario.activeFeedId,
-        stableId: `${scenario.activeFeedId}-0001`,
-        serverId: `${scenario.activeFeedId}-0001`,
-      }, { align: 'start' })
-      await waitForRuntimeIdle(readEvidence, 2_000)
-      return
-    case 'toggle_dynamic_height':
-      scenario.toggleDynamicHeight()
-      await waitForRuntimeIdle(readEvidence, 1_500)
-      return
-    case 'stream_current_row':
-      scenario.streamCurrentRow()
-      await waitForRuntimeIdle(readEvidence, 1_500)
-      return
-    case 'send_optimistic_message':
-      scenario.sendOptimisticMessage()
-      await waitForRuntimeIdle(readEvidence, 1_500)
-      scenario.alignPendingOptimisticAtStart()
-      await waitForRuntimeIdle(readEvidence, 1_500)
-      return
-    case 'resolve_optimistic_remap':
-      scenario.resolveOptimisticRemap()
-      await waitForRuntimeIdle(readEvidence, 1_500)
-      return
-    case 'optimistic_server_remap':
-      await scenario.sendOptimisticAndRemap()
-      await waitForRuntimeIdle(readEvidence, 1_500)
-      return
-    case 'switch_feed_roundtrip':
-      scenario.selectFeed('feed-design')
-      await wait(120)
-      await waitForAnimationFrame()
-      scenario.selectFeed('feed-runtime')
-      await wait(120)
-      await waitForAnimationFrame()
-      await waitForEvidence(
-        readEvidence,
-        (evidence) => evidence.segment.modifier.type === 'reset-around' ||
-          evidence.events.some((event) => event.type === 'destinationSettled'),
-        2_000,
-      )
-      await waitForRuntimeIdle(readEvidence, 2_000)
-      return
-    case 'remount_viewport':
-      remountViewport()
-      await waitForRuntimeIdle(readEvidence, 1_500)
-      return
-    case 'start_event_storm':
-      scenario.toggleEventStorm()
-      await waitForRuntimeIdle(readEvidence, 1_000)
-      return
-    case 'stop_event_storm':
-      if (scenario.eventStormRunning) {
-        scenario.toggleEventStorm()
-      }
-      await waitForRuntimeIdle(readEvidence, 1_000)
-      return
-    case 'start_bot_push':
-      scenario.toggleBotPush()
-      await waitForRuntimeIdle(readEvidence, 1_000)
-      return
-    case 'stop_bot_push':
-      if (scenario.botPushActive) {
-        scenario.toggleBotPush()
-      }
-      await waitForRuntimeIdle(readEvidence, 1_000)
-      return
-    case 'drag_scrollbar_to_top':
-      await wait(240)
-      {
-        const beforeCount = countRuntimeEvents(readEvidence('drag-before'), 'needMoreBefore')
-        dragScrollbarToTop(root)
-        await waitForRuntimeEventCount(readEvidence, 'needMoreBefore', beforeCount + 1, 1_000)
-      }
-      await waitForRuntimeIdle(readEvidence, 2_000)
-      return
-    case 'drag_scrollbar_to_bottom':
-      await wait(240)
-      {
-        const beforeCount = countRuntimeEvents(readEvidence('drag-after'), 'needMoreAfter')
-        dragScrollbarToBottom(root)
-        await waitForRuntimeEventCount(readEvidence, 'needMoreAfter', beforeCount + 1, 1_000)
-      }
-      await waitForRuntimeIdle(readEvidence, 2_000)
-      return
-    case 'track_click_scrollbar':
-      await wait(240)
-      clickScrollbarTrack(root, Number(payload.ratio ?? 0.5))
-      await waitForRuntimeIdle(readEvidence, 1_500)
-      return
-    default:
-      throw new E2EActionError('unknown_action', `unknown action ${actionId}`)
-  }
-}
-
 function getScenarioId(): string {
   return new URL(window.location.href).searchParams.get('scenario') ??
     'bootstrap.latest-native-bottom'
@@ -490,86 +294,20 @@ function readOverlayEvidence(
   }
 }
 
-async function waitForRuntimeIdle(
-  readEvidence: (checkpointId: string) => E2EEvidence,
-  timeoutMs: number,
-): Promise<void> {
-  const start = performance.now()
+function readSessionOverlayEvidence(
+  root: HTMLElement | null,
+): E2EEvidence['sessionOverlay'] {
+  const overlay = root?.querySelector<HTMLElement>('[data-testid="session-loading-overlay"]')
+  const container = root?.querySelector<HTMLElement>('[data-message-scroll-container]')
 
-  while (performance.now() - start < timeoutMs) {
-    const evidence = readEvidence('wait')
-    const edgeIdle = evidence.edgeState.before.status !== 'loading' &&
-      evidence.edgeState.after.status !== 'loading'
-
-    if (
-      evidence.phase === 'IDLE' &&
-      edgeIdle &&
-      evidence.pendingIntent === null &&
-      evidence.visibleRows.length > 0
-    ) {
-      await waitForAnimationFrame()
-      return
-    }
-
-    await wait(25)
+  return {
+    visible: Boolean(overlay),
+    inScrollContainer: Boolean(overlay && container?.contains(overlay)),
   }
-
-  throw new E2EActionError('wait_timeout', 'runtime did not become idle')
 }
 
-async function waitForRuntimeEventCount(
-  readEvidence: (checkpointId: string) => E2EEvidence,
-  type: E2ERuntimeEventRecord['type'],
-  minCount: number,
-  timeoutMs: number,
-): Promise<void> {
-  const start = performance.now()
-
-  while (performance.now() - start < timeoutMs) {
-    const evidence = readEvidence('event-wait')
-    const count = countRuntimeEvents(evidence, type)
-
-    if (count >= minCount) {
-      return
-    }
-
-    await wait(10)
-  }
-
-  throw new E2EActionError('wait_event_timeout', `runtime event ${type} did not reach ${minCount}`)
-}
-
-async function waitForEvidence(
-  readEvidence: (checkpointId: string) => E2EEvidence,
-  predicate: (evidence: E2EEvidence) => boolean,
-  timeoutMs: number,
-): Promise<void> {
-  const start = performance.now()
-
-  while (performance.now() - start < timeoutMs) {
-    const evidence = readEvidence('evidence-wait')
-
-    if (predicate(evidence)) {
-      return
-    }
-
-    await wait(25)
-  }
-
-  throw new E2EActionError('wait_evidence_timeout', 'evidence predicate timed out')
-}
-
-function countRuntimeEvents(
-  evidence: E2EEvidence,
-  type: E2ERuntimeEventRecord['type'],
-): number {
-  return evidence.events.filter((event) => event.type === type).length
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
-function waitForAnimationFrame(): Promise<void> {
-  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()))
+function readScrollContainerTop(root: HTMLElement | null): number {
+  return root
+    ?.querySelector<HTMLElement>('[data-message-scroll-container]')
+    ?.getBoundingClientRect().top ?? 0
 }

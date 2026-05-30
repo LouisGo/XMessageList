@@ -200,6 +200,29 @@ export function expectVisibleIdentity(
   }
 }
 
+export function expectVisibleIdentityNearCenter(
+  evidence: E2EEvidence,
+  stableId: string,
+  options: { tolerancePx: number },
+): E2EOracleResult {
+  const row = evidence.visibleRows.find((candidate) =>
+    candidate.stableId === stableId ||
+    candidate.serverId === stableId ||
+    candidate.key === stableId
+  )
+  const rowCenter = row ? (row.top + row.bottom) / 2 : Number.NaN
+  const viewportCenter = evidence.scrollContainerTop + evidence.clientHeight / 2
+  const delta = Math.abs(rowCenter - viewportCenter)
+
+  return {
+    oracleId: 'visible-identity-near-center',
+    ok: Boolean(row) && delta <= options.tolerancePx,
+    message: row
+      ? `stableId=${stableId} delta=${delta}`
+      : `stableId=${stableId} visible=false`,
+  }
+}
+
 export function expectIdentityRemapModifierContract(
   evidence: E2EEvidence,
 ): E2EOracleResult {
@@ -295,6 +318,63 @@ export function expectOverlayMirrorsNative(
       topDelta <= options.tolerancePx &&
       heightDelta <= options.tolerancePx,
     message: `visible=${overlay.visible} topDelta=${topDelta} heightDelta=${heightDelta}`,
+  }
+}
+
+export function expectOverlayThumbRebounded(
+  before: E2EEvidence,
+  after: E2EEvidence,
+  options: { edge: 'before' | 'after'; tolerancePx: number },
+): E2EOracleResult {
+  const beforeTop = before.overlay?.thumbTop
+  const afterTop = after.overlay?.thumbTop
+  const ok = typeof beforeTop === 'number' &&
+    typeof afterTop === 'number' &&
+    (
+      options.edge === 'before'
+        ? afterTop > beforeTop + options.tolerancePx
+        : afterTop < beforeTop - options.tolerancePx
+    )
+
+  return {
+    oracleId: 'overlay-thumb-rebounded',
+    ok,
+    message: `edge=${options.edge} before=${beforeTop ?? 'missing'} after=${afterTop ?? 'missing'}`,
+  }
+}
+
+export function expectSessionOverlayVisible(
+  evidence: E2EEvidence,
+  visible: boolean,
+): E2EOracleResult {
+  return {
+    oracleId: visible ? 'session-overlay-visible' : 'session-overlay-hidden',
+    ok: evidence.sessionOverlay.visible === visible,
+    message: `visible=${evidence.sessionOverlay.visible}`,
+  }
+}
+
+export function expectSessionOverlayOutsideScrollContainer(
+  evidence: E2EEvidence,
+): E2EOracleResult {
+  return {
+    oracleId: 'session-overlay-outside-scroll-container',
+    ok: !evidence.sessionOverlay.inScrollContainer,
+    message: `inScrollContainer=${evidence.sessionOverlay.inScrollContainer}`,
+  }
+}
+
+export function expectScrollHeightUnchanged(
+  before: E2EEvidence,
+  after: E2EEvidence,
+  options: { tolerancePx: number },
+): E2EOracleResult {
+  const delta = Math.abs(after.scrollHeight - before.scrollHeight)
+
+  return {
+    oracleId: 'scroll-height-unchanged',
+    ok: delta <= options.tolerancePx,
+    message: `before=${before.scrollHeight} after=${after.scrollHeight} delta=${delta}`,
   }
 }
 

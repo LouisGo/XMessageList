@@ -214,6 +214,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
         this.snapshot,
         pending.segment,
       )
+      this.domInteractions.settleDirectScrollSegment(pending.segment.modifier)
       this.syncScrollIntentBottomLock()
       this.pendingTransaction = null
       this.stateAxes.setTransactionState('idle')
@@ -249,14 +250,9 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     target: MessageIdentityAnchor,
     options: import('./options').MessageListScrollToMessageOptions = {},
   ): void {
-    if (this.alignLocalDestination(target, options.align ?? 'nearest', undefined, 'jump')) {
-      return
-    }
-    this.startDestination({
-      target,
-      reason: 'jump',
-      align: options.align ?? 'nearest',
-    })
+    const align = options.align ?? 'center'
+    if (this.alignLocalDestination(target, align, undefined, 'jump')) return
+    this.startDestination({ target, reason: 'jump', align })
   }
   restoreToMessage(
     target: MessageIdentityAnchor,
@@ -326,6 +322,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   beginDirectScroll(): void { this.domInteractions.beginDirectScroll() }
   writeDirectScrollTop(scrollTop: number): boolean { return this.domInteractions.writeDirectScrollTop(scrollTop) }
   endDirectScroll(): void { this.domInteractions.endDirectScroll() }
+  notifyDirectScrollRebased(): void { this.domInteractions.notifyDirectScrollRebased() }
   reportEdgeRequestFailure(edge: RuntimeEdge, requestToken: string): void { this.snapshot = this.interactions.reportEdgeError(this.snapshot, edge, requestToken); this.emitSnapshot() }
   retryEdgeRequest(edge: RuntimeEdge): void { const update = this.interactions.retryEdge(this.snapshot, edge); if (update) this.applyInteractionUpdate(update) }
   reportOverlayMetricMismatch(details: Record<string, unknown>): void { this.pushDiagnostic('overlay.metricMismatch', 'warn', details) }
@@ -362,6 +359,15 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.snapshot = withNextProjectionRevision(update.snapshot)
     this.syncScrollIntentBottomLock()
     this.emitSnapshot()
+    if (
+      update.event?.type === 'needMoreBefore' ||
+      update.event?.type === 'needMoreAfter'
+    ) {
+      this.domInteractions.consumeDirectScrollEdgeIntent(
+        update.event.edge,
+        update.event.requestToken,
+      )
+    }
     if (update.event) this.emitRuntimeEvent(update.event)
   }
   private handleEdgeIntersection(edge: RuntimeEdge): void {

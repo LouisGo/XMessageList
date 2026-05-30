@@ -20,6 +20,7 @@ export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown>
     beginDirectScroll(): void
     writeDirectScrollTop(scrollTop: number): boolean
     endDirectScroll(): void
+    notifyDirectScrollRebased(): void
   }
 
 export function getMessageListAdapterRuntime<

@@ -36,6 +36,51 @@ export function dragScrollbarToTop(root: HTMLElement | null): void {
   dispatchPointer(thumb, 'pointerup', rect.left + rect.width / 2, 0)
 }
 
+export function holdScrollbarAtTop(root: HTMLElement | null): void {
+  const thumb = root?.querySelector<HTMLElement>('[data-message-scrollbar-thumb]')
+  const track = root?.querySelector<HTMLElement>('[data-message-scrollbar-track]')
+
+  if (!thumb || !track) {
+    throw new E2EActionError('missing_scrollbar_thumb', 'scrollbar thumb not found')
+  }
+
+  const thumbRect = thumb.getBoundingClientRect()
+  const trackRect = track.getBoundingClientRect()
+  const x = thumbRect.left + thumbRect.width / 2
+  const y = trackRect.top
+
+  dispatchPointer(thumb, 'pointerdown', x, thumbRect.top + thumbRect.height / 2)
+  dispatchPointer(thumb, 'pointermove', x, y)
+  heldScrollbarDrag = { target: thumb, x, y }
+}
+
+export function continueHeldScrollbarToTop(root: HTMLElement | null): void {
+  if (!heldScrollbarDrag) {
+    throw new E2EActionError('missing_held_scrollbar_drag', 'held scrollbar drag not active')
+  }
+
+  const track = root?.querySelector<HTMLElement>('[data-message-scrollbar-track]')
+  const trackTop = track?.getBoundingClientRect().top ?? heldScrollbarDrag.y
+  const y = trackTop - 32
+
+  dispatchPointer(heldScrollbarDrag.target, 'pointermove', heldScrollbarDrag.x, y)
+  heldScrollbarDrag = { ...heldScrollbarDrag, y }
+}
+
+export function releaseHeldScrollbar(): void {
+  if (!heldScrollbarDrag) {
+    return
+  }
+
+  dispatchPointer(
+    heldScrollbarDrag.target,
+    'pointerup',
+    heldScrollbarDrag.x,
+    heldScrollbarDrag.y,
+  )
+  heldScrollbarDrag = null
+}
+
 export function dragScrollbarToBottom(root: HTMLElement | null): void {
   const thumb = root?.querySelector<HTMLElement>('[data-message-scrollbar-thumb]')
   const track = root?.querySelector<HTMLElement>('[data-message-scrollbar-track]')
@@ -79,6 +124,12 @@ function findScrollContainer(root: HTMLElement | null): HTMLElement {
 
   return container
 }
+
+let heldScrollbarDrag: {
+  target: HTMLElement
+  x: number
+  y: number
+} | null = null
 
 function dispatchPointer(
   target: HTMLElement,

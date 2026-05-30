@@ -30,6 +30,10 @@ export function MessageList<TMessage, TOptimistic>({
     scrollToLatest: () => runtime.scrollToLatest(),
     scrollToMessage: runtime.scrollToMessage.bind(runtime),
   }), [runtime])
+  const rootStyle = useMemo(() => ({
+    position: 'relative' as const,
+    ...style,
+  }), [style])
   const attachContainer = useCallback((element: HTMLDivElement | null) => {
     containerRef.current = element
     if (element) {
@@ -45,7 +49,7 @@ export function MessageList<TMessage, TOptimistic>({
       data-message-list
       data-scrollbar-mode={scrollbar}
       className={className}
-      style={style}
+      style={rootStyle}
     >
       <div
         ref={attachContainer}
@@ -69,12 +73,18 @@ export function MessageList<TMessage, TOptimistic>({
           visible: snapshot.bottomLockState === 'UNLOCKED',
           scrollToLatest: () => runtime.scrollToLatest(),
         })}
-        {renderOverlay?.({ snapshot, observation, commands })}
         <ProjectionCommitAck
           runtime={adapterRuntime}
           token={snapshot.commitToken}
         />
       </div>
+      {renderOverlay ? (
+        <div data-message-list-overlay-layer>
+          <div data-message-list-overlay-content>
+            {renderOverlay({ snapshot, observation, commands })}
+          </div>
+        </div>
+      ) : null}
       {scrollbar === 'custom'
         ? (
             <MessageListScrollbarOverlay

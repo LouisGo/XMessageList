@@ -2,10 +2,12 @@ import {
   findKeyForAnchor,
 } from './controllerHelpers'
 import type { RuntimeDomRegistry } from './domRegistry'
+import { DirectScrollSession } from './directScrollSession'
 import type { ViewportDiagnosticRecord } from './events'
 import type { MessageIdentityAnchor, MessageRuntimeItemKey } from './identity'
 import type { VisualAnchor } from './measurement'
 import type { RuntimeObserverFactory, RuntimeScheduler } from './options'
+import type { SegmentModifier } from './segment'
 import type { MessageListSnapshot } from './snapshot'
 import type { DestinationIntent, RuntimeEdge } from './interactionState'
 import type { ScrollSource } from './scrollIntentEngine'
@@ -37,9 +39,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
 
   private scrollFrame: number | null = null
 
-  private directScrollActive = false
-
-  private directScrollEdgeIntent: RuntimeEdge | null = null
+  private readonly directScroll = new DirectScrollSession()
 
   private readonly rowMetricsByKey = new Map<
     MessageRuntimeItemKey,
@@ -87,7 +87,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       this.options.scheduler.cancelAnimationFrame(this.scrollFrame)
     }
     this.scrollFrame = null
-    this.directScrollActive = false
+    this.directScroll.end()
     this.clearRowMetrics()
   }
 
@@ -103,8 +103,8 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
   }
 
   beginDirectScroll(): void {
-    this.directScrollActive = true
-    this.directScrollEdgeIntent = null
+    const session = this.directScroll.begin()
+    this.emitDirectScrollDiagnostic('begin', session)
     this.options.onUserScrollIntent()
     this.markEdgeSourceActive(this.options.scheduler.now())
   }
@@ -116,31 +116,32 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       return false
     }
 
-    if (this.directScrollActive) {
-      this.options.onUserScrollIntent()
-      this.markEdgeSourceActive(this.options.scheduler.now())
-      this.directScrollEdgeIntent = resolveDirectScrollEdgeIntent(
-        scrollTop,
-        container,
-        this.options.edgeActivationMarginPx,
-      )
-    }
+    this.options.onUserScrollIntent()
+    this.markEdgeSourceActive(this.options.scheduler.now())
+    const edgeIntent = resolveDirectScrollEdgeIntent(
+      scrollTop,
+      container,
+      this.options.edgeActivationMarginPx,
+    )
+    const session = this.directScroll.recordWrite(edgeIntent)
+    this.emitDirectScrollDiagnostic('write', session, { scrollTop })
     container.scrollTop = scrollTop
     this.scheduleScrollFrame()
     return true
   }
 
   endDirectScroll(): void {
-    this.directScrollActive = false
-    this.directScrollEdgeIntent = null
+    const session = this.directScroll.end()
+    this.emitDirectScrollDiagnostic('end', session)
     this.options.onUserScrollIntent()
     this.markEdgeSourceActive(this.options.scheduler.now())
     this.scheduleScrollFrame()
   }
 
-  getDirectScrollEdgeIntent(): RuntimeEdge | null {
-    return this.directScrollActive ? this.directScrollEdgeIntent : null
-  }
+  getDirectScrollEdgeIntent(): RuntimeEdge | null { return this.directScroll.getConsumableEdgeIntent() }
+  consumeDirectScrollEdgeIntent(edge: RuntimeEdge, requestToken: string): void { const session = this.directScroll.markEdgeConsumed(edge, requestToken); if (session) this.emitDirectScrollDiagnostic('edgeConsumed', session) }
+  settleDirectScrollSegment(modifier: SegmentModifier): void { this.directScroll.settleSegment(modifier) }
+  notifyDirectScrollRebased(): void { const session = this.directScroll.markRebased(); if (session) this.emitDirectScrollDiagnostic('rebased', session) }
 
   alignToMessage(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
@@ -429,7 +430,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
   }
 
   private isEdgeSourceActive(): boolean {
-    return this.directScrollActive ||
+    return this.directScroll.snapshot().status !== 'IDLE' ||
       this.options.scheduler.now() <= this.edgeSourceActiveUntil
   }
 
@@ -441,6 +442,19 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     this.scrollFrame = this.options.scheduler.requestAnimationFrame(() => {
       this.scrollFrame = null
       this.options.onScrollFrame()
+    })
+  }
+
+  private emitDirectScrollDiagnostic(
+    action: string,
+    session: ReturnType<DirectScrollSession['snapshot']>,
+    details: Record<string, unknown> = {},
+  ): void {
+    this.options.onDiagnostic(`directScroll.${action}`, 'debug', {
+      ...details,
+      sessionStatus: session.status,
+      edgeIntent: session.edgeIntent,
+      edge: 'edge' in session ? session.edge : undefined,
     })
   }
 }

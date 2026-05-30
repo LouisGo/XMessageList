@@ -17,6 +17,7 @@ type NativeScrollMetrics = {
 }
 
 type DragState = {
+  lastPointerY: number
   startY: number
   startScrollTop: number
   maxScrollTop: number
@@ -44,6 +45,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
 }: MessageListScrollbarOverlayProps<TMessage, TOptimistic>) {
   const [metrics, setMetrics] = useState(EMPTY_METRICS)
   const dragRef = useRef<DragState | null>(null)
+  const dragMetricsKeyRef = useRef<string | null>(null)
   const mismatchKeyRef = useRef<string | null>(null)
   const geometry = useMemo(() => resolveScrollbarGeometry(metrics), [metrics])
   const refresh = useCallback(() => {
@@ -100,6 +102,45 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     refresh()
   }, [refresh, runtime])
 
+  useLayoutEffect(() => {
+    const drag = dragRef.current
+
+    if (!drag) {
+      return
+    }
+
+    const nextMetrics = readMetrics(containerRef.current)
+    const nextGeometry = resolveScrollbarGeometry(nextMetrics)
+    const metricsKey = createDragMetricsKey(projectionRevision, nextMetrics)
+
+    if (dragMetricsKeyRef.current === null) {
+      dragMetricsKeyRef.current = metricsKey
+      return
+    }
+
+    if (dragMetricsKeyRef.current === metricsKey) {
+      return
+    }
+
+    dragRef.current = {
+      lastPointerY: drag.lastPointerY,
+      startY: drag.lastPointerY,
+      startScrollTop: nextMetrics.scrollTop,
+      maxScrollTop: nextGeometry.maxScrollTop,
+      maxThumbTop: nextGeometry.maxThumbTop,
+    }
+    dragMetricsKeyRef.current = metricsKey
+    setMetrics((previous) =>
+      areSameMetrics(previous, nextMetrics) ? previous : nextMetrics
+    )
+    runtime.notifyDirectScrollRebased()
+  }, [
+    containerRef,
+    metrics,
+    projectionRevision,
+    runtime,
+  ])
+
   const handleTrackPointerDown = useCallback((
     event: PointerEvent<HTMLDivElement>,
   ) => {
@@ -130,13 +171,18 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     event.stopPropagation()
     event.currentTarget.setPointerCapture?.(event.pointerId)
     dragRef.current = {
+      lastPointerY: event.clientY,
       startY: event.clientY,
       startScrollTop: metrics.scrollTop,
       maxScrollTop: geometry.maxScrollTop,
       maxThumbTop: geometry.maxThumbTop,
     }
+    dragMetricsKeyRef.current = createDragMetricsKey(
+      projectionRevision,
+      metrics,
+    )
     runtime.beginDirectScroll()
-  }, [geometry, metrics.scrollTop, runtime])
+  }, [geometry, metrics, projectionRevision, runtime])
 
   const handleThumbPointerMove = useCallback((
     event: PointerEvent<HTMLDivElement>,
@@ -148,6 +194,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     }
 
     event.preventDefault()
+    drag.lastPointerY = event.clientY
     const scrollDelta = drag.maxThumbTop > 0
       ? ((event.clientY - drag.startY) / drag.maxThumbTop) * drag.maxScrollTop
       : 0
@@ -157,6 +204,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
   const endDrag = useCallback(() => {
     if (dragRef.current) {
       dragRef.current = null
+      dragMetricsKeyRef.current = null
       runtime.endDirectScroll()
     }
   }, [runtime])
@@ -269,6 +317,17 @@ function areSameMetrics(left: NativeScrollMetrics, right: NativeScrollMetrics): 
   return left.scrollTop === right.scrollTop &&
     left.clientHeight === right.clientHeight &&
     left.scrollHeight === right.scrollHeight
+}
+
+function createDragMetricsKey(
+  projectionRevision: number,
+  metrics: NativeScrollMetrics,
+): string {
+  return [
+    projectionRevision,
+    metrics.clientHeight,
+    metrics.scrollHeight,
+  ].join(':')
 }
 
 const overlayStyle = {

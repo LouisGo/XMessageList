@@ -437,6 +437,16 @@ export function DemoMessageListContent({
               </button>
             ) : null
           }
+          renderOverlay={() =>
+            scenario.sessionLoadingOverlayVisible ? (
+              <div
+                className="session-loading-overlay"
+                data-testid="session-loading-overlay"
+              >
+                Loading messages...
+              </div>
+            ) : null
+          }
           onViewportAnchorChange={scenario.rememberRuntimeViewportAnchor}
           scrollbar="custom"
         />

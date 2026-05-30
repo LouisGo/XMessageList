@@ -46,6 +46,7 @@ import {
 } from './scenario/demoScenarioRuntimeHelpers'
 import { useDemoEdgeBatchLoader } from './scenario/useDemoEdgeBatchLoader'
 import { useDemoEdgeLoadingState } from './scenario/useDemoEdgeLoadingState'
+import { useDelayedVisibility } from './scenario/useDelayedVisibility'
 import { useDemoGeneratedAppends } from './scenario/useDemoGeneratedAppends'
 import { useDemoLongRunningMocks } from './scenario/useDemoLongRunningMocks'
 import { useDemoMessageCommands } from './scenario/useDemoMessageCommands'
@@ -61,6 +62,7 @@ const EDGE_LOAD_DELAY_BASE_MS = 100
 const APPEND_DELAY_BASE_MS = 50
 const LONG_BURST_DELAY_BASE_MS = 620
 const SEND_DELAY_BASE_MS = 60
+const SESSION_LOADING_OVERLAY_DELAY_MS = 200
 export function useDemoMessageScenario(
   runtimeCache: DemoFeedRuntimeCache,
 ): DemoMessageScenario {
@@ -76,8 +78,11 @@ export function useDemoMessageScenario(
   const dataRuntimesRef = useRef(new Map<string, MessageListDataRuntime<DemoMessage>>())
   const savedAnchorsRef = useRef(new Map<string, SavedRuntimeAnchor>())
   const deferredEdgeResponseDelayMsRef = useRef(0)
+  const deferredSessionResponseDelayMsRef = useRef(0)
   const bootstrapTokenRef = useRef(0)
   const { loadingBefore, loadingAfter, setEdgeLoading } = useDemoEdgeLoadingState()
+  const [sessionLoadingOverlayVisible, resetSessionLoadingOverlay] =
+    useDelayedVisibility(feedLoading, SESSION_LOADING_OVERLAY_DELAY_MS)
   const runtime = runtimeCache.getRuntime(activeFeedId)
   const activeFeed = useMemo(
     () => getDemoFeedDefinition(activeFeedId),
@@ -287,6 +292,14 @@ export function useDemoMessageScenario(
         }
         return
       }
+      const sessionDelayMs = deferredSessionResponseDelayMsRef.current
+      deferredSessionResponseDelayMsRef.current = 0
+      if (sessionDelayMs > 0) {
+        await wait(sessionDelayMs)
+        if (cancelled || bootstrapToken !== bootstrapTokenRef.current) {
+          return
+        }
+      }
       const persistedAnchor = await loadDemoViewportAnchor(activeFeedId)
       const persistedRuntimeAnchor = persistedAnchor
         ? toRuntimeAnchor(activeFeedId, persistedAnchor.messageId)
@@ -403,6 +416,9 @@ export function useDemoMessageScenario(
   const deferNextEdgeResponse = useCallback((delayMs: number) => {
     deferredEdgeResponseDelayMsRef.current = Math.max(0, delayMs)
   }, [])
+  const deferNextSessionResponse = useCallback((delayMs: number) => {
+    deferredSessionResponseDelayMsRef.current = Math.max(0, delayMs)
+  }, [])
   const {
     eventStormRunning,
     botPushActive,
@@ -468,13 +484,14 @@ export function useDemoMessageScenario(
   const selectFeed = useCallback((feedId: string) => {
     if (feedId !== activeFeedId) {
       stopLongRunningMocks()
+      resetSessionLoadingOverlay()
       setFeedLoading(true)
       setEdgeLoading('before', false)
       setEdgeLoading('after', false)
     }
     activeFeedIdRef.current = feedId
     setActiveFeedId(feedId)
-  }, [activeFeedId, setEdgeLoading, stopLongRunningMocks])
+  }, [activeFeedId, resetSessionLoadingOverlay, setEdgeLoading, stopLongRunningMocks])
   const resetE2EScenario = useCallback(async (scenarioId: string) => {
     stopLongRunningMocks()
     bootstrapTokenRef.current += 1
@@ -482,6 +499,7 @@ export function useDemoMessageScenario(
     setEdgeLoading('before', false)
     setEdgeLoading('after', false)
     deferredEdgeResponseDelayMsRef.current = 0
+    deferredSessionResponseDelayMsRef.current = 0
     resetMessageMutationState()
     resetOptimisticRemap()
     const prepared = prepareDemoE2EScenario({
@@ -530,6 +548,7 @@ export function useDemoMessageScenario(
     loadingAfter: loadingAfter ||
       runtimeSnapshot.edgeState.after.status === 'loading',
     feedLoading,
+    sessionLoadingOverlayVisible,
     eventStormRunning,
     botPushActive,
     highlightedMessageId,
@@ -557,6 +576,7 @@ export function useDemoMessageScenario(
     resetE2EScenario,
     streamCurrentRow,
     deferNextEdgeResponse,
+    deferNextSessionResponse,
     sendOptimisticMessage,
     alignPendingOptimisticAtStart,
     resolveOptimisticRemap,
