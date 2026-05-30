@@ -165,7 +165,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       align,
       offsetWithinMessage,
     )
-    this.writeProgrammaticScroll(container, nextTop, 'destination')
+    this.writeProgrammaticScroll(container, nextTop, 'jump')
     return true
   }
 

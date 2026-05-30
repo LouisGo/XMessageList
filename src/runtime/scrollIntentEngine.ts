@@ -5,8 +5,9 @@ export type ScrollSource =
   | 'momentum'
   | 'programmatic'
   | 'recovery'
-  | 'destination'
+  | 'jump'
   | 'followBottom'
+  | 'underflowFill'
 
 type ScrollWriteToken = {
   source: ScrollSource
@@ -22,6 +23,8 @@ export class ScrollIntentEngine {
   private state: BottomLockState = 'UNLOCKED'
 
   private currentWrite: ScrollWriteToken | null = null
+
+  private userIntentStartedAtFrame = -1
 
   private userIntentExpiresAtFrame = -1
 
@@ -58,6 +61,9 @@ export class ScrollIntentEngine {
 
   markUserIntent(currentFrame: number): void {
     this.currentWrite = null
+    if (this.userIntentExpiresAtFrame < currentFrame) {
+      this.userIntentStartedAtFrame = currentFrame
+    }
     this.userIntentExpiresAtFrame = Math.max(
       this.userIntentExpiresAtFrame,
       currentFrame + USER_INTENT_FRAME_WINDOW,
@@ -66,6 +72,7 @@ export class ScrollIntentEngine {
 
   clearTransientIntent(): void {
     this.currentWrite = null
+    this.userIntentStartedAtFrame = -1
     this.userIntentExpiresAtFrame = -1
   }
 
@@ -77,9 +84,12 @@ export class ScrollIntentEngine {
     this.currentWrite = null
 
     if (this.userIntentExpiresAtFrame >= currentFrame) {
-      return 'user'
+      return currentFrame <= this.userIntentStartedAtFrame + 1
+        ? 'user'
+        : 'momentum'
     }
 
+    this.userIntentStartedAtFrame = -1
     this.userIntentExpiresAtFrame = -1
     return 'programmatic'
   }

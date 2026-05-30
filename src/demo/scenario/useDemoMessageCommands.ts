@@ -41,6 +41,7 @@ export function useDemoMessageCommands(input: {
   activeFeedId: string
   runtime: MessageListRuntime<DemoMessage>
   getDataRuntime: DemoDataRuntimeGetter
+  isActiveFeed: (feedId: string) => boolean
   publishSegment: DemoSegmentPublisher
   pageSize: number
   sendDelayBaseMs: number
@@ -52,6 +53,7 @@ export function useDemoMessageCommands(input: {
     activeFeedId,
     getDataRuntime,
     highlightState,
+    isActiveFeed,
     publishSegment,
     pageSize,
     runtime,
@@ -82,7 +84,9 @@ export function useDemoMessageCommands(input: {
 
       saveDemoViewportAnchor(activeFeedId, undefined)
       await flushDemoFeedPersistence(activeFeedId)
-      setMessageCount(persistedMessages.length)
+      if (isActiveFeed(activeFeedId)) {
+        setMessageCount(persistedMessages.length)
+      }
 
       if (shouldRebuildLatest) {
         const latest = persistedMessages.slice(
@@ -103,19 +107,24 @@ export function useDemoMessageCommands(input: {
           anchorStatus: 'normal',
         })
         publishSegment(dataRuntime)
-        setLastEvent(`sent ${message.id} and rebuilt latest`)
+        if (isActiveFeed(activeFeedId)) {
+          setLastEvent(`sent ${message.id} and rebuilt latest`)
+        }
         return
       }
 
       runtime.scrollToLatest()
       dataRuntime.patchItems([toDemoMessageDataItem(message)])
       publishSegment(dataRuntime)
-      setLastEvent(`sent ${message.id}`)
+      if (isActiveFeed(activeFeedId)) {
+        setLastEvent(`sent ${message.id}`)
+      }
     })()
     return true
   }, [
     activeFeedId,
     getDataRuntime,
+    isActiveFeed,
     pageSize,
     publishSegment,
     runtime,
@@ -168,7 +177,7 @@ export function useDemoMessageCommands(input: {
 
   const clearFeed = useCallback((feedId: string) => {
     replaceDemoFeedMessages(feedId, [])
-    if (feedId === activeFeedId) {
+    if (isActiveFeed(feedId)) {
       setMessageCount(0)
       const dataRuntime = getDataRuntime(feedId)
       dataRuntime.resetLatest({
@@ -179,10 +188,12 @@ export function useDemoMessageCommands(input: {
       publishSegment(dataRuntime)
     }
     void flushDemoFeedPersistence(feedId)
-    setLastEvent(`cleared ${feedId}`)
+    if (isActiveFeed(feedId)) {
+      setLastEvent(`cleared ${feedId}`)
+    }
   }, [
-    activeFeedId,
     getDataRuntime,
+    isActiveFeed,
     publishSegment,
     setLastEvent,
     setMessageCount,

@@ -26,4 +26,22 @@ describe('ScrollIntentEngine', () => {
     expect(engine.updateBottomLockFromDistance(0, 10, source)).toBe(false)
     expect(engine.getBottomLockState()).toBe('UNLOCKED')
   })
+
+  it('classifies post-input continuation frames as momentum', () => {
+    const engine = new ScrollIntentEngine(8, 64)
+
+    engine.markUserIntent(10)
+
+    expect(engine.classifyScroll(10)).toBe('user')
+    expect(engine.classifyScroll(11)).toBe('user')
+    expect(engine.classifyScroll(12)).toBe('momentum')
+  })
+
+  it('keeps jump writes distinct from generic programmatic scroll', () => {
+    const engine = new ScrollIntentEngine(8, 64)
+
+    engine.markScrollWrite('jump', 10)
+
+    expect(engine.classifyScroll(10)).toBe('jump')
+  })
 })

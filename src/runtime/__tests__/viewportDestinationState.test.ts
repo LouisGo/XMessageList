@@ -21,7 +21,7 @@ describe('MessageList destination state', () => {
     const container = createContainer({ height: 100 })
     const before = createMarker(0, 1)
     const rowA = createRow('row-1', 1, 50)
-    const targetRow = createRow('row-9', 51, 50)
+    const targetRow = createRow('row-9', 51, 200)
     const target = { feedId: 'feed-a', stableId: 'row-9', serverId: 'row-9' }
     const events: MessageListRuntimeEvent[] = []
 
@@ -177,6 +177,37 @@ describe('MessageList destination state', () => {
 
     expect(events.filter((event) => event.type === 'needMoreAfter'))
       .toHaveLength(previousAfterNeeds + 1)
+  })
+
+  it('pauses ordinary edge requests while underflow fill is pending', () => {
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', observers })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const before = createMarker(0, 1)
+    const row = createRow('row-1', 1, 20)
+    const after = createMarker(21, 1)
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(before, row, after)
+    runtime.attachScrollContainer(container)
+    adapter.registerBeforeTriggerElement(before)
+    adapter.registerAfterTriggerElement(after)
+    adapter.registerRowElement('row-1', row)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getSnapshot().pendingIntent).toBe('underflow-fill')
+    expect(events.filter((event) => event.type === 'needMoreBefore')).toHaveLength(1)
+
+    container.dispatchEvent(new Event('scroll'))
+    observers.intersectionObservers[1]?.trigger(after, true)
+
+    expect(events.some((event) => event.type === 'needMoreAfter')).toBe(false)
   })
 
   it('restores a remote destination with the saved offset inside the message', () => {

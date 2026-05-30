@@ -1,6 +1,6 @@
 import type { MessageIdentityAnchor } from './identity'
 import type { MessageListRuntimeEvent } from './events'
-import type { MessageListSnapshot } from './snapshot'
+import type { DOMRectLike, MessageListSnapshot } from './snapshot'
 import type { ScrollSource } from './scrollIntentEngine'
 
 export type RuntimeEdge = 'before' | 'after'
@@ -21,6 +21,10 @@ export type UnderflowInput<TMessage, TOptimistic> = {
   snapshot: MessageListSnapshot<TMessage, TOptimistic>
   scrollHeight: number
   clientHeight: number
+  viewportTop: number
+  viewportBottom: number
+  beforeTrigger: DOMRectLike
+  afterTrigger: DOMRectLike
 }
 
 export type EdgeNeedOptions = {

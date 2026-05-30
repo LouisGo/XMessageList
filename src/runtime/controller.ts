@@ -5,6 +5,7 @@ import { createViewportEvidence } from './evidence'
 import type { MessageIdentityAnchor, MessageRuntimeItemKey } from './identity'
 import type { MessageListAdapterRuntime } from './internal'
 import { createBrowserObserverFactory, createInitialSnapshot, createSnapshotFromSegment, isSameSegmentToken, isSameToken, withNextProjectionRevision } from './controllerHelpers'
+import { resolvePendingAnchorKey, resolveTransactionScrollSource, resolveTransactionStateForPhase, shouldWaitForAnchorRef, type PendingTransaction } from './controllerTransactionHelpers'
 import { RuntimeDomInteractions } from './domInteractions'
 import { RuntimeScrollIntentCoordinator } from './runtimeScrollIntent'
 import { RuntimeInteractionState, type DestinationIntent, type InteractionUpdate, type RuntimeEdge } from './interactionState'
@@ -20,15 +21,6 @@ import { createDestinationSettledEvent, createSegmentTrimPressureEvent, createVi
 import { isStaleLoadedSegment, removeQueuedSegmentsBeforeGeneration } from './transactionQueue'
 import { settleTransactionScrollPosition } from './transactionSettlement'
 import { resolveCurrentViewportAnchor, resolveMeasuredViewportAnchor, resolveViewportAnchorEventInput, type ResolvedViewportAnchor, type ViewportAnchorEventInput } from './viewportAnchorEvents'
-
-type PendingTransaction<TMessage, TOptimistic> = {
-  token: ProjectionCommitToken
-  segment: LoadedSegment<TMessage, TOptimistic>
-  anchor: VisualAnchor | null
-  timeoutHandle: number
-  startedAt: number
-}
-
 export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unknown>
   implements MessageListAdapterRuntime<TMessage, TOptimistic> {
   private readonly scheduler: RuntimeScheduler
@@ -49,14 +41,18 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   private lastObservationScrollTop = 0
   private lastAnchor: MessageIdentityAnchor | null = null
   private lastAnchorOffsetWithinMessage: number | undefined
+  private readyGenerationKey: string | null = null
   private readonly resizeObserver: ResizeObserver | null = null
   private resizeFrame: number | null = null
-
   constructor(private readonly options: MessageListRuntimeOptions) {
     this.scheduler = options.scheduler ?? createDefaultScheduler()
     this.observerFactory = options.observers ?? createBrowserObserverFactory()
     this.diagnostics = new DiagnosticRingBuffer(this.scheduler)
-    this.interactions = new RuntimeInteractionState(this.stateAxes, options.underflowTolerancePx)
+    this.interactions = new RuntimeInteractionState(
+      this.stateAxes,
+      options.underflowTolerancePx,
+      options.edgeActivationMarginPx,
+    )
     this.scrollIntent = new RuntimeScrollIntentCoordinator(options)
     this.domInteractions = new RuntimeDomInteractions({
       scheduler: this.scheduler,
@@ -72,9 +68,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.snapshot = createInitialSnapshot<TMessage, TOptimistic>(options.feedId ?? 'default')
     this.resizeObserver = this.observerFactory?.createResizeObserver(() => this.scheduleResizeMeasurement()) ?? null
   }
-
   attachScrollContainer(container: HTMLElement): void { this.domInteractions.attachScrollContainer(container) }
-
   detachScrollContainer(): void {
     const anchor = this.resolveCurrentVisualAnchor()
     this.emitAnchorChanged('detach', anchor)
@@ -84,7 +78,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.resizeObserver?.unobserve(row)
     }
   }
-
   destroy(): void {
     if (this.pendingTransaction) this.scheduler.clearTimeout(this.pendingTransaction.timeoutHandle)
     if (this.resizeFrame !== null) this.scheduler.cancelAnimationFrame(this.resizeFrame)
@@ -97,7 +90,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.snapshotListeners.clear()
     this.eventListeners.clear()
   }
-
   applyLoadedSegment(segment: LoadedSegment<TMessage, TOptimistic>): void {
     if (this.isStaleSegment(segment)) {
       this.pushDiagnostic('transaction.staleSegment', 'warn', {
@@ -108,9 +100,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       })
       return
     }
-
     this.cancelTransactionsBeforeGeneration(segment)
-
     if (this.pendingTransaction || this.isAdvancingTransactionQueue) {
       this.transactionQueue.push(segment)
       this.stateAxes.setTransactionState('queued')
@@ -122,10 +112,8 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       })
       return
     }
-
     this.startTransaction(segment)
   }
-
   private startTransaction(segment: LoadedSegment<TMessage, TOptimistic>): void {
     const projectionRevision = this.snapshot.projectionRevision + 1
     const token = {
@@ -139,7 +127,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       if (!this.pendingTransaction || !isSameToken(this.pendingTransaction.token, token)) {
         return
       }
-
       this.isAdvancingTransactionQueue = true
       try {
         this.pendingTransaction = null
@@ -152,34 +139,61 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       }
       this.startNextQueuedTransaction()
     }, this.options.commitTimeoutMs ?? 120)
-
-    this.pendingTransaction = { token, segment, anchor, timeoutHandle, startedAt: this.scheduler.now() }
+    this.pendingTransaction = {
+      token,
+      segment,
+      anchor,
+      timeoutHandle,
+      startedAt: this.scheduler.now(),
+      anchorRetryCount: 0,
+    }
     this.stateAxes.setTransactionState('active')
     this.snapshot = createSnapshotFromSegment(segment, { previous: this.snapshot, projectionRevision, viewportPhase: 'PROJECTING' })
     this.emitSnapshot()
   }
-
   ackProjectionCommit(token: ProjectionCommitToken): void {
     const pending = this.pendingTransaction
-
     if (!pending || !isSameToken(pending.token, token)) {
       if (!pending && isSameSegmentToken(this.snapshot.commitToken, token)) {
         return
       }
-
       this.pushDiagnostic('transaction.staleCommitAck', 'warn', token)
       return
     }
-
     this.scheduler.clearTimeout(pending.timeoutHandle)
+    this.continueCommittedTransaction(token)
+  }
+  private continueCommittedTransaction(token: ProjectionCommitToken): void {
+    const pending = this.pendingTransaction
+    if (!pending || !isSameToken(pending.token, token)) {
+      return
+    }
     this.isAdvancingTransactionQueue = true
+    let settled = false
     try {
       this.scrollIntent.incrementFrame()
-      this.stateAxes.setTransactionState('settling')
+      this.stateAxes.setTransactionState('measuring')
       this.setViewportPhase('MEASURING')
       this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
+      if (shouldWaitForAnchorRef(pending, this.registry)) {
+        pending.anchorRetryCount += 1
+        this.pushDiagnostic('correction.anchorAwaitingRef', 'debug', {
+          ...token,
+          key: resolvePendingAnchorKey(pending),
+        })
+        this.scheduler.requestAnimationFrame(() => {
+          this.continueCommittedTransaction(token)
+        })
+        return
+      }
+      this.stateAxes.setTransactionState('correcting')
       this.setViewportPhase('CORRECTING')
       const destination = this.interactions.getPendingDestination()
+      const transactionScrollSource = resolveTransactionScrollSource({
+        snapshot: this.snapshot,
+        segment: pending.segment,
+        destination,
+      })
       if (pending.segment.modifier.type === 'reset-around') {
         this.interactions.markPendingDestinationResolvingDom()
       }
@@ -195,6 +209,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       })
       this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
       this.domInteractions.recordRowMetrics()
+      this.stateAxes.setTransactionState('settling')
       this.snapshot = this.interactions.settleSegment(
         this.snapshot,
         pending.segment,
@@ -204,31 +219,32 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.stateAxes.setTransactionState('idle')
       this.setViewportPhase('IDLE')
       this.pushDiagnostic('transaction.settle', 'info', { ...token, latencyMs: this.scheduler.now() - pending.startedAt })
-      this.emitViewportObservation('transaction-settle', this.scrollIntent.getLastScrollSource(), settledAnchor)
+      this.emitViewportReadyOnce(token)
+      this.emitViewportObservation('transaction-settle', transactionScrollSource, settledAnchor)
       this.emitAnchorChanged('transaction-settle', settledAnchor)
       if (destination && pending.segment.modifier.type === 'reset-around') {
         this.emitDestinationSettled(destination, settledAnchor)
       }
       this.emitSegmentTrimPressure(pending.segment, settledAnchor)
+      settled = true
     } finally {
       this.isAdvancingTransactionQueue = false
     }
-    this.startNextQueuedTransaction()
-    this.applyPostCommitInteractionUpdates(this.domInteractions.getDirectScrollEdgeIntent())
+    if (settled) {
+      this.startNextQueuedTransaction()
+      this.applyPostCommitInteractionUpdates(this.domInteractions.getDirectScrollEdgeIntent())
+    }
   }
-
   scrollToLatest(): void {
     const update = this.interactions.startFollowBottom(
       this.snapshot,
       this.readCurrentScrollTop(),
     )
     this.applyInteractionUpdate(update)
-
     if (!update.event) {
       this.domInteractions.scrollToNativeBottom()
     }
   }
-
   scrollToMessage(
     target: MessageIdentityAnchor,
     options: import('./options').MessageListScrollToMessageOptions = {},
@@ -236,14 +252,12 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     if (this.alignLocalDestination(target, options.align ?? 'nearest', undefined, 'jump')) {
       return
     }
-
     this.startDestination({
       target,
       reason: 'jump',
       align: options.align ?? 'nearest',
     })
   }
-
   restoreToMessage(
     target: MessageIdentityAnchor,
     options: import('./options').MessageListRestoreOptions = {},
@@ -258,7 +272,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     ) {
       return
     }
-
     this.startDestination({
       target,
       reason: 'restore',
@@ -266,7 +279,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       offsetWithinMessage: options.offsetWithinMessage,
     })
   }
-
   private alignLocalDestination(
     target: MessageIdentityAnchor,
     align: DestinationIntent['align'],
@@ -281,7 +293,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     )) {
       return false
     }
-
     this.interactions.clearFollowBottom()
     this.interactions.markLocalDestinationSettled()
     this.snapshot = {
@@ -295,48 +306,29 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.emitDestinationSettled({ target, align, offsetWithinMessage, reason }, target)
     return true
   }
-
   getSnapshot(): MessageListSnapshot<TMessage, TOptimistic> { return this.snapshot }
-
   subscribeSnapshot(listener: MessageListSnapshotListener): () => void { this.snapshotListeners.add(listener); return () => this.snapshotListeners.delete(listener) }
-
   subscribeRuntimeEvent(listener: MessageListRuntimeEventListener): () => void { this.eventListeners.add(listener); return () => this.eventListeners.delete(listener) }
-
   subscribeViewportObservation(listener: ViewportObservationListener): () => void { return this.subscribeRuntimeEvent((event) => { if (event.type === 'viewportObservationChanged') listener(event) }) }
-
   getViewportAnchor(): MessageIdentityAnchor | null { return this.lastAnchor ?? this.snapshot.segmentMeta.anchor ?? null }
-
   getDiagnostics(): import('./events').ViewportDiagnosticRecord[] { return this.diagnostics.getRecords() }
-
   getEvidence(): ViewportEvidence { return createViewportEvidence(this.snapshot, this.lastMeasurement, this.pendingTransaction?.token ?? null) }
-
   registerMessageFlowElement(element: HTMLElement | null): void { this.registry.setMessageFlow(element) }
-
   registerBeforeTriggerElement(element: HTMLElement | null): void { this.registry.setBeforeTrigger(element); this.domInteractions.registerEdgeTrigger('before', element) }
-
   registerAfterTriggerElement(element: HTMLElement | null): void { this.registry.setAfterTrigger(element); this.domInteractions.registerEdgeTrigger('after', element) }
-
   registerBottomMarkerElement(element: HTMLElement | null): void { this.registry.setBottomMarker(element) }
-
   registerRowElement(key: MessageRuntimeItemKey, element: HTMLElement | null): void {
     const previous = this.registry.getRow(key)
     if (previous && previous !== element) this.resizeObserver?.unobserve(previous)
     this.registry.setRow(key, element)
     if (element) this.resizeObserver?.observe(element)
   }
-
   beginDirectScroll(): void { this.domInteractions.beginDirectScroll() }
-
   writeDirectScrollTop(scrollTop: number): boolean { return this.domInteractions.writeDirectScrollTop(scrollTop) }
-
   endDirectScroll(): void { this.domInteractions.endDirectScroll() }
-
   reportEdgeRequestFailure(edge: RuntimeEdge, requestToken: string): void { this.snapshot = this.interactions.reportEdgeError(this.snapshot, edge, requestToken); this.emitSnapshot() }
-
   retryEdgeRequest(edge: RuntimeEdge): void { const update = this.interactions.retryEdge(this.snapshot, edge); if (update) this.applyInteractionUpdate(update) }
-
   reportOverlayMetricMismatch(details: Record<string, unknown>): void { this.pushDiagnostic('overlay.metricMismatch', 'warn', details) }
-
   private correctAnchor(
     anchor: VisualAnchor | null,
     segment: LoadedSegment<TMessage, TOptimistic>,
@@ -352,7 +344,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       emitRuntimeEvent: (event) => this.emitRuntimeEvent(event),
     })
   }
-
   private resolveCurrentVisualAnchor(): ResolvedViewportAnchor {
     return resolveCurrentViewportAnchor({
       registry: this.registry,
@@ -362,11 +353,9 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       lastAnchorOffsetWithinMessage: this.lastAnchorOffsetWithinMessage,
     })
   }
-
   private startDestination(intent: DestinationIntent): void {
     this.applyInteractionUpdate(this.interactions.startDestination(this.snapshot, intent))
   }
-
   private applyInteractionUpdate(
     update: InteractionUpdate<TMessage, TOptimistic>,
   ): void {
@@ -375,7 +364,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.emitSnapshot()
     if (update.event) this.emitRuntimeEvent(update.event)
   }
-
   private handleEdgeIntersection(edge: RuntimeEdge): void {
     const source = this.scrollIntent.classifyCurrentScroll()
     const update = this.interactions.startEdgeNeed(
@@ -385,12 +373,10 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       edge === 'before' ? 'edge-before' : 'edge-after',
       { source },
     )
-
     if (update) {
       this.applyInteractionUpdate(update)
     }
   }
-
   private scheduleResizeMeasurement(): void {
     if (this.resizeFrame !== null) {
       return
@@ -398,12 +384,22 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.resizeFrame = this.scheduler.requestAnimationFrame(() => {
       this.scrollIntent.incrementFrame()
       this.resizeFrame = null
-      this.domInteractions.preserveVisualAnchor(captureVisualAnchor(this.registry.snapshot()))
+      if (this.pendingTransaction || this.snapshot.viewportPhase !== 'IDLE') {
+        this.scheduleResizeMeasurement()
+        return
+      }
+      this.setViewportPhase('MEASURING')
+      const anchor = captureVisualAnchor(this.registry.snapshot())
+      this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
+      this.setViewportPhase('CORRECTING')
+      this.domInteractions.preserveVisualAnchor(anchor)
       this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
       this.domInteractions.recordRowMetrics()
+      this.stateAxes.setTransactionState('settling')
       this.pushDiagnostic('measurement.resizeDirty', 'info', {
         rowCount: this.lastMeasurement.visibleRows.length,
       })
+      this.setViewportPhase('IDLE')
       this.emitViewportObservation('resize')
       this.applyPostCommitInteractionUpdates()
     })
@@ -412,7 +408,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     if (this.pendingTransaction || this.snapshot.viewportPhase !== 'IDLE') {
       return
     }
-
     const scrollSource = this.scrollIntent.classifyFrameScroll()
     this.lastMeasurement = measureRuntimeDom(this.registry.snapshot(), { rowKeys: this.domInteractions.getScrollSampleKeys() })
     this.snapshot = this.interactions.updateActiveFollowBottomForScroll(
@@ -432,7 +427,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.emitViewportObservation('scroll-idle', scrollSource)
     this.emitAnchorChanged('scroll-idle', this.resolveMeasuredViewportAnchor())
   }
-
   private resolveMeasuredViewportAnchor(): ResolvedViewportAnchor {
     return resolveMeasuredViewportAnchor({
       registry: this.registry,
@@ -442,18 +436,15 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       resolveCurrent: () => this.resolveCurrentVisualAnchor(),
     })
   }
-
   private setViewportPhase(phase: MessageListSnapshot['viewportPhase']): void {
-    this.stateAxes.setTransactionState(phase === 'PROJECTING' ? 'active' : this.stateAxes.getTransactionState())
+    this.stateAxes.setTransactionState(resolveTransactionStateForPhase(phase))
     this.snapshot = {
       ...this.snapshot,
       viewportPhase: phase,
     }
     this.emitSnapshot()
   }
-
   private emitSnapshot(): void { for (const listener of this.snapshotListeners) listener() }
-
   private startNextQueuedTransaction(): void {
     if (this.pendingTransaction || this.isAdvancingTransactionQueue) {
       return
@@ -467,7 +458,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.stateAxes.setTransactionState('idle')
     }
   }
-
   private cancelTransactionsBeforeGeneration(
     segment: LoadedSegment<TMessage, TOptimistic>,
   ): void {
@@ -489,7 +479,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.syncScrollIntentBottomLock()
     }
   }
-
   private shouldPreservePendingIntentFor(
     segment: LoadedSegment<TMessage, TOptimistic>,
   ): boolean {
@@ -501,7 +490,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       segment.modifier.type === 'reset-around'
     )
   }
-
   private isStaleSegment(
     segment: LoadedSegment<TMessage, TOptimistic>,
   ): boolean {
@@ -511,7 +499,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.snapshot,
     )
   }
-
   private pushDiagnostic(
     name: string,
     severity: import('./events').ViewportDiagnosticRecord['severity'],
@@ -520,13 +507,11 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     const record = this.diagnostics.push(name, severity, details)
     this.emitRuntimeEvent({ type: 'viewportDiagnostic', record })
   }
-
   private emitRuntimeEvent(event: MessageListRuntimeEvent): void {
     for (const listener of this.eventListeners) {
       listener(event)
     }
   }
-
   private emitAnchorChanged(
     reason: ViewportAnchorChangedEvent['reason'],
     input: ViewportAnchorEventInput,
@@ -547,7 +532,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       offsetWithinMessage: resolved.offsetWithinMessage,
     })
   }
-
   private emitViewportObservation(
     reason: ViewportObservationReason,
     scrollSource = this.scrollIntent.getLastScrollSource(),
@@ -560,16 +544,30 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     }))
     this.lastObservationScrollTop = this.lastMeasurement.scrollTop
   }
-
   private emitDestinationSettled(destination: DestinationIntent, resolvedTarget: MessageIdentityAnchor | null): void {
     this.emitRuntimeEvent(createDestinationSettledEvent({ snapshot: this.snapshot, destination, resolvedTarget }))
   }
-
+  private emitViewportReadyOnce(token: ProjectionCommitToken): void {
+    const key = `${token.feedId}:${token.generation}`
+    if (this.readyGenerationKey === key) {
+      return
+    }
+    this.readyGenerationKey = key
+    this.emitRuntimeEvent({
+      type: 'viewportReady',
+      feedId: token.feedId,
+      commitToken: token,
+    })
+  }
   private emitSegmentTrimPressure(segment: LoadedSegment<TMessage, TOptimistic>, anchor: MessageIdentityAnchor | null): void {
-    const event = createSegmentTrimPressureEvent({ snapshot: this.snapshot, segment, anchor })
+    const event = createSegmentTrimPressureEvent({
+      snapshot: this.snapshot,
+      segment,
+      anchor,
+      measurement: this.lastMeasurement,
+    })
     if (event) this.emitRuntimeEvent(event)
   }
-
   private applyPostCommitInteractionUpdates(
     directScrollEdgeIntent: RuntimeEdge | null = null,
   ): void {
@@ -584,11 +582,9 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.applyInteractionUpdate(update)
     }
   }
-
   private syncScrollIntentBottomLock(): void {
     this.scrollIntent.syncBottomLock(this.snapshot)
   }
-
   private readCurrentScrollTop(): number {
     return this.registry.snapshot().scrollContainer?.scrollTop ??
       this.lastMeasurement.scrollTop

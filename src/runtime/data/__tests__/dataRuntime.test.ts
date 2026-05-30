@@ -92,6 +92,39 @@ describe('MessageListDataRuntime', () => {
     ])
   })
 
+  it('rejects request tokens used for the wrong semantic request kind', () => {
+    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
+    runtime.resetLatest({
+      items: [item('row-1')],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    })
+    const latest = runtime.createRequestToken('latest')
+    const before = runtime.createRequestToken('before')
+
+    expect(runtime.extendBefore({
+      requestToken: latest.requestToken,
+      items: [item('wrong-kind-before')],
+      hasMoreBefore: false,
+      hasMoreAfter: true,
+    })).toMatchObject({
+      applied: false,
+      reason: 'stale-request',
+    })
+    expect(runtime.resetLatestFromRequest({
+      requestToken: before.requestToken,
+      items: [item('wrong-kind-latest')],
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+    })).toMatchObject({
+      applied: false,
+      reason: 'stale-request',
+    })
+    expect(runtime.getSegment().items.map((nextItem) => nextItem.key)).toEqual([
+      'row-1',
+    ])
+  })
+
   it('drops stale latest and around request responses', () => {
     const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
     runtime.resetLatest({
@@ -226,6 +259,42 @@ describe('MessageListDataRuntime', () => {
       'row-6',
     ])
     expect(trimmed.hasMoreBefore).toBe(true)
+  })
+
+  it('trims a single side per modifier when the protected anchor is central', () => {
+    const runtime = createMessageListDataRuntime<string>({
+      feedId: 'feed-a',
+      itemBudget: 3,
+    })
+    runtime.resetLatest({
+      items: Array.from({ length: 10 }, (_, index) => item(`row-${index + 1}`)),
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+    })
+
+    const firstTrim = runtime.trimToBudget('row-6')
+
+    expect(firstTrim.modifier.type).toBe('trim-before')
+    expect(firstTrim.items.map((nextItem) => nextItem.key)).toEqual([
+      'row-6',
+      'row-7',
+      'row-8',
+      'row-9',
+      'row-10',
+    ])
+    expect(firstTrim.hasMoreBefore).toBe(true)
+    expect(firstTrim.hasMoreAfter).toBe(false)
+
+    const secondTrim = runtime.trimToBudget('row-6')
+
+    expect(secondTrim.modifier.type).toBe('trim-after')
+    expect(secondTrim.items.map((nextItem) => nextItem.key)).toEqual([
+      'row-6',
+      'row-7',
+      'row-8',
+    ])
+    expect(secondTrim.hasMoreBefore).toBe(true)
+    expect(secondTrim.hasMoreAfter).toBe(true)
   })
 })
 

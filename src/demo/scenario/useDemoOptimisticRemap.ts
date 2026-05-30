@@ -32,6 +32,7 @@ export function useDemoOptimisticRemap(input: {
   activeFeedId: string
   runtime: MessageListRuntime<DemoMessage>
   getDataRuntime: DemoDataRuntimeGetter
+  isActiveFeed: (feedId: string) => boolean
   publishSegment: DemoSegmentPublisher
   setLastEvent: (eventText: string) => void
   onMessageCountChange: (messageCount: number) => void
@@ -39,6 +40,7 @@ export function useDemoOptimisticRemap(input: {
   const {
     activeFeedId,
     getDataRuntime,
+    isActiveFeed,
     publishSegment,
     runtime,
     setLastEvent,
@@ -77,7 +79,9 @@ export function useDemoOptimisticRemap(input: {
       committedMessage,
       ...tailMessages,
     ])
-    onMessageCountChange(persistedMessages.length)
+    if (isActiveFeed(activeFeedId)) {
+      onMessageCountChange(persistedMessages.length)
+    }
     pendingOptimisticRemapRef.current = {
       feedId: activeFeedId,
       localId,
@@ -100,7 +104,7 @@ export function useDemoOptimisticRemap(input: {
     dataRuntime.patchItems([
       {
         ...toDemoMessageDataItem(optimistic),
-        rowKind: 'optimistic',
+        rowKind: 'message',
         identity: {
           feedId: activeFeedId,
           stableId: localId,
@@ -112,8 +116,10 @@ export function useDemoOptimisticRemap(input: {
     ])
     publishSegment(dataRuntime)
     void flushDemoFeedPersistence(activeFeedId)
-    setLastEvent('optimistic local identity published')
-  }, [activeFeedId, getDataRuntime, onMessageCountChange, publishSegment, setLastEvent])
+    if (isActiveFeed(activeFeedId)) {
+      setLastEvent('optimistic local identity published')
+    }
+  }, [activeFeedId, getDataRuntime, isActiveFeed, onMessageCountChange, publishSegment, setLastEvent])
 
   const alignPendingOptimisticAtStart = useCallback(() => {
     const pending = pendingOptimisticRemapRef.current
@@ -143,8 +149,10 @@ export function useDemoOptimisticRemap(input: {
     dataRuntime.applyIdentityRemap([pending.remap])
     publishSegment(dataRuntime)
     pendingOptimisticRemapRef.current = null
-    setLastEvent('optimistic identity remapped to server id')
-  }, [activeFeedId, getDataRuntime, publishSegment, setLastEvent])
+    if (isActiveFeed(activeFeedId)) {
+      setLastEvent('optimistic identity remapped to server id')
+    }
+  }, [activeFeedId, getDataRuntime, isActiveFeed, publishSegment, setLastEvent])
 
   const sendOptimisticAndRemap = useCallback(async () => {
     sendOptimisticMessage()

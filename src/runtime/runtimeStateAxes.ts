@@ -6,7 +6,13 @@ export type ReadySubstate =
   | 'READY_UNDERFLOW_PENDING'
   | 'READY_VIEWPORT_COMPACTION_PENDING'
 
-export type TransactionState = 'idle' | 'queued' | 'active' | 'settling'
+export type TransactionState =
+  | 'idle'
+  | 'queued'
+  | 'active'
+  | 'measuring'
+  | 'correcting'
+  | 'settling'
 
 export type DestinationState =
   | 'idle'

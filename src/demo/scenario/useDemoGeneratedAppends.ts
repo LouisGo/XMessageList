@@ -16,6 +16,7 @@ export function useDemoGeneratedAppends(input: {
   activeFeedId: string
   appendDelayBaseMs: number
   getDataRuntime: DemoDataRuntimeGetter
+  isActiveFeed: (feedId: string) => boolean
   longBurstDelayBaseMs: number
   longBurstSize: number
   publishActivePatch: (feedId: string, items: DemoMessage[]) => void
@@ -30,6 +31,7 @@ export function useDemoGeneratedAppends(input: {
     activeFeedId,
     appendDelayBaseMs,
     getDataRuntime,
+    isActiveFeed,
     longBurstDelayBaseMs,
     longBurstSize,
     publishActivePatch,
@@ -60,7 +62,7 @@ export function useDemoGeneratedAppends(input: {
     const persistedMessages = appendDemoFeedMessages(feedId, nextMessages)
 
     await flushDemoFeedPersistence(feedId)
-    if (feedId === activeFeedId) {
+    if (isActiveFeed(feedId)) {
       setMessageCount(persistedMessages.length)
     }
     if (visibleInCurrentWindow) {
@@ -68,15 +70,18 @@ export function useDemoGeneratedAppends(input: {
     }
     return { messages: nextMessages, visibleInCurrentWindow }
   }, [
-    activeFeedId,
     appendDelayBaseMs,
     getDataRuntime,
+    isActiveFeed,
     publishActivePatch,
     setMessageCount,
   ])
 
   const appendMessage = useCallback(() => {
     void appendGeneratedMessages(activeFeedId, 1).then((result) => {
+      if (!isActiveFeed(activeFeedId)) {
+        return
+      }
       const message = result.messages[0]
 
       setLastEvent(
@@ -85,24 +90,30 @@ export function useDemoGeneratedAppends(input: {
           : `queued ${message?.id ?? 'message'} after current window`,
       )
     })
-  }, [activeFeedId, appendGeneratedMessages, setLastEvent])
+  }, [activeFeedId, appendGeneratedMessages, isActiveFeed, setLastEvent])
 
   const appendMessages = useCallback((count: number) => {
     void appendGeneratedMessages(activeFeedId, Math.min(Math.max(1, count), 160))
       .then((result) => {
+        if (!isActiveFeed(activeFeedId)) {
+          return
+        }
         setLastEvent(
           result.visibleInCurrentWindow
             ? `appended ${result.messages.length} messages`
             : `queued ${result.messages.length} messages after current window`,
         )
       })
-  }, [activeFeedId, appendGeneratedMessages, setLastEvent])
+  }, [activeFeedId, appendGeneratedMessages, isActiveFeed, setLastEvent])
 
   const appendLongBurst = useCallback(() => {
     void appendGeneratedMessages(activeFeedId, longBurstSize, {
       delayBaseMs: longBurstDelayBaseMs,
       forceLongBurstRow: true,
     }).then((result) => {
+      if (!isActiveFeed(activeFeedId)) {
+        return
+      }
       setLastEvent(
         result.visibleInCurrentWindow
           ? `appended long burst ${result.messages.length}`
@@ -112,6 +123,7 @@ export function useDemoGeneratedAppends(input: {
   }, [
     activeFeedId,
     appendGeneratedMessages,
+    isActiveFeed,
     longBurstDelayBaseMs,
     longBurstSize,
     setLastEvent,

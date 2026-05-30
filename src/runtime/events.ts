@@ -3,7 +3,15 @@ import type {
   MessageRuntimeItemKey,
 } from './identity'
 import type { ProjectionCommitToken } from './snapshot'
-import type { ScrollSource } from './scrollIntentEngine'
+
+type ViewportScrollSource =
+  | 'user'
+  | 'momentum'
+  | 'programmatic'
+  | 'recovery'
+  | 'jump'
+  | 'followBottom'
+  | 'underflowFill'
 
 export type NeedEventBase = {
   feedId: string
@@ -48,7 +56,7 @@ export type ViewportObservationChangedEvent = {
   generation: number
   segmentRevision: number
   reason: ViewportObservationReason
-  scrollSource: ScrollSource | null
+  scrollSource: ViewportScrollSource | null
   direction: ViewportScrollDirection
   activity: ViewportObservationActivity
   anchor: MessageIdentityAnchor | null
@@ -100,6 +108,12 @@ export type SegmentTrimPressureEvent = {
   segmentRevision: number
   itemCount: number
   anchor: MessageIdentityAnchor | null
+  anchorKey: MessageRuntimeItemKey | null
+  itemsBeforeAnchor: number
+  itemsAfterAnchor: number
+  distanceBeforeAnchorPx: number | null
+  distanceAfterAnchorPx: number | null
+  estimatedDomCost: number
   preferredTrimSide: 'before' | 'after'
 }
 

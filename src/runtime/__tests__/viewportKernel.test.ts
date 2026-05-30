@@ -335,6 +335,76 @@ describe('MessageList viewport kernel', () => {
     }))
   })
 
+  it('waits one frame for a committed anchor ref before correcting', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const previousRow = createRow('row-1', 10, 40)
+    const nextRow = createRow('row-1', 30, 40)
+
+    container.scrollTop = 20
+    container.append(previousRow)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', previousRow)
+
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
+    previousRow.remove()
+    adapter.registerRowElement('row-1', null)
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getSnapshot().viewportPhase).toBe('MEASURING')
+    expect(runtime.getDiagnostics().map((record) => record.name)).toContain(
+      'correction.anchorAwaitingRef',
+    )
+
+    container.append(nextRow)
+    adapter.registerRowElement('row-1', nextRow)
+    scheduler.flushFrame()
+
+    expect(container.scrollTop).toBe(40)
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
+    expect(runtime.getDiagnostics().map((record) => record.name)).toContain(
+      'correction.anchorPreserved',
+    )
+  })
+
+  it('falls back to the nearest measurable row when the captured anchor is absent', () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const previousRow = createRow('row-1', 10, 40)
+    const fallbackRow = createRow('row-2', 35, 40)
+    const events: MessageListRuntimeEvent[] = []
+
+    container.scrollTop = 20
+    container.append(previousRow)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', previousRow)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+
+    runtime.applyLoadedSegment(segment([item('row-2')], 1, 1, {
+      modifier: { type: 'trim-before', trimToken: 'trim:1' },
+    }))
+    previousRow.remove()
+    container.append(fallbackRow)
+    adapter.registerRowElement('row-1', null)
+    adapter.registerRowElement('row-2', fallbackRow)
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(container.scrollTop).toBe(45)
+    expect(runtime.getDiagnostics().map((record) => record.name)).toContain(
+      'correction.anchorFallback',
+    )
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: 'viewportError',
+      code: 'anchor-missing',
+    }))
+  })
+
   it('emits viewport anchor checkpoints on settle and detach', () => {
     const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)

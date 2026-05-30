@@ -25,7 +25,6 @@ export type MessageDataItem<TMessage = unknown, TOptimistic = unknown> = {
     | 'system'
     | 'deleted-placeholder'
     | 'permission-fallback'
-    | 'optimistic'
   identity?: MessageIdentity
   renderVersion: number
   message?: TMessage

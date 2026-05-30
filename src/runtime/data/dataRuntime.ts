@@ -128,7 +128,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
   resetLatestFromRequest(
     input: ResetSegmentInput<TMessage, TOptimistic> & { requestToken: string },
   ): DataRuntimeApplyResult<TMessage, TOptimistic> {
-    if (!this.consumeRequest(input.requestToken)) {
+    if (!this.consumeRequest(input.requestToken, 'latest')) {
       return this.staleResult()
     }
 
@@ -152,7 +152,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
       requestToken: string
     },
   ): DataRuntimeApplyResult<TMessage, TOptimistic> {
-    if (!this.consumeRequest(input.requestToken)) {
+    if (!this.consumeRequest(input.requestToken, 'around')) {
       return this.staleResult()
     }
 
@@ -165,7 +165,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
   extendBefore(
     input: ExtendSegmentInput<TMessage, TOptimistic>,
   ): DataRuntimeApplyResult<TMessage, TOptimistic> {
-    const request = this.consumeRequest(input.requestToken)
+    const request = this.consumeRequest(input.requestToken, 'before')
 
     if (!request) {
       return this.staleResult()
@@ -181,7 +181,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
   extendAfter(
     input: ExtendSegmentInput<TMessage, TOptimistic>,
   ): DataRuntimeApplyResult<TMessage, TOptimistic> {
-    const request = this.consumeRequest(input.requestToken)
+    const request = this.consumeRequest(input.requestToken, 'after')
 
     if (!request) {
       return this.staleResult()
@@ -285,12 +285,16 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
     return { applied: true, segment: this.segment }
   }
 
-  private consumeRequest(requestToken: string): DataRuntimeRequestToken | null {
+  private consumeRequest(
+    requestToken: string,
+    expectedKind: DataRuntimeRequestKind,
+  ): DataRuntimeRequestToken | null {
     const request = this.pendingRequests.get(requestToken)
     this.pendingRequests.delete(requestToken)
 
     if (
       !request ||
+      request.kind !== expectedKind ||
       request.generation !== this.generation ||
       this.currentRequestByKind.get(request.kind) !== requestToken
     ) {

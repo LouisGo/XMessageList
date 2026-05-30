@@ -12,6 +12,7 @@ type RuntimeEdge = 'before' | 'after'
 export function useDemoEdgeBatchLoader(input: {
   activeFeedId: string
   getDataRuntime: DemoDataRuntimeGetter
+  isActiveFeed: (feedId: string) => boolean
   loadingDelayBaseMs: number
   pageSize: number
   publishSegment: DemoSegmentPublisher
@@ -22,6 +23,7 @@ export function useDemoEdgeBatchLoader(input: {
   const {
     activeFeedId,
     getDataRuntime,
+    isActiveFeed,
     loadingDelayBaseMs,
     pageSize,
     publishSegment,
@@ -53,7 +55,9 @@ export function useDemoEdgeBatchLoader(input: {
         )
 
         if (boundaryIndex < 0) {
-          setLastEvent(`${edge} boundary missing from mock store`)
+          if (isActiveFeed(activeFeedId)) {
+            setLastEvent(`${edge} boundary missing from mock store`)
+          }
           return
         }
 
@@ -81,19 +85,26 @@ export function useDemoEdgeBatchLoader(input: {
 
         if (result.applied) {
           publishSegment(dataRuntime)
-          setMessageCount(allMessages.length)
-          setLastEvent(`manually loaded ${incoming.length} ${edge} messages`)
+          if (isActiveFeed(activeFeedId)) {
+            setMessageCount(allMessages.length)
+            setLastEvent(`manually loaded ${incoming.length} ${edge} messages`)
+          }
           return
         }
 
-        setLastEvent(`ignored stale manual ${edge} response`)
+        if (isActiveFeed(activeFeedId)) {
+          setLastEvent(`ignored stale manual ${edge} response`)
+        }
       } finally {
-        setEdgeLoading(edge, false)
+        if (isActiveFeed(activeFeedId)) {
+          setEdgeLoading(edge, false)
+        }
       }
     })()
   }, [
     activeFeedId,
     getDataRuntime,
+    isActiveFeed,
     loadingDelayBaseMs,
     pageSize,
     publishSegment,

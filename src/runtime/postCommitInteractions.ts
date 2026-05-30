@@ -22,6 +22,10 @@ export function createPostCommitInteractionUpdates<TMessage, TOptimistic>(
     snapshot,
     scrollHeight: input.measurement.scrollHeight,
     clientHeight: input.measurement.clientHeight,
+    viewportTop: input.measurement.viewportTop,
+    viewportBottom: input.measurement.viewportBottom,
+    beforeTrigger: input.measurement.beforeTrigger,
+    afterTrigger: input.measurement.afterTrigger,
   })
 
   if (underflowUpdate) {

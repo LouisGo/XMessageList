@@ -174,8 +174,7 @@ function canRequestEdge<TMessage, TOptimistic>(
   return hasMore &&
     snapshot.viewportPhase === 'IDLE' &&
     snapshot.edgeState[edge].status === 'idle' &&
-    snapshot.pendingIntent !== 'follow-bottom' &&
-    snapshot.pendingIntent !== 'destination'
+    !snapshot.pendingIntent
 }
 
 function canEmitEdgeNeedForSource(

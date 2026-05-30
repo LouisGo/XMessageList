@@ -65,6 +65,38 @@ describe('MessageList public runtime events', () => {
     })
   })
 
+  it('emits viewportReady once for each settled generation', () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const events: MessageListRuntimeEvent[] = []
+
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 2, {
+      modifier: { type: 'patch', changedKeys: ['row-1'] },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    runtime.applyLoadedSegment(segment([item('row-2')], 2, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(events.filter((event) => event.type === 'viewportReady'))
+      .toEqual([
+        expect.objectContaining({
+          type: 'viewportReady',
+          feedId: 'feed-a',
+          commitToken: expect.objectContaining({ generation: 1 }),
+        }),
+        expect.objectContaining({
+          type: 'viewportReady',
+          feedId: 'feed-a',
+          commitToken: expect.objectContaining({ generation: 2 }),
+        }),
+      ])
+  })
+
   it('emits destinationSettled when an around jump resolves target', () => {
     const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -98,6 +130,48 @@ describe('MessageList public runtime events', () => {
       target,
       resolution: 'target',
       resolvedTarget: expect.objectContaining({ stableId: 'row-3' }),
+    }))
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'viewportObservationChanged',
+      reason: 'transaction-settle',
+      scrollSource: 'jump',
+    }))
+  })
+
+  it('reports underflow fill as the transaction settle source', () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rowA = createRow('row-1', 0, 20)
+    const rowB = createRow('row-0', -20, 20)
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(rowA)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', rowA)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      hasMoreBefore: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    const request = events.find((event) => event.type === 'needMoreBefore')
+
+    container.prepend(rowB)
+    adapter.registerRowElement('row-0', rowB)
+    runtime.applyLoadedSegment(segment([item('row-0'), item('row-1')], 1, 2, {
+      hasMoreBefore: false,
+      modifier: {
+        type: 'extend-before',
+        requestToken: request?.requestToken ?? '',
+      },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'viewportObservationChanged',
+      segmentRevision: 2,
+      reason: 'transaction-settle',
+      scrollSource: 'underflowFill',
     }))
   })
 })

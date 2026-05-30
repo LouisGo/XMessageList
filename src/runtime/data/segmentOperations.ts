@@ -111,19 +111,37 @@ export function trimAroundKey<TMessage, TOptimistic>(
   removedAfter: number
 } {
   const safeBudget = Math.max(1, budget)
-  const anchorIndex = Math.max(0, items.findIndex((item) => item.key === protectKey))
-  const half = Math.floor(safeBudget / 2)
-  const start = Math.min(
-    Math.max(0, anchorIndex - half),
-    Math.max(0, items.length - safeBudget),
-  )
-  const end = Math.min(items.length, start + safeBudget)
+  const anchorIndex = resolveProtectIndex(items, protectKey)
+  const overflow = Math.max(0, items.length - safeBudget)
+  const beforeCount = anchorIndex
+  const afterCount = items.length - anchorIndex - 1
+  const trimBefore = beforeCount >= afterCount
+  const removedBefore = trimBefore
+    ? Math.min(overflow, beforeCount)
+    : 0
+  const removedAfter = trimBefore
+    ? 0
+    : Math.min(overflow, afterCount)
+  const start = removedBefore
+  const end = items.length - removedAfter
 
   return {
     items: items.slice(start, end),
-    removedBefore: start,
-    removedAfter: items.length - end,
+    removedBefore,
+    removedAfter,
   }
+}
+
+function resolveProtectIndex<TMessage, TOptimistic>(
+  items: MessageDataItem<TMessage, TOptimistic>[],
+  protectKey?: MessageRuntimeItemKey,
+): number {
+  if (!protectKey) {
+    return 0
+  }
+
+  const index = items.findIndex((item) => item.key === protectKey)
+  return index >= 0 ? index : 0
 }
 
 function serializeIdentity(identity: {

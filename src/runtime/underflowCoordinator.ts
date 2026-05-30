@@ -11,6 +11,7 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
   constructor(
     private readonly axes: RuntimeStateAxes,
     private readonly tolerancePx = 2,
+    private readonly edgeActivationMarginPx?: number,
   ) {}
 
   reset(): void {
@@ -27,12 +28,30 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
     destinationDirection: RuntimeEdge | null,
   ): InteractionUpdate<TMessage, TOptimistic> | null {
     const { snapshot, scrollHeight, clientHeight } = input
+    const edgeActivationMargin = resolveEdgeActivationMargin(
+      clientHeight,
+      this.edgeActivationMarginPx,
+    )
+    const needsMinimumRangeFill =
+      scrollHeight <= clientHeight + edgeActivationMargin
+    const bothEdgesInActivationMargin = areBothTriggersInActivationMargin(
+      input,
+      edgeActivationMargin,
+    )
 
     if (
       snapshot.viewportPhase !== 'IDLE' ||
       snapshot.pendingIntent ||
-      scrollHeight > clientHeight + this.tolerancePx
+      (
+        !needsMinimumRangeFill &&
+        !bothEdgesInActivationMargin &&
+        scrollHeight > clientHeight + this.tolerancePx
+      )
     ) {
+      return null
+    }
+
+    if (!needsMinimumRangeFill && !bothEdgesInActivationMargin) {
       return null
     }
 
@@ -128,6 +147,41 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
 
     return this.lastEdge === 'before' ? 'after' : 'before'
   }
+}
+
+function resolveEdgeActivationMargin(
+  clientHeight: number,
+  configuredMarginPx?: number,
+): number {
+  return configuredMarginPx ?? Math.min(Math.max(clientHeight * 0.25, 64), 240)
+}
+
+function areBothTriggersInActivationMargin<TMessage, TOptimistic>(
+  input: UnderflowInput<TMessage, TOptimistic>,
+  marginPx: number,
+): boolean {
+  return isTriggerInActivationMargin(
+    input.beforeTrigger,
+    input.viewportTop,
+    input.viewportBottom,
+    marginPx,
+  ) && isTriggerInActivationMargin(
+    input.afterTrigger,
+    input.viewportTop,
+    input.viewportBottom,
+    marginPx,
+  )
+}
+
+function isTriggerInActivationMargin(
+  rect: { top: number; bottom: number; height: number },
+  viewportTop: number,
+  viewportBottom: number,
+  marginPx: number,
+): boolean {
+  return rect.height > 0 &&
+    rect.bottom >= viewportTop - marginPx &&
+    rect.top <= viewportBottom + marginPx
 }
 
 function canRequestEdge<TMessage, TOptimistic>(

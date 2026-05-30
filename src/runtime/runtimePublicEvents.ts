@@ -89,14 +89,21 @@ export function createSegmentTrimPressureEvent<TMessage, TOptimistic>(input: {
   snapshot: MessageListSnapshot<TMessage, TOptimistic>
   segment: LoadedSegment<TMessage, TOptimistic>
   anchor: MessageIdentityAnchor | null
+  measurement: RuntimeMeasurement
 }): SegmentTrimPressureEvent | null {
   if (
-    input.segment.items.length === 0 ||
-    input.segment.modifier.type === 'trim-before' ||
-    input.segment.modifier.type === 'trim-after'
+    input.segment.items.length === 0
   ) {
     return null
   }
+
+  const anchorKey = input.anchor
+    ? findKeyForAnchor(input.snapshot, input.anchor)
+    : null
+  const anchorIndex = anchorKey
+    ? input.snapshot.items.findIndex((item) => item.key === anchorKey)
+    : -1
+  const distances = resolveAnchorDistances(input.measurement, anchorKey)
 
   return {
     type: 'segmentTrimPressure',
@@ -105,7 +112,37 @@ export function createSegmentTrimPressureEvent<TMessage, TOptimistic>(input: {
     segmentRevision: input.snapshot.segmentRevision,
     itemCount: input.segment.items.length,
     anchor: input.anchor,
+    anchorKey,
+    itemsBeforeAnchor: anchorIndex >= 0 ? anchorIndex : 0,
+    itemsAfterAnchor: anchorIndex >= 0
+      ? Math.max(0, input.snapshot.items.length - anchorIndex - 1)
+      : 0,
+    distanceBeforeAnchorPx: distances.before,
+    distanceAfterAnchorPx: distances.after,
+    estimatedDomCost: input.segment.items.length,
     preferredTrimSide: resolvePreferredTrimSide(input.snapshot, input.anchor),
+  }
+}
+
+function resolveAnchorDistances(
+  measurement: RuntimeMeasurement,
+  anchorKey: string | null,
+): { before: number | null; after: number | null } {
+  if (!anchorKey || measurement.visibleRows.length === 0) {
+    return { before: null, after: null }
+  }
+
+  const anchorRow = measurement.visibleRows.find((row) => row.key === anchorKey)
+  const first = measurement.visibleRows[0]
+  const last = measurement.visibleRows.at(-1)
+
+  if (!anchorRow || !first || !last) {
+    return { before: null, after: null }
+  }
+
+  return {
+    before: Math.max(0, anchorRow.top - first.top),
+    after: Math.max(0, last.bottom - anchorRow.bottom),
   }
 }
 

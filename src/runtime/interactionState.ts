@@ -36,6 +36,7 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
   constructor(
     private readonly axes: RuntimeStateAxes,
     underflowTolerancePx = 2,
+    edgeActivationMarginPx?: number,
   ) {
     this.edge = new EdgeNeedCoordinator((kind) => this.nextRequestToken(kind))
     this.followBottom = new FollowBottomCoordinator(
@@ -46,7 +47,11 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
       this.axes,
       (kind) => this.nextRequestToken(kind),
     )
-    this.underflow = new UnderflowCoordinator(this.axes, underflowTolerancePx)
+    this.underflow = new UnderflowCoordinator(
+      this.axes,
+      underflowTolerancePx,
+      edgeActivationMarginPx,
+    )
   }
 
   resetForGeneration(
