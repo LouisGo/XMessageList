@@ -86,6 +86,16 @@ export function useDemoFeedBootstrap(input: {
 
     void (async () => {
       if (cancelled || bootstrapToken !== bootstrapTokenRef.current) return
+      const sessionDelayMs = pendingFeedId === feedId
+        ? deferredSessionResponseDelayMsRef.current
+        : 0
+      if (pendingFeedId === feedId) {
+        deferredSessionResponseDelayMsRef.current = 0
+      }
+      if (sessionDelayMs > 0) {
+        await wait(sessionDelayMs)
+        if (cancelled || bootstrapToken !== bootstrapTokenRef.current) return
+      }
       if (cachedSegment.items.length > 0) {
         const savedAnchor = savedAnchorsRef.current.get(feedId)
         const allMessages = await loadDemoFeedMessages(feedId)
@@ -104,12 +114,6 @@ export function useDemoFeedBootstrap(input: {
         return
       }
 
-      const sessionDelayMs = deferredSessionResponseDelayMsRef.current
-      deferredSessionResponseDelayMsRef.current = 0
-      if (sessionDelayMs > 0) {
-        await wait(sessionDelayMs)
-        if (cancelled || bootstrapToken !== bootstrapTokenRef.current) return
-      }
       const persistedAnchor = await loadDemoViewportAnchor(feedId)
       const persistedRuntimeAnchor = persistedAnchor
         ? toRuntimeAnchor(feedId, persistedAnchor.messageId)

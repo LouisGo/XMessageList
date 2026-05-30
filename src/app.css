@@ -281,6 +281,15 @@ h1 {
     );
 }
 
+.message-viewport.session-loading [data-message-scroll-container] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.message-viewport.session-loading [data-message-scrollbar-overlay] {
+  display: none;
+}
+
 [data-message-scroll-container] {
   min-height: 0;
   height: 100%;
@@ -587,16 +596,29 @@ h1 {
   position: absolute;
   top: 50%;
   left: 50%;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
   translate: -50% -50%;
-  border: 1px solid #c2d2d7;
-  border-radius: 999px;
-  background: rgb(255 255 255 / 0.94);
-  color: #34454c;
-  padding: 10px 16px;
-  font-size: 13px;
-  font-weight: 700;
-  box-shadow: 0 10px 30px rgb(29 45 53 / 0.16);
+  border: 0;
+  background: transparent;
   pointer-events: none;
+}
+
+.session-loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgb(20 116 93 / 0.2);
+  border-top-color: #14745d;
+  border-radius: 999px;
+  animation: session-loading-spin 720ms linear infinite;
+}
+
+@keyframes session-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .follow-bottom-button {

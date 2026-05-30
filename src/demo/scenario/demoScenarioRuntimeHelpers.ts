@@ -28,6 +28,10 @@ import {
   usesAroundBootstrap,
 } from './demoScenarioHelpers'
 
+export const RANDOM_CHAT_FEED_ID = 'feed-random'
+const RANDOM_CHAT_SLOW_DELAY_MS = 340
+const RANDOM_CHAT_FAST_DELAY_MS = 150
+
 export async function restoreAroundAnchor(input: {
   dataRuntime: MessageListDataRuntime<DemoMessage>
   runtime: MessageListRuntime<DemoMessage>
@@ -169,12 +173,23 @@ export function selectDemoFeed(input: {
   input.setSelectedFeedId(feedId)
   input.setEdgeLoading('before', false)
   input.setEdgeLoading('after', false)
+  if (
+    feedId === RANDOM_CHAT_FEED_ID &&
+    input.deferredSessionResponseDelayMsRef.current === 0
+  ) {
+    input.deferredSessionResponseDelayMsRef.current = resolveDemoSessionDelayMs(feedId)
+  }
 
   const warmRuntime = input.runtimeCache.hasRuntime(feedId)
     ? input.runtimeCache.getRuntime(feedId)
     : null
-  if (warmRuntime && warmRuntime.getSnapshot().items.length > 0) {
+  if (
+    input.deferredSessionResponseDelayMsRef.current === 0 &&
+    warmRuntime &&
+    warmRuntime.getSnapshot().items.length > 0
+  ) {
     activateSelectedFeed(input, feedId)
+    syncLoadedFeedState(input, feedId)
     return
   }
 
@@ -201,7 +216,30 @@ export function selectDemoFeed(input: {
   }
 
   input.setPendingFeedId(feedId)
+  input.activeFeedIdRef.current = feedId
+  input.setActiveFeedId(feedId)
+  input.setMessages([])
+  input.setMessageCount(0)
+  input.setLastEvent(`loading ${getDemoFeedDefinition(feedId).title}`)
   input.setFeedLoading(true)
+}
+
+export function resolveDemoSessionDelayMs(feedId: string): number {
+  if (feedId !== RANDOM_CHAT_FEED_ID) {
+    return 0
+  }
+
+  const roll = Math.random()
+
+  if (roll < 0.5) {
+    return RANDOM_CHAT_SLOW_DELAY_MS
+  }
+
+  if (roll < 0.8) {
+    return RANDOM_CHAT_FAST_DELAY_MS
+  }
+
+  return 0
 }
 
 function activateSelectedFeed(
@@ -218,6 +256,30 @@ function activateSelectedFeed(
   input.setActiveFeedId(feedId)
   input.setPendingFeedId(null)
   input.setFeedLoading(false)
+}
+
+function syncLoadedFeedState(
+  input: Pick<
+    Parameters<typeof selectDemoFeed>[0],
+    | 'getDataRuntime'
+    | 'savedAnchorsRef'
+    | 'setLastEvent'
+    | 'setMessageCount'
+    | 'setMessages'
+  >,
+  feedId: string,
+): void {
+  const segment = input.getDataRuntime(feedId).getSegment()
+  input.setMessages(segment.items
+    .map((item) => item.message)
+    .filter((message): message is DemoMessage => Boolean(message)))
+  input.setMessageCount(readDemoFeedMessages(feedId).length)
+  const feedTitle = getDemoFeedDefinition(feedId).title
+  input.setLastEvent(
+    input.savedAnchorsRef.current.has(feedId)
+      ? `restored ${feedTitle}`
+      : `loaded ${feedTitle}`,
+  )
 }
 
 export function prepareSynchronousFeedActivation(input: {

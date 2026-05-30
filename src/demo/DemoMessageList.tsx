@@ -393,11 +393,18 @@ export function DemoMessageListContent({
           ))}
         </section>
       </aside>
-      <section className="chat-surface" aria-label="Message runtime demo">
+      <section
+        className="chat-surface"
+        aria-label="Message runtime demo"
+        data-feed-id={scenario.activeFeedId}
+      >
         <MessageList
           key={e2e?.viewportRemountKey ?? 0}
           runtime={scenario.activeRuntime}
-          className="message-viewport"
+          className={[
+            'message-viewport',
+            scenario.feedLoading ? 'session-loading' : '',
+          ].filter(Boolean).join(' ')}
           renderRow={renderDemoItem}
           renderBeforeEdge={({ status, retry }) =>
             scenario.loadingBefore ? (
@@ -442,8 +449,14 @@ export function DemoMessageListContent({
               <div
                 className="session-loading-overlay"
                 data-testid="session-loading-overlay"
+                role="status"
+                aria-label="Loading messages"
               >
-                Loading messages...
+                <span
+                  className="session-loading-spinner"
+                  data-testid="session-loading-spinner"
+                  aria-hidden="true"
+                />
               </div>
             ) : null
           }
