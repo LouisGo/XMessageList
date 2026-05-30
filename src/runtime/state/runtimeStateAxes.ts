@@ -31,6 +31,9 @@ export type RuntimeStateAxesSnapshot = {
   destinationState: DestinationState
 }
 
+/**
+ * RuntimeStateAxes 是内部观测用的正交状态轴；不要把它折叠成 snapshot.pendingIntent 或 viewportPhase 的派生值。
+ */
 export class RuntimeStateAxes {
   private readySubstate: ReadySubstate = 'READY_IDLE'
 

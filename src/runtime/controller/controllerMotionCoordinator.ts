@@ -57,6 +57,9 @@ type MotionHost<TMessage, TOptimistic> = {
   applyPostCommitInteractionUpdates: () => void
 }
 
+/**
+ * ControllerMotionCoordinator 是 controller 和 motion engine 的隔离层，负责把 motion settle/cancel 写回 snapshot 与 runtime events。
+ */
 export class ControllerMotionCoordinator<TMessage, TOptimistic> {
   private readonly motion: MotionCoordinator
 
@@ -126,12 +129,17 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
         bottomLockState: 'UNLOCKED',
         destination,
         allowPreposition: !motion?.crossFeed,
+        directionHint: resolveMotionDirectionHint(motion),
       }, 'jump')
     ) {
       return true
     }
 
-    this.host.writeProgrammaticScroll(resolved.container, resolved.scrollTop, 'jump')
+    this.host.writeProgrammaticScroll(
+      resolved.container,
+      resolved.scrollTop,
+      reason === 'jump' ? 'jump' : 'programmatic',
+    )
     this.host.emitAnchorChanged('transaction-settle', target)
     this.host.emitDestinationSettled(destination, target)
     return true
@@ -150,6 +158,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
       anchor,
       bottomLockState: 'LOCKED',
       destination: null,
+      directionHint: source === 'followBottom' ? 'after' : undefined,
     }, source)
   }
 
@@ -160,6 +169,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     const container = this.host.getScrollContainer()
     if (!container) return false
     this.cancel('restart')
+    // queued transaction drain 后再启动 motion 时，目标 DOM 位置可能已经变化，需要以当前 DOM 重新解析。
     const targetTop = this.resolveCurrentTargetTop(resolution)
     this.prepareSnapshotForMotion(resolution)
     this.host.stateAxes.markMotionActive()
@@ -170,7 +180,8 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
       source: resolution.source,
       targetTop,
       allowPreposition: resolution.allowPreposition,
-      directionHint: resolution.destination?.motion?.direction,
+      directionHint: resolution.directionHint,
+      enforceDirectionHint: resolution.enforceDirectionHint,
       writeScrollTop: (scrollTop, source) =>
         this.host.writeProgrammaticScroll(container, scrollTop, source),
       onSettle: () => this.finish(resolution, scrollSource ?? resolution.source, targetTop),
@@ -278,4 +289,10 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
 
 export type {
   ScrollMotionCancelReason,
+}
+
+function resolveMotionDirectionHint(
+  motion: MessageListScrollMotionHint | undefined,
+): MessageListScrollMotionHint['direction'] {
+  return motion?.crossFeed ? undefined : motion?.direction
 }

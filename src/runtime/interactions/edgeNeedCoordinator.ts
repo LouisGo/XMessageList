@@ -13,6 +13,9 @@ import type {
   RuntimeEdge,
 } from '../state/interactionTypes'
 
+/**
+ * 管理 before/after edge need 的 latch 和 requestToken；只产出 snapshot/event update，不直接请求数据。
+ */
 export class EdgeNeedCoordinator<TMessage, TOptimistic> {
   constructor(
     private readonly nextRequestToken: (kind: string) => string,

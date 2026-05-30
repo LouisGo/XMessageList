@@ -29,6 +29,9 @@ export type RuntimeDomInteractionsOptions = {
   ) => void
 }
 
+/**
+ * RuntimeDomInteractions 是 viewport runtime 唯一的 DOM I/O 层，集中处理测量、scrollTop 写入和 edge trigger 观察。
+ */
 export class RuntimeDomInteractions<TMessage, TOptimistic> {
   private beforeIntersectionObserver: IntersectionObserver | null = null
 
@@ -167,6 +170,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     target: MessageIdentityAnchor,
     align: DestinationIntent['align'],
     offsetWithinMessage?: number,
+    source: ScrollSource = 'programmatic',
   ): boolean {
     const resolved = this.resolveAlignedScrollTarget(snapshot, target, align, offsetWithinMessage)
 
@@ -174,7 +178,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       return false
     }
 
-    this.writeProgrammaticScroll(resolved.container, resolved.scrollTop, 'jump')
+    this.writeProgrammaticScroll(resolved.container, resolved.scrollTop, source)
     return true
   }
 
@@ -239,6 +243,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     scrollTop: number,
     source: ScrollSource = 'programmatic',
   ): void {
+    // 程序性写入会短暂压制原生 scroll 事件，防止 recovery/motion 被误判成用户滚动。
     this.options.onScrollWrite(source)
     this.suppressScrollUntil = this.options.scheduler.now() + 200
     container.scrollTop = scrollTop

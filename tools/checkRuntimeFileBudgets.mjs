@@ -9,6 +9,7 @@ const ROOT = path.resolve(
 )
 const RUNTIME_DIR = path.join(ROOT, 'src', 'runtime')
 const CODE_EXTENSIONS = new Set(['.ts', '.tsx'])
+const BUDGET_EXEMPT_DIRECTORIES = new Set(['__tests__'])
 const LOGIC_BUDGET = 300
 const CLASS_OR_REACT_BUDGET = 600
 
@@ -49,11 +50,18 @@ async function collectRuntimeCodeFiles(directory) {
     const absolute = path.join(directory, entry.name)
 
     if (entry.isDirectory()) {
+      if (BUDGET_EXEMPT_DIRECTORIES.has(entry.name)) {
+        continue
+      }
       files.push(...await collectRuntimeCodeFiles(absolute))
       continue
     }
 
-    if (entry.isFile() && CODE_EXTENSIONS.has(path.extname(entry.name))) {
+    if (
+      entry.isFile() &&
+      CODE_EXTENSIONS.has(path.extname(entry.name)) &&
+      !isTestFile(entry.name)
+    ) {
       files.push(absolute)
     }
   }
@@ -62,10 +70,6 @@ async function collectRuntimeCodeFiles(directory) {
 }
 
 function getBudgetKind(file, source) {
-  if (isTestFile(file)) {
-    return 'test'
-  }
-
   if (isReactComponentFile(file) || hasExportedClass(source, file)) {
     return 'class-or-react'
   }

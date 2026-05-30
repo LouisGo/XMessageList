@@ -90,6 +90,7 @@ export function useDemoMessageCommands(input: {
 
       if (shouldRebuildLatest) {
         runtime.scrollToLatest()
+        // 当前窗口不在 latest tail 时，send 先打开 follow-bottom intent，再用 reset-latest 重建尾部窗口。
         const latest = persistedMessages.slice(
           Math.max(0, persistedMessages.length - pageSize),
         )

@@ -7,7 +7,7 @@ flowchart LR
   Host["App / Demo Host"]
   Source["Main / Bridge or mock API"]
   Data["Renderer Data Runtime<br/>merge, dedupe, trim, request tokens"]
-  Runtime["Viewport Runtime<br/>scroll, measurement, correction, latches"]
+  Runtime["Viewport Runtime<br/>scroll, motion, measurement, correction, latches"]
   React["React Adapter<br/>snapshot projection, DOM refs, commit ack"]
   DOM["Native DOM Scroll Container<br/>real scrollHeight and row rects"]
   Overlay["Custom Scrollbar Overlay<br/>native metric mirror"]
@@ -39,6 +39,7 @@ flowchart TD
   Data["data/<br/>loaded segment merge, trim, tokens"]
   DOMDomain["dom/<br/>registry, measurement, anchor correction, row metrics"]
   Scroll["scroll/<br/>scroll source, bottom lock, direct scroll session"]
+  Motion["motion/<br/>bounded JS scroll engine"]
   Interactions["interactions/<br/>edge, underflow, destination, follow-bottom"]
   State["state/<br/>axes and shared interaction types"]
   Events["events/<br/>diagnostics, evidence, public event builders"]
@@ -48,6 +49,7 @@ flowchart TD
   Controller --> Shared
   Controller --> DOMDomain
   Controller --> Scroll
+  Controller --> Motion
   Controller --> Interactions
   Controller --> State
   Controller --> Events
@@ -66,9 +68,12 @@ flowchart TD
   Events --> Shared
   Events --> DOMDomain
   Scroll -.->|"RuntimeMeasurement type"| DOMDomain
+  Motion -.->|"ScrollMotionOptions type"| Contracts
+  Motion -.->|"ScrollSource type"| Scroll
   Transactions --> Contracts
   Transactions --> DOMDomain
   Transactions --> Interactions
+  Transactions -.->|"ScrollMotionSource type"| Motion
 ```
 
 Legend: solid arrows describe ownership, orchestration, or collaboration. Dashed arrows describe type/helper dependencies that are not ownership edges.

@@ -23,13 +23,14 @@ stateDiagram-v2
   Idle --> Motion: local jump or follow-bottom can resolve in current segment
   Motion --> Idle: motion settle emits observation and destination if needed
   Motion --> Idle: user input or detach cancels motion
+  Motion --> Idle: command supersede opens a new intent
   Motion --> Projecting: accepted LoadedSegment supersedes motion
 
   Idle --> Measuring: resize observer rAF
   Measuring --> Correcting: resize measurement complete
 ```
 
-`settling` 是 internal transaction axis state，不是 public `viewportPhase`。`MOTION` 只表示 runtime 自管的 bounded JS scroll motion；reduced-motion 或 epsilon target 可以同步 settle 回 `IDLE`。
+`settling` 是 internal transaction axis state，不是 public `viewportPhase`。`MOTION` 只表示 runtime 自管的 bounded JS scroll motion；reduced-motion 或 epsilon target 仍会进入 motion path，但可能同步 settle 回 `IDLE`。
 
 ## Edge Slot State
 
@@ -57,7 +58,7 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
   [*] --> ReadyIdle
-  ReadyIdle: IDLE phase, no pendingIntent
+  ReadyIdle: no pendingIntent
   EdgePending: pendingIntent=edge-before or edge-after
   UnderflowPending: pendingIntent=underflow-fill
   FollowBottomPending: pendingIntent=follow-bottom
@@ -80,3 +81,34 @@ stateDiagram-v2
   DestinationPending --> ReadyIdle: reset-around settles
   DestinationPending --> ReadyIdle: new generation or follow-bottom clears destination
 ```
+
+`pendingIntent=null` does not imply `viewportPhase=IDLE`: local jump, final follow-bottom alignment, and deferred `pendingRuntimeMotion` can run with `viewportPhase=MOTION` and `READY_MOTION_ACTIVE`.
+
+## Destination And Motion State
+
+```mermaid
+stateDiagram-v2
+  [*] --> Idle
+  Idle: idle
+  PendingData: pendingData
+  ResolvingDom: resolvingDom
+  MotionActive: motionActive
+  Settled: settled
+  Interrupted: interrupted
+
+  Idle --> PendingData: remote destination or follow-bottom requests data
+  PendingData --> ResolvingDom: reset-around commit resolves destination in DOM
+  ResolvingDom --> MotionActive: jump destination resolves bounded motion
+  ResolvingDom --> Settled: restore or instant destination alignment
+  PendingData --> MotionActive: final reset-latest resolves follow-bottom motion
+  Idle --> MotionActive: local jump or local follow-bottom starts motion
+  Settled --> MotionActive: settled transaction preserved pendingRuntimeMotion
+  MotionActive --> Settled: motion settle clears pendingIntent, locks bottom if needed, emits events
+  MotionActive --> Interrupted: user input cancels motion
+  MotionActive --> Idle: command supersede, transaction supersede, detach, or generation reset
+  PendingData --> Idle: follow-bottom, destination, or generation reset clears intent
+  Interrupted --> Idle: next ready transition
+  Settled --> Idle: next ready transition
+```
+
+`READY_MOTION_ACTIVE` is a ready substate, not a `pendingIntent` value. Motion is owned by `ControllerMotionCoordinator`; transaction settlement may carry `pendingRuntimeMotion` across queued transactions before this state becomes active.

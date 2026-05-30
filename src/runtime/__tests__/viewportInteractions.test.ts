@@ -251,6 +251,41 @@ describe('MessageList viewport interactions', () => {
     const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
+    const rowA = createRow('row-1', 0, 20)
+    const rowB = createRow('row-0', -110, 110)
+    const events: MessageListRuntimeEvent[] = []
+    container.append(rowA)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', rowA)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    const firstRequest = events.find((event) => event.type === 'needMoreBefore')
+    container.prepend(rowB)
+    adapter.registerRowElement('row-0', rowB)
+    runtime.applyLoadedSegment(segment([item('row-0'), item('row-1')], 1, 2, {
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+      modifier: { type: 'extend-before', requestToken: firstRequest?.requestToken ?? '' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getEvidence().scrollHeight).toBe(130)
+    expect(events.filter((event) =>
+      event.type === 'needMoreBefore' &&
+      event.reason === 'underflow-fill'
+    )).toHaveLength(2)
+    expect(runtime.getSnapshot()).toMatchObject({
+      pendingIntent: 'underflow-fill',
+      segmentMeta: { underflow: 'fillable' },
+    })
+  })
+  it('does not start underflow from edge margin alone', () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 60)
     const rowB = createRow('row-2', 60, 70)
     const events: MessageListRuntimeEvent[] = []
@@ -265,14 +300,9 @@ describe('MessageList viewport interactions', () => {
     }))
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
     expect(runtime.getEvidence().scrollHeight).toBe(130)
-    expect(events).toContainEqual(expect.objectContaining({
-      type: 'needMoreBefore',
-      reason: 'underflow-fill',
-    }))
-    expect(runtime.getSnapshot()).toMatchObject({
-      pendingIntent: 'underflow-fill',
-      segmentMeta: { underflow: 'fillable' },
-    })
+    expect(events.some((event) =>
+      event.type === 'needMoreBefore' || event.type === 'needMoreAfter'
+    )).toBe(false)
   })
   it('uses reset-around anchor protection to choose the thin underflow side', () => {
     const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
@@ -504,7 +534,9 @@ describe('MessageList viewport interactions', () => {
     runtime.restoreToMessage(target, { align: 'end' })
     expect(events.some((event) => event.type === 'needMessagesAround')).toBe(false)
     expect(container.scrollTop).toBe(50)
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
     expect(runtime.getSnapshot().pendingIntent).toBeNull()
+    expect(runtime.getDiagnostics().map((record) => record.name)).not.toContain('destinationMotion.start')
   })
 })
 function item(key: string): MessageDataItem<string> {

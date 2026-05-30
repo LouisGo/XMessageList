@@ -8,6 +8,9 @@ import { ProjectionCommitAck } from './ProjectionCommitAck'
 import { RuntimeEventBridge } from './RuntimeEventBridge'
 import type { MessageListProps } from '../types'
 
+/**
+ * React 壳只投影 runtime snapshot、注册 DOM refs 并回传 commit ack；滚动和测量语义由 runtime 拥有。
+ */
 export function MessageList<TMessage, TOptimistic>({
   runtime,
   className,
@@ -49,6 +52,7 @@ export function MessageList<TMessage, TOptimistic>({
     <div
       data-message-list
       data-scrollbar-mode={scrollbar}
+      data-custom-scrollbar={scrollbar === 'custom' ? 'true' : 'false'}
       className={className}
       style={rootStyle}
     >

@@ -10,6 +10,9 @@ export type DataRuntimeRequestToken = {
   kind: DataRuntimeRequestKind
 }
 
+/**
+ * 维护每种请求的 current pointer；旧 token 可以被安全拒绝，但不能误清掉更新的 current token。
+ */
 export class DataRuntimeRequestTokenRegistry {
   private requestSequence = 0
 
@@ -58,6 +61,7 @@ export class DataRuntimeRequestTokenRegistry {
     generation: number,
   ): DataRuntimeRequestToken | null {
     const request = this.pendingRequests.get(requestToken)
+    // 只删除被消费的 token；如果它已被更新 token 替代，current pointer 必须保留。
     this.pendingRequests.delete(requestToken)
 
     if (!request) {

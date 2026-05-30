@@ -16,7 +16,7 @@ import {
   readMetrics,
   reportMetricMismatch,
 } from './scrollbarMetrics'
-import { overlayStyle, thumbStyle, trackStyle } from './scrollbarStyles'
+import { customScrollbarStyle } from './scrollbarStyles'
 
 type DragState = {
   lastPointerY: number
@@ -32,14 +32,32 @@ export type MessageListScrollbarOverlayProps<TMessage, TOptimistic> = {
   projectionRevision: number
 }
 
+type StyleEntry = {
+  element: HTMLStyleElement
+  references: number
+}
+
+const HIDE_DELAY_MS = 650
+const styleEntries = new WeakMap<Document, StyleEntry>()
+
+/**
+ * 自定义滚动条只镜像原生容器指标，并通过 direct-scroll session 把拖拽意图交回 runtime。
+ */
 export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
   containerRef,
   runtime,
   projectionRevision,
 }: MessageListScrollbarOverlayProps<TMessage, TOptimistic>) {
   const [metrics, setMetrics] = useState(EMPTY_METRICS)
+  const [visible, setVisible] = useState(false)
+  const [hovering, setHovering] = useState(false)
+  const [dragging, setDragging] = useState(false)
   const dragRef = useRef<DragState | null>(null)
   const dragMetricsKeyRef = useRef<string | null>(null)
+  const hoveringRef = useRef(false)
+  const draggingRef = useRef(false)
+  const dragOwnerDocumentRef = useRef<Document | null>(null)
+  const hideTimerRef = useRef<number | null>(null)
   const mismatchKeyRef = useRef<string | null>(null)
   const geometry = useMemo(() => resolveScrollbarGeometry(metrics), [metrics])
   const refresh = useCallback(() => {
@@ -47,6 +65,48 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     setMetrics((previous) => areSameMetrics(previous, next) ? previous : next)
     reportMetricMismatch(runtime, next, mismatchKeyRef)
   }, [containerRef, runtime])
+  const clearHideTimer = useCallback(() => {
+    if (hideTimerRef.current === null) {
+      return
+    }
+
+    window.clearTimeout(hideTimerRef.current)
+    hideTimerRef.current = null
+  }, [])
+  const showScrollbar = useCallback(() => {
+    setVisible(true)
+    clearHideTimer()
+  }, [clearHideTimer])
+  const scheduleHide = useCallback(() => {
+    clearHideTimer()
+    hideTimerRef.current = window.setTimeout(() => {
+      hideTimerRef.current = null
+
+      if (!hoveringRef.current && !draggingRef.current) {
+        setVisible(false)
+      }
+    }, HIDE_DELAY_MS)
+  }, [clearHideTimer])
+  const setDraggingState = useCallback((nextDragging: boolean) => {
+    draggingRef.current = nextDragging
+    setDragging(nextDragging)
+    const ownerDocument = containerRef.current?.ownerDocument ?? document
+    dragOwnerDocumentRef.current = nextDragging ? ownerDocument : null
+    ownerDocument.body.classList.toggle(
+      'x-message-scrollbar-dragging',
+      nextDragging,
+    )
+  }, [containerRef])
+
+  useLayoutEffect(() => {
+    const ownerDocument = containerRef.current?.ownerDocument
+
+    if (!ownerDocument) {
+      return
+    }
+
+    return retainCustomScrollbarStyle(ownerDocument)
+  }, [containerRef])
 
   useLayoutEffect(() => {
     const container = containerRef.current
@@ -56,7 +116,11 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     }
 
     let frame: number | null = null
-    const scheduleRefresh = () => {
+    const scheduleRefresh = (reveal = false) => {
+      if (reveal) {
+        showScrollbar()
+      }
+
       if (frame !== null) {
         return
       }
@@ -65,15 +129,29 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
         refresh()
       })
     }
+    const scheduleRefreshAndReveal = () => {
+      scheduleRefresh(true)
+    }
+    const handleContainerPointerEnter = () => {
+      showScrollbar()
+      scheduleRefresh()
+    }
+    const handleContainerPointerLeave = () => {
+      if (!draggingRef.current) {
+        scheduleHide()
+      }
+    }
     const resizeObserver = typeof ResizeObserver === 'undefined'
       ? null
-      : new ResizeObserver(scheduleRefresh)
+      : new ResizeObserver(scheduleRefreshAndReveal)
     const mutationObserver = typeof MutationObserver === 'undefined'
       ? null
-      : new MutationObserver(scheduleRefresh)
+      : new MutationObserver(scheduleRefreshAndReveal)
 
     scheduleRefresh()
-    container.addEventListener('scroll', scheduleRefresh, { passive: true })
+    container.addEventListener('scroll', scheduleRefreshAndReveal, { passive: true })
+    container.addEventListener('pointerenter', handleContainerPointerEnter)
+    container.addEventListener('pointerleave', handleContainerPointerLeave)
     resizeObserver?.observe(container)
     mutationObserver?.observe(container, {
       childList: true,
@@ -85,11 +163,24 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       if (frame !== null) {
         window.cancelAnimationFrame(frame)
       }
-      container.removeEventListener('scroll', scheduleRefresh)
+      container.removeEventListener('scroll', scheduleRefreshAndReveal)
+      container.removeEventListener('pointerenter', handleContainerPointerEnter)
+      container.removeEventListener('pointerleave', handleContainerPointerLeave)
       resizeObserver?.disconnect()
       mutationObserver?.disconnect()
     }
-  }, [containerRef, projectionRevision, refresh])
+  }, [containerRef, projectionRevision, refresh, scheduleHide, showScrollbar])
+
+  useLayoutEffect(() => {
+    return () => {
+      clearHideTimer()
+      draggingRef.current = false
+      dragOwnerDocumentRef.current?.body.classList.remove(
+        'x-message-scrollbar-dragging',
+      )
+      dragOwnerDocumentRef.current = null
+    }
+  }, [clearHideTimer])
 
   const writeScrollTop = useCallback((scrollTop: number) => {
     runtime.writeDirectScrollTop(scrollTop)
@@ -116,6 +207,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       return
     }
 
+    // projection 期间内容高度可能变化；拖拽基准要重建，避免 thumb 跳动放大成错误 scrollTop。
     dragRef.current = {
       lastPointerY: drag.lastPointerY,
       startY: drag.lastPointerY,
@@ -138,26 +230,32 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
   const handleTrackPointerDown = useCallback((
     event: PointerEvent<HTMLDivElement>,
   ) => {
-    if (event.target !== event.currentTarget || !geometry.visible) {
+    if (
+      event.button !== 0 ||
+      event.target !== event.currentTarget ||
+      !geometry.visible
+    ) {
       return
     }
 
     event.preventDefault()
+    showScrollbar()
     const rect = event.currentTarget.getBoundingClientRect()
-    const trackHeight = rect.height || metrics.clientHeight
-    const maxThumbTop = Math.max(1, trackHeight - geometry.thumbHeight)
-    const targetThumbTop = event.clientY - rect.top - geometry.thumbHeight / 2
+    const targetThumbTop =
+      event.clientY - rect.top - geometry.trackStart - geometry.thumbHeight / 2
+    const maxThumbTop = Math.max(1, geometry.maxThumbTop)
     const ratio = Math.min(Math.max(targetThumbTop / maxThumbTop, 0), 1)
 
     runtime.beginDirectScroll()
     writeScrollTop(ratio * geometry.maxScrollTop)
     runtime.endDirectScroll()
-  }, [geometry, metrics.clientHeight, runtime, writeScrollTop])
+    scheduleHide()
+  }, [geometry, runtime, scheduleHide, showScrollbar, writeScrollTop])
 
   const handleThumbPointerDown = useCallback((
     event: PointerEvent<HTMLDivElement>,
   ) => {
-    if (!geometry.visible) {
+    if (event.button !== 0 || !geometry.visible) {
       return
     }
 
@@ -175,8 +273,17 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       projectionRevision,
       metrics,
     )
+    setDraggingState(true)
+    showScrollbar()
     runtime.beginDirectScroll()
-  }, [geometry, metrics, projectionRevision, runtime])
+  }, [
+    geometry,
+    metrics,
+    projectionRevision,
+    runtime,
+    setDraggingState,
+    showScrollbar,
+  ])
 
   const handleThumbPointerMove = useCallback((
     event: PointerEvent<HTMLDivElement>,
@@ -199,35 +306,99 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     if (dragRef.current) {
       dragRef.current = null
       dragMetricsKeyRef.current = null
+      setDraggingState(false)
       runtime.endDirectScroll()
+      scheduleHide()
     }
-  }, [runtime])
+  }, [runtime, scheduleHide, setDraggingState])
+
+  const handleScrollbarPointerEnter = useCallback(() => {
+    hoveringRef.current = true
+    setHovering(true)
+    showScrollbar()
+  }, [showScrollbar])
+
+  const handleScrollbarPointerLeave = useCallback(() => {
+    hoveringRef.current = false
+    setHovering(false)
+
+    if (!draggingRef.current) {
+      scheduleHide()
+    }
+  }, [scheduleHide])
+
+  const scrollbarClassName = [
+    'x-message-scrollbar',
+    geometry.visible ? 'is-scrollable' : null,
+    visible ? 'is-visible' : null,
+    hovering ? 'is-hovering' : null,
+    dragging ? 'is-dragging' : null,
+  ].filter(Boolean).join(' ')
 
   return (
     <div
       aria-hidden="true"
+      className={scrollbarClassName}
       data-message-scrollbar-overlay
-      data-visible={geometry.visible ? 'true' : 'false'}
-      style={overlayStyle}
+      data-message-scrollbar-track
+      data-testid="custom-scrollbar"
+      onPointerDown={handleTrackPointerDown}
+      onPointerEnter={handleScrollbarPointerEnter}
+      onPointerLeave={handleScrollbarPointerLeave}
     >
       <div
-        data-message-scrollbar-track
-        onPointerDown={handleTrackPointerDown}
-        style={trackStyle}
-      >
-        <div
-          data-message-scrollbar-thumb
-          onPointerDown={handleThumbPointerDown}
-          onPointerMove={handleThumbPointerMove}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-          style={{
-            ...thumbStyle,
-            height: geometry.thumbHeight,
-            transform: `translateY(${geometry.thumbTop}px)`,
-          }}
-        />
-      </div>
+        className="x-message-scrollbar-thumb"
+        data-message-scrollbar-thumb
+        data-testid="custom-scrollbar-thumb"
+        onPointerDown={handleThumbPointerDown}
+        onPointerMove={handleThumbPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        style={{
+          height: geometry.thumbHeight,
+          transform: `translate3d(0, ${geometry.thumbTop}px, 0)`,
+        }}
+      />
     </div>
   )
+}
+
+function retainCustomScrollbarStyle(ownerDocument: Document): () => void {
+  const current = styleEntries.get(ownerDocument)
+
+  if (current) {
+    current.references += 1
+    return () => {
+      releaseCustomScrollbarStyle(ownerDocument)
+    }
+  }
+
+  const element = ownerDocument.createElement('style')
+  element.textContent = customScrollbarStyle
+  ownerDocument.head.appendChild(element)
+  styleEntries.set(ownerDocument, {
+    element,
+    references: 1,
+  })
+
+  return () => {
+    releaseCustomScrollbarStyle(ownerDocument)
+  }
+}
+
+function releaseCustomScrollbarStyle(ownerDocument: Document): void {
+  const current = styleEntries.get(ownerDocument)
+
+  if (!current) {
+    return
+  }
+
+  current.references -= 1
+
+  if (current.references > 0) {
+    return
+  }
+
+  current.element.remove()
+  styleEntries.delete(ownerDocument)
 }

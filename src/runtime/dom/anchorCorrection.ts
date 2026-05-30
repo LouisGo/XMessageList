@@ -10,6 +10,9 @@ import type { VisualAnchor } from './measurement'
 import type { LoadedSegment } from '../contracts/segment'
 import type { MessageListSnapshot } from '../contracts/snapshot'
 
+/**
+ * commit 后按旧 visual anchor 计算滚动补偿；锚点缺失时只在可测行内降级，并发出诊断或错误事件。
+ */
 export function correctTransactionAnchor<TMessage, TOptimistic>(options: {
   anchor: VisualAnchor | null
   segment: LoadedSegment<TMessage, TOptimistic>

@@ -3,6 +3,9 @@ import type { MessageListSnapshot } from '../contracts/snapshot'
 import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import type { InteractionUpdate, RuntimeEdge, UnderflowInput } from '../state/interactionTypes'
 
+/**
+ * 在 viewport idle 且无 pending intent 时补齐过短窗口；按 feed/generation/revision/edge 去重，避免 underflow fill 自旋。
+ */
 export class UnderflowCoordinator<TMessage, TOptimistic> {
   private lastEdge: RuntimeEdge | null = null
 
@@ -32,42 +35,40 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
       clientHeight,
       this.edgeActivationMarginPx,
     )
-    const needsMinimumRangeFill =
+    const needsShortSegmentFill = scrollHeight <= clientHeight + this.tolerancePx
+    const bothEdgesVisible = areBothTriggersVisible(input)
+    const activeFillInProgress = this.lastEdge !== null
+    const shouldContinueActiveFill = activeFillInProgress &&
       scrollHeight <= clientHeight + edgeActivationMargin
-    const bothEdgesInActivationMargin = areBothTriggersInActivationMargin(
-      input,
-      edgeActivationMargin,
-    )
 
     if (
       snapshot.viewportPhase !== 'IDLE' ||
-      snapshot.pendingIntent ||
-      (
-        !needsMinimumRangeFill &&
-        !bothEdgesInActivationMargin &&
-        scrollHeight > clientHeight + this.tolerancePx
-      )
+      snapshot.pendingIntent
     ) {
       return null
     }
 
-    if (!needsMinimumRangeFill && !bothEdgesInActivationMargin) {
+    if (
+      activeFillInProgress &&
+      !shouldContinueActiveFill &&
+      !needsShortSegmentFill &&
+      !bothEdgesVisible
+    ) {
+      return this.settle(snapshot)
+    }
+
+    if (
+      !needsShortSegmentFill &&
+      !bothEdgesVisible &&
+      !shouldContinueActiveFill
+    ) {
       return null
     }
 
     const edge = this.chooseEdge(snapshot, destinationDirection)
 
     if (!edge) {
-      this.axes.markReadyIdle()
-      return {
-        snapshot: {
-          ...snapshot,
-          segmentMeta: {
-            ...snapshot.segmentMeta,
-            underflow: 'settled',
-          },
-        },
-      }
+      return this.settle(snapshot)
     }
 
     const requestKey = `${snapshot.feedId}:${snapshot.generation}:${snapshot.segmentRevision}:${edge}`
@@ -108,6 +109,23 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
     return {
       ...snapshot,
       pendingIntent: null,
+    }
+  }
+
+  private settle(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+  ): InteractionUpdate<TMessage, TOptimistic> {
+    this.lastEdge = null
+    this.requests.clear()
+    this.axes.markReadyIdle()
+    return {
+      snapshot: {
+        ...snapshot,
+        segmentMeta: {
+          ...snapshot.segmentMeta,
+          underflow: 'settled',
+        },
+      },
     }
   }
 
@@ -156,32 +174,28 @@ function resolveEdgeActivationMargin(
   return configuredMarginPx ?? Math.min(Math.max(clientHeight * 0.25, 64), 240)
 }
 
-function areBothTriggersInActivationMargin<TMessage, TOptimistic>(
+function areBothTriggersVisible<TMessage, TOptimistic>(
   input: UnderflowInput<TMessage, TOptimistic>,
-  marginPx: number,
 ): boolean {
-  return isTriggerInActivationMargin(
+  return isTriggerVisible(
     input.beforeTrigger,
     input.viewportTop,
     input.viewportBottom,
-    marginPx,
-  ) && isTriggerInActivationMargin(
+  ) && isTriggerVisible(
     input.afterTrigger,
     input.viewportTop,
     input.viewportBottom,
-    marginPx,
   )
 }
 
-function isTriggerInActivationMargin(
+function isTriggerVisible(
   rect: { top: number; bottom: number; height: number },
   viewportTop: number,
   viewportBottom: number,
-  marginPx: number,
 ): boolean {
   return rect.height > 0 &&
-    rect.bottom >= viewportTop - marginPx &&
-    rect.top <= viewportBottom + marginPx
+    rect.bottom >= viewportTop &&
+    rect.top <= viewportBottom
 }
 
 function canRequestEdge<TMessage, TOptimistic>(

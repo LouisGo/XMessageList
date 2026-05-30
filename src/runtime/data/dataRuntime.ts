@@ -65,6 +65,9 @@ export type IdentityRemapInput = Extract<
   { type: 'identity-remap' }
 >['remaps']
 
+/**
+ * Data runtime 只负责把请求结果和本地变更规整成不可变 LoadedSegment；滚动、测量和 intent 仲裁都留给 viewport runtime。
+ */
 export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
   private generation = 0
 

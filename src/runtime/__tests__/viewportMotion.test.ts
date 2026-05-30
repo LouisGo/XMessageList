@@ -439,6 +439,7 @@ describe('MessageList viewport motion', () => {
       hasMoreAfter: false,
       modifier: { type: 'reset-latest' },
     }))
+    container.scrollTop = 250
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
 
     expect(runtime.getSnapshot()).toMatchObject({
@@ -446,10 +447,7 @@ describe('MessageList viewport motion', () => {
       pendingIntent: null,
       bottomLockState: 'UNLOCKED',
     })
-    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
-      name: 'destinationMotion.start',
-      details: expect.objectContaining({ source: 'followBottom' }),
-    }))
+    expect(container.scrollTop).toBeLessThan(250)
 
     scheduler.flushFrames(40)
 

@@ -55,14 +55,17 @@ sequenceDiagram
         Runtime->>Runtime: settle interaction state and edge latches
         Runtime-->>Events: viewportReady once per generation
         alt scroll resolution is bounded motion
+          Runtime->>Runtime: save pendingRuntimeMotion(settlement, source, segment)
           Runtime->>Runtime: start next queued transaction first
           alt queued transaction started
             Runtime-->>React: snapshot with viewportPhase PROJECTING
+            Runtime->>Runtime: keep pendingRuntimeMotion until queue drains or timeout
           else no queued transaction
+            Runtime->>Runtime: startPendingRuntimeMotion()
             Runtime-->>React: snapshot with viewportPhase MOTION
             Runtime-->>Events: segmentTrimPressure if needed
             Runtime->>DOM: JS motion writes bounded scroll frames
-            alt user input or newer transaction arrives
+            alt user input, command supersede, detach, or newer transaction arrives
               Runtime->>Runtime: cancel motion without destination settle
             else motion settles
               Runtime-->>React: snapshot with viewportPhase IDLE
@@ -84,8 +87,12 @@ sequenceDiagram
           opt segment has trim pressure
             Runtime-->>Events: segmentTrimPressure
           end
-          Runtime->>Runtime: start next queued transaction
-          opt no queued transaction started and phase is IDLE
+          Runtime->>Runtime: run settled continuation priority
+          alt queued transaction started
+            Runtime-->>React: snapshot with viewportPhase PROJECTING
+          else pendingRuntimeMotion exists
+            Runtime-->>React: snapshot with viewportPhase MOTION
+          else no queued transaction, no pending motion, and phase is IDLE
             Runtime->>Runtime: evaluate underflow and direct-scroll edge intent
           end
         end
@@ -93,6 +100,36 @@ sequenceDiagram
     end
   end
 ```
+
+## Settled Continuation Priority
+
+```mermaid
+flowchart TD
+  Start["transaction settled or queued transaction timed out"]
+  Queue["startNextQueuedTransaction()"]
+  Queued{"queued transaction started?"}
+  PendingMotion{"pendingRuntimeMotion exists?"}
+  StartMotion["startPendingRuntimeMotion()"]
+  MotionActive{"motion started?"}
+  Opportunity["reserve and consume motion opportunity"]
+  Evaluate{"phase is IDLE?"}
+  PostCommit["evaluate underflow and direct-scroll edge intent"]
+  Stop["stop continuation"]
+
+  Start --> Queue --> Queued
+  Queued -->|"yes"| Stop
+  Queued -->|"no"| PendingMotion
+  PendingMotion -->|"yes"| StartMotion --> MotionActive
+  MotionActive -->|"yes"| Stop
+  MotionActive -->|"no"| Opportunity
+  PendingMotion -->|"no"| Opportunity
+  Opportunity --> Evaluate
+  Evaluate -->|"yes"| PostCommit
+  Evaluate -->|"no"| Stop
+  PostCommit --> Stop
+```
+
+`pendingRuntimeMotion` is resolved before post-commit underflow or direct-scroll edge evaluation. Command APIs (`scrollToLatest`, `scrollToMessage`, `restoreToMessage`) clear both active motion and pending runtime motion before opening the new intent.
 
 ## Resize And Scroll Observation
 
@@ -104,16 +141,26 @@ sequenceDiagram
 
   DOM-->>Runtime: ResizeObserver callback
   Runtime->>Runtime: schedule resize rAF
-  Runtime->>DOM: captureVisualAnchor and measureRuntimeDom
-  Runtime->>DOM: preserveVisualAnchor(anchor)
-  Runtime->>Runtime: record row metrics
-  Runtime-->>Events: viewportObservationChanged(resize)
-  Runtime->>Runtime: evaluate underflow
+  alt pending transaction or viewportPhase is not IDLE
+    Runtime->>Runtime: defer resize measurement
+  else phase is IDLE
+    Runtime->>DOM: captureVisualAnchor and measureRuntimeDom
+    Runtime->>DOM: preserveVisualAnchor(anchor)
+    Runtime->>Runtime: record row metrics
+    Runtime-->>Events: viewportObservationChanged(resize)
+    Runtime->>Runtime: evaluate underflow
+  end
 
   DOM-->>Runtime: scroll event
-  Runtime->>Runtime: classify scroll source
-  Runtime->>DOM: measure visible sample
-  Runtime->>Runtime: update follow-bottom and bottom lock
-  Runtime-->>Events: viewportObservationChanged(scroll-idle)
-  Runtime-->>Events: viewportAnchorChanged(scroll-idle)
+  alt pending transaction or viewportPhase is not IDLE
+    Runtime->>Runtime: ignore scroll-idle observation
+  else phase is IDLE
+    Runtime->>Runtime: classify scroll source
+    Runtime->>DOM: measure visible sample
+    Runtime->>Runtime: update follow-bottom and bottom lock
+    Runtime-->>Events: viewportObservationChanged(scroll-idle)
+    Runtime-->>Events: viewportAnchorChanged(scroll-idle)
+  end
 ```
+
+Motion frame writes are programmatic scroll writes. They do not run the `scroll-idle` observation path while `viewportPhase` is `MOTION`.

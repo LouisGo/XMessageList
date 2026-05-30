@@ -91,14 +91,13 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   }
   attachScrollContainer(container: HTMLElement): void { this.domInteractions.attachScrollContainer(container) }
   detachScrollContainer(): void {
+    this.pendingRuntimeMotion = null
     this.motion.cancel('detach')
     const anchor = this.resolveCurrentVisualAnchor()
     this.emitAnchorChanged('detach', anchor)
     this.emitViewportObservation('detach', null, anchor)
     this.domInteractions.detachScrollContainer()
-    for (const row of this.registry.clearAll()) {
-      this.resizeObserver?.unobserve(row)
-    }
+    for (const row of this.registry.clearAll()) this.resizeObserver?.unobserve(row)
   }
   destroy(): void {
     const pending = this.transactions.getPending()
@@ -214,18 +213,18 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
       this.domInteractions.recordRowMetrics()
       this.stateAxes.markTransactionSettling()
-      this.snapshot = this.interactions.settleSegment(
-        this.snapshot,
-        pending.segment,
-      )
+      this.snapshot = this.interactions.settleSegment(this.snapshot, pending.segment)
       this.domInteractions.settleDirectScrollSegment(pending.segment.modifier)
       this.syncScrollIntentBottomLock()
       this.transactions.clearPending()
       this.stateAxes.markTransactionIdle()
+      const shouldStartRuntimeMotion = scrollSettlement.kind === 'motion'
+      if (shouldStartRuntimeMotion) {
+        this.pendingRuntimeMotion = { settlement: scrollSettlement, scrollSource: transactionScrollSource, segment: pending.segment }
+      }
       this.pushDiagnostic('transaction.settle', 'info', { ...token, latencyMs: this.scheduler.now() - pending.startedAt })
       this.emitViewportReadyOnce(token)
-      if (scrollSettlement.kind === 'motion') {
-        this.pendingRuntimeMotion = { settlement: scrollSettlement, scrollSource: transactionScrollSource, segment: pending.segment }
+      if (shouldStartRuntimeMotion) {
         settled = true
       } else {
         this.setViewportPhase('IDLE')
@@ -305,6 +304,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   }
   private handleUserScrollIntent(): void {
     this.pendingRuntimeMotion = null
+    this.interactions.cancelUnderflowFill()
     this.motion.cancel('user-interrupt')
     this.scrollIntent.markUserScrollIntent()
   }
@@ -361,6 +361,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   }
   private cancelCommandMotion(): void {
     this.pendingRuntimeMotion = null
+    this.interactions.cancelUnderflowFill()
     this.motion.cancel('command-supersede')
   }
   private startPendingRuntimeMotion(): boolean {

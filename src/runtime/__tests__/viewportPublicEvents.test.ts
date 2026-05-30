@@ -177,6 +177,47 @@ describe('MessageList public runtime events', () => {
       scrollSource: 'underflowFill',
     }))
   })
+
+  it('reports restore alignment as programmatic instead of jump source', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rowA = createRow('row-1', 0, 50)
+    const rowB = createRow('row-2', 50, 50)
+    const targetRow = createRow('row-3', 100, 50)
+    const target = { feedId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(rowA)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', rowA)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    runtime.restoreToMessage(target, { align: 'start' })
+
+    container.append(rowB, targetRow)
+    adapter.registerRowElement('row-2', rowB)
+    adapter.registerRowElement('row-3', targetRow)
+    runtime.applyLoadedSegment(segment([item('row-1'), item('row-2'), item('row-3')], 2, 1, {
+      modifier: { type: 'reset-around', target },
+      anchor: target,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    scheduler.flushFrame()
+
+    expect(runtime.getDiagnostics().map((record) => record.name)).not.toContain('destinationMotion.start')
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'viewportObservationChanged',
+      reason: 'transaction-settle',
+      scrollSource: 'programmatic',
+    }))
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: 'viewportObservationChanged',
+      scrollSource: 'jump',
+    }))
+  })
 })
 
 function item(key: string): MessageDataItem<string> {

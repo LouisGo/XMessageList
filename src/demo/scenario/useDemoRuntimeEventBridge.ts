@@ -35,6 +35,9 @@ type DemoRuntimeEventBridgeOptions = {
   setLastEvent: (eventText: string) => void
 }
 
+/**
+ * 把 runtime semantic need events 接到 demo API 和 data runtime；这里不读取 DOM，也不直接修正滚动。
+ */
 export function useDemoRuntimeEventBridge({
   runtimeCache,
   getDataRuntime,
@@ -82,6 +85,7 @@ export function useDemoRuntimeEventBridge({
     if (event.type === 'needMoreBefore' || event.type === 'needMoreAfter') {
       const edge = event.type === 'needMoreBefore' ? 'before' : 'after'
       const isSelectedFeed = selectedFeedIdRef.current === event.feedId
+      // underflow-fill 是 runtime 自动补齐，不展示成用户可见的 edge loading。
       const canExposeEdgeLoading = isSelectedFeed &&
         !feedLoadingRef.current &&
         event.reason !== 'underflow-fill'

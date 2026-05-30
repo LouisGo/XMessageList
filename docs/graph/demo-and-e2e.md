@@ -75,3 +75,5 @@ sequenceDiagram
     Runner->>Artifacts: write failure report
   end
 ```
+
+`wait until phase IDLE` includes runtime-owned motion: E2E actions wait for bounded JS scroll motion to settle before collecting the next evidence checkpoint.

@@ -16,6 +16,9 @@ export type PendingTransaction<TMessage, TOptimistic> = {
   anchorRetryCount: number
 }
 
+/**
+ * 已解析但尚未启动的 motion；queued transaction 优先时用它把 settle 结果安全接力到队列 drain 之后。
+ */
 export type PendingRuntimeMotion<TMessage, TOptimistic> = {
   settlement: Extract<TransactionScrollResolution, { kind: 'motion' }>
   scrollSource: ScrollSource

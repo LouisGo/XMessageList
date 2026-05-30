@@ -19,6 +19,9 @@ const USER_INTENT_FRAME_WINDOW = 90
 export const DEFAULT_BOTTOM_LOCK_THRESHOLD_PX = 40
 export const DEFAULT_BOTTOM_UNLOCK_THRESHOLD_PX = 120
 
+/**
+ * ScrollIntentEngine 区分用户意图、惯性滚动和 runtime 写入，避免程序性修正误触发底部锁状态。
+ */
 export class ScrollIntentEngine {
   private state: BottomLockState = 'UNLOCKED'
 
@@ -60,6 +63,7 @@ export class ScrollIntentEngine {
   }
 
   markUserIntent(currentFrame: number): void {
+    // 用户输入优先级高于当前 programmatic write，并在后续若干帧内被视为 momentum。
     this.currentWrite = null
     if (this.userIntentExpiresAtFrame < currentFrame) {
       this.userIntentStartedAtFrame = currentFrame

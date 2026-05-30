@@ -4,6 +4,7 @@ import type { MessageIdentityAnchor } from '../contracts/identity'
 import type { VisualAnchor } from '../dom/measurement'
 import type { LoadedSegment } from '../contracts/segment'
 import type { BottomLockState, MessageListSnapshot } from '../contracts/snapshot'
+import type { MessageListMotionDirection } from '../contracts/options'
 import type { ScrollMotionSource } from '../motion/motionCoordinator'
 
 export type TransactionScrollResolution =
@@ -16,8 +17,13 @@ export type TransactionScrollResolution =
       bottomLockState: BottomLockState
       destination: DestinationIntent | null
       allowPreposition?: boolean
+      directionHint?: MessageListMotionDirection
+      enforceDirectionHint?: boolean
     }
 
+/**
+ * projection commit 后唯一决定滚动结算方式的入口：返回 instant correction，或把 motion 意图交给 controller 延后调度。
+ */
 export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: {
   snapshot: MessageListSnapshot<TMessage, TOptimistic>
   segment: LoadedSegment<TMessage, TOptimistic>
@@ -63,6 +69,11 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
       return { kind: 'instant', anchor: target }
     }
     return { kind: 'instant', anchor: segment.anchor ?? getViewportAnchor() }
+  }
+
+  if (snapshot.pendingIntent === 'underflow-fill') {
+    // underflow fill 是补齐可视范围，不应继承 bottom lock 去触发 follow-bottom motion。
+    return { kind: 'instant', anchor: correctAnchor(capturedAnchor, segment) }
   }
 
   if (
@@ -124,7 +135,7 @@ function settleResetAround<TMessage, TOptimistic>(input: {
   }
 
   if (destination.reason === 'restore') {
-    domInteractions.writeProgrammaticScroll(targetScroll.container, targetScroll.scrollTop, 'jump')
+    domInteractions.writeProgrammaticScroll(targetScroll.container, targetScroll.scrollTop, 'programmatic')
     return { kind: 'instant', anchor: target }
   }
 
@@ -136,6 +147,12 @@ function settleResetAround<TMessage, TOptimistic>(input: {
     bottomLockState: 'UNLOCKED',
     destination,
     allowPreposition: !destination.motion?.crossFeed,
+    directionHint: destination.motion?.crossFeed ? undefined : destination.motion?.direction,
+    enforceDirectionHint: Boolean(
+      !destination.motion?.crossFeed &&
+      destination.motion?.direction &&
+      destination.motion.direction !== 'none',
+    ),
   }
 }
 
@@ -157,6 +174,8 @@ function settleBottomMotion<TMessage, TOptimistic>(
     anchor,
     bottomLockState: 'LOCKED',
     destination: null,
+    directionHint: source === 'followBottom' ? 'after' : undefined,
+    enforceDirectionHint: source === 'followBottom',
   }
 }
 

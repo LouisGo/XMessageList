@@ -22,6 +22,9 @@ export type {
   UnderflowInput,
 } from '../state/interactionTypes'
 
+/**
+ * RuntimeInteractionState 只仲裁 pending intent 和 edge/follow/destination/underflow 状态，不直接读写 DOM。
+ */
 export class RuntimeInteractionState<TMessage, TOptimistic> {
   private requestSequence = 0
 
@@ -82,6 +85,10 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
 
   clearFollowBottom(): void {
     this.followBottom.clear()
+  }
+
+  cancelUnderflowFill(): void {
+    this.underflow.reset()
   }
 
   startEdgeNeed(

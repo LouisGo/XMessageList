@@ -58,6 +58,7 @@ export function useDemoFeedBootstrap(input: {
 
   useEffect(() => {
     let cancelled = false
+    // bootstrapToken 是跨 feed 切换的 async fence，防止旧 feed 响应覆盖当前激活 feed。
     const bootstrapToken = bootstrapTokenRef.current + 1
     bootstrapTokenRef.current = bootstrapToken
     const feedId = pendingFeedId ?? activeFeedId

@@ -13,6 +13,9 @@ type PostCommitInteractionInput<TMessage, TOptimistic> = {
   allowDirectScrollEdge: boolean
 }
 
+/**
+ * 只在 projection/motion 都结束后评估的补充交互；顺序固定为 underflow 先于 direct-scroll edge intent。
+ */
 export function createPostCommitInteractionUpdates<TMessage, TOptimistic>(
   input: PostCommitInteractionInput<TMessage, TOptimistic>,
 ): Array<InteractionUpdate<TMessage, TOptimistic>> {

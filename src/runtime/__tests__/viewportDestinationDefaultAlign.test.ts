@@ -101,6 +101,8 @@ describe('MessageList destination default alignment', () => {
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
 
     expect(container.scrollTop).toBe(112)
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
+    expect(runtime.getDiagnostics().map((record) => record.name)).not.toContain('destinationMotion.start')
   })
 })
 

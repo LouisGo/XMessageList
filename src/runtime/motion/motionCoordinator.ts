@@ -1,4 +1,4 @@
-import type { RuntimeScheduler, ScrollMotionOptions } from '../contracts/options'
+import type { MessageListMotionDirection, RuntimeScheduler, ScrollMotionOptions } from '../contracts/options'
 import {
   ScrollMotionEngine,
   type ScrollMotionCancelReason,
@@ -13,7 +13,8 @@ export type MotionStartInput = {
   source: ScrollMotionSource
   targetTop: number
   allowPreposition?: boolean
-  directionHint?: string
+  directionHint?: MessageListMotionDirection
+  enforceDirectionHint?: boolean
   writeScrollTop: (scrollTop: number, source: ScrollMotionSource) => void
   onSettle: () => void
   onCancel: (reason: ScrollMotionCancelReason, source: ScrollMotionSource) => void
@@ -33,6 +34,9 @@ const DEFAULT_SCROLL_MOTION_OPTIONS: Required<ScrollMotionOptions> = {
   targetEpsilonPx: 1,
 }
 
+/**
+ * MotionCoordinator 把配置、reduced-motion、诊断和底层帧动画合并成一个 runtime-owned motion slot。
+ */
 export class MotionCoordinator {
   private readonly engine = new ScrollMotionEngine()
 
@@ -68,19 +72,25 @@ export class MotionCoordinator {
 
   start(input: MotionStartInput): void {
     this.cancel('restart')
-    const direction = resolveMotionDirection(input.container.scrollTop, input.targetTop)
+    const rawDirection = resolveMotionDirection(input.container.scrollTop, input.targetTop)
+    const direction = input.enforceDirectionHint === true
+      ? directionHintToMotionDirection(input.directionHint) ?? rawDirection
+      : rawDirection
     input.onDiagnostic('destinationMotion.start', 'info', {
       source: input.source,
       targetTop: input.targetTop,
       currentTop: input.container.scrollTop,
       distancePx: input.targetTop - input.container.scrollTop,
       direction,
+      rawDirection,
       directionHint: input.directionHint ?? null,
+      enforceDirectionHint: input.enforceDirectionHint === true,
       scrollHeight: input.container.scrollHeight,
       clientHeight: input.container.clientHeight,
     })
 
     if (!this.options.enabled || isReducedMotionRequested(input.container, this.options)) {
+      // 关闭动画时仍走 settle 回调，保证 pendingIntent、bottom lock 和事件链保持一致。
       input.writeScrollTop(input.targetTop, input.source)
       input.onSettle()
       return
@@ -97,6 +107,8 @@ export class MotionCoordinator {
       maxDurationMs: this.options.maxDurationMs,
       targetEpsilonPx: this.options.targetEpsilonPx,
       allowPreposition: input.allowPreposition,
+      directionHint: input.directionHint,
+      enforceDirectionHint: input.enforceDirectionHint,
       now: () => this.scheduler.now(),
       requestFrame: (callback) => this.scheduler.requestAnimationFrame(callback),
       cancelFrame: (handle) => this.scheduler.cancelAnimationFrame(handle),
@@ -153,6 +165,14 @@ function resolveMotionDirection(currentTop: number, targetTop: number): 'up' | '
   if (targetTop > currentTop) return 'down'
   if (targetTop < currentTop) return 'up'
   return 'none'
+}
+
+function directionHintToMotionDirection(
+  directionHint: MessageListMotionDirection | undefined,
+): 'up' | 'down' | null {
+  if (directionHint === 'before') return 'up'
+  if (directionHint === 'after') return 'down'
+  return null
 }
 
 function decisionToDetails(

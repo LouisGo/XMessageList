@@ -23,6 +23,9 @@ type DemoSegmentPublisherOptions = {
   setLastEvent: (eventText: string) => void
 }
 
+/**
+ * 将 data runtime 的最新 LoadedSegment 发布给对应 viewport runtime，并在同一边界内处理 demo 的 trim 预算。
+ */
 export function useDemoSegmentPublisher({
   runtimeCache,
   getDataRuntime,
@@ -41,6 +44,7 @@ export function useDemoSegmentPublisher({
       runtimeForFeed.getSnapshot().bottomLockState === 'LOCKED'
     let segment = committedSegment
 
+    // trim 可能连续产生新 segment；限制轮数防止异常数据让 demo publisher 自旋。
     for (let trimGuard = 0; trimGuard < 4; trimGuard += 1) {
       const trimmed = dataRuntime.trimToBudget(resolveTrimProtectKey(
         segment,

@@ -26,6 +26,9 @@ export type RuntimeMeasurementOptions = {
   rowKeys?: MessageRuntimeItemKey[]
 }
 
+/**
+ * 捕获 commit 前最靠近 viewport 顶部的可视行，后续 correction 通过它保持视觉锚点稳定。
+ */
 export function captureVisualAnchor(
   registry: RuntimeDomRegistrySnapshot,
 ): VisualAnchor | null {

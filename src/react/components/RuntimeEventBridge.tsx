@@ -13,6 +13,9 @@ export type RuntimeEventBridgeProps<TMessage, TOptimistic> = Pick<
   ) => void
 }
 
+/**
+ * 将 runtime 事件订阅转接成 React props 回调；不参与 snapshot 投影，也不持有滚动状态。
+ */
 export function RuntimeEventBridge<TMessage, TOptimistic>({
   runtime,
   onViewportAnchorChange,
