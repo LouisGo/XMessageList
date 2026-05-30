@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  MessageListRuntime,
   MessageListRuntimeEvent,
   ViewportAnchorChangedEvent,
 } from '../runtime'
@@ -11,7 +12,6 @@ import { toDemoMessageDataItem, type DemoMessage } from './demoData'
 import { DEMO_FEEDS, getDemoFeedDefinition } from './demoFeeds'
 import {
   flushDemoFeedPersistence,
-  loadDemoViewportAnchor,
   loadDemoFeedMessages,
   replaceDemoFeedMessages,
   saveDemoViewportAnchor,
@@ -25,7 +25,6 @@ import {
   applyEdgeRequest,
   applyLatestRequest,
   type DemoRequestResult,
-  toRuntimeAnchor,
 } from './demoScenarioRequests'
 import type { AdvancedMockPublishResult } from './demoAdvancedMockScenarios'
 import {
@@ -34,18 +33,18 @@ import {
   isRuntimeNeedEvent,
   resolveChangedMessageKeys,
   resolveLoadedBounds,
-  wait,
   waitMockDelay,
 } from './scenario/demoScenarioHelpers'
 import {
   prepareDemoE2EScenario,
   resolveTrimProtectKey,
-  restoreAroundAnchor,
+  selectDemoFeed,
   type SavedRuntimeAnchor,
   toPersistedViewportAnchor,
 } from './scenario/demoScenarioRuntimeHelpers'
 import { useDemoEdgeBatchLoader } from './scenario/useDemoEdgeBatchLoader'
 import { useDemoEdgeLoadingState } from './scenario/useDemoEdgeLoadingState'
+import { useDemoFeedBootstrap } from './scenario/useDemoFeedBootstrap'
 import { useDelayedVisibility } from './scenario/useDelayedVisibility'
 import { useDemoGeneratedAppends } from './scenario/useDemoGeneratedAppends'
 import { useDemoLongRunningMocks } from './scenario/useDemoLongRunningMocks'
@@ -67,11 +66,15 @@ export function useDemoMessageScenario(
   runtimeCache: DemoFeedRuntimeCache,
 ): DemoMessageScenario {
   const [activeFeedId, setActiveFeedId] = useState(DEMO_FEEDS[0].id)
+  const [selectedFeedId, setSelectedFeedId] = useState(DEMO_FEEDS[0].id)
+  const [pendingFeedId, setPendingFeedId] = useState<string | null>(null)
   const activeFeedIdRef = useRef(activeFeedId)
+  const selectedFeedIdRef = useRef(DEMO_FEEDS[0].id)
   const [messages, setMessages] = useState<DemoMessage[]>([])
   const [messageCount, setMessageCount] = useState(0)
   const [lastEvent, setLastEvent] = useState('bootstrapping latest segment')
   const [feedLoading, setFeedLoading] = useState(true)
+  const feedLoadingRef = useRef(true)
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null)
   const [highlightToken, setHighlightToken] = useState(0)
   const highlightTimerRef = useRef<number | null>(null)
@@ -80,19 +83,28 @@ export function useDemoMessageScenario(
   const deferredEdgeResponseDelayMsRef = useRef(0)
   const deferredSessionResponseDelayMsRef = useRef(0)
   const bootstrapTokenRef = useRef(0)
+  const runtimeEventSubscriptionsRef = useRef(new Map<string, {
+    runtime: MessageListRuntime<DemoMessage>; unsubscribe: () => void
+  }>())
+  const handleSemanticEventRef = useRef<
+    (event: MessageListRuntimeEvent) => Promise<DemoRequestResult | null> | null
+  >(() => null)
   const { loadingBefore, loadingAfter, setEdgeLoading } = useDemoEdgeLoadingState()
-  const [sessionLoadingOverlayVisible, resetSessionLoadingOverlay] =
-    useDelayedVisibility(feedLoading, SESSION_LOADING_OVERLAY_DELAY_MS)
+  const [sessionLoadingOverlayVisible, resetSessionLoadingOverlay] = useDelayedVisibility(feedLoading, SESSION_LOADING_OVERLAY_DELAY_MS)
   const runtime = runtimeCache.getRuntime(activeFeedId)
-  const activeFeed = useMemo(
-    () => getDemoFeedDefinition(activeFeedId),
-    [activeFeedId],
-  )
+  const activeFeed = useMemo(() => getDemoFeedDefinition(activeFeedId), [activeFeedId])
   useEffect(() => {
     activeFeedIdRef.current = activeFeedId
   }, [activeFeedId])
+  useEffect(() => {
+    selectedFeedIdRef.current = selectedFeedId
+  }, [selectedFeedId])
   const isActiveFeed = useCallback((feedId: string) =>
     activeFeedIdRef.current === feedId, [])
+  const setFeedLoadingState = useCallback((loading: boolean) => {
+    feedLoadingRef.current = loading
+    setFeedLoading(loading)
+  }, [])
   const getDataRuntime = useCallback((feedId: string) => {
     const existing = dataRuntimesRef.current.get(feedId)
     if (existing) {
@@ -188,7 +200,7 @@ export function useDemoMessageScenario(
   const handleSemanticEvent = useCallback((
     event: MessageListRuntimeEvent,
   ): Promise<DemoRequestResult | null> | null => {
-    if (!isRuntimeNeedEvent(event) || !isActiveFeed(event.feedId)) {
+    if (!isRuntimeNeedEvent(event)) {
       return null
     }
     const dataRuntime = getDataRuntime(event.feedId)
@@ -214,22 +226,44 @@ export function useDemoMessageScenario(
     }
     if (event.type === 'needMoreBefore' || event.type === 'needMoreAfter') {
       const edge = event.type === 'needMoreBefore' ? 'before' : 'after'
-      const delayMs = consumeDeferredEdgeResponseDelay(deferredEdgeResponseDelayMsRef)
-      setEdgeLoading(edge, true)
+      const isSelectedFeed = selectedFeedIdRef.current === event.feedId
+      const canExposeEdgeLoading = isSelectedFeed &&
+        !feedLoadingRef.current &&
+        event.reason !== 'underflow-fill'
+      const delayMs = isSelectedFeed
+        ? consumeDeferredEdgeResponseDelay(deferredEdgeResponseDelayMsRef)
+        : 0
+      if (canExposeEdgeLoading) {
+        setEdgeLoading(edge, true)
+      }
       const request = async () => {
         await waitMockDelay(delayMs > 0 ? delayMs : EDGE_LOAD_DELAY_BASE_MS)
         return applyEdgeRequest({ ...context, event })
       }
-      return request().finally(() => setEdgeLoading(edge, false))
+      return request().finally(() => {
+        if (canExposeEdgeLoading && selectedFeedIdRef.current === event.feedId) {
+          setEdgeLoading(edge, false)
+        }
+      })
     }
     return null
-  }, [getDataRuntime, isActiveFeed, publishSegment, runtimeCache, setEdgeLoading])
+  }, [getDataRuntime, publishSegment, runtimeCache, setEdgeLoading])
   useEffect(() => {
-    let cancelled = false
-    const unsubscribe = runtime.subscribeRuntimeEvent((event) => {
+    handleSemanticEventRef.current = handleSemanticEvent
+  }, [handleSemanticEvent])
+  const ensureRuntimeEventSubscription = useCallback((feedId: string) => {
+    const runtimeForFeed = runtimeCache.getRuntime(feedId)
+    const existing = runtimeEventSubscriptionsRef.current.get(feedId)
+
+    if (existing?.runtime === runtimeForFeed) {
+      return
+    }
+
+    existing?.unsubscribe()
+    const unsubscribe = runtimeForFeed.subscribeRuntimeEvent((event) => {
       const eventFeedId = 'feedId' in event
         ? event.feedId
-        : runtime.getSnapshot().feedId
+        : runtimeForFeed.getSnapshot().feedId
       void writeDemoLog({
         requestId: createDemoRequestId('runtime.event'),
         operation: 'runtime.event',
@@ -238,126 +272,70 @@ export function useDemoMessageScenario(
         messageCount: getDataRuntime(eventFeedId).getSegment().items.length,
         details: event as unknown as Record<string, unknown>,
       })
-      const request = handleSemanticEvent(event)
+      const request = handleSemanticEventRef.current(event)
       if (!request) {
         return
       }
       void request.then((result) => {
-        if (!cancelled && result) {
+        if (result && selectedFeedIdRef.current === eventFeedId) {
           if (typeof result.total === 'number') {
             setMessageCount(result.total)
           }
           setLastEvent(result.message)
         }
+      }).catch((error: unknown) => {
+        if (event.type === 'needMoreBefore' || event.type === 'needMoreAfter') {
+          runtimeForFeed.reportEdgeRequestFailure(event.edge, event.requestToken)
+          if (selectedFeedIdRef.current === eventFeedId) {
+            setEdgeLoading(event.edge, false)
+          }
+        }
+        void writeDemoLog({
+          requestId: createDemoRequestId('runtime.event'),
+          operation: 'runtime.event',
+          phase: 'error',
+          feedId: eventFeedId,
+          messageCount: getDataRuntime(eventFeedId).getSegment().items.length,
+          error: error instanceof Error ? error.message : String(error),
+        })
       })
     })
-    return () => {
-      cancelled = true
-      unsubscribe()
-    }
-  }, [getDataRuntime, handleSemanticEvent, runtime])
+
+    runtimeEventSubscriptionsRef.current.set(feedId, {
+      runtime: runtimeForFeed,
+      unsubscribe,
+    })
+  }, [getDataRuntime, runtimeCache, setEdgeLoading])
   useEffect(() => {
-    let cancelled = false
-    const bootstrapToken = bootstrapTokenRef.current + 1
-    bootstrapTokenRef.current = bootstrapToken
-    const dataRuntime = getDataRuntime(activeFeedId)
-    const cachedSegment = dataRuntime.getSegment()
-    void (async () => {
-      if (cancelled || bootstrapToken !== bootstrapTokenRef.current) {
-        return
-      }
-      if (cachedSegment.items.length > 0) {
-        const savedAnchor = savedAnchorsRef.current.get(activeFeedId)
-        const allMessages = await loadDemoFeedMessages(activeFeedId)
-        if (cancelled || bootstrapToken !== bootstrapTokenRef.current) {
-          return
-        }
-        setMessageCount(allMessages.length)
-        setFeedLoading(false)
-        setLastEvent(savedAnchor
-          ? `restored ${activeFeed.title}`
-          : `loaded ${activeFeed.title}`)
-        publishSegment(dataRuntime)
-        if (savedAnchor) {
-          await wait(60)
-          if (cancelled || bootstrapToken !== bootstrapTokenRef.current) {
-            return
-          }
-          runtime.restoreToMessage(savedAnchor.anchor, {
-            align: 'start',
-            offsetWithinMessage: savedAnchor.offsetWithinMessage ?? 0,
-          })
-        } else {
-          runtime.scrollToLatest()
-        }
-        return
-      }
-      const sessionDelayMs = deferredSessionResponseDelayMsRef.current
-      deferredSessionResponseDelayMsRef.current = 0
-      if (sessionDelayMs > 0) {
-        await wait(sessionDelayMs)
-        if (cancelled || bootstrapToken !== bootstrapTokenRef.current) {
-          return
-        }
-      }
-      const persistedAnchor = await loadDemoViewportAnchor(activeFeedId)
-      const persistedRuntimeAnchor = persistedAnchor
-        ? toRuntimeAnchor(activeFeedId, persistedAnchor.messageId)
-        : undefined
-      if (persistedRuntimeAnchor) {
-        const restored = await restoreAroundAnchor({
-          dataRuntime,
-          runtime,
-          publishSegment,
-          feedId: activeFeedId,
-          pageSize: PAGE_SIZE,
-          target: persistedRuntimeAnchor,
-        })
-        if (cancelled || bootstrapToken !== bootstrapTokenRef.current) {
-          return
-        }
-        if (restored.status === 'applied') {
-          if (typeof restored.total === 'number') {
-            setMessageCount(restored.total)
-          }
-          savedAnchorsRef.current.set(activeFeedId, {
-            anchor: persistedRuntimeAnchor,
-            offsetWithinMessage: persistedAnchor.offsetWithinMessage,
-          })
-          setLastEvent(`restored ${activeFeed.title}`)
-          setFeedLoading(false)
-          await wait(60)
-          if (cancelled || bootstrapToken !== bootstrapTokenRef.current) {
-            return
-          }
-          runtime.restoreToMessage(persistedRuntimeAnchor, {
-            align: 'start',
-            offsetWithinMessage: persistedAnchor.offsetWithinMessage ?? 0,
-          })
-          return
-        }
-      }
-      const result = await applyLatestRequest({
-        dataRuntime,
-        feedId: activeFeedId,
-        runtime,
-        publishSegment,
-        pageSize: PAGE_SIZE,
-        isStale: () => cancelled || bootstrapToken !== bootstrapTokenRef.current,
-      })
-      if (!cancelled && bootstrapToken === bootstrapTokenRef.current) {
-        if (typeof result.total === 'number') {
-          setMessageCount(result.total)
-        }
-        setLastEvent(result.message)
-        setFeedLoading(false)
-        runtime.scrollToLatest()
-      }
-    })()
+    ensureRuntimeEventSubscription(activeFeedId)
+  }, [activeFeedId, ensureRuntimeEventSubscription])
+  useEffect(() => {
+    const subscriptions = runtimeEventSubscriptionsRef.current
     return () => {
-      cancelled = true
+      for (const subscription of subscriptions.values()) {
+        subscription.unsubscribe()
+      }
+      subscriptions.clear()
     }
-  }, [activeFeed, activeFeedId, getDataRuntime, publishSegment, runtime])
+  }, [])
+  useDemoFeedBootstrap({
+    activeFeedId,
+    pendingFeedId,
+    pageSize: PAGE_SIZE,
+    runtimeCache,
+    getDataRuntime,
+    publishSegment,
+    bootstrapTokenRef,
+    deferredSessionResponseDelayMsRef,
+    savedAnchorsRef,
+    activeFeedIdRef,
+    setActiveFeedId,
+    setPendingFeedId,
+    setMessages,
+    setMessageCount,
+    setFeedLoading: setFeedLoadingState,
+    setLastEvent,
+  })
   const {
     appendMessage,
     appendMessages,
@@ -482,16 +460,42 @@ export function useDemoMessageScenario(
     }
   }, [runtimeCache])
   const selectFeed = useCallback((feedId: string) => {
-    if (feedId !== activeFeedId) {
-      stopLongRunningMocks()
-      resetSessionLoadingOverlay()
-      setFeedLoading(true)
-      setEdgeLoading('before', false)
-      setEdgeLoading('after', false)
-    }
-    activeFeedIdRef.current = feedId
-    setActiveFeedId(feedId)
-  }, [activeFeedId, resetSessionLoadingOverlay, setEdgeLoading, stopLongRunningMocks])
+    selectedFeedIdRef.current = feedId
+    ensureRuntimeEventSubscription(feedId)
+    selectDemoFeed({
+      feedId,
+      activeFeedId,
+      selectedFeedId,
+      activeFeedIdRef,
+      savedAnchorsRef,
+      deferredSessionResponseDelayMsRef,
+      pageSize: PAGE_SIZE,
+      runtimeCache,
+      getDataRuntime,
+      publishSegment,
+      stopLongRunningMocks,
+      resetSessionLoadingOverlay,
+      setEdgeLoading,
+      setActiveFeedId,
+      setSelectedFeedId,
+      setPendingFeedId,
+      setFeedLoading: setFeedLoadingState,
+      setMessages,
+      setMessageCount,
+      setLastEvent,
+    })
+  }, [
+    activeFeedId,
+    ensureRuntimeEventSubscription,
+    getDataRuntime,
+    publishSegment,
+    resetSessionLoadingOverlay,
+    runtimeCache,
+    selectedFeedId,
+    setEdgeLoading,
+    setFeedLoadingState,
+    stopLongRunningMocks,
+  ])
   const resetE2EScenario = useCallback(async (scenarioId: string) => {
     stopLongRunningMocks()
     bootstrapTokenRef.current += 1
@@ -509,10 +513,14 @@ export function useDemoMessageScenario(
       runtimeCache,
     })
     activeFeedIdRef.current = prepared.feedId
+    selectedFeedIdRef.current = prepared.feedId
+    ensureRuntimeEventSubscription(prepared.feedId)
     setActiveFeedId(prepared.feedId)
+    setSelectedFeedId(prepared.feedId)
+    setPendingFeedId(null)
     setMessages(prepared.messages)
     setMessageCount(prepared.messageCount)
-    setFeedLoading(false)
+    setFeedLoadingState(false)
     setLastEvent(`reset ${scenarioId}`)
     prepared.runtime.applyLoadedSegment(prepared.segment)
     await Promise.resolve()
@@ -520,11 +528,13 @@ export function useDemoMessageScenario(
       prepared.runtime.scrollToLatest()
     }
   }, [
+    ensureRuntimeEventSubscription,
     getDataRuntime,
     resetMessageMutationState,
     resetOptimisticRemap,
     runtimeCache,
     setEdgeLoading,
+    setFeedLoadingState,
     stopLongRunningMocks,
   ])
   useEffect(() => () => {
@@ -532,21 +542,26 @@ export function useDemoMessageScenario(
     clearHighlightTimer(highlightTimerRef)
   }, [stopLongRunningMocks])
   const runtimeSnapshot = runtime.getSnapshot()
+  const canExposeEdgeLoading = !feedLoading
+  const runtimeBeforeLoading = runtimeSnapshot.pendingIntent === 'edge-before' &&
+    runtimeSnapshot.edgeState.before.status === 'loading'
+  const runtimeAfterLoading = runtimeSnapshot.pendingIntent === 'edge-after' &&
+    runtimeSnapshot.edgeState.after.status === 'loading'
   return {
     feeds: DEMO_FEEDS,
     activeFeedId,
-    selectedFeedId: activeFeedId,
-    pendingFeedId: null,
+    selectedFeedId,
+    pendingFeedId,
     activeFeed,
     activeRuntime: runtime,
     messageCount,
     loadedMessageCount: messages.length,
     hasMoreBefore: runtimeSnapshot.segmentMeta.hasMoreBefore,
     hasMoreAfter: runtimeSnapshot.segmentMeta.hasMoreAfter,
-    loadingBefore: loadingBefore ||
-      runtimeSnapshot.edgeState.before.status === 'loading',
-    loadingAfter: loadingAfter ||
-      runtimeSnapshot.edgeState.after.status === 'loading',
+    loadingBefore: canExposeEdgeLoading &&
+      (loadingBefore || runtimeBeforeLoading),
+    loadingAfter: canExposeEdgeLoading &&
+      (loadingAfter || runtimeAfterLoading),
     feedLoading,
     sessionLoadingOverlayVisible,
     eventStormRunning,

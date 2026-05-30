@@ -4,11 +4,18 @@ import type {
   MessageRuntimeItemKey,
 } from './identity'
 
+export type ResetAroundAlign = 'start' | 'center' | 'end' | 'nearest'
+
 export type SegmentModifier =
   | { type: 'bootstrap' }
   | { type: 'extend-before'; requestToken: string }
   | { type: 'extend-after'; requestToken: string }
-  | { type: 'reset-around'; target: MessageIdentityAnchor }
+  | {
+      type: 'reset-around'
+      target: MessageIdentityAnchor
+      align?: ResetAroundAlign
+      offsetWithinMessage?: number
+    }
   | { type: 'reset-latest' }
   | { type: 'trim-before'; trimToken: string }
   | { type: 'trim-after'; trimToken: string }

@@ -41,6 +41,8 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
 
   private readonly directScroll = new DirectScrollSession()
 
+  private detachedScrollTop: number | null = null
+
   private readonly rowMetricsByKey = new Map<
     MessageRuntimeItemKey,
     RowMetric
@@ -73,12 +75,19 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     )
     this.disconnectEdgeObservers()
     this.options.registry.setScrollContainer(container)
+    if (this.detachedScrollTop !== null) {
+      this.options.onScrollWrite('recovery')
+      this.suppressScrollUntil = this.options.scheduler.now() + 200
+      container.scrollTop = this.detachedScrollTop
+    }
     container.addEventListener('scroll', this.handleScroll, { passive: true })
     this.reconnectEdgeObservers()
   }
 
   detachScrollContainer(): void {
-    this.options.registry.snapshot().scrollContainer?.removeEventListener(
+    const container = this.options.registry.snapshot().scrollContainer
+    this.detachedScrollTop = container?.scrollTop ?? this.detachedScrollTop
+    container?.removeEventListener(
       'scroll',
       this.handleScroll,
     )

@@ -2,6 +2,7 @@ import type {
   MessageIdentityAnchor,
   MessageListRuntime,
   MessageListRuntimeEvent,
+  ResetAroundAlign,
 } from '../runtime'
 import type { MessageListDataRuntime } from '../runtime/data'
 import { toDemoMessageDataItem, type DemoMessage } from './demoData'
@@ -98,6 +99,8 @@ export async function applyLatestRequest(
 export async function applyAroundRequest(
   context: DemoRequestContext & {
     event: NeedMessagesAroundEvent
+    align?: ResetAroundAlign
+    offsetWithinMessage?: number
   },
 ): Promise<DemoRequestResult> {
   const { dataRuntime, event, pageSize, publishSegment } = context
@@ -137,6 +140,8 @@ export async function applyAroundRequest(
     hasMoreAfter: resp.hasMoreAfter,
     anchor: toRuntimeAnchor(resp.feedId, resp.anchor.messageId),
     anchorStatus: resp.anchorStatus,
+    align: context.align,
+    offsetWithinMessage: context.offsetWithinMessage,
   })
 
   if (!result.applied) {

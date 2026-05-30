@@ -10,6 +10,7 @@ export type {
 } from './identity'
 export type {
   LoadedSegment,
+  ResetAroundAlign,
   SegmentModifier,
 } from './segment'
 export type {

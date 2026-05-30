@@ -65,6 +65,37 @@ describe('MessageList destination default alignment', () => {
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
     expect(container.scrollTop).toBe(75)
   })
+
+  it('uses reset-around restore alignment before the first settled paint', () => {
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = Array.from({ length: 5 }, (_, index) =>
+      createRow(`row-${index + 1}`, index * 50, 50)
+    )
+    const target = { feedId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
+
+    container.append(...rows)
+    runtime.attachScrollContainer(container)
+    for (const row of rows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+
+    runtime.applyLoadedSegment(segment(rows.map((row) =>
+      item(row.dataset.runtimeKey as string)
+    ), 1, 1, {
+      modifier: {
+        type: 'reset-around',
+        target,
+        align: 'start',
+        offsetWithinMessage: 12,
+      },
+      anchor: target,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(container.scrollTop).toBe(112)
+  })
 })
 
 function item(key: string): MessageDataItem<string> {

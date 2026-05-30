@@ -402,7 +402,7 @@ export function DemoMessageListContent({
           renderBeforeEdge={({ status, retry }) =>
             scenario.loadingBefore ? (
               <div className="history-loading">Loading older messages...</div>
-            ) : status === 'error' ? (
+            ) : !scenario.feedLoading && status === 'error' ? (
               <button type="button" className="history-loading" onClick={retry}>
                 Retry history
               </button>
@@ -413,7 +413,7 @@ export function DemoMessageListContent({
               <div className="history-loading history-loading-bottom">
                 Loading newer messages...
               </div>
-            ) : status === 'error' ? (
+            ) : !scenario.feedLoading && status === 'error' ? (
               <button
                 type="button"
                 className="history-loading history-loading-bottom"

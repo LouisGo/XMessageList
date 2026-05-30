@@ -3,7 +3,11 @@ import type {
   MessageIdentityAnchor,
   MessageRuntimeItemKey,
 } from '../identity'
-import type { LoadedSegment, SegmentModifier } from '../segment'
+import type {
+  LoadedSegment,
+  ResetAroundAlign,
+  SegmentModifier,
+} from '../segment'
 import {
   applyIdentityRemaps,
   dedupeItems,
@@ -141,15 +145,24 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
   resetAround(
     input: ResetSegmentInput<TMessage, TOptimistic> & {
       target: MessageIdentityAnchor
+      align?: ResetAroundAlign
+      offsetWithinMessage?: number
     },
   ): LoadedSegment<TMessage, TOptimistic> {
-    return this.reset(input, { type: 'reset-around', target: input.target })
+    return this.reset(input, {
+      type: 'reset-around',
+      target: input.target,
+      align: input.align,
+      offsetWithinMessage: input.offsetWithinMessage,
+    })
   }
 
   resetAroundFromRequest(
     input: ResetSegmentInput<TMessage, TOptimistic> & {
       target: MessageIdentityAnchor
       requestToken: string
+      align?: ResetAroundAlign
+      offsetWithinMessage?: number
     },
   ): DataRuntimeApplyResult<TMessage, TOptimistic> {
     if (!this.consumeRequest(input.requestToken, 'around')) {
@@ -158,7 +171,12 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
 
     return {
       applied: true,
-      segment: this.reset(input, { type: 'reset-around', target: input.target }),
+      segment: this.reset(input, {
+        type: 'reset-around',
+        target: input.target,
+        align: input.align,
+        offsetWithinMessage: input.offsetWithinMessage,
+      }),
     }
   }
 

@@ -60,16 +60,23 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
 
   if (segment.modifier.type === 'reset-around') {
     const target = segment.modifier.target
+    const align = segment.modifier.align ?? 'center'
+    const offsetWithinMessage = segment.modifier.offsetWithinMessage
 
     if (
-      domInteractions.alignToMessage(snapshot, target, 'center')
+      domInteractions.alignToMessage(snapshot, target, align, offsetWithinMessage)
     ) {
       return target
     }
 
     if (
       segment.anchor &&
-      domInteractions.alignToMessage(snapshot, segment.anchor, 'center')
+      domInteractions.alignToMessage(
+        snapshot,
+        segment.anchor,
+        align,
+        offsetWithinMessage,
+      )
     ) {
       return segment.anchor
     }
