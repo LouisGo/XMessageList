@@ -8,12 +8,14 @@ import {
 import { getMessageListAdapterRuntime } from '../internal'
 import {
   createContainer,
+  FakeScheduler,
   setElementMetrics,
 } from '../../test/fakes'
 
 describe('MessageList destination default alignment', () => {
   it('centers local and reset-around jump destinations by default', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = Array.from({ length: 5 }, (_, index) =>
@@ -35,6 +37,8 @@ describe('MessageList destination default alignment', () => {
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
 
     runtime.scrollToMessage(localTarget)
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    scheduler.flushFrames(40)
     expect(container.scrollTop).toBe(125)
     expect(events.some((event) => event.type === 'needMessagesAround')).toBe(false)
 
@@ -63,6 +67,8 @@ describe('MessageList destination default alignment', () => {
       anchor: remoteTarget,
     }))
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    scheduler.flushFrames(40)
     expect(container.scrollTop).toBe(75)
   })
 

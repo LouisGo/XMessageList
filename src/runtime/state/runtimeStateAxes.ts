@@ -7,6 +7,7 @@ export type ReadySubstate =
   | 'READY_DESTINATION_PENDING'
   | 'READY_UNDERFLOW_PENDING'
   | 'READY_VIEWPORT_COMPACTION_PENDING'
+  | 'READY_MOTION_ACTIVE'
 
 export type TransactionState =
   | 'idle'
@@ -20,6 +21,7 @@ export type DestinationState =
   | 'idle'
   | 'pendingData'
   | 'resolvingDom'
+  | 'motionActive'
   | 'settled'
   | 'interrupted'
 
@@ -68,6 +70,10 @@ export class RuntimeStateAxes {
     this.readySubstate = 'READY_VIEWPORT_COMPACTION_PENDING'
   }
 
+  markMotionActive(): void {
+    this.readySubstate = 'READY_MOTION_ACTIVE'
+  }
+
   getTransactionState(): TransactionState {
     return this.transactionState
   }
@@ -97,7 +103,12 @@ export class RuntimeStateAxes {
   }
 
   markTransactionForViewportPhase(phase: ViewportPhase): void {
-    if (phase === 'PROJECTING' || phase === 'MOTION') {
+    if (phase === 'MOTION') {
+      this.markTransactionIdle()
+      return
+    }
+
+    if (phase === 'PROJECTING') {
       this.markTransactionActive()
       return
     }
@@ -129,6 +140,10 @@ export class RuntimeStateAxes {
 
   markDestinationResolvingDom(): void {
     this.destinationState = 'resolvingDom'
+  }
+
+  markDestinationMotionActive(): void {
+    this.destinationState = 'motionActive'
   }
 
   markDestinationSettled(): void {

@@ -214,9 +214,10 @@ describe('MessageList viewport interactions', () => {
     ), 1, 1))
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
     runtime.scrollToLatest()
-    expect(container.scrollTop).toBe(50)
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    expect(container.scrollTop).toBe(0)
     expect(runtime.getEvidence().scrollTop).toBe(0)
-    scheduler.flushFrame()
+    scheduler.flushFrames(40)
     expect(runtime.getEvidence().scrollTop).toBe(50)
   })
   it('arbitrates short segment underflow to a single edge request', () => {
@@ -339,7 +340,8 @@ describe('MessageList viewport interactions', () => {
     }))
   })
   it('follows latest via reset and locks bottom only at feed latest', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 50)
@@ -373,9 +375,12 @@ describe('MessageList viewport interactions', () => {
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
     expect(runtime.getSnapshot()).toMatchObject({
       pendingIntent: null,
-      bottomLockState: 'LOCKED',
+      bottomLockState: 'UNLOCKED',
     })
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    scheduler.flushFrames(40)
     expect(container.scrollTop).toBe(50)
+    expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
   })
   it('stabilizes dynamic height changes above the visual anchor', () => {
     const scheduler = new FakeScheduler()
@@ -437,7 +442,8 @@ describe('MessageList viewport interactions', () => {
       .toMatchObject({ details: { latencyMs: expect.any(Number) } })
   })
   it('requests around messages for outside destination and aligns reset target', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 50)
@@ -466,6 +472,8 @@ describe('MessageList viewport interactions', () => {
       anchor: target,
     }))
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    scheduler.flushFrames(40)
     expect(container.scrollTop).toBe(50)
     expect(runtime.getSnapshot().pendingIntent).toBeNull()
     expect(events).toContainEqual(expect.objectContaining({

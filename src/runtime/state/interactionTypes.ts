@@ -2,6 +2,7 @@ import type { MessageIdentityAnchor } from '../contracts/identity'
 import type { MessageListRuntimeEvent } from '../contracts/events'
 import type { DOMRectLike, MessageListSnapshot } from '../contracts/snapshot'
 import type { ScrollSource } from '../scroll/scrollIntentEngine'
+import type { MessageListScrollMotionHint } from '../contracts/options'
 
 export type RuntimeEdge = 'before' | 'after'
 
@@ -10,6 +11,7 @@ export type DestinationIntent = {
   reason: 'jump' | 'restore'
   align: 'start' | 'center' | 'end' | 'nearest'
   offsetWithinMessage?: number
+  motion?: MessageListScrollMotionHint
 }
 
 export type InteractionUpdate<TMessage, TOptimistic> = {

@@ -154,6 +154,20 @@ export function useDemoMessageCommands(input: {
         feedId: activeFeedId,
         stableId: target.messageId,
         serverId: target.messageId,
+      }, {
+        motion: {
+          origin: input?.origin
+            ? {
+                feedId: activeFeedId,
+                stableId: input.origin.messageId,
+                serverId: input.origin.messageId,
+              }
+            : undefined,
+          direction: input?.origin?.position !== undefined &&
+            target.position !== undefined
+              ? target.position < input.origin.position ? 'before' : 'after'
+              : undefined,
+        },
       })
       highlightMessage(target.messageId, highlightState)
       setLastEvent(`jump to quote ${target.messageId}`)

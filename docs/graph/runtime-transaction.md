@@ -49,23 +49,45 @@ sequenceDiagram
           Runtime->>Runtime: wait one animation frame
           Runtime->>DOM: measureRuntimeDom()
         end
-        Runtime->>DOM: correct anchor, align destination, or scroll to bottom
+        Runtime->>DOM: correct anchor, resolve destination, or resolve bottom target
         Runtime->>DOM: measureRuntimeDom()
         Runtime->>Runtime: record row metrics
         Runtime->>Runtime: settle interaction state and edge latches
-        Runtime-->>React: snapshot with viewportPhase IDLE
         Runtime-->>Events: viewportReady once per generation
-        Runtime-->>Events: viewportObservationChanged(transaction-settle)
-        Runtime-->>Events: viewportAnchorChanged(transaction-settle)
-        opt reset-around destination
-          Runtime-->>Events: destinationSettled
-        end
-        opt segment has trim pressure
-          Runtime-->>Events: segmentTrimPressure
-        end
-        Runtime->>Runtime: start next queued transaction
-        opt no queued transaction started and phase is IDLE
-          Runtime->>Runtime: evaluate underflow and direct-scroll edge intent
+        alt scroll resolution is bounded motion
+          Runtime->>Runtime: start next queued transaction first
+          alt queued transaction started
+            Runtime-->>React: snapshot with viewportPhase PROJECTING
+          else no queued transaction
+            Runtime-->>React: snapshot with viewportPhase MOTION
+            Runtime-->>Events: segmentTrimPressure if needed
+            Runtime->>DOM: JS motion writes bounded scroll frames
+            alt user input or newer transaction arrives
+              Runtime->>Runtime: cancel motion without destination settle
+            else motion settles
+              Runtime-->>React: snapshot with viewportPhase IDLE
+              Runtime-->>Events: viewportObservationChanged(transaction-settle)
+              Runtime-->>Events: viewportAnchorChanged(transaction-settle)
+              opt reset-around destination
+                Runtime-->>Events: destinationSettled
+              end
+              Runtime->>Runtime: evaluate underflow and direct-scroll edge intent
+            end
+          end
+        else instant resolution
+          Runtime-->>React: snapshot with viewportPhase IDLE
+          Runtime-->>Events: viewportObservationChanged(transaction-settle)
+          Runtime-->>Events: viewportAnchorChanged(transaction-settle)
+          opt reset-around destination
+            Runtime-->>Events: destinationSettled
+          end
+          opt segment has trim pressure
+            Runtime-->>Events: segmentTrimPressure
+          end
+          Runtime->>Runtime: start next queued transaction
+          opt no queued transaction started and phase is IDLE
+            Runtime->>Runtime: evaluate underflow and direct-scroll edge intent
+          end
         end
       end
     end

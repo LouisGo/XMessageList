@@ -11,19 +11,25 @@ stateDiagram-v2
   Projecting: PROJECTING
   Measuring: MEASURING
   Correcting: CORRECTING
+  Motion: MOTION
 
   Idle --> Projecting: accepted LoadedSegment
   Projecting --> Measuring: matching ProjectionCommitAck
   Projecting --> Idle: commit timeout emits viewportError
   Measuring --> Measuring: first pass waits for missing anchor ref
   Measuring --> Correcting: DOM can be evaluated
-  Correcting --> Idle: correction, settle, events emitted
+  Correcting --> Idle: instant correction, settle, events emitted
+  Correcting --> Motion: settle resolves bounded JS motion
+  Idle --> Motion: local jump or follow-bottom can resolve in current segment
+  Motion --> Idle: motion settle emits observation and destination if needed
+  Motion --> Idle: user input or detach cancels motion
+  Motion --> Projecting: accepted LoadedSegment supersedes motion
 
   Idle --> Measuring: resize observer rAF
   Measuring --> Correcting: resize measurement complete
 ```
 
-`settling` 是 internal transaction axis state，不是 public `viewportPhase`。`MOTION` 是当前 contract 保留值；现有 controller 不会 emit，所以不作为真实运行节点绘制。当前实现已预留 internal motion slot，但仍是 no-op，不改变 snapshot phase 或事件。
+`settling` 是 internal transaction axis state，不是 public `viewportPhase`。`MOTION` 只表示 runtime 自管的 bounded JS scroll motion；reduced-motion 或 epsilon target 可以同步 settle 回 `IDLE`。
 
 ## Edge Slot State
 
@@ -60,9 +66,9 @@ stateDiagram-v2
   ReadyIdle --> EdgePending: edge trigger intersects with user or momentum source
   ReadyIdle --> UnderflowPending: post-commit underflow fillable edge
   ReadyIdle --> FollowBottomPending: scrollToLatest with hasMoreAfter
-  ReadyIdle --> ReadyIdle: scrollToLatest with no hasMoreAfter writes native bottom and LOCKED
+  ReadyIdle --> ReadyIdle: scrollToLatest with no hasMoreAfter starts follow-bottom motion and locks on settle
   ReadyIdle --> DestinationPending: scrollToMessage or restoreToMessage target outside segment
-  ReadyIdle --> ReadyIdle: local destination align emits destinationSettled
+  ReadyIdle --> ReadyIdle: local destination jump starts motion and emits destinationSettled on settle
 
   EdgePending --> ReadyIdle: matching extend segment settles
   EdgePending --> ReadyIdle: matching failure or generation reset

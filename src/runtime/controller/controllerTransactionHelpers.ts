@@ -67,3 +67,16 @@ export function resolveTransactionScrollSource<TMessage, TOptimistic>(
 
   return 'recovery'
 }
+
+export function shouldPreservePendingIntentForSegment<TMessage, TOptimistic>(
+  snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+  segment: LoadedSegment<TMessage, TOptimistic>,
+): boolean {
+  return (
+    snapshot.pendingIntent === 'follow-bottom' &&
+    segment.modifier.type === 'reset-latest'
+  ) || (
+    snapshot.pendingIntent === 'destination' &&
+    segment.modifier.type === 'reset-around'
+  )
+}

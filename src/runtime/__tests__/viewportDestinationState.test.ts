@@ -95,7 +95,7 @@ describe('MessageList destination state', () => {
     }))
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
     runtime.scrollToLatest()
-    scheduler.flushFrame()
+    scheduler.flushFrames(40)
     expect(container.scrollTop).toBe(200)
 
     rows.forEach((row, index) => setElementMetrics(row, {
@@ -103,6 +103,8 @@ describe('MessageList destination state', () => {
       height: 50,
     }))
     runtime.scrollToMessage(target, { align: 'start' })
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    scheduler.flushFrames(40)
     expect(container.scrollTop).toBe(0)
 
     rows.forEach((row, index) => setElementMetrics(row, {

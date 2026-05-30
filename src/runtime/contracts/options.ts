@@ -23,17 +23,36 @@ export type MessageListRuntimeOptions = {
   bottomUnlockThresholdPx?: number
   edgeActivationMarginPx?: number
   underflowTolerancePx?: number
+  scrollMotion?: ScrollMotionOptions
 }
 
 export type MessageListScrollOptions = {
   behavior?: ScrollBehavior
 }
 
+export type MessageListMotionDirection = 'before' | 'after' | 'none'
+
+export type MessageListScrollMotionHint = {
+  origin?: import('./identity').MessageIdentityAnchor
+  direction?: MessageListMotionDirection
+  crossFeed?: boolean
+}
+
 export type MessageListScrollToMessageOptions = MessageListScrollOptions & {
   align?: 'start' | 'center' | 'end' | 'nearest'
+  motion?: MessageListScrollMotionHint
 }
 
 export type MessageListRestoreOptions = {
   align?: 'start' | 'center' | 'end'
   offsetWithinMessage?: number
+}
+
+export type ScrollMotionOptions = {
+  enabled?: boolean
+  respectReducedMotion?: boolean
+  maxDistancePx?: number
+  minDurationMs?: number
+  maxDurationMs?: number
+  targetEpsilonPx?: number
 }

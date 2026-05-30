@@ -58,6 +58,13 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     this.scheduleScrollFrame()
   }
 
+  private readonly handleUserScrollInput = (): void => {
+    const now = this.options.scheduler.now()
+    this.markEdgeSourceActive(now)
+    this.options.onUserScrollIntent()
+    this.scheduleScrollFrame()
+  }
+
   constructor(private readonly options: RuntimeDomInteractionsOptions) {
     this.rowMetrics = new RuntimeRowMetricCache({
       scheduler: options.scheduler,
@@ -78,6 +85,9 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       container.scrollTop = this.detachedScrollTop
     }
     container.addEventListener('scroll', this.handleScroll, { passive: true })
+    container.addEventListener('wheel', this.handleUserScrollInput, { passive: true })
+    container.addEventListener('touchstart', this.handleUserScrollInput, { passive: true })
+    container.addEventListener('pointerdown', this.handleUserScrollInput, { passive: true })
     this.reconnectEdgeObservers()
   }
 
@@ -88,6 +98,9 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       'scroll',
       this.handleScroll,
     )
+    container?.removeEventListener('wheel', this.handleUserScrollInput)
+    container?.removeEventListener('touchstart', this.handleUserScrollInput)
+    container?.removeEventListener('pointerdown', this.handleUserScrollInput)
     this.disconnectEdgeObservers()
     if (this.scrollFrame !== null) {
       this.options.scheduler.cancelAnimationFrame(this.scrollFrame)
@@ -155,12 +168,28 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     align: DestinationIntent['align'],
     offsetWithinMessage?: number,
   ): boolean {
+    const resolved = this.resolveAlignedScrollTarget(snapshot, target, align, offsetWithinMessage)
+
+    if (!resolved) {
+      return false
+    }
+
+    this.writeProgrammaticScroll(resolved.container, resolved.scrollTop, 'jump')
+    return true
+  }
+
+  resolveAlignedScrollTarget(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+    target: MessageIdentityAnchor,
+    align: DestinationIntent['align'],
+    offsetWithinMessage?: number,
+  ): { container: HTMLElement; scrollTop: number } | null {
     const key = findKeyForAnchor(snapshot, target)
     const container = this.options.registry.snapshot().scrollContainer
     const row = key ? this.options.registry.getRow(key) : null
 
     if (!row || !container) {
-      return false
+      return null
     }
 
     const containerRect = container.getBoundingClientRect()
@@ -172,15 +201,29 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       align,
       offsetWithinMessage,
     )
-    this.writeProgrammaticScroll(container, nextTop, 'jump')
-    return true
+
+    return { container, scrollTop: nextTop }
   }
 
-  scrollToNativeBottom(source: ScrollSource = 'followBottom'): void {
+  getBottomTargetTop(): number | null {
     const container = this.options.registry.snapshot().scrollContainer
 
     if (!container) {
-      return
+      return null
+    }
+
+    return Math.max(0, container.scrollHeight - container.clientHeight)
+  }
+
+  getScrollContainer(): HTMLElement | null {
+    return this.options.registry.snapshot().scrollContainer
+  }
+
+  scrollToNativeBottom(source: ScrollSource = 'followBottom'): boolean {
+    const container = this.options.registry.snapshot().scrollContainer
+
+    if (!container) {
+      return false
     }
 
     this.writeProgrammaticScroll(
@@ -188,6 +231,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       Math.max(0, container.scrollHeight - container.clientHeight),
       source,
     )
+    return true
   }
 
   writeProgrammaticScroll(

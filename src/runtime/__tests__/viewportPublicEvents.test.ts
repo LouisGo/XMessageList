@@ -98,7 +98,8 @@ describe('MessageList public runtime events', () => {
   })
 
   it('emits destinationSettled when an around jump resolves target', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 50)
@@ -123,6 +124,8 @@ describe('MessageList public runtime events', () => {
       anchor: target,
     }))
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    scheduler.flushFrames(40)
 
     expect(events).toContainEqual(expect.objectContaining({
       type: 'destinationSettled',

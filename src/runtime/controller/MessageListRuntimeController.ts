@@ -5,7 +5,7 @@ import { createViewportEvidence } from '../events/evidence'
 import type { MessageIdentityAnchor, MessageRuntimeItemKey } from '../contracts/identity'
 import type { MessageListAdapterRuntime } from '../internal'
 import { createBrowserObserverFactory, createInitialSnapshot, createSnapshotFromSegment, isSameSegmentToken, isSameToken } from './controllerHelpers'
-import { resolvePendingAnchorKey, resolveTransactionScrollSource, shouldWaitForAnchorRef } from './controllerTransactionHelpers'
+import { resolvePendingAnchorKey, resolveTransactionScrollSource, shouldPreservePendingIntentForSegment, shouldWaitForAnchorRef } from './controllerTransactionHelpers'
 import { withNextProjectionRevision } from '../shared/snapshotIdentity'
 import { RuntimeDomInteractions } from '../dom/domInteractions'
 import { RuntimeScrollIntentCoordinator } from '../scroll/runtimeScrollIntent'
@@ -15,18 +15,17 @@ import type { LoadedSegment } from '../contracts/segment'
 import { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import { createDefaultScheduler } from './scheduler'
 import { captureVisualAnchor, measureRuntimeDom, type VisualAnchor } from '../dom/measurement'
-import type { MessageListRuntimeOptions, RuntimeObserverFactory, RuntimeScheduler } from '../contracts/options'
+import type { MessageListRuntimeOptions, RuntimeScheduler } from '../contracts/options'
 import type { MessageListSnapshot, MessageListSnapshotListener, ProjectionCommitToken, ViewportEvidence } from '../contracts/snapshot'
 import { createPostCommitInteractionUpdates } from '../interactions/postCommitInteractions'
 import { createDestinationSettledEvent, createSegmentTrimPressureEvent, createViewportObservationEvent } from '../events/runtimePublicEvents'
 import { ProjectionTransactionQueue } from './transactionQueue'
-import { settleTransactionScrollPosition } from '../transactions/transactionSettlement'
+import { settleTransactionScrollPosition, type TransactionScrollResolution } from '../transactions/transactionSettlement'
 import { resolveCurrentViewportAnchor, resolveMeasuredViewportAnchor, resolveViewportAnchorEventInput, type ResolvedViewportAnchor, type ViewportAnchorEventInput } from '../dom/viewportAnchorEvents'
-import { MotionCoordinator } from '../motion/motionCoordinator'
+import { ControllerMotionCoordinator } from './controllerMotionCoordinator'
 export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unknown>
   implements MessageListAdapterRuntime<TMessage, TOptimistic> {
   private readonly scheduler: RuntimeScheduler
-  private readonly observerFactory: RuntimeObserverFactory | null
   private readonly registry = new RuntimeDomRegistry()
   private readonly diagnostics: DiagnosticRingBuffer
   private readonly interactions: RuntimeInteractionState<TMessage, TOptimistic>
@@ -34,7 +33,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   private readonly scrollIntent: RuntimeScrollIntentCoordinator
   private readonly domInteractions: RuntimeDomInteractions<TMessage, TOptimistic>
   private readonly transactions = new ProjectionTransactionQueue<TMessage, TOptimistic>()
-  private readonly motion = new MotionCoordinator()
+  private readonly motion: ControllerMotionCoordinator<TMessage, TOptimistic>
   private readonly snapshotListeners = new Set<MessageListSnapshotListener>()
   private readonly eventListeners = new Set<MessageListRuntimeEventListener>()
   private snapshot: MessageListSnapshot<TMessage, TOptimistic>
@@ -47,30 +46,51 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   private resizeFrame: number | null = null
   constructor(private readonly options: MessageListRuntimeOptions) {
     this.scheduler = options.scheduler ?? createDefaultScheduler()
-    this.observerFactory = options.observers ?? createBrowserObserverFactory()
+    const observerFactory = options.observers ?? createBrowserObserverFactory()
     this.diagnostics = new DiagnosticRingBuffer(this.scheduler)
-    this.interactions = new RuntimeInteractionState(
-      this.stateAxes,
-      options.underflowTolerancePx,
-      options.edgeActivationMarginPx,
-    )
+    this.interactions = new RuntimeInteractionState(this.stateAxes, options.underflowTolerancePx, options.edgeActivationMarginPx)
     this.scrollIntent = new RuntimeScrollIntentCoordinator(options)
     this.domInteractions = new RuntimeDomInteractions({
       scheduler: this.scheduler,
-      observerFactory: this.observerFactory,
+      observerFactory,
       registry: this.registry,
       onEdgeIntersect: (edge) => this.handleEdgeIntersection(edge),
       onScrollWrite: (source) => this.scrollIntent.markScrollWrite(source),
-      onUserScrollIntent: () => this.scrollIntent.markUserScrollIntent(),
+      onUserScrollIntent: () => this.handleUserScrollIntent(),
       onScrollFrame: () => this.handleScrollFrame(),
       edgeActivationMarginPx: options.edgeActivationMarginPx,
       onDiagnostic: (name, severity, details) => this.pushDiagnostic(name, severity, details),
     })
     this.snapshot = createInitialSnapshot<TMessage, TOptimistic>(options.feedId ?? 'default')
-    this.resizeObserver = this.observerFactory?.createResizeObserver(() => this.scheduleResizeMeasurement()) ?? null
+    this.motion = new ControllerMotionCoordinator({ scheduler: this.scheduler, options: options.scrollMotion, host: {
+        stateAxes: this.stateAxes,
+        getSnapshot: () => this.snapshot,
+        setSnapshot: (snapshot) => { this.snapshot = snapshot },
+        emitSnapshot: () => this.emitSnapshot(),
+        getScrollContainer: () => this.domInteractions.getScrollContainer(),
+        getBottomTargetTop: () => this.domInteractions.getBottomTargetTop(),
+        resolveAlignedScrollTarget: (snapshot, target, align, offsetWithinMessage) =>
+          this.domInteractions.resolveAlignedScrollTarget(snapshot, target, align, offsetWithinMessage),
+        writeProgrammaticScroll: (container, scrollTop, source) =>
+          this.domInteractions.writeProgrammaticScroll(container, scrollTop, source),
+        measureRuntimeDom: () => (this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())),
+        recordRowMetrics: () => this.domInteractions.recordRowMetrics(),
+        setViewportPhase: (phase) => this.setViewportPhase(phase),
+        syncScrollIntentBottomLock: () => this.syncScrollIntentBottomLock(),
+        clearFollowBottom: () => this.interactions.clearFollowBottom(),
+        markLocalDestinationSettled: () => this.interactions.markLocalDestinationSettled(),
+        readCurrentScrollTop: () => this.readCurrentScrollTop(),
+        pushDiagnostic: (name, severity, details) => this.pushDiagnostic(name, severity, details),
+        emitViewportObservation: (reason, source, anchor) => this.emitViewportObservation(reason, source, anchor),
+        emitAnchorChanged: (reason, anchor) => this.emitAnchorChanged(reason, anchor),
+        emitDestinationSettled: (destination, anchor) => this.emitDestinationSettled(destination, anchor),
+        applyPostCommitInteractionUpdates: () => this.applyPostCommitInteractionUpdates(),
+      } })
+    this.resizeObserver = observerFactory?.createResizeObserver(() => this.scheduleResizeMeasurement()) ?? null
   }
   attachScrollContainer(container: HTMLElement): void { this.domInteractions.attachScrollContainer(container) }
   detachScrollContainer(): void {
+    this.motion.cancel('detach')
     const anchor = this.resolveCurrentVisualAnchor()
     this.emitAnchorChanged('detach', anchor)
     this.emitViewportObservation('detach', null, anchor)
@@ -93,7 +113,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.eventListeners.clear()
   }
   applyLoadedSegment(segment: LoadedSegment<TMessage, TOptimistic>): void {
-    if (this.isStaleSegment(segment)) {
+    if (this.transactions.isStaleSegment(segment, this.snapshot)) {
       this.pushDiagnostic('transaction.staleSegment', 'warn', {
         segmentGeneration: segment.generation,
         currentGeneration: this.snapshot.generation,
@@ -117,13 +137,9 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.startTransaction(segment)
   }
   private startTransaction(segment: LoadedSegment<TMessage, TOptimistic>): void {
+    this.motion.cancel('transaction-supersede')
     const projectionRevision = this.snapshot.projectionRevision + 1
-    const token = {
-      feedId: segment.feedId,
-      generation: segment.generation,
-      segmentRevision: segment.segmentRevision,
-      projectionRevision,
-    }
+    const token = { feedId: segment.feedId, generation: segment.generation, segmentRevision: segment.segmentRevision, projectionRevision }
     const anchor = captureVisualAnchor(this.registry.snapshot())
     const timeoutHandle = this.scheduler.setTimeout(() => this.handleCommitTimeout(token), this.options.commitTimeoutMs ?? 120)
     this.transactions.setPending({
@@ -157,6 +173,11 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     }
     this.transactions.beginAdvancing()
     let settled = false
+    let pendingMotion: {
+      settlement: Extract<TransactionScrollResolution, { kind: 'motion' }>
+      scrollSource: ReturnType<typeof resolveTransactionScrollSource>
+      segment: LoadedSegment<TMessage, TOptimistic>
+    } | null = null
     try {
       this.scrollIntent.incrementFrame()
       this.stateAxes.markTransactionMeasuring()
@@ -184,7 +205,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       if (pending.segment.modifier.type === 'reset-around') {
         this.interactions.markPendingDestinationResolvingDom()
       }
-      const settledAnchor = settleTransactionScrollPosition({
+      const scrollSettlement = settleTransactionScrollPosition({
         snapshot: this.snapshot,
         segment: pending.segment,
         capturedAnchor: pending.anchor,
@@ -205,20 +226,39 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.syncScrollIntentBottomLock()
       this.transactions.clearPending()
       this.stateAxes.markTransactionIdle()
-      this.setViewportPhase('IDLE')
       this.pushDiagnostic('transaction.settle', 'info', { ...token, latencyMs: this.scheduler.now() - pending.startedAt })
       this.emitViewportReadyOnce(token)
-      this.emitViewportObservation('transaction-settle', transactionScrollSource, settledAnchor)
-      this.emitAnchorChanged('transaction-settle', settledAnchor)
-      if (destination && pending.segment.modifier.type === 'reset-around') {
-        this.emitDestinationSettled(destination, settledAnchor)
+      if (scrollSettlement.kind === 'motion') {
+        pendingMotion = { settlement: scrollSettlement, scrollSource: transactionScrollSource, segment: pending.segment }
+        settled = true
+      } else {
+        this.setViewportPhase('IDLE')
+        this.emitViewportObservation('transaction-settle', transactionScrollSource, scrollSettlement.anchor)
+        this.emitAnchorChanged('transaction-settle', scrollSettlement.anchor)
+        if (destination && pending.segment.modifier.type === 'reset-around') {
+          this.emitDestinationSettled(destination, scrollSettlement.anchor)
+        }
+        this.emitSegmentTrimPressure(pending.segment, scrollSettlement.anchor)
+        settled = true
       }
-      this.emitSegmentTrimPressure(pending.segment, settledAnchor)
-      settled = true
     } finally {
       this.transactions.endAdvancing()
     }
     if (settled) {
+      if (pendingMotion) {
+        if (this.startNextQueuedTransaction()) return
+        if (this.motion.startResolution(pendingMotion.settlement, pendingMotion.scrollSource)) {
+          this.emitSegmentTrimPressure(pendingMotion.segment, pendingMotion.settlement.anchor)
+          return
+        }
+        this.setViewportPhase('IDLE')
+        this.emitViewportObservation('transaction-settle', pendingMotion.scrollSource, pendingMotion.settlement.anchor)
+        this.emitAnchorChanged('transaction-settle', pendingMotion.settlement.anchor)
+        if (pendingMotion.settlement.destination) {
+          this.emitDestinationSettled(pendingMotion.settlement.destination, pendingMotion.settlement.anchor)
+        }
+        this.emitSegmentTrimPressure(pendingMotion.segment, pendingMotion.settlement.anchor)
+      }
       this.applySettledTransactionContinuations()
     }
   }
@@ -254,7 +294,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     )
     this.applyInteractionUpdate(update)
     if (!update.event) {
-      this.domInteractions.scrollToNativeBottom()
+      this.motion.startBottom('followBottom', this.getViewportAnchor())
     }
   }
   scrollToMessage(
@@ -262,21 +302,19 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     options: import('../contracts/options').MessageListScrollToMessageOptions = {},
   ): void {
     const align = options.align ?? 'center'
-    if (this.alignLocalDestination(target, align, undefined, 'jump')) return
-    this.startDestination({ target, reason: 'jump', align })
+    if (this.motion.alignLocalDestination(target, align, undefined, 'jump', options.motion)) return
+    this.startDestination({ target, reason: 'jump', align, motion: options.motion })
   }
   restoreToMessage(
     target: MessageIdentityAnchor,
     options: import('../contracts/options').MessageListRestoreOptions = {},
   ): void {
-    if (
-      this.alignLocalDestination(
-        target,
-        options.align ?? 'center',
-        options.offsetWithinMessage,
-        'restore',
-      )
-    ) {
+    if (this.motion.alignLocalDestination(
+      target,
+      options.align ?? 'center',
+      options.offsetWithinMessage,
+      'restore',
+    )) {
       return
     }
     this.startDestination({
@@ -286,32 +324,9 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       offsetWithinMessage: options.offsetWithinMessage,
     })
   }
-  private alignLocalDestination(
-    target: MessageIdentityAnchor,
-    align: DestinationIntent['align'],
-    offsetWithinMessage?: number,
-    reason: DestinationIntent['reason'] = 'jump',
-  ): boolean {
-    if (!this.domInteractions.alignToMessage(
-      this.snapshot,
-      target,
-      align,
-      offsetWithinMessage,
-    )) {
-      return false
-    }
-    this.interactions.clearFollowBottom()
-    this.interactions.markLocalDestinationSettled()
-    this.snapshot = {
-      ...this.snapshot,
-      bottomLockState: 'UNLOCKED',
-      pendingIntent: null,
-    }
-    this.syncScrollIntentBottomLock()
-    this.emitSnapshot()
-    this.emitAnchorChanged('transaction-settle', target)
-    this.emitDestinationSettled({ target, align, offsetWithinMessage, reason }, target)
-    return true
+  private handleUserScrollIntent(): void {
+    this.motion.cancel('user-interrupt')
+    this.scrollIntent.markUserScrollIntent()
   }
   getSnapshot(): MessageListSnapshot<TMessage, TOptimistic> { return this.snapshot }
   subscribeSnapshot(listener: MessageListSnapshotListener): () => void { this.snapshotListeners.add(listener); return () => this.snapshotListeners.delete(listener) }
@@ -485,27 +500,11 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.transactions.removeQueuedBeforeGeneration(generation)
     if (
       generation > this.snapshot.generation &&
-      !this.shouldPreservePendingIntentFor(segment)
+      !shouldPreservePendingIntentForSegment(this.snapshot, segment)
     ) {
       this.snapshot = this.interactions.resetForGeneration(this.snapshot)
       this.syncScrollIntentBottomLock()
     }
-  }
-  private shouldPreservePendingIntentFor(
-    segment: LoadedSegment<TMessage, TOptimistic>,
-  ): boolean {
-    return (
-      this.snapshot.pendingIntent === 'follow-bottom' &&
-      segment.modifier.type === 'reset-latest'
-    ) || (
-      this.snapshot.pendingIntent === 'destination' &&
-      segment.modifier.type === 'reset-around'
-    )
-  }
-  private isStaleSegment(
-    segment: LoadedSegment<TMessage, TOptimistic>,
-  ): boolean {
-    return this.transactions.isStaleSegment(segment, this.snapshot)
   }
   private pushDiagnostic(
     name: string,
