@@ -261,6 +261,50 @@ describe('MessageList React adapter', () => {
     fixture.destroy()
   })
 
+  it('rerenders rows when renderRow captures external state without explicit row versions', async () => {
+    const fixture = createSessionFixture({
+      rows: ['row-1', 'row-2'],
+    })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const renderCounts = new Map<string, number>()
+    let highlightedRow = 'row-1'
+    const render = () => (
+      <MessageList
+        session={fixture.session}
+        renderRow={({ row }) => {
+          renderCounts.set(row, (renderCounts.get(row) ?? 0) + 1)
+          return (
+            <span data-testid={`row-${row}`}>
+              {highlightedRow === row ? 'highlighted' : 'normal'}
+            </span>
+          )
+        }}
+      />
+    )
+
+    await act(async () => {
+      root.render(render())
+    })
+
+    highlightedRow = 'row-2'
+    await act(async () => {
+      root.render(render())
+    })
+
+    expect(host.querySelector('[data-testid="row-row-1"]')?.textContent)
+      .toBe('normal')
+    expect(host.querySelector('[data-testid="row-row-2"]')?.textContent)
+      .toBe('highlighted')
+    expect(renderCounts.get('row-1')).toBe(2)
+    expect(renderCounts.get('row-2')).toBe(2)
+
+    await act(async () => {
+      root.unmount()
+    })
+    fixture.destroy()
+  })
+
   it('keeps StrictMode double commit ack idempotent', async () => {
     const fixture = createSessionFixture({
       rows: ['row-1'],

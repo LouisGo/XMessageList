@@ -173,6 +173,8 @@ type MessageListSession<Row> = {
   commands: {
     scrollToLatest(): void
     scrollToMessage(anchor, options?): void
+    loadBefore(): void
+    loadAfter(): void
     reloadLatest(): void
   }
 

@@ -69,6 +69,9 @@ export type MessageListCommands = {
     target: MessageListAnchor,
     options?: MessageListScrollToMessageOptions,
   ) => void
+  loadBefore: () => void
+  loadAfter: () => void
+  reloadLatest: () => void
 }
 
 export type MessageListRenderRowInput<

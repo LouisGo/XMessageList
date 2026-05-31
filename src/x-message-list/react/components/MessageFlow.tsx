@@ -16,6 +16,7 @@ export type MessageFlowProps<TMessage, TOptimistic> = Pick<
   runtime: MessageListAdapterRuntime<TMessage, TOptimistic>
   snapshot: MessageListSnapshot<TMessage, TOptimistic>
   reload: () => void
+  usesRowRenderVersion: boolean
 }
 
 export function MessageFlow<TMessage, TOptimistic>({
@@ -28,6 +29,7 @@ export function MessageFlow<TMessage, TOptimistic>({
   getRowRenderVersion,
   renderRow,
   reload,
+  usesRowRenderVersion,
 }: MessageFlowProps<TMessage, TOptimistic>) {
   const registerFlow = useCallback((element: HTMLDivElement | null) => {
     runtime.registerMessageFlowElement(element)
@@ -70,7 +72,7 @@ export function MessageFlow<TMessage, TOptimistic>({
               runtime={runtime}
               renderRow={renderRow}
               rowRenderVersion={getRowRenderVersion?.(item)}
-              usesRowRenderVersion={Boolean(getRowRenderVersion)}
+              usesRowRenderVersion={usesRowRenderVersion}
             />
           ))}
       <div ref={registerAfter} data-edge-trigger="after">

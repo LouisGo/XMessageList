@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createMessageListManager,
   type MessageListAdapter,
@@ -22,6 +22,10 @@ type TestConversation = {
   type: 'normal' | 'favorite'
   encrypted?: boolean
 }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('createMessageListManager', () => {
   it('lazily creates, routes, and reuses a warm session', async () => {
@@ -89,6 +93,17 @@ describe('createMessageListManager', () => {
     expect(manager.destroySession('feed-a')).toBe(true)
     expect(manager.destroySession('feed-a')).toBe(false)
     expect(manager.hasSession('feed-a')).toBe(false)
+  })
+
+  it('does not expose runtime internals as enumerable session fields', () => {
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+    })
+    const session = manager.getSession('feed-a')
+
+    expect(Object.keys(session)).not.toContain('runtime')
+    expect(Object.keys(session)).not.toContain('dataRuntime')
   })
 
   it('restores around an anchorMemory anchor before falling back to latest', async () => {
@@ -229,7 +244,37 @@ describe('createMessageListManager', () => {
     expect(requestResults).toEqual(['latest:stale'])
   })
 
-  it('merges edge responses against the current segment flags', async () => {
+  it('cancels bootstrap while anchor memory is still pending', async () => {
+    let resolveMemory: ((value: null) => void) | null = null
+    const loadLatest = vi.fn(() => Promise.resolve(page(['bootstrap'])))
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => ({
+        ...createAdapter('normal', {
+          loadLatest,
+        }),
+        anchorMemory: {
+          load: () => new Promise<null>((resolve) => {
+            resolveMemory = resolve
+          }),
+          save: () => undefined,
+        },
+      }),
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => Boolean(resolveMemory))
+
+    session.rows.resetLatest(page(['local']))
+    resolveMemory?.(null)
+    await wait()
+
+    expect(loadLatest).not.toHaveBeenCalled()
+    expect(internals.getSnapshot().items[0]?.message?.id).toBe('local')
+  })
+
+  it('rejects concurrent edge responses once another edge advances segment revision', async () => {
     type NeedMoreEvent = Extract<MessageListRuntimeEvent, { edge: 'before' | 'after' }>
     const pendingBefore: Array<(page: MessageListPage<TestRow>) => void> = []
     const pendingAfter: Array<(page: MessageListPage<TestRow>) => void> = []
@@ -299,9 +344,67 @@ describe('createMessageListManager', () => {
     await afterRequest
 
     expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
-      .toEqual(['before', 'middle', 'after'])
+      .toEqual(['before', 'middle'])
     expect(internals.dataRuntime.getSegment().hasMoreBefore).toBe(false)
-    expect(internals.dataRuntime.getSegment().hasMoreAfter).toBe(false)
+    expect(internals.dataRuntime.getSegment().hasMoreAfter).toBe(true)
+  })
+
+  it('rejects same-generation edge responses after local patches advance segment revision', async () => {
+    type NeedMoreEvent = Extract<MessageListRuntimeEvent, { edge: 'before' | 'after' }>
+    const pendingBefore: Array<(page: MessageListPage<TestRow>) => void> = []
+    const requestResults: string[] = []
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadBefore: () => new Promise<MessageListPage<TestRow>>((resolve) => {
+          pendingBefore.push(resolve)
+        }),
+      }),
+      onRequestResult: (result) => {
+        requestResults.push(`${result.kind}:${result.status}`)
+      },
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+    const bridge = session as unknown as {
+      loadEdge(event: NeedMoreEvent): Promise<void>
+    }
+
+    await waitFor(() => internals.getSnapshot().items.length === 1)
+    session.rows.resetAround({
+      target: { id: 'middle' },
+      rows: [{ id: 'middle', text: 'before patch' }],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      anchor: { id: 'middle' },
+    })
+
+    const segment = internals.dataRuntime.getSegment()
+    const request = bridge.loadEdge({
+      type: 'needMoreBefore',
+      edge: 'before',
+      feedId: 'feed-a',
+      generation: segment.generation,
+      segmentRevision: segment.segmentRevision,
+      requestToken: 'feed-a:before:test-stale-revision',
+      reason: 'test',
+    })
+
+    await waitFor(() => pendingBefore.length === 1)
+
+    session.rows.patch([{ id: 'middle', text: 'after patch' }])
+    pendingBefore[0](page(['before'], {
+      hasMoreBefore: false,
+      hasMoreAfter: true,
+      anchorId: 'middle',
+    }))
+    await request
+
+    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+      .toEqual(['middle'])
+    expect(internals.dataRuntime.getSegment().items[0]?.message?.text)
+      .toBe('after patch')
+    expect(requestResults).toContain('before:stale')
   })
 
   it('rejects stale bootstrap/reload responses without overwriting newer rows', async () => {
@@ -334,6 +437,60 @@ describe('createMessageListManager', () => {
 
     expect(internals.getSnapshot().items[0]?.message?.id).toBe('new')
     expect(requestResults).toEqual(['latest:applied', 'latest:stale'])
+  })
+
+  it('keeps overlay idle when a bootstrap request finishes before the delay', async () => {
+    vi.useFakeTimers()
+    const pending: Array<(page: MessageListPage<TestRow>) => void> = []
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
+          pending.push(resolve)
+        }),
+      }),
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await flushMicrotasks()
+    expect(pending).toHaveLength(1)
+    expect(internals.getViewState().overlayStatus.status).toBe('idle')
+
+    pending[0](page(['latest']))
+    await flushMicrotasks()
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(internals.getViewState().overlayStatus.status).toBe('idle')
+    expect(internals.getSnapshot().items[0]?.message?.id).toBe('latest')
+  })
+
+  it('publishes overlay loading only after a slow request crosses the delay', async () => {
+    vi.useFakeTimers()
+    const pending: Array<(page: MessageListPage<TestRow>) => void> = []
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
+          pending.push(resolve)
+        }),
+      }),
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await flushMicrotasks()
+    expect(pending).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(199)
+    expect(internals.getViewState().overlayStatus.status).toBe('idle')
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(internals.getViewState().overlayStatus.status).toBe('loading')
+
+    pending[0](page(['latest']))
+    await flushMicrotasks()
+
+    expect(internals.getViewState().overlayStatus.status).toBe('idle')
   })
 })
 
@@ -496,6 +653,11 @@ function observation(keys: string[]): ViewportObservationChangedEvent {
 
 async function wait(ms = 0): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
 }
 
 async function waitFor(

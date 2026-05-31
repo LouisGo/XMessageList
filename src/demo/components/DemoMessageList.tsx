@@ -443,8 +443,8 @@ export function DemoMessageListContent({
               </button>
             ) : null
           }
-          renderOverlayStatus={() =>
-            scenario.sessionLoadingOverlayVisible ? (
+          renderOverlayStatus={({ status }) =>
+            status === 'loading' ? (
               <div
                 className="session-loading-overlay"
                 data-testid="session-loading-overlay"

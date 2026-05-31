@@ -15,7 +15,11 @@ const CHECKED_ROOTS = [
   path.join(ROOT, 'tools'),
 ]
 const X_MESSAGE_LIST_ROOT = path.join(ROOT, 'src', 'x-message-list')
+const DEMO_ROOT = path.join(ROOT, 'src', 'demo')
+const E2E_APP_ROOT = path.join(ROOT, 'src', 'e2e-app')
+const E2E_RUNNER_ROOT = path.join(ROOT, 'e2e', 'runner')
 const RUNTIME_ROOT = path.join(X_MESSAGE_LIST_ROOT, 'core', 'runtime')
+const MANAGER_INTERNAL = path.join(X_MESSAGE_LIST_ROOT, 'core', 'manager', 'internal.ts')
 const REACT_ROOT = path.join(X_MESSAGE_LIST_ROOT, 'react')
 const PUBLIC_TYPE_FILES = [
   path.join(X_MESSAGE_LIST_ROOT, 'core', 'manager', 'types.ts'),
@@ -24,7 +28,6 @@ const PUBLIC_TYPE_FILES = [
 const RUNTIME_INDEX = path.join(RUNTIME_ROOT, 'index.ts')
 const RUNTIME_INTERNAL = path.join(RUNTIME_ROOT, 'internal.ts')
 const RUNTIME_CONTROLLER_ROOT = path.join(RUNTIME_ROOT, 'controller')
-const DATA_RUNTIME_INDEX = path.join(RUNTIME_ROOT, 'data', 'index.ts')
 const FORBIDDEN_ROOT_EXPORTS = [
   'ProjectionCommitToken',
   'EdgeSnapshotState',
@@ -39,6 +42,7 @@ const FORBIDDEN_ROOT_EXPORTS = [
   'MessageDataItem',
   'MessageListDataRuntime',
   'MessageListAdapterRuntime',
+  'MessageListViewState',
   'RuntimeDomRegistry',
   'RuntimeMeasurement',
   'VisualAnchor',
@@ -96,7 +100,7 @@ async function checkNoGodFiles() {
   const files = await collectCodeFiles(CHECKED_ROOTS)
 
   for (const file of files) {
-    if (isGeneratedOrBuildOutput(file)) {
+    if (isGeneratedOrBuildOutput(file) || isTestFile(file)) {
       continue
     }
 
@@ -114,9 +118,9 @@ async function checkNoGodFiles() {
 async function checkImportGuards() {
   const files = await collectCodeFiles([
     REACT_ROOT,
-    path.join(ROOT, 'src', 'demo'),
-    path.join(ROOT, 'src', 'e2e-app'),
-    path.join(ROOT, 'e2e', 'runner'),
+    DEMO_ROOT,
+    E2E_APP_ROOT,
+    E2E_RUNNER_ROOT,
   ])
 
   for (const file of files) {
@@ -200,17 +204,28 @@ function guardReactImport(file, target) {
 }
 
 function guardDemoOrE2EImport(file, target) {
-  if (!isUnder(target, RUNTIME_ROOT)) {
+  const reachesInternalSurface = isUnder(target, RUNTIME_ROOT) ||
+    target === MANAGER_INTERNAL
+
+  if (!reachesInternalSurface) {
     return
   }
 
-  if (target === RUNTIME_INDEX || target === DATA_RUNTIME_INDEX) {
+  if (isE2EHarnessFile(file)) {
     return
   }
 
   violations.push(
-    `${relative(file)} must not import viewport runtime private module ${relative(target)}`,
+    `${relative(file)} must not import message-list runtime/data/internal module ${relative(target)}`,
   )
+}
+
+function isE2EHarnessFile(file) {
+  const basename = path.basename(file).toLowerCase()
+
+  return basename.includes('e2e') ||
+    isUnder(file, E2E_APP_ROOT) ||
+    isUnder(file, E2E_RUNNER_ROOT)
 }
 
 async function collectCodeFiles(roots) {

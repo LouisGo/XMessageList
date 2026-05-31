@@ -165,6 +165,8 @@ export type MessageListSession<Row = unknown> = {
       target: MessageListAnchor,
       options?: MessageListScrollToMessageOptions,
     ): void
+    loadBefore(): void
+    loadAfter(): void
     reloadLatest(): void
   }
   rows: {

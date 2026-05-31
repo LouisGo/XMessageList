@@ -1,6 +1,4 @@
 import type { Dispatch, SetStateAction } from 'react'
-import type { MessageListRuntimeEvent } from '../../x-message-list/core/runtime/index'
-import type { MessageListDataRuntime } from '../../x-message-list/core/runtime/data/index'
 import {
   createNewestMessage,
   getNextMessageSequence,
@@ -41,19 +39,6 @@ export function waitMockDelay(
   return wait(getMockDelayMs(baseMs, random))
 }
 
-export function isRuntimeNeedEvent(event: MessageListRuntimeEvent): event is Extract<
-  MessageListRuntimeEvent,
-  | { type: 'needLatestMessages' }
-  | { type: 'needMessagesAround' }
-  | { type: 'needMoreBefore' }
-  | { type: 'needMoreAfter' }
-> {
-  return event.type === 'needLatestMessages' ||
-    event.type === 'needMessagesAround' ||
-    event.type === 'needMoreBefore' ||
-    event.type === 'needMoreAfter'
-}
-
 export function resolveScenarioTotalMessages(scenarioId: string): number {
   if (scenarioId === 'underflow.dual-edge-arbitration') {
     return 18
@@ -68,14 +53,6 @@ export function usesAroundBootstrap(scenarioId: string): boolean {
     scenarioId === 'destination.jump-in-segment' ||
     scenarioId === 'follow-bottom.partial-segment' ||
     scenarioId === 'scrollbar.drag-edge-after'
-}
-
-export function readLoadedMessages(
-  dataRuntime: MessageListDataRuntime<DemoMessage>,
-): DemoMessage[] {
-  return dataRuntime.getSegment().items
-    .map((item) => item.message)
-    .filter((message): message is DemoMessage => Boolean(message))
 }
 
 export function createMockNewestMessages(input: {

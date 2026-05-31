@@ -75,6 +75,7 @@ describe('MessageListDataRuntime', () => {
     runtime.adoptRequestToken({
       requestToken: 'feed-a:before:runtime-1',
       generation: 1,
+      segmentRevision: 1,
       kind: 'before',
     })
 
@@ -229,6 +230,65 @@ describe('MessageListDataRuntime', () => {
       'row-0',
       'row-1',
     ])
+  })
+
+  it('rejects same-generation edge responses after the segment revision changes', () => {
+    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
+    runtime.resetLatest({
+      items: [item('row-1')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })
+    const request = runtime.createRequestToken('before')
+
+    runtime.patchItems([item('row-1')])
+
+    expect(runtime.extendBefore({
+      requestToken: request.requestToken,
+      items: [item('stale-before')],
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+    })).toMatchObject({
+      applied: false,
+      reason: 'stale-request',
+    })
+    expect(runtime.getSegment().items.map((nextItem) => nextItem.key)).toEqual([
+      'row-1',
+    ])
+  })
+
+  it('lets destination reset tokens supersede pending edge tokens', () => {
+    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
+    runtime.resetLatest({
+      items: [item('row-1')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })
+    const before = runtime.createRequestToken('before')
+
+    runtime.adoptRequestToken({
+      requestToken: 'feed-a:around:runtime-1',
+      generation: 1,
+      segmentRevision: 1,
+      kind: 'around',
+    })
+
+    expect(runtime.extendBefore({
+      requestToken: before.requestToken,
+      items: [item('stale-before')],
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+    })).toMatchObject({
+      applied: false,
+      reason: 'stale-request',
+    })
+    expect(runtime.resetAroundFromRequest({
+      requestToken: 'feed-a:around:runtime-1',
+      target: { feedId: 'feed-a', stableId: 'row-9' },
+      items: [item('row-9')],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    })).toMatchObject({ applied: true })
   })
 
   it('clears request registry state on reset and accepts new generation tokens', () => {

@@ -1,8 +1,3 @@
-import type {
-  LoadedSegment,
-  MessageIdentityAnchor,
-  MessageRuntimeItemKey,
-} from '../../x-message-list/core/runtime/index'
 import type { MessageListResolvedAnchor } from '../../index'
 import type { DemoMessage } from '../data/demoData'
 import {
@@ -16,45 +11,6 @@ const RANDOM_CHAT_FAST_DELAY_MS = 150
 export type SavedRuntimeAnchor = {
   anchor: MessageListResolvedAnchor
   offsetWithinMessage?: number
-}
-
-export function resolveTrimProtectKey(
-  segment: LoadedSegment<DemoMessage>,
-  anchor: MessageIdentityAnchor | null,
-  shouldProtectTail: boolean,
-): MessageRuntimeItemKey | undefined {
-  if (segment.modifier.type === 'extend-before') {
-    return segment.items[0]?.key
-  }
-
-  if (segment.modifier.type === 'extend-after') {
-    return segment.items.at(-1)?.key
-  }
-
-  if (shouldProtectTail) {
-    return segment.items.at(-1)?.key
-  }
-
-  const anchorKey = anchor ? findKeyForAnchor(segment, anchor) : undefined
-  if (anchorKey) {
-    return anchorKey
-  }
-
-  const segmentAnchorKey = segment.anchor
-    ? findKeyForAnchor(segment, segment.anchor)
-    : undefined
-  if (segmentAnchorKey) {
-    return segmentAnchorKey
-  }
-
-  if (
-    segment.modifier.type === 'reset-latest' ||
-    !segment.hasMoreAfter
-  ) {
-    return segment.items.at(-1)?.key
-  }
-
-  return segment.items[Math.floor(segment.items.length / 2)]?.key
 }
 
 export function toPersistedViewportAnchor(
@@ -93,21 +49,4 @@ export function resolveDemoSessionDelayMs(feedId: string): number {
   }
 
   return 0
-}
-
-function findKeyForAnchor(
-  segment: LoadedSegment<DemoMessage>,
-  anchor: MessageIdentityAnchor,
-): MessageRuntimeItemKey | undefined {
-  return segment.items.find((item) => {
-    const identity = item.identity
-
-    return identity &&
-      identity.feedId === anchor.feedId &&
-      (
-        identity.stableId === anchor.stableId ||
-        Boolean(identity.serverId && identity.serverId === anchor.serverId) ||
-        Boolean(identity.localId && identity.localId === anchor.localId)
-      )
-  })?.key
 }

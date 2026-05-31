@@ -24,7 +24,6 @@ export type {
   MessageListScrollToMessageOptions,
   MessageListSession,
   MessageListSessionContext,
-  MessageListViewState,
 } from './x-message-list/core/manager/index'
 export type {
   EmptySlotInput,

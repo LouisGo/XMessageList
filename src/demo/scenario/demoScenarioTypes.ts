@@ -3,12 +3,9 @@ import type {
   MessageListResolvedAnchor,
   MessageListSession,
 } from '../../index'
-import type {
-  MessageListRuntime,
-} from '../../x-message-list/core/runtime/index'
-import type { MessageListDataRuntime } from '../../x-message-list/core/runtime/data/index'
 import type { DemoMessage } from '../data/demoData'
 import { DEMO_FEEDS, getDemoFeedDefinition } from '../data/demoFeeds'
+import type { DemoE2ERuntime } from './demoE2EHarnessInternals'
 
 export type DemoMessageScenario = {
   feeds: typeof DEMO_FEEDS
@@ -17,7 +14,7 @@ export type DemoMessageScenario = {
   pendingFeedId: string | null
   activeFeed: ReturnType<typeof getDemoFeedDefinition>
   activeSession: MessageListSession<DemoMessage>
-  activeRuntime: MessageListRuntime<DemoMessage>
+  activeRuntime: DemoE2ERuntime
   messageCount: number
   loadedMessageCount: number
   hasMoreBefore: boolean
@@ -25,7 +22,6 @@ export type DemoMessageScenario = {
   loadingBefore: boolean
   loadingAfter: boolean
   feedLoading: boolean
-  sessionLoadingOverlayVisible: boolean
   eventStormRunning: boolean
   botPushActive: boolean
   highlightedMessageId: string | null
@@ -61,14 +57,6 @@ export type DemoMessageScenario = {
   resolveOptimisticRemap: () => void
   sendOptimisticAndRemap: () => Promise<void>
 }
-
-export type DemoDataRuntimeGetter = (
-  feedId: string,
-) => MessageListDataRuntime<DemoMessage>
-
-export type DemoSegmentPublisher = (
-  dataRuntime: MessageListDataRuntime<DemoMessage>,
-) => void
 
 export type DemoLoadedMessagesReplacer = (input: {
   feedId: string

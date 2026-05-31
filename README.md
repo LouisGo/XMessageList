@@ -129,8 +129,9 @@ function ConversationView({ conversationId }: { conversationId: string }) {
   detaches the view but does not destroy the session.
 - `MessageListSession` exposes only public application commands and local row
   mutation entry points: `commands.scrollToLatest`, `commands.scrollToMessage`,
-  `commands.reloadLatest`, `rows.patch`, `rows.replace`, `rows.resetLatest`,
-  `rows.resetAround`, `rows.applyIdentityRemap` and `rows.clear`.
+  `commands.loadBefore`, `commands.loadAfter`, `commands.reloadLatest`,
+  `rows.patch`, `rows.replace`, `rows.resetLatest`, `rows.resetAround`,
+  `rows.applyIdentityRemap` and `rows.clear`.
 - React is an adapter over `MessageListSession`; it must not call request APIs,
   merge data, persist anchors or run read receipts.
 - Runtime and data runtime stay package-internal implementation details.

@@ -10,10 +10,7 @@ import {
   getNextEventStormDelayMs,
 } from '../mocks/demoAdvancedMockScenarios'
 import { loadDemoFeedMessages } from '../data/demoMessageApi'
-import { readLoadedMessages } from './demoScenarioHelpers'
-import type {
-  DemoDataRuntimeGetter,
-} from './demoScenarioTypes'
+import type { DemoMessage } from '../data/demoData'
 
 export type DemoLongRunningMockActions = {
   eventStormRunning: boolean
@@ -25,18 +22,20 @@ export type DemoLongRunningMockActions = {
 
 export function useDemoLongRunningMocks(input: {
   activeFeedId: string
-  getDataRuntime: DemoDataRuntimeGetter
+  getHasMoreAfter: () => boolean
+  getLoadedMessages: () => DemoMessage[]
   applyAdvancedMockResult: (
     feedId: string,
     result: AdvancedMockPublishResult,
-    previousMessages: ReturnType<typeof readLoadedMessages>,
+    previousMessages: DemoMessage[],
   ) => Promise<void>
   setLastEvent: (eventText: string) => void
 }): DemoLongRunningMockActions {
   const {
     activeFeedId,
     applyAdvancedMockResult,
-    getDataRuntime,
+    getHasMoreAfter,
+    getLoadedMessages,
     setLastEvent,
   } = input
   const [eventStormRunning, setEventStormRunning] = useState(false)
@@ -60,14 +59,13 @@ export function useDemoLongRunningMocks(input: {
       return
     }
 
-    const dataRuntime = getDataRuntime(activeFeedId)
-    const previousMessages = readLoadedMessages(dataRuntime)
+    const previousMessages = getLoadedMessages()
     const feedMessages = await loadDemoFeedMessages(activeFeedId)
     const result = flushEventStormBuffer({
       feedId: activeFeedId,
       feedMessages,
       messages: previousMessages,
-      hasMoreAfter: dataRuntime.getSegment().hasMoreAfter,
+      hasMoreAfter: getHasMoreAfter(),
       state: eventStormStateRef.current,
     })
     eventStormStateRef.current = null
@@ -78,7 +76,13 @@ export function useDemoLongRunningMocks(input: {
     }
 
     setLastEvent('event storm stopped')
-  }, [activeFeedId, applyAdvancedMockResult, getDataRuntime, setLastEvent])
+  }, [
+    activeFeedId,
+    applyAdvancedMockResult,
+    getHasMoreAfter,
+    getLoadedMessages,
+    setLastEvent,
+  ])
 
   const stopBotPush = useCallback(() => {
     if (botPushTimerRef.current !== null) {
@@ -104,14 +108,13 @@ export function useDemoLongRunningMocks(input: {
           return
         }
 
-        const dataRuntime = getDataRuntime(feedId)
-        const previousMessages = readLoadedMessages(dataRuntime)
+        const previousMessages = getLoadedMessages()
         const feedMessages = await loadDemoFeedMessages(feedId)
         const result = applyEventStormTick({
           feedId,
           feedMessages,
           messages: previousMessages,
-          hasMoreAfter: dataRuntime.getSegment().hasMoreAfter,
+          hasMoreAfter: getHasMoreAfter(),
           state: eventStormStateRef.current,
         })
 
@@ -124,7 +127,7 @@ export function useDemoLongRunningMocks(input: {
         }
       })()
     }, getNextEventStormDelayMs())
-  }, [applyAdvancedMockResult, getDataRuntime])
+  }, [applyAdvancedMockResult, getHasMoreAfter, getLoadedMessages])
 
   const scheduleBotPushTick = useCallback(function schedule(
     feedId: string,
@@ -136,14 +139,13 @@ export function useDemoLongRunningMocks(input: {
           return
         }
 
-        const dataRuntime = getDataRuntime(feedId)
-        const previousMessages = readLoadedMessages(dataRuntime)
+        const previousMessages = getLoadedMessages()
         const feedMessages = await loadDemoFeedMessages(feedId)
         const result = applyBotPushTick({
           feedId,
           feedMessages,
           messages: previousMessages,
-          hasMoreAfter: dataRuntime.getSegment().hasMoreAfter,
+          hasMoreAfter: getHasMoreAfter(),
         })
 
         await applyAdvancedMockResult(feedId, result, previousMessages)
@@ -152,7 +154,7 @@ export function useDemoLongRunningMocks(input: {
         }
       })()
     }, getNextBotPushDelayMs())
-  }, [applyAdvancedMockResult, getDataRuntime])
+  }, [applyAdvancedMockResult, getHasMoreAfter, getLoadedMessages])
 
   const toggleEventStorm = useCallback(() => {
     if (eventStormTimerRef.current !== null) {
@@ -162,7 +164,6 @@ export function useDemoLongRunningMocks(input: {
 
     void (async () => {
       const feedId = activeFeedId
-      const dataRuntime = getDataRuntime(feedId)
       const feedMessages = await loadDemoFeedMessages(feedId)
       const token = eventStormTokenRef.current + 1
       eventStormTokenRef.current = token
@@ -170,12 +171,18 @@ export function useDemoLongRunningMocks(input: {
       setEventStormRunning(true)
       scheduleEventStormTick(feedId, token)
       setLastEvent(
-        dataRuntime.getSegment().items.length === 0
+        getLoadedMessages().length === 0
           ? 'event storm started; waiting for loaded segment'
           : 'event storm started',
       )
     })()
-  }, [activeFeedId, getDataRuntime, scheduleEventStormTick, setLastEvent, stopEventStorm])
+  }, [
+    activeFeedId,
+    getLoadedMessages,
+    scheduleEventStormTick,
+    setLastEvent,
+    stopEventStorm,
+  ])
 
   const toggleBotPush = useCallback(() => {
     if (botPushTimerRef.current !== null) {

@@ -158,7 +158,7 @@ describe('useDemoMessageScenario feed switching', () => {
     expect(harness.host.textContent).not.toContain('feed-runtime-')
 
     await waitFor(() =>
-      Boolean(harness.getScenario()?.sessionLoadingOverlayVisible),
+      Boolean(harness.host.querySelector('[data-testid="session-loading-overlay"]')),
     )
 
     expect(
@@ -179,8 +179,6 @@ describe('useDemoMessageScenario feed switching', () => {
           !scenario.feedLoading,
       )
     })
-
-    expect(harness.getScenario()?.sessionLoadingOverlayVisible).toBe(false)
 
     await harness.unmount()
   })
@@ -213,7 +211,6 @@ describe('useDemoMessageScenario feed switching', () => {
     })
     await wait(120)
 
-    expect(harness.getScenario()?.sessionLoadingOverlayVisible).toBe(false)
     expect(
       harness.host.querySelector('[data-testid="session-loading-overlay"]'),
     ).toBeNull()
@@ -238,7 +235,7 @@ describe('useDemoMessageScenario feed switching', () => {
 
     expect(harness.getScenario()?.activeFeedId).toBe(RANDOM_CHAT_FEED_ID)
     expect(harness.getScenario()?.feedLoading).toBe(false)
-    expect(harness.getScenario()?.sessionLoadingOverlayVisible).toBe(false)
+    expect(harness.host.querySelector('[data-testid="session-loading-overlay"]')).toBeNull()
 
     await harness.unmount()
   })
@@ -287,7 +284,6 @@ describe('useDemoMessageScenario feed switching', () => {
       return Boolean(scenario?.activeFeedId === RANDOM_CHAT_FEED_ID && !scenario.feedLoading)
     })
 
-    expect(harness.getScenario()?.sessionLoadingOverlayVisible).toBe(false)
     expect(harness.host.querySelector('[data-testid="session-loading-overlay"]')).toBeNull()
 
     await harness.unmount()
@@ -355,14 +351,12 @@ describe('useDemoMessageScenario feed switching', () => {
         target: { messageId: 'feed-runtime-0010', position: 10 },
       })
     })
-
     await waitFor(() => {
       const scenario = harness.getScenario()
       return Boolean(scenario?.activeRuntime.getSnapshot().items.some((item) =>
         item.message?.id === 'feed-runtime-0010'
       ))
     })
-
     expect(harness.getScenario()?.lastEvent).toBe('loaded around anchor')
 
     await harness.unmount()
@@ -496,8 +490,8 @@ function createScenarioHarness(): {
             <div data-testid="after-loading" />
           ) : null
         }
-        renderOverlayStatus={() =>
-          nextScenario.sessionLoadingOverlayVisible ? (
+        renderOverlayStatus={({ status }) =>
+          status === 'loading' ? (
             <div
               data-testid="session-loading-overlay"
               role="status"

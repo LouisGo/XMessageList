@@ -95,13 +95,13 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
   }
 
   createRequestToken(kind: DataRuntimeRequestKind): DataRuntimeRequestToken {
-    return this.requestTokens.create(kind, this.generation)
+    return this.requestTokens.create(kind, this.generation, this.segmentRevision)
   }
 
   adoptRequestToken(
     request: DataRuntimeRequestToken,
   ): void {
-    this.requestTokens.adopt(request, this.generation)
+    this.requestTokens.adopt(request, this.generation, this.segmentRevision)
   }
 
   resetLatest(
@@ -291,6 +291,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
       requestToken,
       expectedKind,
       this.generation,
+      this.segmentRevision,
     )
   }
 

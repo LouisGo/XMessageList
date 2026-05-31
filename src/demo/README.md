@@ -9,11 +9,11 @@ runtime ownership of scroll, measurement, paging latches or anchor correction.
 - `components/` owns demo UI components.
 - `data/` owns feed fixtures, mock persistence, request adapters and message API types.
 - `mocks/` owns advanced mock publishers and test utilities.
-- `runtime/` owns per-feed runtime cache helpers.
-- `scenario/` owns scenario orchestration hooks, segment publishing, runtime event handling and command wiring.
+- `scenario/` owns scenario orchestration hooks, public session commands,
+  manager adapter wiring, and E2E-only evidence/reset helpers.
 - `styles/` owns CSS entry files used by the demo and E2E app.
 - `utils/` owns small generic demo utilities that do not imply runtime or data ownership.
 
-Demo code should respond to semantic runtime events and publish data runtime
-segments back to the viewport runtime. It should not inspect projection DOM to
-repair runtime behavior.
+Demo code should use the public manager/session path for ordinary loading and
+row mutations. E2E helpers may read package-internal runtime evidence, but the
+demo must not inspect projection DOM to repair runtime behavior.

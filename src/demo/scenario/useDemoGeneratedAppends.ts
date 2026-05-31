@@ -10,12 +10,11 @@ import {
   createMockNewestMessages,
   waitMockDelay,
 } from './demoScenarioHelpers'
-import type { DemoDataRuntimeGetter } from './demoScenarioTypes'
 
 export function useDemoGeneratedAppends(input: {
   activeFeedId: string
   appendDelayBaseMs: number
-  getDataRuntime: DemoDataRuntimeGetter
+  getHasMoreAfter: () => boolean
   isActiveFeed: (feedId: string) => boolean
   longBurstDelayBaseMs: number
   longBurstSize: number
@@ -30,7 +29,7 @@ export function useDemoGeneratedAppends(input: {
   const {
     activeFeedId,
     appendDelayBaseMs,
-    getDataRuntime,
+    getHasMoreAfter,
     isActiveFeed,
     longBurstDelayBaseMs,
     longBurstSize,
@@ -49,8 +48,7 @@ export function useDemoGeneratedAppends(input: {
   ): Promise<{ messages: DemoMessage[]; visibleInCurrentWindow: boolean }> => {
     await waitMockDelay(options.delayBaseMs ?? appendDelayBaseMs)
     const allMessages = await loadDemoFeedMessages(feedId)
-    const dataRuntime = getDataRuntime(feedId)
-    const visibleInCurrentWindow = !dataRuntime.getSegment().hasMoreAfter
+    const visibleInCurrentWindow = !getHasMoreAfter()
     const generatedMessages = createMockNewestMessages({
       feedId,
       count,
@@ -71,7 +69,7 @@ export function useDemoGeneratedAppends(input: {
     return { messages: nextMessages, visibleInCurrentWindow }
   }, [
     appendDelayBaseMs,
-    getDataRuntime,
+    getHasMoreAfter,
     isActiveFeed,
     publishActivePatch,
     setMessageCount,

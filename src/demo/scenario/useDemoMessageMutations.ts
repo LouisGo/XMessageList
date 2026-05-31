@@ -1,12 +1,7 @@
 import { useCallback, useRef } from 'react'
-import type { MessageListRuntime } from '../../x-message-list/core/runtime/index'
 import type { DemoMessage } from '../data/demoData'
 import { readDemoFeedMessages } from '../data/demoMessageApi'
-import {
-  readLoadedMessages,
-} from './demoScenarioHelpers'
 import type {
-  DemoDataRuntimeGetter,
   DemoLoadedMessagesReplacer,
 } from './demoScenarioTypes'
 
@@ -23,16 +18,14 @@ export type DemoMessageMutationActions = {
 
 export function useDemoMessageMutations(input: {
   activeFeedId: string
-  runtime: MessageListRuntime<DemoMessage>
-  getDataRuntime: DemoDataRuntimeGetter
+  getLoadedMessages: () => DemoMessage[]
   replaceLoadedMessages: DemoLoadedMessagesReplacer
   setLastEvent: (eventText: string) => void
 }): DemoMessageMutationActions {
   const {
     activeFeedId,
-    getDataRuntime,
+    getLoadedMessages,
     replaceLoadedMessages,
-    runtime,
     setLastEvent,
   } = input
   const dynamicHeightExpandedRef = useRef(false)
@@ -46,8 +39,7 @@ export function useDemoMessageMutations(input: {
     mutate: (message: DemoMessage) => DemoMessage | null,
     eventText: string,
   ) => {
-    const dataRuntime = getDataRuntime(activeFeedId)
-    const currentMessages = readLoadedMessages(dataRuntime)
+    const currentMessages = getLoadedMessages()
     const feedMessages = readDemoFeedMessages(activeFeedId)
     let changed = false
     const nextFeedMessages = feedMessages.flatMap((message) => {
@@ -81,11 +73,10 @@ export function useDemoMessageMutations(input: {
       changedKeys: [messageId],
       eventText,
     })
-  }, [activeFeedId, getDataRuntime, replaceLoadedMessages, setLastEvent])
+  }, [activeFeedId, getLoadedMessages, replaceLoadedMessages, setLastEvent])
 
   const toggleDynamicHeight = useCallback(() => {
-    const dataRuntime = getDataRuntime(activeFeedId)
-    const currentMessages = readLoadedMessages(dataRuntime)
+    const currentMessages = getLoadedMessages()
 
     if (currentMessages.length === 0) {
       return
@@ -108,14 +99,11 @@ export function useDemoMessageMutations(input: {
         ? 'expanded dynamic row height'
         : 'collapsed dynamic row height',
     )
-  }, [activeFeedId, getDataRuntime, updateMessage])
+  }, [getLoadedMessages, updateMessage])
 
   const streamCurrentRow = useCallback(() => {
-    const visibleKey = runtime.getEvidence().visibleRows[0]?.key
-    const current = getDataRuntime(activeFeedId).getSegment()
-    const target = current.items.find((item) => item.key === visibleKey) ??
-      current.items[Math.floor(current.items.length / 2)]
-    const message = target?.message
+    const currentMessages = getLoadedMessages()
+    const message = currentMessages[Math.floor(currentMessages.length / 2)]
 
     if (!message) {
       setLastEvent('no visible row to stream')
@@ -128,7 +116,7 @@ export function useDemoMessageMutations(input: {
       editedAt: new Date().toISOString(),
     }
     updateMessage(streamed.id, () => streamed, 'streamed current row')
-  }, [activeFeedId, getDataRuntime, runtime, setLastEvent, updateMessage])
+  }, [getLoadedMessages, setLastEvent, updateMessage])
 
   const editMessage = useCallback((messageId: string, nextBody: string) => {
     const trimmed = nextBody.trim()

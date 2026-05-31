@@ -1,5 +1,3 @@
-import type { MessageDataItem } from '../../x-message-list/core/runtime/index'
-
 export type DemoViewportEffect =
   | 'none'
   | 'prepend'
@@ -223,23 +221,6 @@ export function getFirstMessageSequence(messages: DemoMessage[]): number {
   )
 }
 
-export function toDemoMessageDataItem(
-  message: DemoMessage,
-): MessageDataItem<DemoMessage> {
-  return {
-    key: message.id,
-    rowKind: 'message',
-    identity: {
-      feedId: message.feedId,
-      stableId: message.id,
-      serverId: message.id,
-      version: 1,
-    },
-    renderVersion: getDemoMessageContentVersion(message),
-    message,
-  }
-}
-
 export function normalizeDemoMessages(
   feedId: string,
   messages: DemoMessage[],
@@ -435,24 +416,6 @@ function pickLineCount(id: string, min: number, max: number): number {
   const lower = Math.max(1, Math.min(min, max))
   const upper = Math.max(lower, max)
   return lower + (Math.abs(hashCode(`${id}:line-count`)) % (upper - lower + 1))
-}
-
-function getDemoMessageContentVersion(message: DemoMessage): number {
-  return (
-    Math.abs(
-      hashCode(
-        JSON.stringify({
-          body: message.body,
-          kind: message.kind,
-          expanded: message.expanded,
-          editedAt: message.editedAt ?? '',
-          reactions: message.reactions,
-          media: message.media ?? null,
-          quote: message.quote ?? null,
-        }),
-      ),
-    ) + 1
-  )
 }
 
 function normalizeQuote(messageQuote: DemoMessage['quote']): DemoMessage['quote'] {

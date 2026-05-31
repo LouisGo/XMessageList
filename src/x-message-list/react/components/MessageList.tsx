@@ -69,6 +69,7 @@ export function MessageList<TMessage, TOptimistic>({
     return (item: MessageDataItem<TMessage, TOptimistic>) =>
       sessionInternals.getRowRenderVersion(item as MessageDataItem<TMessage>)
   }, [getRowRenderVersion, sessionInternals])
+  const usesRowRenderVersion = Boolean(getRowRenderVersion)
   const rootStyle = useMemo(() => ({
     position: 'relative' as const,
     ...style,
@@ -105,6 +106,7 @@ export function MessageList<TMessage, TOptimistic>({
           snapshot={snapshot}
           renderRow={renderRow}
           getRowRenderVersion={resolveRowRenderVersion}
+          usesRowRenderVersion={usesRowRenderVersion}
           renderBeforeStatus={renderBeforeStatus}
           renderAfterStatus={renderAfterStatus}
           renderTopPlaceholder={renderTopPlaceholder}

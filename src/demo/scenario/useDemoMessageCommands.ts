@@ -17,11 +17,9 @@ import {
 } from '../data/demoLocalStoreClient'
 import {
   highlightMessage,
-  readLoadedMessages,
   waitMockDelay,
 } from './demoScenarioHelpers'
 import type {
-  DemoDataRuntimeGetter,
   DemoHighlightState,
 } from './demoScenarioTypes'
 
@@ -39,7 +37,8 @@ export function useDemoMessageCommands(input: {
   activeFeedId: string
   session: MessageListSession<DemoMessage>
   getSession: (feedId: string) => MessageListSession<DemoMessage>
-  getDataRuntime: DemoDataRuntimeGetter
+  getHasMoreAfter: () => boolean
+  getLoadedMessages: () => DemoMessage[]
   isActiveFeed: (feedId: string) => boolean
   pageSize: number
   sendDelayBaseMs: number
@@ -49,7 +48,8 @@ export function useDemoMessageCommands(input: {
 }): DemoMessageCommandActions {
   const {
     activeFeedId,
-    getDataRuntime,
+    getHasMoreAfter,
+    getLoadedMessages,
     getSession,
     highlightState,
     isActiveFeed,
@@ -71,8 +71,7 @@ export function useDemoMessageCommands(input: {
       await waitMockDelay(sendDelayBaseMs)
 
       const allMessages = await loadDemoFeedMessages(activeFeedId)
-      const dataRuntime = getDataRuntime(activeFeedId)
-      const shouldRebuildLatest = dataRuntime.getSegment().hasMoreAfter
+      const shouldRebuildLatest = getHasMoreAfter()
       const message = createOutgoingMessage(trimmed, {
         feedId: activeFeedId,
         sequence: (allMessages.at(-1)?.sequence ?? 0) + 1,
@@ -122,7 +121,7 @@ export function useDemoMessageCommands(input: {
     return true
   }, [
     activeFeedId,
-    getDataRuntime,
+    getHasMoreAfter,
     isActiveFeed,
     pageSize,
     session,
@@ -172,7 +171,7 @@ export function useDemoMessageCommands(input: {
       return
     }
 
-    const first = readLoadedMessages(getDataRuntime(activeFeedId))[0]
+    const first = getLoadedMessages()[0]
     if (!first) {
       setLastEvent('no loaded quote target')
       return
@@ -185,7 +184,7 @@ export function useDemoMessageCommands(input: {
     })
     highlightMessage(first.id, highlightState)
     setLastEvent('jump command sent to session')
-  }, [activeFeedId, getDataRuntime, highlightState, session, setLastEvent])
+  }, [activeFeedId, getLoadedMessages, highlightState, session, setLastEvent])
 
   const clearFeed = useCallback((feedId: string) => {
     replaceDemoFeedMessages(feedId, [])

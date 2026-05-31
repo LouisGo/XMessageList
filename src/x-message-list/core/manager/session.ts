@@ -13,17 +13,14 @@ import {
   type MessageListDataRuntime,
 } from '../runtime/data/index'
 import { MessageListReadReceiptsWorker } from './readReceipts'
+import { MessageListSessionOverlay } from './sessionOverlay'
+import { createSessionRows } from './sessionRows'
 import { defineMessageListSessionInternals } from './internal'
-import {
-  normalizeMessageListAnchor,
-  toMessageDataItems,
-} from './rowAdapter'
+import { normalizeMessageListAnchor } from './rowAdapter'
 import {
   reindexRows,
   resolveTrimProtectKey,
   toRuntimeScrollOptions,
-  toSessionIdentityRemaps,
-  toSessionReplaceInput,
   toSessionResetInput,
   type AroundRequestOptions,
   type RuntimeNeedEvent,
@@ -31,7 +28,6 @@ import {
 } from './sessionHelpers'
 import type {
   MessageListConversationId,
-  MessageListOverlayStatus,
   MessageListPage,
   MessageListRequestResult,
   MessageListSession as PublicMessageListSession,
@@ -39,21 +35,24 @@ import type {
   MessageListViewState,
 } from './types'
 
+type OverlayRequestOptions = {
+  overlayRequestId?: number
+  requestEpoch?: number
+}
+
 export class MessageListSession<Row, Conversation>
   implements PublicMessageListSession<Row> {
+  readonly #runtime: MessageListRuntime<Row>
+  readonly #dataRuntime: MessageListDataRuntime<Row>
   readonly id: MessageListConversationId
-  readonly runtime: MessageListRuntime<Row>
-  readonly dataRuntime: MessageListDataRuntime<Row>
   readonly commands: PublicMessageListSession<Row>['commands']
   readonly rows: PublicMessageListSession<Row>['rows']
   private readonly context: MessageListSessionContext<Conversation>
   private readonly readReceipts: MessageListReadReceiptsWorker<Row, Conversation>
+  private readonly overlay: MessageListSessionOverlay
   private readonly viewListeners = new Set<() => void>()
   private readonly runtimeUnsubscribe: () => void
   private readonly rowsByKey = new Map<string, Row>()
-  private overlayStatus: MessageListOverlayStatus
-  private viewState: MessageListViewState
-  private overlayRequestId = 0
   private viewRetainCount = 0
   lastUsedAt = Date.now()
 
@@ -63,78 +62,50 @@ export class MessageListSession<Row, Conversation>
       id: options.id,
       conversation: options.conversation,
     }
-    this.runtime = createMessageListRuntime<Row>({ feedId: options.id })
-    this.dataRuntime = createMessageListDataRuntime<Row>({
+    this.overlay = new MessageListSessionOverlay(
+      () => this.notifyViewListeners(),
+      () => {
+        this.overlay.bumpRequestEpoch()
+        void this.bootstrap()
+      },
+    )
+    this.#runtime = createMessageListRuntime<Row>({ feedId: options.id })
+    this.#dataRuntime = createMessageListDataRuntime<Row>({
       feedId: options.id,
       itemBudget: options.defaults.maxItems,
     })
     this.commands = {
-      scrollToLatest: () => this.runtime.scrollToLatest(),
+      scrollToLatest: () => this.#runtime.scrollToLatest(),
       scrollToMessage: (target, scrollOptions) =>
-        this.runtime.scrollToMessage(
+        this.#runtime.scrollToMessage(
           normalizeMessageListAnchor(this.id, target),
           toRuntimeScrollOptions(this.id, scrollOptions),
         ),
       reloadLatest: () => {
+        this.overlay.bumpRequestEpoch()
         void this.loadLatest()
       },
-    }
-    this.rows = {
-      patch: (rows) => {
-        this.publishSegment(
-          this.dataRuntime.patchItems(
-            toMessageDataItems(this.id, rows, this.options.adapter),
-          ),
-        )
+      loadBefore: () => {
+        void this.loadEdgeFromCommand('before')
       },
-      replace: (input) => {
-        this.publishSegment(this.dataRuntime.replaceItems(
-          toSessionReplaceInput(this.id, input, this.options.adapter),
-        ))
-      },
-      resetLatest: (page) => {
-        this.publishLocalResetSegment(
-          this.dataRuntime.resetLatest(
-            toSessionResetInput(this.id, page, this.options.adapter),
-          ),
-        )
-      },
-      resetAround: (input) => {
-        this.publishLocalResetSegment(
-          this.dataRuntime.resetAround({
-            ...toSessionResetInput(this.id, input, this.options.adapter),
-            target: normalizeMessageListAnchor(this.id, input.target),
-            align: input.align,
-            offsetWithinMessage: input.offsetWithinMessage,
-          }),
-        )
-      },
-      applyIdentityRemap: (remaps) => {
-        this.publishSegment(this.dataRuntime.applyIdentityRemap(
-          toSessionIdentityRemaps(this.id, remaps),
-        ))
-      },
-      clear: () => {
-        this.publishLocalResetSegment(
-          this.dataRuntime.resetLatest({
-            items: [],
-            hasMoreBefore: false,
-            hasMoreAfter: false,
-          }),
-        )
+      loadAfter: () => {
+        void this.loadEdgeFromCommand('after')
       },
     }
-    this.overlayStatus = this.createOverlayStatus('idle')
-    this.viewState = {
-      overlayStatus: this.overlayStatus,
-    }
+    this.rows = createSessionRows({
+      id: this.id,
+      adapter: this.options.adapter,
+      dataRuntime: this.#dataRuntime,
+      publishSegment: (segment) => this.publishSegment(segment),
+      publishLocalResetSegment: (segment) => this.publishLocalResetSegment(segment),
+    })
     this.readReceipts = new MessageListReadReceiptsWorker(
       options.adapter,
       (keys) => this.getRowsByKeys(keys),
     )
     defineMessageListSessionInternals<Row>(this, {
-      runtime: this.runtime,
-      dataRuntime: this.dataRuntime,
+      runtime: this.#runtime,
+      dataRuntime: this.#dataRuntime,
       getSnapshot: () => this.getSnapshot(),
       getViewState: () => this.getViewState(),
       subscribeView: (listener) => this.subscribeView(listener),
@@ -143,18 +114,18 @@ export class MessageListSession<Row, Conversation>
       getRowRenderVersion: (item) => this.getRowRenderVersion(item),
       getRowsByKeys: (keys) => this.getRowsByKeys(keys),
     })
-    this.runtimeUnsubscribe = this.runtime.subscribeRuntimeEvent((event) => {
+    this.runtimeUnsubscribe = this.#runtime.subscribeRuntimeEvent((event) => {
       this.handleRuntimeEvent(event)
     })
     void this.bootstrap()
   }
 
   getSnapshot(): MessageListSnapshot<Row> {
-    return this.runtime.getSnapshot()
+    return this.#runtime.getSnapshot()
   }
 
   getViewState(): MessageListViewState {
-    return this.viewState
+    return this.overlay.getViewState()
   }
 
   subscribeView(listener: () => void): () => void {
@@ -209,14 +180,23 @@ export class MessageListSession<Row, Conversation>
   destroy(): void {
     this.runtimeUnsubscribe()
     this.readReceipts.destroy()
-    this.runtime.destroy()
+    this.overlay.destroy()
+    this.#runtime.destroy()
     this.viewListeners.clear()
   }
 
   private async bootstrap(): Promise<void> {
+    const requestEpoch = this.overlay.getRequestEpoch()
+    const overlayRequestId = this.overlay.startRequest()
+
     try {
-      this.setOverlayStatus('loading')
       const memoryValue = await this.options.adapter.anchorMemory?.load(this.context)
+
+      if (this.overlay.isStaleRequest(overlayRequestId) ||
+        this.overlay.isStaleEpoch(requestEpoch)) {
+        return
+      }
+
       const runtimeAnchor = memoryValue
         ? normalizeMessageListAnchor(this.id, memoryValue.anchor)
         : null
@@ -225,13 +205,21 @@ export class MessageListSession<Row, Conversation>
         await this.loadAround(runtimeAnchor, undefined, {
           align: 'start',
           offsetWithinMessage: memoryValue?.offsetWithinMessage,
+          overlayRequestId,
+          requestEpoch,
         })
         return
       }
 
-      await this.loadLatest()
+      await this.loadLatest(undefined, { overlayRequestId, requestEpoch })
     } catch (error) {
-      this.setOverlayStatus('error', error)
+      if (!this.overlay.isStaleRequest(overlayRequestId) &&
+        !this.overlay.isStaleEpoch(requestEpoch)) {
+        this.finishOverlayRequest(
+          this.emitRequestResult({ kind: 'latest', status: 'failed', error }),
+          overlayRequestId,
+        )
+      }
     }
   }
 
@@ -239,7 +227,7 @@ export class MessageListSession<Row, Conversation>
     this.touch()
 
     if (event.type === 'viewportAnchorChanged' && event.anchor) {
-      const snapshot = this.runtime.getSnapshot()
+      const snapshot = this.#runtime.getSnapshot()
       if (
         snapshot.generation !== event.generation ||
         snapshot.segmentRevision !== event.segmentRevision
@@ -277,9 +265,15 @@ export class MessageListSession<Row, Conversation>
     }
   }
 
-  private async loadLatest(event?: RuntimeNeedEvent): Promise<void> {
-    const overlayRequestId = this.startOverlayRequest()
-    const requestGeneration = this.dataRuntime.getSegment().generation
+  private async loadLatest(
+    event?: RuntimeNeedEvent,
+    options: OverlayRequestOptions = {},
+  ): Promise<void> {
+    const overlayRequestId = options.overlayRequestId ?? this.overlay.startRequest()
+    const requestEpoch = options.requestEpoch ?? this.overlay.getRequestEpoch()
+    const requestSegment = this.#dataRuntime.getSegment()
+    const requestGeneration = requestSegment.generation
+    const requestSegmentRevision = requestSegment.segmentRevision
     if (event) {
       this.adoptRequestToken(event, 'latest')
     }
@@ -290,28 +284,29 @@ export class MessageListSession<Row, Conversation>
         requestToken: event?.requestToken,
         reason: event?.reason,
       })
-      if (this.isStaleOverlayRequest(overlayRequestId)) {
+      if (this.overlay.isStaleRequest(overlayRequestId) ||
+        this.overlay.isStaleEpoch(requestEpoch)) {
         return {
           page,
-          segment: this.dataRuntime.getSegment(),
+          segment: this.#dataRuntime.getSegment(),
           applied: false,
         }
       }
-      if (this.isStaleRequest(event, requestGeneration)) {
+      if (this.isStaleRequest(event, requestGeneration, requestSegmentRevision)) {
         return {
           page,
-          segment: this.dataRuntime.getSegment(),
+          segment: this.#dataRuntime.getSegment(),
           applied: false,
         }
       }
       const applied = event
-        ? this.dataRuntime.resetLatestFromRequest({
+        ? this.#dataRuntime.resetLatestFromRequest({
             ...toSessionResetInput(this.id, page, this.options.adapter),
             requestToken: event.requestToken,
           })
         : {
             applied: true,
-            segment: this.dataRuntime.resetLatest(
+            segment: this.#dataRuntime.resetLatest(
               toSessionResetInput(this.id, page, this.options.adapter),
             ),
           }
@@ -323,10 +318,13 @@ export class MessageListSession<Row, Conversation>
   private async loadAround(
     target: MessageIdentityAnchor,
     event?: RuntimeNeedEvent,
-    options: AroundRequestOptions = {},
+    options: AroundRequestOptions & OverlayRequestOptions = {},
   ): Promise<void> {
-    const overlayRequestId = this.startOverlayRequest()
-    const requestGeneration = this.dataRuntime.getSegment().generation
+    const overlayRequestId = options.overlayRequestId ?? this.overlay.startRequest()
+    const requestEpoch = options.requestEpoch ?? this.overlay.getRequestEpoch()
+    const requestSegment = this.#dataRuntime.getSegment()
+    const requestGeneration = requestSegment.generation
+    const requestSegmentRevision = requestSegment.segmentRevision
     if (event) {
       this.adoptRequestToken(event, 'around')
     }
@@ -338,22 +336,23 @@ export class MessageListSession<Row, Conversation>
         reason: event?.reason,
         target,
       })
-      if (this.isStaleOverlayRequest(overlayRequestId)) {
+      if (this.overlay.isStaleRequest(overlayRequestId) ||
+        this.overlay.isStaleEpoch(requestEpoch)) {
         return {
           page,
-          segment: this.dataRuntime.getSegment(),
+          segment: this.#dataRuntime.getSegment(),
           applied: false,
         }
       }
-      if (this.isStaleRequest(event, requestGeneration)) {
+      if (this.isStaleRequest(event, requestGeneration, requestSegmentRevision)) {
         return {
           page,
-          segment: this.dataRuntime.getSegment(),
+          segment: this.#dataRuntime.getSegment(),
           applied: false,
         }
       }
       const applied = event
-        ? this.dataRuntime.resetAroundFromRequest({
+        ? this.#dataRuntime.resetAroundFromRequest({
             ...toSessionResetInput(this.id, page, this.options.adapter),
             target,
             requestToken: event.requestToken,
@@ -362,7 +361,7 @@ export class MessageListSession<Row, Conversation>
           })
         : {
             applied: true,
-            segment: this.dataRuntime.resetAround({
+            segment: this.#dataRuntime.resetAround({
               ...toSessionResetInput(this.id, page, this.options.adapter),
               target,
               align: options.align,
@@ -376,12 +375,18 @@ export class MessageListSession<Row, Conversation>
 
   private async loadEdge(event: RuntimeNeedEvent): Promise<void> {
     const edge = event.type === 'needMoreBefore' ? 'before' : 'after'
-    const segment = this.dataRuntime.getSegment()
+    const segment = this.#dataRuntime.getSegment()
     const boundaryItem = edge === 'before' ? segment.items[0] : segment.items.at(-1)
     const boundaryRow = boundaryItem?.message
 
+    if (this.isStaleEvent(event)) {
+      this.#runtime.reportEdgeRequestFailure(edge, event.requestToken)
+      this.emitRequestResult({ kind: edge, status: 'stale' })
+      return
+    }
+
     if (!boundaryRow) {
-      this.runtime.reportEdgeRequestFailure(edge, event.requestToken)
+      this.#runtime.reportEdgeRequestFailure(edge, event.requestToken)
       return
     }
 
@@ -402,11 +407,11 @@ export class MessageListSession<Row, Conversation>
       if (this.isStaleEvent(event)) {
         return {
           page,
-          segment: this.dataRuntime.getSegment(),
+          segment: this.#dataRuntime.getSegment(),
           applied: false,
         }
       }
-      const currentSegment = this.dataRuntime.getSegment()
+      const currentSegment = this.#dataRuntime.getSegment()
       const input = {
         ...toSessionResetInput(this.id, page, this.options.adapter),
         hasMoreBefore: edge === 'before'
@@ -420,10 +425,35 @@ export class MessageListSession<Row, Conversation>
         anchorStatus: currentSegment.anchorStatus,
       }
       const applied = edge === 'before'
-        ? this.dataRuntime.extendBefore(input)
-        : this.dataRuntime.extendAfter(input)
+        ? this.#dataRuntime.extendBefore(input)
+        : this.#dataRuntime.extendAfter(input)
       return { page, segment: applied.segment, applied: applied.applied }
     })
+  }
+
+  private async loadEdgeFromCommand(edge: 'before' | 'after'): Promise<void> {
+    const request = this.#dataRuntime.createRequestToken(edge)
+    const event: RuntimeNeedEvent = edge === 'before'
+      ? {
+          type: 'needMoreBefore',
+          edge: 'before',
+          feedId: this.id,
+          generation: request.generation,
+          segmentRevision: request.segmentRevision,
+          requestToken: request.requestToken,
+          reason: 'command-before',
+        }
+      : {
+          type: 'needMoreAfter',
+          edge: 'after',
+          feedId: this.id,
+          generation: request.generation,
+          segmentRevision: request.segmentRevision,
+          requestToken: request.requestToken,
+          reason: 'command-after',
+        }
+
+    await this.loadEdge(event)
   }
 
   private async runRequest(
@@ -440,7 +470,7 @@ export class MessageListSession<Row, Conversation>
 
       if (!result.applied) {
         if (kind === 'before' || kind === 'after') {
-          this.runtime.reportEdgeRequestFailure(kind, event?.requestToken ?? '')
+          this.#runtime.reportEdgeRequestFailure(kind, event?.requestToken ?? '')
         }
         return this.emitRequestResult({ kind, status: 'stale' })
       }
@@ -453,7 +483,7 @@ export class MessageListSession<Row, Conversation>
       })
     } catch (error) {
       if (kind === 'before' || kind === 'after') {
-        this.runtime.reportEdgeRequestFailure(kind, event?.requestToken ?? '')
+        this.#runtime.reportEdgeRequestFailure(kind, event?.requestToken ?? '')
       }
       return this.emitRequestResult({ kind, status: 'failed', error })
     }
@@ -464,8 +494,8 @@ export class MessageListSession<Row, Conversation>
     this.applySegmentToRuntime(current)
 
     for (let guard = 0; guard < 4; guard += 1) {
-      const trimmed = this.dataRuntime.trimToBudget(
-        resolveTrimProtectKey(this.runtime, this.dataRuntime),
+      const trimmed = this.#dataRuntime.trimToBudget(
+        resolveTrimProtectKey(this.#runtime, this.#dataRuntime),
       )
 
       if (trimmed === current) {
@@ -479,39 +509,56 @@ export class MessageListSession<Row, Conversation>
 
   private applySegmentToRuntime(segment: LoadedSegment<Row>): void {
     reindexRows(this.rowsByKey, segment.items)
-    this.runtime.applyLoadedSegment(segment)
+    this.#runtime.applyLoadedSegment(segment)
   }
 
   private publishLocalResetSegment(segment: LoadedSegment<Row>): void {
-    this.overlayRequestId += 1
+    this.overlay.bumpRequestEpoch()
+    this.overlay.cancelRequest()
     this.publishSegment(segment)
-    if (this.overlayStatus.status === 'loading') {
-      this.setOverlayStatus('idle')
-    }
   }
 
   private adoptRequestToken(
     event: RuntimeNeedEvent,
     kind: DataRuntimeRequestKind,
   ): void {
-    this.dataRuntime.adoptRequestToken({
+    this.#dataRuntime.adoptRequestToken({
       requestToken: event.requestToken,
       generation: event.generation,
+      segmentRevision: event.segmentRevision,
       kind,
     })
   }
 
   private isStaleEvent(event: RuntimeNeedEvent | undefined): boolean {
-    return Boolean(event && this.dataRuntime.getSegment().generation !== event.generation)
+    if (!event) {
+      return false
+    }
+
+    const segment = this.#dataRuntime.getSegment()
+
+    return segment.generation !== event.generation ||
+      segment.segmentRevision !== event.segmentRevision
   }
 
   private isStaleRequest(
     event: RuntimeNeedEvent | undefined,
     requestGeneration: number,
+    requestSegmentRevision: number,
   ): boolean {
     return event
       ? this.isStaleEvent(event)
-      : this.dataRuntime.getSegment().generation !== requestGeneration
+      : this.isStaleSegment(requestGeneration, requestSegmentRevision)
+  }
+
+  private isStaleSegment(
+    generation: number,
+    segmentRevision: number,
+  ): boolean {
+    const segment = this.#dataRuntime.getSegment()
+
+    return segment.generation !== generation ||
+      segment.segmentRevision !== segmentRevision
   }
 
   private emitRequestResult(
@@ -530,45 +577,15 @@ export class MessageListSession<Row, Conversation>
     result: MessageListRequestResult<Row, Conversation>,
     overlayRequestId: number,
   ): void {
-    if (overlayRequestId !== this.overlayRequestId) {
-      return
-    }
-
-    this.setOverlayStatus(result.status === 'failed' ? 'error' : 'idle', result.error)
+    this.overlay.finishRequest(
+      overlayRequestId,
+      result.status === 'failed' ? 'error' : 'idle',
+      result.error,
+    )
   }
 
-  private createOverlayStatus(
-    status: MessageListOverlayStatus['status'],
-    error?: unknown,
-  ): MessageListOverlayStatus {
-    return {
-      status,
-      error,
-      retry: () => {
-        void this.bootstrap()
-      },
-    }
-  }
-
-  private setOverlayStatus(
-    status: MessageListOverlayStatus['status'],
-    error?: unknown,
-  ): void {
-    this.overlayStatus = this.createOverlayStatus(status, error)
-    this.viewState = {
-      overlayStatus: this.overlayStatus,
-    }
+  private notifyViewListeners(): void {
     for (const listener of this.viewListeners) listener()
-  }
-
-  private startOverlayRequest(): number {
-    this.overlayRequestId += 1
-    this.setOverlayStatus('loading')
-    return this.overlayRequestId
-  }
-
-  private isStaleOverlayRequest(overlayRequestId: number): boolean {
-    return overlayRequestId !== this.overlayRequestId
   }
 
   private touch(): void {

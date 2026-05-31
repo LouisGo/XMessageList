@@ -7,6 +7,7 @@ export type DataRuntimeRequestKind =
 export type DataRuntimeRequestToken = {
   requestToken: string
   generation: number
+  segmentRevision: number
   kind: DataRuntimeRequestKind
 }
 
@@ -25,13 +26,16 @@ export class DataRuntimeRequestTokenRegistry {
   create(
     kind: DataRuntimeRequestKind,
     generation: number,
+    segmentRevision: number,
   ): DataRuntimeRequestToken {
     const request = {
       requestToken: `${this.feedId}:${kind}:${this.requestSequence + 1}`,
       generation,
+      segmentRevision,
       kind,
     }
     this.requestSequence += 1
+    this.supersedeConflictingKinds(request.kind)
     this.pendingRequests.set(request.requestToken, request)
     this.currentRequestByKind.set(request.kind, request.requestToken)
     return request
@@ -40,17 +44,16 @@ export class DataRuntimeRequestTokenRegistry {
   adopt(
     request: DataRuntimeRequestToken,
     generation: number,
+    segmentRevision: number,
   ): void {
-    if (request.generation !== generation) {
+    if (
+      request.generation !== generation ||
+      request.segmentRevision !== segmentRevision
+    ) {
       return
     }
 
-    if (request.kind === 'around') {
-      this.currentRequestByKind.delete('latest')
-    }
-    if (request.kind === 'latest') {
-      this.currentRequestByKind.delete('around')
-    }
+    this.supersedeConflictingKinds(request.kind)
     this.pendingRequests.set(request.requestToken, request)
     this.currentRequestByKind.set(request.kind, request.requestToken)
   }
@@ -59,6 +62,7 @@ export class DataRuntimeRequestTokenRegistry {
     requestToken: string,
     expectedKind: DataRuntimeRequestKind,
     generation: number,
+    segmentRevision: number,
   ): DataRuntimeRequestToken | null {
     const request = this.pendingRequests.get(requestToken)
     // 只删除被消费的 token；如果它已被更新 token 替代，current pointer 必须保留。
@@ -74,6 +78,7 @@ export class DataRuntimeRequestTokenRegistry {
     if (
       request.kind !== expectedKind ||
       request.generation !== generation ||
+      request.segmentRevision !== segmentRevision ||
       !isCurrent
     ) {
       if (isCurrent) {
@@ -89,5 +94,15 @@ export class DataRuntimeRequestTokenRegistry {
   reset(): void {
     this.pendingRequests.clear()
     this.currentRequestByKind.clear()
+  }
+
+  private supersedeConflictingKinds(kind: DataRuntimeRequestKind): void {
+    if (kind !== 'latest' && kind !== 'around') {
+      return
+    }
+
+    this.currentRequestByKind.delete(kind === 'latest' ? 'around' : 'latest')
+    this.currentRequestByKind.delete('before')
+    this.currentRequestByKind.delete('after')
   }
 }
