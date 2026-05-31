@@ -1,9 +1,29 @@
 export { createMessageListRuntime } from './runtime/index'
 export {
+  createMessageListManager,
+} from './manager/index'
+export {
+  MessageListProvider,
   MessageList,
+  useMessageListController,
   useMessageListSelector,
   useMessageListSnapshot,
 } from './react/index'
+export type {
+  MessageListAdapter,
+  MessageListAnchor,
+  MessageListController,
+  MessageListConversationId,
+  MessageListManager,
+  MessageListManagerOptions,
+  MessageListObservationHandler,
+  MessageListOverlayStatus,
+  MessageListPage,
+  MessageListRequestContext,
+  MessageListRequestResult,
+  MessageListSessionContext,
+  MessageListViewState,
+} from './manager/index'
 export type {
   DestinationSettledEvent,
   LoadedSegment,
@@ -39,9 +59,12 @@ export type {
   ViewportVisibleRange,
 } from './runtime/index'
 export type {
+  EmptySlotInput,
   EdgeSlotInput,
   MessageListCommands,
   MessageListOverlayInput,
   MessageListProps,
+  MessageListRenderRowInput,
+  OverlayStatusInput,
   ScrollToLatestSlotInput,
 } from './react/index'

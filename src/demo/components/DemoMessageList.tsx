@@ -7,7 +7,7 @@ import {
   useCallback,
   useState,
 } from 'react'
-import { MessageList, type MessageDataItem } from '../../index'
+import { MessageList, type MessageListRenderRowInput } from '../../index'
 import type { DemoMessage } from '../data/demoData'
 import { useDemoFeedRuntimeCache } from '../runtime/useDemoFeedRuntimeCache'
 import {
@@ -48,8 +48,9 @@ export function DemoMessageListContent({
     reactToMessage,
   } = scenario
 
-  const renderDemoItem = useCallback((item: MessageDataItem<DemoMessage>) => {
-    const message = item.message
+  const renderDemoItem = useCallback(({
+    row: message,
+  }: MessageListRenderRowInput<DemoMessage>) => {
 
     if (!message) {
       return (

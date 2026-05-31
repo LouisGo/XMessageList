@@ -4,11 +4,14 @@
 
 React adapter 是 projection 层：
 
-- 使用 `useMessageListSnapshot` / `useMessageListSelector` 读取 runtime snapshot。
+- 默认通过 `MessageListProvider` / `useMessageListController(id)` 获取应用级 manager session controller。
+- 使用 `useMessageListSnapshot` 读取 controller 内的 runtime snapshot。
 - 渲染固定 DOM skeleton。
 - 给每个 row 注册 DOM ref。
 - 在 layout effect 中发送 commit ack。
-- 渲染 slots：before edge、after edge、scroll-to-latest、overlay。
+- 渲染 slots：before status、after status、top placeholder、overlay status、empty、scroll-to-latest。
+
+React adapter 不发起业务请求，不合并请求结果，不保存 anchor，也不实现已读回执。上述职责属于 manager/session adapter。
 
 ## External Store
 
@@ -52,18 +55,20 @@ Row wrapper 可以：
 
 Slots 接收 runtime semantic state，不接收 raw DOM metrics：
 
-- `renderBeforeEdge(input)`
-- `renderAfterEdge(input)`
+- `renderBeforeStatus(input)`
+- `renderAfterStatus(input)`
+- `renderTopPlaceholder()`
+- `renderOverlayStatus(input)`
+- `renderEmpty(input)`
 - `renderScrollToLatest(input)`
-- `renderOverlay(input)`
 
-`renderOverlay(input)` 接收：
+`renderOverlayStatus(input)` 接收：
 
+- `status` / `retry` / `error`：manager view state。
 - `snapshot`：当前 `MessageListSnapshot`。
 - `observation`：最近一次 `ViewportObservationChangedEvent`，无事件时为 `null`。
-- `commands`：仅包含 `scrollToLatest()` 和 `scrollToMessage(target, options?)`。
 
-`renderBeforeEdge` / `renderAfterEdge` 的 `retry()` 只能回调 adapter-private `retryEdgeRequest(edge)`；slot 不持有 request token，不直接请求 SDK。
+`renderBeforeStatus` / `renderAfterStatus` 的 `retry()` 只能回调 adapter-private `retryEdgeRequest(edge)`；slot 不持有 request token，不直接请求 SDK。
 
 Slots 禁止：
 
@@ -84,16 +89,11 @@ Slots 禁止：
 
 ## App Integration
 
-App 只通过 runtime events 接入：
+App 默认通过 manager adapter 接入：
 
-- `needMoreBefore`
-- `needMoreAfter`
-- `needLatestMessages`
-- `needMessagesAround`
-- `destinationSettled`
-- `segmentTrimPressure`
-- `viewportAnchorChanged`
-- `viewportObservationChanged`
-- diagnostics
+- `adapter.row`：业务 row key、anchor、version、kind。
+- `adapter.request`：`loadLatest` / `loadBefore` / `loadAfter` / `loadAround`。
+- `adapter.memory`：可选的 anchor load/save。
+- `adapter.readReceipt`：可选的批量已读回执。
 
-App 对 `needMoreBefore` / `needMoreAfter` 必须把 runtime event 的 `requestToken` 交给 data runtime 采用；请求失败时用 `reportEdgeRequestFailure(edge, requestToken)` ack。App 不通过 ref 拿 scroll container 来补逻辑。
+Manager 将 runtime semantic need events 接到 adapter request，负责 request token、stale response、failure ack、segment publish 和 trim。App 不通过 ref 拿 scroll container 来补逻辑。

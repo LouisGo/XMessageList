@@ -5,7 +5,7 @@
 
 ## Package Entries
 
-- `src/index.ts` 是 package 根出口，只暴露 `MessageList`、hooks、runtime facade 和 public contract types。
+- `src/index.ts` 是 package 根出口，只暴露 manager entry、`MessageList`、React provider/hooks、runtime facade 和 public contract types。
 - `src/data.ts` 是 `x-message-list/data` 子路径出口，只暴露 data runtime 接入合同。
 - 内部目录不作为 public deep import 承诺；业务接入只能依赖 package exports。
 
@@ -30,16 +30,28 @@
 - `data/`：data runtime，负责 merge、dedupe、identity remap、trim 和 request token。
 - `shared/`：跨 runtime 域复用的无状态 helper；不能持有 controller orchestration 或 DOM ownership。
 
+## Manager
+
+`src/manager` 是应用级会话编排层：
+
+- `manager.ts`：`createMessageListManager` 和 keepAlive session retention。
+- `session.ts`：单会话 viewport runtime、data runtime、request bridge、memory restore 和 controller facade。
+- `readReceipt.ts`：基于 viewport observation 的批量已读 worker，不经过 React state。
+- `rowAdapter.ts`：业务 row 到 runtime item/anchor 的归一化。
+- `types.ts` / `index.ts`：manager public contract types 和 exports。
+
+Manager 可以依赖 runtime public/data barrels；runtime 不能反向依赖 manager。
+
 ## React Adapter
 
 `src/react` 是 React projection adapter：
 
-- `components/`：projection DOM shell、row wrapper、commit ack 和 event bridge。
+- `components/`：provider lookup、projection DOM shell、row wrapper、commit ack 和 event bridge。
 - `hooks/`：`useSyncExternalStore` snapshot/selector hooks。
 - `scrollbar/`：custom scrollbar overlay、geometry、metric reading 和 styles。
 - `types.ts` / `index.ts`：public adapter types 和 exports。
 
-React adapter 不拥有 scroll correction、edge latch 或 anchor persistence。
+React adapter 不拥有 request、data merge、read receipt、scroll correction、edge latch 或 anchor persistence。
 custom scrollbar overlay 只可镜像 native metrics，并通过 adapter-private runtime direct-scroll API 写入。
 
 ## Demo And E2E

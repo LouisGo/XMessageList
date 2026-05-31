@@ -35,7 +35,7 @@ describe('useDemoMessageScenario feed switching', () => {
       return (
         <MessageList
           runtime={nextScenario.activeRuntime}
-          renderRow={(item) => <span>{item.message?.id}</span>}
+          renderRow={({ row }) => <span>{row?.id}</span>}
           renderBeforeEdge={() =>
             nextScenario.loadingBefore ? (
               <div data-testid="before-loading" />
@@ -254,7 +254,7 @@ function createScenarioHarness(runtimeCache: DemoFeedRuntimeCache): {
           'message-viewport',
           nextScenario.feedLoading ? 'session-loading' : '',
         ].filter(Boolean).join(' ')}
-        renderRow={(item) => <span>{item.message?.id}</span>}
+        renderRow={({ row }) => <span>{row?.id}</span>}
         renderBeforeEdge={() =>
           nextScenario.loadingBefore ? (
             <div data-testid="before-loading" />

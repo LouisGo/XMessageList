@@ -24,7 +24,7 @@ describe('MessageList React adapter', () => {
       root.render(
         <MessageList
           runtime={runtime}
-          renderRow={(nextItem) => <span>{nextItem.message}</span>}
+          renderRow={({ row }) => <span>{row}</span>}
           renderBeforeEdge={() => <div data-testid="before-slot" />}
           renderAfterEdge={() => <div data-testid="after-slot" />}
           renderScrollToLatest={({ scrollToLatest }) => (
@@ -80,7 +80,7 @@ describe('MessageList React adapter', () => {
       root.render(
         <MessageList
           runtime={runtime}
-          renderRow={(nextItem) => <span>{nextItem.message}</span>}
+          renderRow={({ row }) => <span>{row}</span>}
           renderScrollToLatest={({ scrollToLatest }) => (
             <button type="button" onClick={scrollToLatest}>Latest</button>
           )}
@@ -120,7 +120,7 @@ describe('MessageList React adapter', () => {
       root.render(
         <MessageList
           runtime={runtime}
-          renderRow={(nextItem) => <span>{nextItem.message}</span>}
+          renderRow={({ row }) => <span>{row}</span>}
           onViewportAnchorChange={(event) => anchorEvents.push(event)}
           onViewportObservationChange={(event) => {
             observationEvents.push(event)
@@ -161,7 +161,7 @@ describe('MessageList React adapter', () => {
       root.render(
         <MessageList
           runtime={runtime}
-          renderRow={(nextItem) => <span>{nextItem.message}</span>}
+          renderRow={({ row }) => <span>{row}</span>}
           renderOverlay={(input) => {
             overlayInputs.push(input)
             return <button type="button" onClick={() => input.commands.scrollToMessage(target)} />
@@ -204,7 +204,9 @@ describe('MessageList React adapter', () => {
       ['row-2', 0],
     ])
     const renderCounts = new Map<string, number>()
-    const createRenderRow = () => (nextItem: MessageDataItem<string>) => {
+    const createRenderRow = () => ({ item: nextItem }: {
+      item: MessageDataItem<string>
+    }) => {
       renderCounts.set(nextItem.key, (renderCounts.get(nextItem.key) ?? 0) + 1)
       return <span>{versions.get(nextItem.key)}</span>
     }
@@ -251,7 +253,7 @@ describe('MessageList React adapter', () => {
         <StrictMode>
           <MessageList
             runtime={runtime}
-            renderRow={(nextItem) => <span>{nextItem.message}</span>}
+            renderRow={({ row }) => <span>{row}</span>}
           />
         </StrictMode>,
       )
@@ -293,7 +295,7 @@ describe('MessageList React adapter', () => {
       root.render(
         <MessageList
           runtime={runtimeA}
-          renderRow={(nextItem) => <span>{nextItem.message}</span>}
+          renderRow={({ row }) => <span>{row}</span>}
         />,
       )
     })
@@ -302,7 +304,7 @@ describe('MessageList React adapter', () => {
       root.render(
         <MessageList
           runtime={runtimeB}
-          renderRow={(nextItem) => <span>{nextItem.message}</span>}
+          renderRow={({ row }) => <span>{row}</span>}
         />,
       )
     })
@@ -329,7 +331,7 @@ describe('MessageList React adapter', () => {
       root.render(
         <MessageList
           runtime={runtime}
-          renderRow={(nextItem) => <span>{nextItem.message}</span>}
+          renderRow={({ row }) => <span>{row}</span>}
           scrollbar="custom"
         />,
       )
@@ -394,7 +396,7 @@ describe('MessageList React adapter', () => {
       root.render(
         <MessageList
           runtime={runtime}
-          renderRow={(nextItem) => <span>{nextItem.message}</span>}
+          renderRow={({ row }) => <span>{row}</span>}
           scrollbar="custom"
         />,
       )
@@ -472,6 +474,7 @@ describe('MessageList React adapter', () => {
       root.unmount()
     })
   })
+
 })
 
 function item(key: string, feedId = 'feed-a'): MessageDataItem<string> {

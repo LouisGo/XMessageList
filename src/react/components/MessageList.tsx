@@ -1,6 +1,19 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { getMessageListAdapterRuntime } from '../../runtime/internal'
-import type { ViewportObservationChangedEvent } from '../../runtime/index'
+import type {
+  MessageDataItem,
+  ViewportObservationChangedEvent,
+} from '../../runtime/index'
+import type {
+  MessageListController,
+  MessageListViewState,
+} from '../../manager/index'
 import { MessageFlow } from './MessageFlow'
 import { MessageListScrollbarOverlay } from '../scrollbar/MessageListScrollbarOverlay'
 import { useMessageListSnapshot } from '../hooks/useMessageListSnapshot'
@@ -8,32 +21,77 @@ import { ProjectionCommitAck } from './ProjectionCommitAck'
 import { RuntimeEventBridge } from './RuntimeEventBridge'
 import type { MessageListProps } from '../types'
 
+const noopSubscribe = () => () => undefined
+const idleViewState: MessageListViewState = {
+  overlayStatus: {
+    status: 'idle',
+    retry: () => undefined,
+  },
+}
+
 /**
  * React 壳只投影 runtime snapshot、注册 DOM refs 并回传 commit ack；滚动和测量语义由 runtime 拥有。
  */
 export function MessageList<TMessage, TOptimistic>({
+  controller,
   runtime,
   className,
   style,
   renderAfterEdge,
+  renderAfterStatus,
   renderBeforeEdge,
+  renderBeforeStatus,
+  renderEmpty,
   renderOverlay,
+  renderOverlayStatus,
   renderRow,
   renderScrollToLatest,
+  renderTopPlaceholder,
   getRowRenderVersion,
   onViewportAnchorChange,
   onViewportObservationChange,
   scrollbar = 'native',
 }: MessageListProps<TMessage, TOptimistic>) {
-  const snapshot = useMessageListSnapshot(runtime)
-  const adapterRuntime = getMessageListAdapterRuntime(runtime)
+  const resolvedRuntime = controller?.runtime ?? runtime
+
+  if (!resolvedRuntime) {
+    throw new Error('MessageList requires either controller or runtime.')
+  }
+
+  const snapshot = useMessageListSnapshot(resolvedRuntime)
+  const viewState = useMessageListViewState(controller)
+  const adapterRuntime = getMessageListAdapterRuntime(resolvedRuntime)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [observation, setObservation] =
     useState<ViewportObservationChangedEvent | null>(null)
   const commands = useMemo(() => ({
-    scrollToLatest: () => runtime.scrollToLatest(),
-    scrollToMessage: runtime.scrollToMessage.bind(runtime),
-  }), [runtime])
+    scrollToLatest: controller
+      ? controller.commands.scrollToLatest
+      : () => resolvedRuntime.scrollToLatest(),
+    scrollToMessage: controller
+      ? controller.commands.scrollToMessage
+      : resolvedRuntime.scrollToMessage.bind(resolvedRuntime),
+  }), [controller, resolvedRuntime])
+  const reload = useCallback(() => {
+    if (controller) {
+      controller.commands.reloadLatest()
+      return
+    }
+
+    resolvedRuntime.scrollToLatest()
+  }, [controller, resolvedRuntime])
+  const resolveRowRenderVersion = useMemo(() => {
+    if (getRowRenderVersion) {
+      return getRowRenderVersion
+    }
+
+    if (controller) {
+      return (item: MessageDataItem<TMessage, TOptimistic>) =>
+        controller.getRowRenderVersion(item as MessageDataItem<TMessage>)
+    }
+
+    return undefined
+  }, [controller, getRowRenderVersion])
   const rootStyle = useMemo(() => ({
     position: 'relative' as const,
     ...style,
@@ -41,12 +99,13 @@ export function MessageList<TMessage, TOptimistic>({
   const attachContainer = useCallback((element: HTMLDivElement | null) => {
     containerRef.current = element
     if (element) {
-      runtime.attachScrollContainer(element)
+      resolvedRuntime.attachScrollContainer(element)
       return
     }
 
-    runtime.detachScrollContainer()
-  }, [runtime])
+    resolvedRuntime.detachScrollContainer()
+  }, [resolvedRuntime])
+  const observesOverlay = Boolean(renderOverlay ?? renderOverlayStatus)
 
   return (
     <div
@@ -61,29 +120,44 @@ export function MessageList<TMessage, TOptimistic>({
         data-message-scroll-container
       >
         <RuntimeEventBridge
-          runtime={runtime}
+          runtime={resolvedRuntime}
           onViewportAnchorChange={onViewportAnchorChange}
           onViewportObservationChange={onViewportObservationChange}
-          onViewportObservationForOverlay={renderOverlay ? setObservation : undefined}
+          onViewportObservationForOverlay={observesOverlay ? setObservation : undefined}
         />
         <MessageFlow
           runtime={adapterRuntime}
           snapshot={snapshot}
           renderRow={renderRow}
-          getRowRenderVersion={getRowRenderVersion}
+          getRowRenderVersion={resolveRowRenderVersion}
+          renderBeforeStatus={renderBeforeStatus}
           renderBeforeEdge={renderBeforeEdge}
+          renderAfterStatus={renderAfterStatus}
           renderAfterEdge={renderAfterEdge}
+          renderTopPlaceholder={renderTopPlaceholder}
+          renderEmpty={renderEmpty}
+          reload={reload}
         />
         {renderScrollToLatest?.({
           visible: snapshot.bottomLockState === 'UNLOCKED',
-          scrollToLatest: () => runtime.scrollToLatest(),
+          scrollToLatest: commands.scrollToLatest,
         })}
         <ProjectionCommitAck
           runtime={adapterRuntime}
           token={snapshot.commitToken}
         />
       </div>
-      {renderOverlay ? (
+      {renderOverlayStatus ? (
+        <div data-message-list-overlay-layer>
+          <div data-message-list-overlay-content>
+            {renderOverlayStatus({
+              ...viewState.overlayStatus,
+              snapshot,
+              observation,
+            })}
+          </div>
+        </div>
+      ) : renderOverlay ? (
         <div data-message-list-overlay-layer>
           <div data-message-list-overlay-content>
             {renderOverlay({ snapshot, observation, commands })}
@@ -101,4 +175,19 @@ export function MessageList<TMessage, TOptimistic>({
         : null}
     </div>
   )
+}
+
+function useMessageListViewState(
+  controller: MessageListController<unknown> | undefined,
+): MessageListViewState {
+  const subscribe = useCallback((listener: () => void) => {
+    return controller
+      ? controller.subscribeView(listener)
+      : noopSubscribe()
+  }, [controller])
+  const getSnapshot = useCallback(() => {
+    return controller?.getViewState() ?? idleViewState
+  }, [controller])
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }

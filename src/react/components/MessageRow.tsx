@@ -1,11 +1,14 @@
 import { memo, type ReactNode, useCallback } from 'react'
 import type { MessageDataItem } from '../../runtime/index'
 import type { MessageListAdapterRuntime } from '../../runtime/internal'
+import type { MessageListRenderRowInput } from '../types'
 
 export type MessageRowProps<TMessage, TOptimistic> = {
   item: MessageDataItem<TMessage, TOptimistic>
   runtime: MessageListAdapterRuntime<TMessage, TOptimistic>
-  renderRow: (item: MessageDataItem<TMessage, TOptimistic>) => ReactNode
+  renderRow: (
+    input: MessageListRenderRowInput<TMessage, TOptimistic>,
+  ) => ReactNode
   rowRenderVersion?: unknown
   usesRowRenderVersion: boolean
 }
@@ -28,7 +31,10 @@ function MessageRowInner<TMessage, TOptimistic>({
       data-message-stable-id={item.identity?.stableId}
       data-message-server-id={item.identity?.serverId}
     >
-      {renderRow(item)}
+      {renderRow({
+        row: item.message as TMessage,
+        item,
+      })}
     </div>
   )
 }

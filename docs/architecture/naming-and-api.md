@@ -81,6 +81,9 @@ Canonical names：
 | 名称 | 类别 | 说明 |
 | --- | --- | --- |
 | `MessageList` | React component | 唯一公开组件名 |
+| `createMessageListManager` | function | 应用级 manager 入口 |
+| `MessageListProvider` | React component | 注入应用级 manager |
+| `useMessageListController` | hook | 按 conversation id 解析 session controller |
 | `MessageListProps` | React props | 组件 props 类型 |
 | `MessageListCommands` | slot command object | 只暴露命名命令，不暴露 generic dispatch |
 | `useMessageListSnapshot` | hook | 读取稳定 snapshot |
@@ -96,28 +99,36 @@ Canonical names：
 
 ```ts
 type MessageListProps<TMessage = unknown, TOptimistic = unknown> = {
-  runtime: MessageListRuntime<TMessage, TOptimistic>;
-  renderRow: (item: MessageDataItem<TMessage, TOptimistic>) => ReactNode;
+  controller?: MessageListController<TMessage>;
+  runtime?: MessageListRuntime<TMessage, TOptimistic>;
+  renderRow: (input: {
+    row: TMessage;
+    item: MessageDataItem<TMessage, TOptimistic>;
+  }) => ReactNode;
   getRowRenderVersion?: (
     item: MessageDataItem<TMessage, TOptimistic>,
   ) => unknown;
   className?: string;
   style?: CSSProperties;
-  renderBeforeEdge?: (input: EdgeSlotInput) => ReactNode;
-  renderAfterEdge?: (input: EdgeSlotInput) => ReactNode;
+  renderBeforeStatus?: (input: EdgeSlotInput) => ReactNode;
+  renderAfterStatus?: (input: EdgeSlotInput) => ReactNode;
+  renderTopPlaceholder?: () => ReactNode;
+  renderOverlayStatus?: (input: OverlayStatusInput) => ReactNode;
+  renderEmpty?: (input: EmptySlotInput) => ReactNode;
   renderScrollToLatest?: (input: ScrollToLatestSlotInput) => ReactNode;
-  renderOverlay?: (input: MessageListOverlayInput) => ReactNode;
   onViewportAnchorChange?: (event: ViewportAnchorChangedEvent) => void;
   onViewportObservationChange?: (event: ViewportObservationChangedEvent) => void;
   scrollbar?: 'native' | 'custom';
 };
 ```
 
-`renderOverlay(input)` 接收 `{ snapshot, observation, commands }`。`commands` 只允许 `scrollToLatest()` 和 `scrollToMessage(target, options?)`，不暴露 generic dispatch 或 adapter-private direct scroll。
+`controller` 是应用接入 SOP；`runtime` 仅保留给底层 runtime 测试和高级嵌入。`renderOverlayStatus(input)` 接收 manager view state 加 `snapshot` / `observation`，不暴露 generic dispatch 或 adapter-private direct scroll。
 
 命名取舍：
 
 - 使用 `renderRow`，不沿用 `renderMessage`，因为 row 可以是 message、date separator、system、deleted placeholder 或 permission fallback。
+- 使用 `renderBeforeStatus` / `renderAfterStatus`，因为 slot 呈现的是 edge semantic status，不是触发器本身。
+- 使用 `renderTopPlaceholder`，因为它位于第一条消息之前并跟随文档流自然布局。
 - 使用 `renderScrollToLatest`，不把 public slot 命名为 `renderFollowBottom`；`bottom follow` 是内部状态机语义，用户看到的是“回到最新消息”。
 - callback 使用 `onViewportAnchorChange` 和 `onViewportObservationChange`，因为事件内容描述的是可视区域，不是 data segment。
 

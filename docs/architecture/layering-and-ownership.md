@@ -6,6 +6,10 @@
 Main / Bridge
   resolves message identity and server query contracts
 
+MessageList Manager
+  owns per-conversation session lifecycle, adapter routing, request bridge,
+  memory restore, read receipt workers and keepAlive retention
+
 Renderer Data Runtime
   owns loaded segment data, merge/reset/trim policy, request dedupe
 
@@ -13,10 +17,11 @@ Viewport Runtime
   owns scroll container, DOM refs, measurement, visual anchors, transactions
 
 React Adapter
-  projects snapshot, registers DOM refs, renders slots, sends commit ack
+  resolves controller from provider, projects snapshot, registers DOM refs,
+  renders slots, sends commit ack
 
 App / Demo Host
-  owns feed activation, runtime cache, fake/real data source, logging UI
+  owns active conversation selection, manager construction, adapters and logging UI
 ```
 
 对外命名以 `MessageList` 为准：公开组件是 `MessageList`，公开 runtime facade 是 `MessageListRuntime`，公开 snapshot 是 `MessageListSnapshot`。本文件继续使用 `Viewport Runtime` 描述内部所有权，因为 scroll container、visual anchor、measurement 和 correction 都是视口运行时职责。
@@ -35,6 +40,23 @@ Main / Bridge 不负责：
 - 推断 visual anchor。
 - 决定 DOM 是否 trim。
 - 读写 renderer scroll container。
+
+## MessageList Manager
+
+MessageList Manager 负责：
+
+- 按 conversation id 懒创建和复用 session controller。
+- 通过 app-level adapter 路由 normal / encrypted / favorite 等业务差异。
+- 接收 viewport runtime semantic need events，并调用 adapter request。
+- 处理 request token、stale response、failure ack、segment publish 和 trim。
+- 管理 memory restore/save anchor 与 read receipt batching。
+- 按 keepAlive 策略或显式 API 销毁 session。
+
+MessageList Manager 不负责：
+
+- 渲染 DOM。
+- 读取 row DOM 或 scrollTop。
+- 在 React component unmount 时销毁会话状态。
 
 ## Renderer Data Runtime
 

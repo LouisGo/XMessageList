@@ -6,19 +6,32 @@ import type { EdgeSlotInput, MessageListProps } from '../types'
 
 export type MessageFlowProps<TMessage, TOptimistic> = Pick<
   MessageListProps<TMessage, TOptimistic>,
-  'getRowRenderVersion' | 'renderAfterEdge' | 'renderBeforeEdge' | 'renderRow'
+  | 'getRowRenderVersion'
+  | 'renderAfterEdge'
+  | 'renderAfterStatus'
+  | 'renderBeforeEdge'
+  | 'renderBeforeStatus'
+  | 'renderEmpty'
+  | 'renderRow'
+  | 'renderTopPlaceholder'
 > & {
   runtime: MessageListAdapterRuntime<TMessage, TOptimistic>
   snapshot: MessageListSnapshot<TMessage, TOptimistic>
+  reload: () => void
 }
 
 export function MessageFlow<TMessage, TOptimistic>({
   runtime,
   snapshot,
   renderAfterEdge,
+  renderAfterStatus,
   renderBeforeEdge,
+  renderBeforeStatus,
+  renderEmpty,
+  renderTopPlaceholder,
   getRowRenderVersion,
   renderRow,
+  reload,
 }: MessageFlowProps<TMessage, TOptimistic>) {
   const registerFlow = useCallback((element: HTMLDivElement | null) => {
     runtime.registerMessageFlowElement(element)
@@ -40,25 +53,32 @@ export function MessageFlow<TMessage, TOptimistic>({
       data-short-align={snapshot.segmentMeta.shortSegmentAlignment}
     >
       <div ref={registerBefore} data-edge-trigger="before">
-        {renderBeforeEdge?.(
+        {(renderBeforeStatus ?? renderBeforeEdge)?.(
           toEdgeSlotInput(
             snapshot.edgeState.before.status,
             () => runtime.retryEdgeRequest('before'),
           ),
         )}
       </div>
-      {snapshot.items.map((item) => (
-        <MessageRow
-          key={item.key}
-          item={item}
-          runtime={runtime}
-          renderRow={renderRow}
-          rowRenderVersion={getRowRenderVersion?.(item)}
-          usesRowRenderVersion={Boolean(getRowRenderVersion)}
-        />
-      ))}
+      {renderTopPlaceholder ? (
+        <div data-message-top-placeholder>
+          {renderTopPlaceholder()}
+        </div>
+      ) : null}
+      {snapshot.items.length === 0
+        ? renderEmpty?.({ reload })
+        : snapshot.items.map((item) => (
+            <MessageRow
+              key={item.key}
+              item={item}
+              runtime={runtime}
+              renderRow={renderRow}
+              rowRenderVersion={getRowRenderVersion?.(item)}
+              usesRowRenderVersion={Boolean(getRowRenderVersion)}
+            />
+          ))}
       <div ref={registerAfter} data-edge-trigger="after">
-        {renderAfterEdge?.(
+        {(renderAfterStatus ?? renderAfterEdge)?.(
           toEdgeSlotInput(
             snapshot.edgeState.after.status,
             () => runtime.retryEdgeRequest('after'),
