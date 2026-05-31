@@ -169,7 +169,11 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       resizeObserver?.disconnect()
       mutationObserver?.disconnect()
     }
-  }, [containerRef, projectionRevision, refresh, scheduleHide, showScrollbar])
+  }, [containerRef, refresh, showScrollbar, scheduleHide])
+
+  useLayoutEffect(() => {
+    refresh()
+  }, [projectionRevision, refresh])
 
   useLayoutEffect(() => {
     return () => {

@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import type { MessageListSnapshot } from '../../core/runtime/index'
 import type { MessageListAdapterRuntime } from '../../core/runtime/internal'
 import { MessageRow } from './MessageRow'
@@ -43,6 +43,22 @@ export function MessageFlow<TMessage, TOptimistic>({
   const registerBottom = useCallback((element: HTMLDivElement | null) => {
     runtime.registerBottomMarkerElement(element)
   }, [runtime])
+  const retryBefore = useCallback(
+    () => runtime.retryEdgeRequest('before'),
+    [runtime],
+  )
+  const retryAfter = useCallback(
+    () => runtime.retryEdgeRequest('after'),
+    [runtime],
+  )
+  const beforeSlotInput = useMemo(
+    () => toEdgeSlotInput(snapshot.edgeState.before.status, retryBefore),
+    [snapshot.edgeState.before.status, retryBefore],
+  )
+  const afterSlotInput = useMemo(
+    () => toEdgeSlotInput(snapshot.edgeState.after.status, retryAfter),
+    [snapshot.edgeState.after.status, retryAfter],
+  )
 
   return (
     <div
@@ -51,12 +67,7 @@ export function MessageFlow<TMessage, TOptimistic>({
       data-short-align={snapshot.segmentMeta.shortSegmentAlignment}
     >
       <div ref={registerBefore} data-edge-trigger="before">
-        {renderBeforeStatus?.(
-          toEdgeSlotInput(
-            snapshot.edgeState.before.status,
-            () => runtime.retryEdgeRequest('before'),
-          ),
-        )}
+        {renderBeforeStatus?.(beforeSlotInput)}
       </div>
       {renderTopPlaceholder ? (
         <div data-message-top-placeholder>
@@ -76,12 +87,7 @@ export function MessageFlow<TMessage, TOptimistic>({
             />
           ))}
       <div ref={registerAfter} data-edge-trigger="after">
-        {renderAfterStatus?.(
-          toEdgeSlotInput(
-            snapshot.edgeState.after.status,
-            () => runtime.retryEdgeRequest('after'),
-          ),
-        )}
+        {renderAfterStatus?.(afterSlotInput)}
       </div>
       <div ref={registerBottom} data-bottom-marker />
     </div>

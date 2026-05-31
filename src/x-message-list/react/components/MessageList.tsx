@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -29,10 +30,7 @@ const idleViewState: MessageListViewState = {
   },
 }
 
-/**
- * React 壳只投影 runtime snapshot、注册 DOM refs 并回传 commit ack；滚动和测量语义由 runtime 拥有。
- */
-export function MessageList<TMessage, TOptimistic>({
+function MessageListInner<TMessage, TOptimistic>({
   session,
   className,
   style,
@@ -48,7 +46,10 @@ export function MessageList<TMessage, TOptimistic>({
   onViewportObservationChange,
   scrollbar = 'native',
 }: MessageListProps<TMessage, TOptimistic>) {
-  const sessionInternals = getMessageListSessionInternals(session)
+  const sessionInternals = useMemo(
+    () => getMessageListSessionInternals(session),
+    [session],
+  )
   const resolvedRuntime = sessionInternals.runtime
   const snapshot = useMessageListSnapshot(resolvedRuntime)
   const viewState = useMessageListViewState(session)
@@ -61,6 +62,13 @@ export function MessageList<TMessage, TOptimistic>({
   const reload = useCallback(() => {
     session.commands.reloadLatest()
   }, [session])
+  const scrollToLatestInput = useMemo(
+    () => ({
+      visible: snapshot.bottomLockState === 'UNLOCKED',
+      scrollToLatest: commands.scrollToLatest,
+    }),
+    [snapshot.bottomLockState, commands.scrollToLatest],
+  )
   const resolveRowRenderVersion = useMemo(() => {
     if (getRowRenderVersion) {
       return getRowRenderVersion
@@ -113,10 +121,7 @@ export function MessageList<TMessage, TOptimistic>({
           renderEmpty={renderEmpty}
           reload={reload}
         />
-        {renderScrollToLatest?.({
-          visible: snapshot.bottomLockState === 'UNLOCKED',
-          scrollToLatest: commands.scrollToLatest,
-        })}
+        {renderScrollToLatest?.(scrollToLatestInput)}
         <ProjectionCommitAck
           runtime={adapterRuntime}
           token={snapshot.commitToken}
@@ -143,6 +148,50 @@ export function MessageList<TMessage, TOptimistic>({
     </div>
   )
 }
+
+
+
+function areMessageListPropsEqual<TMessage, TOptimistic>(
+  prev: MessageListProps<TMessage, TOptimistic>,
+  next: MessageListProps<TMessage, TOptimistic>,
+): boolean {
+  if (prev.session !== next.session) return false
+  if (prev.className !== next.className) return false
+  if (prev.scrollbar !== next.scrollbar) return false
+
+  if (prev.style !== next.style) {
+    if (!prev.style || !next.style) return false
+    const prevKeys = Object.keys(prev.style)
+    const nextKeys = Object.keys(next.style)
+    if (prevKeys.length !== nextKeys.length) return false
+    for (const key of prevKeys) {
+      if (
+        (prev.style as Record<string, unknown>)[key] !==
+        (next.style as Record<string, unknown>)[key]
+      ) {
+        return false
+      }
+    }
+  }
+
+  if (prev.renderRow !== next.renderRow) return false
+  if (prev.renderBeforeStatus !== next.renderBeforeStatus) return false
+  if (prev.renderAfterStatus !== next.renderAfterStatus) return false
+  if (prev.renderEmpty !== next.renderEmpty) return false
+  if (prev.renderOverlayStatus !== next.renderOverlayStatus) return false
+  if (prev.renderScrollToLatest !== next.renderScrollToLatest) return false
+  if (prev.renderTopPlaceholder !== next.renderTopPlaceholder) return false
+  if (prev.getRowRenderVersion !== next.getRowRenderVersion) return false
+  if (prev.onViewportAnchorChange !== next.onViewportAnchorChange) return false
+  if (prev.onViewportObservationChange !== next.onViewportObservationChange) return false
+
+  return true
+}
+
+export const MessageList = memo(
+  MessageListInner,
+  areMessageListPropsEqual,
+) as typeof MessageListInner
 
 function useMessageListViewState(
   session: MessageListSession<unknown>,
