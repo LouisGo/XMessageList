@@ -7,7 +7,13 @@ const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..',
 )
-const RUNTIME_DIR = path.join(ROOT, 'src', 'runtime')
+const RUNTIME_DIR = path.join(
+  ROOT,
+  'src',
+  'x-message-list',
+  'core',
+  'runtime',
+)
 const CODE_EXTENSIONS = new Set(['.ts', '.tsx'])
 const BUDGET_EXEMPT_DIRECTORIES = new Set(['__tests__'])
 const LOGIC_BUDGET = 300

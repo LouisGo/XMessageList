@@ -1,8 +1,7 @@
 import { useCallback } from 'react'
-import type { MessageListRuntime } from '../../runtime/index'
+import type { MessageListSession } from '../../index'
 import {
   createOutgoingMessage,
-  toDemoMessageDataItem,
   type DemoMessage,
 } from '../data/demoData'
 import {
@@ -24,7 +23,6 @@ import {
 import type {
   DemoDataRuntimeGetter,
   DemoHighlightState,
-  DemoSegmentPublisher,
 } from './demoScenarioTypes'
 
 export type DemoMessageCommandActions = {
@@ -39,10 +37,10 @@ export type DemoMessageCommandActions = {
 
 export function useDemoMessageCommands(input: {
   activeFeedId: string
-  runtime: MessageListRuntime<DemoMessage>
+  session: MessageListSession<DemoMessage>
+  getSession: (feedId: string) => MessageListSession<DemoMessage>
   getDataRuntime: DemoDataRuntimeGetter
   isActiveFeed: (feedId: string) => boolean
-  publishSegment: DemoSegmentPublisher
   pageSize: number
   sendDelayBaseMs: number
   setMessageCount: (messageCount: number) => void
@@ -52,12 +50,12 @@ export function useDemoMessageCommands(input: {
   const {
     activeFeedId,
     getDataRuntime,
+    getSession,
     highlightState,
     isActiveFeed,
-    publishSegment,
     pageSize,
-    runtime,
     sendDelayBaseMs,
+    session,
     setLastEvent,
     setMessageCount,
   } = input
@@ -89,18 +87,19 @@ export function useDemoMessageCommands(input: {
       }
 
       if (shouldRebuildLatest) {
-        runtime.scrollToLatest()
+        session.commands.scrollToLatest()
         // 当前窗口不在 latest tail 时，send 先打开 follow-bottom intent，再用 reset-latest 重建尾部窗口。
         const latest = persistedMessages.slice(
           Math.max(0, persistedMessages.length - pageSize),
         )
         const latestMessage = latest.at(-1)
-        dataRuntime.resetLatest({
-          items: latest.map(toDemoMessageDataItem),
+        session.rows.resetLatest({
+          rows: latest,
           hasMoreBefore: persistedMessages.length > pageSize,
           hasMoreAfter: false,
           anchor: latestMessage
             ? {
+                id: latestMessage.id,
                 feedId: activeFeedId,
                 stableId: latestMessage.id,
                 serverId: latestMessage.id,
@@ -108,16 +107,14 @@ export function useDemoMessageCommands(input: {
             : undefined,
           anchorStatus: 'normal',
         })
-        publishSegment(dataRuntime)
         if (isActiveFeed(activeFeedId)) {
           setLastEvent(`sent ${message.id} and rebuilt latest`)
         }
         return
       }
 
-      runtime.scrollToLatest()
-      dataRuntime.patchItems([toDemoMessageDataItem(message)])
-      publishSegment(dataRuntime)
+      session.commands.scrollToLatest()
+      session.rows.patch([message])
       if (isActiveFeed(activeFeedId)) {
         setLastEvent(`sent ${message.id}`)
       }
@@ -128,8 +125,7 @@ export function useDemoMessageCommands(input: {
     getDataRuntime,
     isActiveFeed,
     pageSize,
-    publishSegment,
-    runtime,
+    session,
     sendDelayBaseMs,
     setLastEvent,
     setMessageCount,
@@ -143,8 +139,8 @@ export function useDemoMessageCommands(input: {
 
     if (target) {
       void writeDemoLog({
-        requestId: createDemoRequestId('runtime.command.quoteJump'),
-        operation: 'runtime.command.quoteJump',
+        requestId: createDemoRequestId('session.command.quoteJump'),
+        operation: 'session.command.quoteJump',
         phase: 'info',
         feedId: activeFeedId,
         details: {
@@ -152,7 +148,7 @@ export function useDemoMessageCommands(input: {
           target,
         },
       })
-      runtime.scrollToMessage({
+      session.commands.scrollToMessage({
         feedId: activeFeedId,
         stableId: target.messageId,
         serverId: target.messageId,
@@ -182,42 +178,35 @@ export function useDemoMessageCommands(input: {
       return
     }
 
-    runtime.scrollToMessage({
+    session.commands.scrollToMessage({
       feedId: activeFeedId,
       stableId: first.id,
       serverId: first.id,
     })
     highlightMessage(first.id, highlightState)
-    setLastEvent('jump command sent to runtime')
-  }, [activeFeedId, getDataRuntime, highlightState, runtime, setLastEvent])
+    setLastEvent('jump command sent to session')
+  }, [activeFeedId, getDataRuntime, highlightState, session, setLastEvent])
 
   const clearFeed = useCallback((feedId: string) => {
     replaceDemoFeedMessages(feedId, [])
     if (isActiveFeed(feedId)) {
       setMessageCount(0)
-      const dataRuntime = getDataRuntime(feedId)
-      dataRuntime.resetLatest({
-        items: [],
-        hasMoreBefore: false,
-        hasMoreAfter: false,
-      })
-      publishSegment(dataRuntime)
+      getSession(feedId).rows.clear()
     }
     void flushDemoFeedPersistence(feedId)
     if (isActiveFeed(feedId)) {
       setLastEvent(`cleared ${feedId}`)
     }
   }, [
-    getDataRuntime,
+    getSession,
     isActiveFeed,
-    publishSegment,
     setLastEvent,
     setMessageCount,
   ])
 
   return {
     sendMessage,
-    followBottom: () => runtime.scrollToLatest(),
+    followBottom: () => session.commands.scrollToLatest(),
     jumpToQuote,
     clearFeed,
   }

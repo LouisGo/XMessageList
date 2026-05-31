@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { MessageListRuntimeEvent, MessageListSnapshot } from '../../runtime/index'
+import type { MessageListRuntimeEvent, MessageListSnapshot } from '../../x-message-list/core/runtime/index'
 import { DemoMessageListContent } from '../../demo/components/DemoMessageList'
 import type { DemoMessage } from '../../demo/data/demoData'
-import { useDemoFeedRuntimeCache } from '../../demo/runtime/useDemoFeedRuntimeCache'
 import { useDemoMessageScenario } from '../../demo/scenario/useDemoMessageScenario'
 import {
   createE2EState,
@@ -57,8 +56,7 @@ const E2E_ACTIONS: E2EActionDescriptor[] = [
 ]
 
 export function E2EMessageListApp() {
-  const runtimeCache = useDemoFeedRuntimeCache()
-  const scenario = useDemoMessageScenario(runtimeCache)
+  const scenario = useDemoMessageScenario()
   const rootRef = useRef<HTMLElement | null>(null)
   const eventLogRef = useRef<E2ERuntimeEventRecord[]>([])
   const [viewportRemountKey, setViewportRemountKey] = useState(0)

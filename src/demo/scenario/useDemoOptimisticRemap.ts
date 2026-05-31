@@ -1,8 +1,7 @@
 import { useCallback, useRef } from 'react'
-import type { MessageListRuntime } from '../../runtime/index'
+import type { MessageListSession } from '../../index'
 import {
   createNewestMessage,
-  toDemoMessageDataItem,
   type DemoMessage,
 } from '../data/demoData'
 import {
@@ -15,8 +14,6 @@ import {
   wait,
 } from './demoScenarioHelpers'
 import type {
-  DemoDataRuntimeGetter,
-  DemoSegmentPublisher,
   PendingOptimisticRemap,
 } from './demoScenarioTypes'
 
@@ -30,19 +27,15 @@ export type DemoOptimisticRemapActions = {
 
 export function useDemoOptimisticRemap(input: {
   activeFeedId: string
-  runtime: MessageListRuntime<DemoMessage>
-  getDataRuntime: DemoDataRuntimeGetter
+  session: MessageListSession<DemoMessage>
   isActiveFeed: (feedId: string) => boolean
-  publishSegment: DemoSegmentPublisher
   setLastEvent: (eventText: string) => void
   onMessageCountChange: (messageCount: number) => void
 }): DemoOptimisticRemapActions {
   const {
     activeFeedId,
-    getDataRuntime,
     isActiveFeed,
-    publishSegment,
-    runtime,
+    session,
     setLastEvent,
     onMessageCountChange,
   } = input
@@ -53,7 +46,6 @@ export function useDemoOptimisticRemap(input: {
   }, [])
 
   const sendOptimisticMessage = useCallback(() => {
-    const dataRuntime = getDataRuntime(activeFeedId)
     const allMessages = readDemoFeedMessages(activeFeedId)
     const nextSequence = (allMessages.at(-1)?.sequence ?? 0) + 1
     const localId = `local-${Date.now()}`
@@ -101,25 +93,12 @@ export function useDemoOptimisticRemap(input: {
         nextKey: serverId,
       },
     }
-    dataRuntime.patchItems([
-      {
-        ...toDemoMessageDataItem(optimistic),
-        rowKind: 'message',
-        identity: {
-          feedId: activeFeedId,
-          stableId: localId,
-          localId,
-          version: 1,
-        },
-      },
-      ...tailMessages.map(toDemoMessageDataItem),
-    ])
-    publishSegment(dataRuntime)
+    session.rows.patch([optimistic, ...tailMessages])
     void flushDemoFeedPersistence(activeFeedId)
     if (isActiveFeed(activeFeedId)) {
       setLastEvent('optimistic local identity published')
     }
-  }, [activeFeedId, getDataRuntime, isActiveFeed, onMessageCountChange, publishSegment, setLastEvent])
+  }, [activeFeedId, isActiveFeed, onMessageCountChange, session, setLastEvent])
 
   const alignPendingOptimisticAtStart = useCallback(() => {
     const pending = pendingOptimisticRemapRef.current
@@ -129,13 +108,13 @@ export function useDemoOptimisticRemap(input: {
       return
     }
 
-    runtime.scrollToMessage({
+    session.commands.scrollToMessage({
       feedId: pending.feedId,
       stableId: pending.localId,
       localId: pending.localId,
     }, { align: 'start' })
     setLastEvent('aligned optimistic row at viewport start')
-  }, [activeFeedId, runtime, setLastEvent])
+  }, [activeFeedId, session, setLastEvent])
 
   const resolveOptimisticRemap = useCallback(() => {
     const pending = pendingOptimisticRemapRef.current
@@ -145,14 +124,12 @@ export function useDemoOptimisticRemap(input: {
       return
     }
 
-    const dataRuntime = getDataRuntime(activeFeedId)
-    dataRuntime.applyIdentityRemap([pending.remap])
-    publishSegment(dataRuntime)
+    session.rows.applyIdentityRemap([pending.remap])
     pendingOptimisticRemapRef.current = null
     if (isActiveFeed(activeFeedId)) {
       setLastEvent('optimistic identity remapped to server id')
     }
-  }, [activeFeedId, getDataRuntime, isActiveFeed, publishSegment, setLastEvent])
+  }, [activeFeedId, isActiveFeed, session, setLastEvent])
 
   const sendOptimisticAndRemap = useCallback(async () => {
     sendOptimisticMessage()

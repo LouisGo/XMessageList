@@ -1,9 +1,13 @@
 import type {
-  MessageIdentityAnchor,
+  MessageListIdentityRemap,
+  MessageListViewportAnchorChangeEvent,
+  MessageListResolvedAnchor,
+  MessageListSession,
+} from '../../index'
+import type {
   MessageListRuntime,
-  ViewportAnchorChangedEvent,
-} from '../../runtime/index'
-import type { MessageListDataRuntime } from '../../runtime/data/index'
+} from '../../x-message-list/core/runtime/index'
+import type { MessageListDataRuntime } from '../../x-message-list/core/runtime/data/index'
 import type { DemoMessage } from '../data/demoData'
 import { DEMO_FEEDS, getDemoFeedDefinition } from '../data/demoFeeds'
 
@@ -13,6 +17,7 @@ export type DemoMessageScenario = {
   selectedFeedId: string
   pendingFeedId: string | null
   activeFeed: ReturnType<typeof getDemoFeedDefinition>
+  activeSession: MessageListSession<DemoMessage>
   activeRuntime: MessageListRuntime<DemoMessage>
   messageCount: number
   loadedMessageCount: number
@@ -48,7 +53,9 @@ export type DemoMessageScenario = {
     target: { messageId: string; position?: number }
   }) => void
   clearFeed: (feedId: string) => void
-  rememberRuntimeViewportAnchor: (event: ViewportAnchorChangedEvent) => void
+  rememberRuntimeViewportAnchor: (
+    event: MessageListViewportAnchorChangeEvent,
+  ) => void
   resetE2EScenario: (scenarioId: string) => Promise<void>
   streamCurrentRow: () => void
   deferNextEdgeResponse: (delayMs: number) => void
@@ -79,7 +86,7 @@ export type PendingOptimisticRemap = {
   feedId: string
   localId: string
   serverId: string
-  remap: Parameters<MessageListDataRuntime<DemoMessage>['applyIdentityRemap']>[0][number]
+  remap: MessageListIdentityRemap
 }
 
 export type DemoHighlightState = {
@@ -89,7 +96,7 @@ export type DemoHighlightState = {
 }
 
 export type RuntimeAnchorChangeHandler = (
-  event: ViewportAnchorChangedEvent,
+  event: MessageListViewportAnchorChangeEvent,
 ) => void
 
-export type PersistedRuntimeAnchor = MessageIdentityAnchor
+export type PersistedRuntimeAnchor = MessageListResolvedAnchor

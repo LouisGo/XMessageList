@@ -1,4 +1,4 @@
-import type { RuntimeObserverFactory, RuntimeScheduler } from '../runtime/index'
+import type { RuntimeObserverFactory, RuntimeScheduler } from '../x-message-list/core/runtime/index'
 
 export class FakeScheduler implements RuntimeScheduler {
   private nextHandle = 1

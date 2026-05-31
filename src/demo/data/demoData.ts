@@ -1,4 +1,4 @@
-import type { MessageDataItem } from '../../runtime/index'
+import type { MessageDataItem } from '../../x-message-list/core/runtime/index'
 
 export type DemoViewportEffect =
   | 'none'

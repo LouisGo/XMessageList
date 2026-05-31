@@ -4,8 +4,9 @@
 
 React adapter 是 projection 层：
 
-- 默认通过 `MessageListProvider` / `useMessageListController(id)` 获取应用级 manager session controller。
-- 使用 `useMessageListSnapshot` 读取 controller 内的 runtime snapshot。
+- 默认通过 `MessageListProvider` / `useMessageListSession(id)` 获取应用级
+  `MessageListSession`。
+- 通过 package-internal session internals 读取 runtime snapshot。
 - 渲染固定 DOM skeleton。
 - 给每个 row 注册 DOM ref。
 - 在 layout effect 中发送 commit ack。
@@ -62,11 +63,9 @@ Slots 接收 runtime semantic state，不接收 raw DOM metrics：
 - `renderEmpty(input)`
 - `renderScrollToLatest(input)`
 
-`renderOverlayStatus(input)` 接收：
-
-- `status` / `retry` / `error`：manager view state。
-- `snapshot`：当前 `MessageListSnapshot`。
-- `observation`：最近一次 `ViewportObservationChangedEvent`，无事件时为 `null`。
+`renderOverlayStatus(input)` 接收 `status` / `retry` / `error`，来源是
+manager view state。overlay slot 不订阅 viewport observation，避免滚动过程被
+额外 React state 打断。
 
 `renderBeforeStatus` / `renderAfterStatus` 的 `retry()` 只能回调 adapter-private `retryEdgeRequest(edge)`；slot 不持有 request token，不直接请求 SDK。
 
@@ -81,7 +80,7 @@ Slots 禁止：
 
 如果 adapter 提供 overlay：
 
-- overlay controller 只读 native metrics。
+- overlay 只读 native metrics。
 - drag / track click 调 runtime adapter-private direct scroll API：`beginDirectScroll` / `writeDirectScrollTop` / `endDirectScroll`。
 - overlay metric 与 runtime evidence 的 `clientHeight` / `scrollHeight` 不一致时，必须上报 `overlay.metricMismatch` warning diagnostic。
 - overlay 不进入 core snapshot。
@@ -93,7 +92,7 @@ App 默认通过 manager adapter 接入：
 
 - `adapter.row`：业务 row key、anchor、version、kind。
 - `adapter.request`：`loadLatest` / `loadBefore` / `loadAfter` / `loadAround`。
-- `adapter.memory`：可选的 anchor load/save。
-- `adapter.readReceipt`：可选的批量已读回执。
+- `adapter.anchorMemory`：可选的 anchor load/save。
+- `adapter.readReceipts`：可选的批量已读回执。
 
 Manager 将 runtime semantic need events 接到 adapter request，负责 request token、stale response、failure ack、segment publish 和 trim。App 不通过 ref 拿 scroll container 来补逻辑。

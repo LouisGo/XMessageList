@@ -8,7 +8,7 @@ Main / Bridge
 
 MessageList Manager
   owns per-conversation session lifecycle, adapter routing, request bridge,
-  memory restore, read receipt workers and keepAlive retention
+  `anchorMemory`, `readReceipts` workers and keepAlive retention
 
 Renderer Data Runtime
   owns loaded segment data, merge/reset/trim policy, request dedupe
@@ -17,14 +17,17 @@ Viewport Runtime
   owns scroll container, DOM refs, measurement, visual anchors, transactions
 
 React Adapter
-  resolves controller from provider, projects snapshot, registers DOM refs,
+  resolves session from provider, projects snapshot, registers DOM refs,
   renders slots, sends commit ack
 
 App / Demo Host
   owns active conversation selection, manager construction, adapters and logging UI
 ```
 
-对外命名以 `MessageList` 为准：公开组件是 `MessageList`，公开 runtime facade 是 `MessageListRuntime`，公开 snapshot 是 `MessageListSnapshot`。本文件继续使用 `Viewport Runtime` 描述内部所有权，因为 scroll container、visual anchor、measurement 和 correction 都是视口运行时职责。
+对外命名以 `MessageList` 为准：公开组件是 `MessageList`，公开会话对象是
+`MessageListSession`。runtime/data runtime 是内部实现。本文件继续使用
+`Viewport Runtime` 描述内部所有权，因为 scroll container、visual anchor、
+measurement 和 correction 都是视口运行时职责。
 
 ## Main / Bridge
 
@@ -45,11 +48,11 @@ Main / Bridge 不负责：
 
 MessageList Manager 负责：
 
-- 按 conversation id 懒创建和复用 session controller。
+- 按 conversation id 懒创建和复用 `MessageListSession`。
 - 通过 app-level adapter 路由 normal / encrypted / favorite 等业务差异。
 - 接收 viewport runtime semantic need events，并调用 adapter request。
 - 处理 request token、stale response、failure ack、segment publish 和 trim。
-- 管理 memory restore/save anchor 与 read receipt batching。
+- 管理 `anchorMemory` restore/save anchor 与 `readReceipts` batching。
 - 按 keepAlive 策略或显式 API 销毁 session。
 
 MessageList Manager 不负责：
@@ -116,17 +119,21 @@ React adapter 禁止：
 
 Host 负责：
 
-- 创建并缓存 per-feed runtime。
-- 订阅 `viewportAnchorChanged` 并持久化 identity anchor。
-- 响应 `needMoreBefore` / `needMoreAfter` / `needLatestMessages` / `needMessagesAround`。
-- 把请求结果转成 data snapshot。
+- 在应用层创建并持有 `MessageListManager`。
+- 通过 `getConversation` / `getAdapter` 注入会话查询、请求、`anchorMemory`
+  和 `readReceipts` 等业务依赖。
+- 选择 active conversation，并把对应 `MessageListSession` 交给 React adapter。
+- 通过 `session.commands` 发起 scroll / reload 意图。
+- 通过 `session.rows` 接入 send、append、edit、delete、optimistic remap 和
+  clear 等本地 row 变更。
 - 记录 diagnostics 和 E2E evidence。
 
 Host 禁止：
 
 - 监听 raw scroll 触发分页。
 - 通过 query DOM 修正滚动位置。
-- 把 feed 切换伪装成 runtime jump。
+- 直接操作 runtime/data runtime 作为业务接入 SOP。
+- 把 conversation 切换伪装成 runtime jump。
 
 ## 所有权判定规则
 

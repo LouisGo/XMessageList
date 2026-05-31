@@ -9,15 +9,13 @@ import {
 } from 'react'
 import { MessageList, type MessageListRenderRowInput } from '../../index'
 import type { DemoMessage } from '../data/demoData'
-import { useDemoFeedRuntimeCache } from '../runtime/useDemoFeedRuntimeCache'
 import {
   type DemoMessageScenario,
   useDemoMessageScenario,
 } from '../scenario/useDemoMessageScenario'
 
 export function DemoMessageList() {
-  const runtimeCache = useDemoFeedRuntimeCache()
-  const scenario = useDemoMessageScenario(runtimeCache)
+  const scenario = useDemoMessageScenario()
 
   return <DemoMessageListContent scenario={scenario} />
 }
@@ -401,13 +399,13 @@ export function DemoMessageListContent({
       >
         <MessageList
           key={e2e?.viewportRemountKey ?? 0}
-          runtime={scenario.activeRuntime}
+          session={scenario.activeSession}
           className={[
             'message-viewport',
             scenario.feedLoading ? 'session-loading' : '',
           ].filter(Boolean).join(' ')}
           renderRow={renderDemoItem}
-          renderBeforeEdge={({ status, retry }) =>
+          renderBeforeStatus={({ status, retry }) =>
             scenario.loadingBefore ? (
               <div className="history-loading">Loading older messages...</div>
             ) : !scenario.feedLoading && status === 'error' ? (
@@ -416,7 +414,7 @@ export function DemoMessageListContent({
               </button>
             ) : null
           }
-          renderAfterEdge={({ status, retry }) =>
+          renderAfterStatus={({ status, retry }) =>
             scenario.loadingAfter ? (
               <div className="history-loading history-loading-bottom">
                 Loading newer messages...
@@ -445,7 +443,7 @@ export function DemoMessageListContent({
               </button>
             ) : null
           }
-          renderOverlay={() =>
+          renderOverlayStatus={() =>
             scenario.sessionLoadingOverlayVisible ? (
               <div
                 className="session-loading-overlay"

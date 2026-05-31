@@ -1,47 +1,38 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MessageList } from '../../react/components/MessageList'
+import { MessageList } from '../../x-message-list/react/components/MessageList'
 import type { DemoMessageScenario } from '../scenario/demoScenarioTypes'
 import {
   RANDOM_CHAT_FEED_ID,
   resolveDemoSessionDelayMs,
 } from '../scenario/demoScenarioRuntimeHelpers'
-import {
-  createDemoFeedRuntimeCache,
-  type DemoFeedRuntimeCache,
-} from '../runtime/useDemoFeedRuntimeCache'
 import { useDemoMessageScenario } from '../scenario/useDemoMessageScenario'
 
 describe('useDemoMessageScenario feed switching', () => {
-  let cache: DemoFeedRuntimeCache | null = null
-
   afterEach(() => {
     vi.restoreAllMocks()
-    cache?.destroyAll()
-    cache = null
   })
 
-  it('consumes the first staged feed edge request instead of stranding loading', async () => {
-    cache = createDemoFeedRuntimeCache()
+  it('loads history after switching feeds without stranding loading', async () => {
     const host = document.createElement('div')
     const root = createRoot(host)
     let scenario: DemoMessageScenario | null = null
 
     function Harness() {
-      const nextScenario = useDemoMessageScenario(cache as DemoFeedRuntimeCache)
+      const nextScenario = useDemoMessageScenario()
       scenario = nextScenario
 
       return (
         <MessageList
-          runtime={nextScenario.activeRuntime}
+          session={nextScenario.activeSession}
           renderRow={({ row }) => <span>{row?.id}</span>}
-          renderBeforeEdge={() =>
+          renderBeforeStatus={() =>
             nextScenario.loadingBefore ? (
               <div data-testid="before-loading" />
             ) : null
           }
-          renderAfterEdge={() =>
+          renderAfterStatus={() =>
             nextScenario.loadingAfter ? (
               <div data-testid="after-loading" />
             ) : null
@@ -65,19 +56,16 @@ describe('useDemoMessageScenario feed switching', () => {
       Boolean(scenario && scenario.activeFeedId === 'feed-design' && !scenario.feedLoading)
     )
 
-    const feedRuntime = cache.getRuntime('feed-design')
-    await waitFor(() =>
-      feedRuntime.getSnapshot().edgeState.before.status === 'loading'
-    )
+    await act(async () => {
+      scenario?.loadHistoryBatch()
+    })
+    await wait(220)
 
+    await waitFor(() =>
+      !scenario?.loadingBefore
+    )
     expect(host.querySelector('[data-testid="before-loading"]')).toBeNull()
     expect(host.querySelector('[data-testid="after-loading"]')).toBeNull()
-
-    await waitFor(() =>
-      feedRuntime.getSnapshot().edgeState.before.status !== 'loading'
-    )
-
-    expect(feedRuntime.getSnapshot().edgeState.before.status).not.toBe('loading')
 
     await act(async () => {
       root.unmount()
@@ -105,8 +93,7 @@ describe('useDemoMessageScenario feed switching', () => {
 
   it('keeps slow Random Chat entry pending long enough to show the session overlay', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.4)
-    cache = createDemoFeedRuntimeCache()
-    const harness = createScenarioHarness(cache)
+    const harness = createScenarioHarness()
 
     await harness.render()
     await waitFor(() => {
@@ -155,8 +142,7 @@ describe('useDemoMessageScenario feed switching', () => {
 
   it('completes fast Random Chat entry without showing the session overlay', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.6)
-    cache = createDemoFeedRuntimeCache()
-    const harness = createScenarioHarness(cache)
+    const harness = createScenarioHarness()
 
     await harness.render()
     await waitFor(() => {
@@ -192,8 +178,7 @@ describe('useDemoMessageScenario feed switching', () => {
 
   it('activates Random Chat immediately on the cache-hit path', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.9)
-    cache = createDemoFeedRuntimeCache()
-    const harness = createScenarioHarness(cache)
+    const harness = createScenarioHarness()
 
     await harness.render()
     await waitFor(() => {
@@ -233,7 +218,7 @@ async function waitFor(
   expect(condition()).toBe(true)
 }
 
-function createScenarioHarness(runtimeCache: DemoFeedRuntimeCache): {
+function createScenarioHarness(): {
   host: HTMLElement
   getScenario: () => DemoMessageScenario | null
   render: () => Promise<void>
@@ -244,28 +229,28 @@ function createScenarioHarness(runtimeCache: DemoFeedRuntimeCache): {
   let scenario: DemoMessageScenario | null = null
 
   function Harness() {
-    const nextScenario = useDemoMessageScenario(runtimeCache)
+    const nextScenario = useDemoMessageScenario()
     scenario = nextScenario
 
     return (
       <MessageList
-        runtime={nextScenario.activeRuntime}
+        session={nextScenario.activeSession}
         className={[
           'message-viewport',
           nextScenario.feedLoading ? 'session-loading' : '',
         ].filter(Boolean).join(' ')}
         renderRow={({ row }) => <span>{row?.id}</span>}
-        renderBeforeEdge={() =>
+        renderBeforeStatus={() =>
           nextScenario.loadingBefore ? (
             <div data-testid="before-loading" />
           ) : null
         }
-        renderAfterEdge={() =>
+        renderAfterStatus={() =>
           nextScenario.loadingAfter ? (
             <div data-testid="after-loading" />
           ) : null
         }
-        renderOverlay={() =>
+        renderOverlayStatus={() =>
           nextScenario.sessionLoadingOverlayVisible ? (
             <div
               data-testid="session-loading-overlay"

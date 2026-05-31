@@ -12,21 +12,12 @@ export default defineConfig({
     dts({
       entryRoot: 'src',
       include: [
-        'src/data.ts',
         'src/index.ts',
-        'src/react/index.ts',
-        'src/react/components/MessageList.tsx',
-        'src/react/hooks/useMessageListSnapshot.ts',
-        'src/react/types.ts',
-        'src/runtime/index.ts',
-        'src/runtime/controller/runtime.ts',
-        'src/runtime/contracts/identity.ts',
-        'src/runtime/contracts/segment.ts',
-        'src/runtime/contracts/snapshot.ts',
-        'src/runtime/contracts/events.ts',
-        'src/runtime/contracts/options.ts',
-        'src/runtime/data/index.ts',
-        'src/runtime/data/dataRuntime.ts',
+        'src/x-message-list/core/manager/index.ts',
+        'src/x-message-list/core/manager/types.ts',
+        'src/x-message-list/react/index.ts',
+        'src/x-message-list/react/components/MessageList.tsx',
+        'src/x-message-list/react/types.ts',
       ],
       insertTypesEntry: true,
       tsconfigPath: './tsconfig.app.json',
@@ -36,15 +27,10 @@ export default defineConfig({
     lib: {
       entry: {
         index: fileURLToPath(new URL('./src/index.ts', import.meta.url)),
-        data: fileURLToPath(new URL('./src/data.ts', import.meta.url)),
       },
       formats: ['es', 'cjs'],
       name: 'XMessageList',
-      fileName: (format, entryName) => {
-        if (entryName === 'data') {
-          return format === 'es' ? 'data.js' : 'data.cjs'
-        }
-
+      fileName: (format) => {
         return format === 'es' ? 'x-message-list.js' : 'x-message-list.cjs'
       },
     },

@@ -131,7 +131,8 @@ Snapshot 不包含：
 
 Snapshot 规则：
 
-- `MessageListSnapshot` 是 public / React adapter snapshot；runtime 内部可以把同一份发布语义称为 `ProjectionSnapshot`。
+- `MessageListSnapshot` 是 runtime 到 React adapter 的内部 projection
+  snapshot；它不从 package root 作为业务 public API 暴露。
 - `hasMoreBefore/After`、`modifier`、`generation`、`segmentRevision`、`projectionRevision` 和 `commitToken` 是 projection / adapter / E2E 的必需合同字段。
 - React slots 和 tests 只能从 snapshot/evidence 读取 segment 边界，不得从 edgeState 或外部 props 反推 `hasMoreAfter`。
 - 同一 segment revision 可以因为 edge state、bottom lock 或 viewport phase 变化产生新的 projection revision；commit ack 必须回传完整 token。

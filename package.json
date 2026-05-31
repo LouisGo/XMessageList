@@ -12,11 +12,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/x-message-list.js",
       "require": "./dist/x-message-list.cjs"
-    },
-    "./data": {
-      "types": "./dist/data.d.ts",
-      "import": "./dist/data.js",
-      "require": "./dist/data.cjs"
     }
   },
   "files": [

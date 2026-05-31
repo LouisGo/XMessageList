@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react'
-import type { MessageListRuntimeEvent } from '../../runtime/index'
-import type { MessageListDataRuntime } from '../../runtime/data/index'
+import type { MessageListRuntimeEvent } from '../../x-message-list/core/runtime/index'
+import type { MessageListDataRuntime } from '../../x-message-list/core/runtime/data/index'
 import {
   createNewestMessage,
   getNextMessageSequence,

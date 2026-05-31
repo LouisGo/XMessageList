@@ -18,8 +18,8 @@ export type DemoOperationName =
   | 'message.send'
   | 'mock.eventStorm'
   | 'mock.botPush'
-  | 'runtime.command.followBottom'
-  | 'runtime.command.quoteJump'
+  | 'session.command.followBottom'
+  | 'session.command.quoteJump'
   | 'runtime.event'
 
 export type DemoLogPhase =

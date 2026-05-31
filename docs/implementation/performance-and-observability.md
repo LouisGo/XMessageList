@@ -48,7 +48,7 @@ Scroll rAF 中避免：
 禁止：
 
 - 用 estimate / median size / cached total height 生成 native scroll range。
-- 在 ResizeObserver、IntersectionObserver、React effect 或 overlay controller 中直接拥有 correction。
+- 在 ResizeObserver、IntersectionObserver、React effect 或 overlay 中直接拥有 correction。
 - 在没有 profile 证明前引入 recycler pool 作为 core 优化。
 
 ## Segment Budget

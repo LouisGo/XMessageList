@@ -26,7 +26,11 @@
 
 ## API 迁移方向
 
-Phase 1 已将旧 `src/runtime/` 与 `src/react/` 整体删除后按 loaded-segment / native-scroll 架构重建。next 分支不保留旧实现的兼容层，也不承诺旧 package surface 可继续 import。
+Phase 1 已将旧 root-level `src/runtime/` 与 `src/react/` 整体删除后按
+loaded-segment / native-scroll 架构重建。当前实现已进一步收口到
+`src/x-message-list/core/manager`、`src/x-message-list/core/runtime` 和
+`src/x-message-list/react`。next 分支不保留旧实现的兼容层，也不承诺旧
+package surface 可继续 import。
 
 旧 public surface：
 
@@ -44,15 +48,21 @@ runtime.dispatch({ type: 'followBottom' | 'jump' | 'restore' })
 
 ```ts
 MessageList
-createMessageListRuntime
-MessageListRuntime
-MessageListSnapshot
-useMessageListSnapshot
-useMessageListSelector
-runtime.applyLoadedSegment(...)
-runtime.scrollToLatest()
-runtime.scrollToMessage(target)
-runtime.restoreToMessage(target)
+MessageListProvider
+createMessageListManager
+useMessageListSession
+MessageListManager
+MessageListSession
+MessageListAdapter
+session.commands.scrollToLatest()
+session.commands.scrollToMessage(target)
+session.commands.reloadLatest()
+session.rows.patch(rows)
+session.rows.replace(input)
+session.rows.resetLatest(page)
+session.rows.resetAround(input)
+session.rows.applyIdentityRemap(remaps)
+session.rows.clear()
 ```
 
 完整命名对照以 [architecture/naming-and-api.md](../architecture/naming-and-api.md) 为准。

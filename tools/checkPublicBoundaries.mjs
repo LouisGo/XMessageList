@@ -14,7 +14,13 @@ const CHECKED_ROOTS = [
   path.join(ROOT, 'e2e', 'runner'),
   path.join(ROOT, 'tools'),
 ]
-const RUNTIME_ROOT = path.join(ROOT, 'src', 'runtime')
+const X_MESSAGE_LIST_ROOT = path.join(ROOT, 'src', 'x-message-list')
+const RUNTIME_ROOT = path.join(X_MESSAGE_LIST_ROOT, 'core', 'runtime')
+const REACT_ROOT = path.join(X_MESSAGE_LIST_ROOT, 'react')
+const PUBLIC_TYPE_FILES = [
+  path.join(X_MESSAGE_LIST_ROOT, 'core', 'manager', 'types.ts'),
+  path.join(REACT_ROOT, 'types.ts'),
+]
 const RUNTIME_INDEX = path.join(RUNTIME_ROOT, 'index.ts')
 const RUNTIME_INTERNAL = path.join(RUNTIME_ROOT, 'internal.ts')
 const RUNTIME_CONTROLLER_ROOT = path.join(RUNTIME_ROOT, 'controller')
@@ -27,6 +33,11 @@ const FORBIDDEN_ROOT_EXPORTS = [
   'ViewportPhase',
   'DOMRectLike',
   'MessageListRuntimeController',
+  'createMessageListRuntime',
+  'MessageListRuntime',
+  'LoadedSegment',
+  'MessageDataItem',
+  'MessageListDataRuntime',
   'MessageListAdapterRuntime',
   'RuntimeDomRegistry',
   'RuntimeMeasurement',
@@ -36,6 +47,7 @@ const FORBIDDEN_ROOT_EXPORTS = [
 const violations = []
 
 await checkRootExports()
+await checkPublicTypeFiles()
 await checkNoGodFiles()
 await checkImportGuards()
 await checkRuntimeImportDirections()
@@ -63,6 +75,23 @@ async function checkRootExports() {
   }
 }
 
+async function checkPublicTypeFiles() {
+  for (const file of PUBLIC_TYPE_FILES) {
+    const source = await readFile(file, 'utf8')
+    const specifiers = readModuleSpecifiers(source)
+
+    for (const specifier of specifiers) {
+      const target = await resolveLocalImport(file, specifier)
+
+      if (target && isUnder(target, RUNTIME_ROOT)) {
+        violations.push(
+          `${relative(file)} must not expose runtime types through public contracts`,
+        )
+      }
+    }
+  }
+}
+
 async function checkNoGodFiles() {
   const files = await collectCodeFiles(CHECKED_ROOTS)
 
@@ -84,7 +113,7 @@ async function checkNoGodFiles() {
 
 async function checkImportGuards() {
   const files = await collectCodeFiles([
-    path.join(ROOT, 'src', 'react'),
+    REACT_ROOT,
     path.join(ROOT, 'src', 'demo'),
     path.join(ROOT, 'src', 'e2e-app'),
     path.join(ROOT, 'e2e', 'runner'),
@@ -105,7 +134,7 @@ async function checkImportGuards() {
         continue
       }
 
-      if (isUnder(file, path.join(ROOT, 'src', 'react'))) {
+      if (isUnder(file, REACT_ROOT)) {
         guardReactImport(file, target)
         continue
       }

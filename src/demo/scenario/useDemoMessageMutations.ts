@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react'
-import type { MessageListRuntime } from '../../runtime/index'
+import type { MessageListRuntime } from '../../x-message-list/core/runtime/index'
 import type { DemoMessage } from '../data/demoData'
 import { readDemoFeedMessages } from '../data/demoMessageApi'
 import {

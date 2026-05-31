@@ -4,7 +4,7 @@ import type {
   MessageListSnapshot,
   ViewportDiagnosticRecord,
   ViewportEvidence,
-} from '../../runtime/index'
+} from '../../x-message-list/core/runtime/index'
 
 export type E2EScenarioStatus = 'booting' | 'ready' | 'running' | 'failed'
 

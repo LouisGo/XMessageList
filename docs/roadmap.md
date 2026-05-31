@@ -1,6 +1,10 @@
 # Next 重写实施路线
 
-本文档描述 next 分支从文档到实现的阶段顺序。当前方向是：`src/runtime/` 与 `src/react/` 作为旧实现整体删除后重写，不做渐进迁移，不保留 deprecated runtime，不从旧目录搬运实现细节。
+本文档描述 next 分支从文档到实现的阶段顺序。它保留了早期 root-level
+`src/runtime/` 与 `src/react/` 重写阶段的历史记录；当前源码已收口到
+`src/x-message-list/core/manager`、`src/x-message-list/core/runtime` 和
+`src/x-message-list/react`。当前 public API 以
+`MessageListManager` / `MessageListSession` / `MessageList` 为准。
 
 ## 进度规则
 
@@ -35,7 +39,7 @@
 目标：
 
 - [x] 确认 architecture / interaction / implementation / testing 文档都以 loaded segment native scroll 为唯一正向机制。
-- [x] 冻结术语与 public API 命名，统一采用 `MessageList` / `MessageListRuntime` / `MessageListSnapshot` 口径。
+- [x] 冻结术语与 public API 命名，统一采用 `MessageList` / `MessageListManager` / `MessageListSession` 口径。
 - [x] 明确 `src/runtime/` 和 `src/react/` 是 rewrite targets，不是 migration sources。
 - [x] 明确保留 demo / e2e 请求模型的边界。
 
@@ -171,7 +175,7 @@ Phase gate：Phase 1 必须把 `src/runtime/` 与 `src/react/` 旧实现整体�
 - [x] 实现固定 DOM skeleton：before trigger + rows + after trigger + bottom marker。
 - [x] 实现 row wrapper：runtime key、row kind、identity data attributes、ref register/unregister。
 - [x] 实现 layout effect commit ack：调用 `ackProjectionCommit(commitToken)`，ack 必须带 feedId / generation / segmentRevision / projectionRevision。
-- [x] 实现 slots：`renderBeforeEdge`、`renderAfterEdge`、`renderScrollToLatest`、`renderOverlay`。
+- [x] 实现 slots：`renderBeforeStatus`、`renderAfterStatus`、`renderTopPlaceholder`、`renderOverlayStatus`、`renderEmpty`、`renderScrollToLatest`。
 
 退出标准：
 

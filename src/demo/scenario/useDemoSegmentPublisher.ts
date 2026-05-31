@@ -1,12 +1,11 @@
 import { useCallback } from 'react'
-import type { MessageListDataRuntime } from '../../runtime/data/index'
+import type { MessageListDataRuntime } from '../../x-message-list/core/runtime/data/index'
 import {
   flushDemoFeedPersistence,
   replaceDemoFeedMessages,
 } from '../data/demoMessageApi'
-import { toDemoMessageDataItem, type DemoMessage } from '../data/demoData'
+import type { DemoMessage } from '../data/demoData'
 import type { AdvancedMockPublishResult } from '../mocks/demoAdvancedMockScenarios'
-import type { DemoFeedRuntimeCache } from '../runtime/useDemoFeedRuntimeCache'
 import { DEMO_ITEM_BUDGET } from './demoScenarioConfig'
 import {
   resolveChangedMessageKeys,
@@ -15,7 +14,19 @@ import {
 import { resolveTrimProtectKey } from './demoScenarioRuntimeHelpers'
 
 type DemoSegmentPublisherOptions = {
-  runtimeCache: DemoFeedRuntimeCache
+  getRuntime: (
+    feedId: string,
+  ) => import('../../x-message-list/core/runtime/index').MessageListRuntime<DemoMessage>
+  patchRows: (feedId: string, rows: DemoMessage[]) => void
+  replaceRows: (input: {
+    feedId: string
+    rows: DemoMessage[]
+    changedKeys: string[]
+    hasMoreBefore?: boolean
+    hasMoreAfter?: boolean
+    anchor?: import('../../index').MessageListAnchor
+    anchorStatus?: 'normal' | 'deleted' | 'unavailable' | 'permission'
+  }) => void
   getDataRuntime: (feedId: string) => MessageListDataRuntime<DemoMessage>
   isActiveFeed: (feedId: string) => boolean
   setMessages: (messages: DemoMessage[]) => void
@@ -27,7 +38,9 @@ type DemoSegmentPublisherOptions = {
  * 将 data runtime 的最新 LoadedSegment 发布给对应 viewport runtime，并在同一边界内处理 demo 的 trim 预算。
  */
 export function useDemoSegmentPublisher({
-  runtimeCache,
+  getRuntime,
+  patchRows,
+  replaceRows,
   getDataRuntime,
   isActiveFeed,
   setMessages,
@@ -37,7 +50,7 @@ export function useDemoSegmentPublisher({
   const publishSegment = useCallback((
     dataRuntime: MessageListDataRuntime<DemoMessage>,
   ) => {
-    const runtimeForFeed = runtimeCache.getRuntime(dataRuntime.getSegment().feedId)
+    const runtimeForFeed = getRuntime(dataRuntime.getSegment().feedId)
     const committedSegment = dataRuntime.getSegment()
     runtimeForFeed.applyLoadedSegment(committedSegment)
     const shouldProtectTail =
@@ -67,16 +80,21 @@ export function useDemoSegmentPublisher({
     if (isActiveFeed(segment.feedId)) {
       setMessages(nextMessages)
     }
-  }, [isActiveFeed, runtimeCache, setMessages])
+  }, [getRuntime, isActiveFeed, setMessages])
 
   const publishActivePatch = useCallback((
     feedId: string,
     items: DemoMessage[],
   ) => {
+    patchRows(feedId, items)
     const dataRuntime = getDataRuntime(feedId)
-    dataRuntime.patchItems(items.map(toDemoMessageDataItem))
-    publishSegment(dataRuntime)
-  }, [getDataRuntime, publishSegment])
+    const nextMessages = dataRuntime.getSegment().items
+      .map((item) => item.message)
+      .filter((message): message is DemoMessage => Boolean(message))
+    if (isActiveFeed(feedId)) {
+      setMessages(nextMessages)
+    }
+  }, [getDataRuntime, isActiveFeed, patchRows, setMessages])
 
   const replaceLoadedMessages = useCallback(async (input: {
     feedId: string
@@ -92,15 +110,15 @@ export function useDemoSegmentPublisher({
     const bounds = resolveLoadedBounds(input.feedMessages, input.messages)
 
     if (input.changedKeys.length > 0) {
-      dataRuntime.replaceItems({
-        items: input.messages.map(toDemoMessageDataItem),
+      replaceRows({
+        feedId: input.feedId,
+        rows: input.messages,
         changedKeys: input.changedKeys,
         hasMoreBefore: bounds.hasMoreBefore ?? currentSegment.hasMoreBefore,
         hasMoreAfter: bounds.hasMoreAfter ?? currentSegment.hasMoreAfter,
         anchor: currentSegment.anchor,
         anchorStatus: currentSegment.anchorStatus,
       })
-      publishSegment(dataRuntime)
     }
 
     if (isActiveFeed(input.feedId)) {
@@ -110,7 +128,7 @@ export function useDemoSegmentPublisher({
   }, [
     getDataRuntime,
     isActiveFeed,
-    publishSegment,
+    replaceRows,
     setLastEvent,
     setMessageCount,
   ])

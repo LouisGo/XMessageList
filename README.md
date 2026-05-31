@@ -1,8 +1,15 @@
 # XMessageList
 
-Deterministic IM message-list runtime for TypeX-style chat surfaces. It is not a generic virtual list: the current loaded segment is rendered in normal document flow, while the runtime owns native scroll semantics, visual-anchor correction, DOM measurement, edge requests, diagnostics, and evidence.
+Deterministic IM message-list implementation for TypeX-style chat surfaces. It
+is not a generic virtual list: the current loaded segment is rendered in normal
+document flow, while the internal runtime owns native scroll semantics,
+visual-anchor correction, DOM measurement, edge requests, diagnostics and
+evidence.
 
-React is only the projection adapter. Host/data code merges messages into immutable `LoadedSegment` snapshots, publishes them to the runtime, and responds to semantic need events.
+The public integration model is application-level manager + per-conversation
+session + React projection adapter. Applications configure `request`, `row`,
+`anchorMemory` and `readReceipts` behavior once through adapters; React renders
+an existing `MessageListSession`.
 
 ## Commands
 
@@ -18,11 +25,19 @@ npm run e2e:correctness
 npm run e2e:perf
 ```
 
-## Runtime Boundary
+## Source Layout
 
-- `src/runtime`: framework-independent viewport runtime. It consumes already-merged `LoadedSegment` data, serializes projection transactions, owns DOM refs/measurement, writes `scrollTop`, preserves visual anchors, emits need events, and reports diagnostics/evidence.
-- `src/runtime/data`: demo/test data runtime. It owns merge, dedupe, identity remap, trim, request-token, and generation/stale-response rules before publishing immutable segments.
-- `src/react`: React 18 `MessageList` adapter. It subscribes with `useSyncExternalStore`, renders rows/triggers/optional overlay, registers refs, attaches the native scroll container, and acks projection commits in layout effects.
+- `src/x-message-list/core/manager`: application orchestration. It lazily
+  creates one `MessageListSession` per conversation id, routes adapters, owns
+  request bridging, keepAlive retention, `anchorMemory` and `readReceipts`.
+- `src/x-message-list/core/runtime`: framework-independent viewport runtime and
+  internal data runtime. It consumes already-merged loaded segments, serializes
+  projection transactions, owns DOM refs/measurement, writes `scrollTop`,
+  preserves visual anchors, emits need events and reports diagnostics/evidence.
+- `src/x-message-list/react`: React 18 projection adapter. It resolves sessions
+  from provider context, renders rows/slots/optional overlay, registers refs,
+  attaches the native scroll container and acks projection commits in layout
+  effects.
 - `src/demo`: local mock host and scenario wiring for feeds, edge requests, dynamic height, optimistic remap, event storms, and bot push.
 - `src/e2e-app` and `e2e/runner`: real-browser bridge, evidence, oracle, correctness, and perf lanes.
 - `docs`: architecture, interaction specs, implementation constraints, testing contracts, and migration notes.
@@ -32,36 +47,71 @@ npm run e2e:perf
 ```tsx
 import {
   MessageList,
-  createMessageListRuntime,
-  type LoadedSegment,
-  type MessageDataItem,
+  MessageListProvider,
+  createMessageListManager,
+  useMessageListSession,
+  type MessageListAdapter,
 } from 'x-message-list'
 
-const runtime = createMessageListRuntime<MyMessage>({ feedId: 'feed-1' })
+const messageAdapter: MessageListAdapter<MyMessage, Conversation> = {
+  row: {
+    getKey: (message) => message.id,
+    getAnchor: (message) => ({ id: message.id }),
+    getVersion: (message) => message.version,
+    getKind: (message) => message.type,
+  },
+  request: {
+    loadLatest,
+    loadBefore,
+    loadAfter,
+    loadAround,
+  },
+  anchorMemory: {
+    load: ({ id }) => loadSavedAnchor(id),
+    save: ({ id }, anchor, offsetWithinMessage) =>
+      saveAnchor(id, anchor, offsetWithinMessage),
+  },
+  readReceipts: {
+    batchDelayMs: 120,
+    shouldMarkRead: (message) => !message.read,
+    markRead: (messages) => markMessagesRead(messages),
+  },
+}
 
-runtime.applyLoadedSegment({
-  feedId: 'feed-1',
-  generation: 1,
-  segmentRevision: 1,
-  items,
-  hasMoreBefore: true,
-  hasMoreAfter: false,
-  modifier: { type: 'reset-latest' },
-} satisfies LoadedSegment<MyMessage>)
-
-runtime.subscribeRuntimeEvent((event) => {
-  if (event.type === 'needMoreBefore') {
-    loadOlderMessages(event.requestToken)
-  }
+const manager = createMessageListManager<MyMessage, Conversation>({
+  defaults: {
+    pageSize: 30,
+    maxItems: 300,
+    keepAlive: {
+      maxSessions: 20,
+      ttlMs: 10 * 60_000,
+    },
+  },
+  getConversation: (id) => getConversationById(id),
+  getAdapter: () => messageAdapter,
 })
 
-export function Chat() {
+export function App() {
+  return (
+    <MessageListProvider manager={manager}>
+      <ConversationView conversationId="feed-1" />
+    </MessageListProvider>
+  )
+}
+
+function ConversationView({ conversationId }: { conversationId: string }) {
+  const session = useMessageListSession<MyMessage>(conversationId)
+
   return (
     <MessageList
-      runtime={runtime}
-      renderRow={(item: MessageDataItem<MyMessage>) => (
-        item.message ? <MessageRow message={item.message} /> : null
-      )}
+      session={session}
+      renderRow={({ row }) => <MessageRow message={row} />}
+      renderBeforeStatus={({ status, retry }) => ...}
+      renderAfterStatus={({ status, retry }) => ...}
+      renderTopPlaceholder={() => ...}
+      renderOverlayStatus={({ status }) => ...}
+      renderEmpty={({ reload }) => ...}
+      renderScrollToLatest={({ visible, scrollToLatest }) => ...}
     />
   )
 }
@@ -69,10 +119,20 @@ export function Chat() {
 
 ## Public Contracts
 
-- Package root exports `MessageList`, hooks, `createMessageListRuntime`, and message-list/runtime/data contract types only. Internal controller, DOM registry, measurement, transaction, projection ack, and data merge internals are not public package API.
-- `MessageListRuntime` is a feed-scoped facade. Hosts publish data with `applyLoadedSegment(...)`, navigate with `scrollToLatest(...)`, `scrollToMessage(...)`, and `restoreToMessage(...)`, then react to semantic runtime events.
-- `MessageListSnapshot` contains loaded-segment projection state, edge state, bottom-lock state, pending intent, viewport phase, revision counters, and commit token. It does not contain render windows, spacers, estimated total height, global offsets, or raw persisted `scrollTop`.
-- DOM refs are registered by React but owned by the runtime. Ref callbacks must not measure, dispatch, or mutate scroll position.
-- `ResizeObserver` and `IntersectionObserver` are signals only. Runtime batches measurement/correction and arbitrates edge requests.
+- Package root exports `createMessageListManager`, `MessageListProvider`,
+  `useMessageListSession`, `MessageList` and public manager/session/React
+  contract types.
+- Package root does not export `createMessageListRuntime`, `MessageListRuntime`,
+  `MessageListSnapshot`, `MessageListRuntimeEvent`, `LoadedSegment`,
+  `MessageDataItem`, data runtime types, or a `x-message-list/data` subpath.
+- `MessageListManager` owns all conversation sessions. `MessageList` unmount
+  detaches the view but does not destroy the session.
+- `MessageListSession` exposes only public application commands and local row
+  mutation entry points: `commands.scrollToLatest`, `commands.scrollToMessage`,
+  `commands.reloadLatest`, `rows.patch`, `rows.replace`, `rows.resetLatest`,
+  `rows.resetAround`, `rows.applyIdentityRemap` and `rows.clear`.
+- React is an adapter over `MessageListSession`; it must not call request APIs,
+  merge data, persist anchors or run read receipts.
+- Runtime and data runtime stay package-internal implementation details.
 
 React is pinned to `18.3.1` to match the current TypeX render package.
