@@ -1,4 +1,4 @@
-import { act } from 'react'
+import { StrictMode, act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MessageList } from '../../x-message-list/react/components/MessageList'
@@ -70,6 +70,46 @@ describe('useDemoMessageScenario feed switching', () => {
     await act(async () => {
       root.unmount()
     })
+  })
+
+  it('boots once under StrictMode without destroying the active session', async () => {
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const errors: string[] = []
+    const consoleError = vi.spyOn(console, 'error').mockImplementation((...args) => {
+      errors.push(args.map(String).join(' '))
+    })
+    let scenario: DemoMessageScenario | null = null
+
+    function Harness() {
+      const nextScenario = useDemoMessageScenario()
+      scenario = nextScenario
+
+      return (
+        <MessageList
+          session={nextScenario.activeSession}
+          renderRow={({ row }) => <span>{row?.id}</span>}
+        />
+      )
+    }
+
+    await act(async () => {
+      root.render(
+        <StrictMode>
+          <Harness />
+        </StrictMode>,
+      )
+    })
+    await waitFor(() =>
+      Boolean(scenario && !scenario.feedLoading && scenario.loadedMessageCount > 0)
+    )
+
+    expect(errors.join('\n')).not.toContain('Maximum update depth exceeded')
+
+    await act(async () => {
+      root.unmount()
+    })
+    consoleError.mockRestore()
   })
 
   it('maps Random Chat entry rolls to slow, fast, and immediate paths', () => {

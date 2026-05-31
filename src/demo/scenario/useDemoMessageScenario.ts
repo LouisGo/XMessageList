@@ -65,6 +65,7 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null)
   const [highlightToken, setHighlightToken] = useState(0)
   const highlightTimerRef = useRef<number | null>(null)
+  const destroyManagerTimerRef = useRef<number | null>(null)
   const { loadingBefore, loadingAfter, setEdgeLoading } = useDemoEdgeLoadingState()
   const [sessionLoadingOverlayVisible, resetSessionLoadingOverlay] =
     useDelayedVisibility(feedLoading, SESSION_LOADING_OVERLAY_DELAY_MS)
@@ -264,6 +265,18 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     applyAdvancedMockResult,
     setLastEvent,
   })
+  const stopLongRunningMocksRef = useRef(stopLongRunningMocks)
+
+  useEffect(() => {
+    stopLongRunningMocksRef.current = stopLongRunningMocks
+  }, [stopLongRunningMocks])
+
+  useEffect(() => {
+    if (destroyManagerTimerRef.current !== null) {
+      window.clearTimeout(destroyManagerTimerRef.current)
+      destroyManagerTimerRef.current = null
+    }
+  })
   const {
     sendMessage,
     followBottom,
@@ -407,10 +420,13 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     stopLongRunningMocks,
   ])
   useEffect(() => () => {
-    stopLongRunningMocks()
-    manager.destroyAll()
-    clearHighlightTimer(highlightTimerRef)
-  }, [manager, stopLongRunningMocks])
+    destroyManagerTimerRef.current = window.setTimeout(() => {
+      stopLongRunningMocksRef.current()
+      manager.destroyAll()
+      clearHighlightTimer(highlightTimerRef)
+      destroyManagerTimerRef.current = null
+    }, 0)
+  }, [manager])
 
   const runtimeSnapshot = runtime.getSnapshot()
   const canExposeEdgeLoading = !feedLoading
