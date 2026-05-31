@@ -6,7 +6,10 @@ import {
 } from '../index'
 import { getMessageListSessionInternals } from '../internal'
 import { MessageListReadReceiptsWorker } from '../readReceipts'
-import type { ViewportObservationChangedEvent } from '../../runtime/index'
+import type {
+  MessageListRuntimeEvent,
+  ViewportObservationChangedEvent,
+} from '../../runtime/index'
 
 type TestRow = {
   id: string
@@ -101,7 +104,10 @@ describe('createMessageListManager', () => {
           loadAround,
         }),
         anchorMemory: {
-          load: () => ({ id: 'restored' }),
+          load: () => ({
+            anchor: { id: 'restored' },
+            offsetWithinMessage: 12,
+          }),
           save: () => undefined,
         },
       }),
@@ -120,6 +126,182 @@ describe('createMessageListManager', () => {
       }),
     }))
     expect(internals.getSnapshot().items[0].message?.id).toBe('restored')
+    expect(internals.dataRuntime.getSegment().modifier).toEqual(
+      expect.objectContaining({
+        type: 'reset-around',
+        align: 'start',
+        offsetWithinMessage: 12,
+      }),
+    )
+  })
+
+  it('publishes event-driven around requests instead of self-staling them', async () => {
+    const requestResults: string[] = []
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: (context) => Promise.resolve(page([
+          context.target?.stableId ?? 'missing-target',
+        ], {
+          hasMoreBefore: true,
+          hasMoreAfter: true,
+        })),
+      }),
+      onRequestResult: (result) => {
+        requestResults.push(`${result.kind}:${result.status}`)
+      },
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.getSnapshot().items.length === 1)
+    requestResults.length = 0
+
+    session.commands.scrollToMessage({ id: 'remote' })
+
+    await waitFor(() => internals.getSnapshot().items[0]?.message?.id === 'remote')
+
+    expect(requestResults).toContain('around:applied')
+    expect(requestResults).not.toContain('around:stale')
+  })
+
+  it('publishes event-driven latest requests instead of self-staling them', async () => {
+    const requestResults: string[] = []
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => Promise.resolve(page(['tail'])),
+      }),
+      onRequestResult: (result) => {
+        requestResults.push(`${result.kind}:${result.status}`)
+      },
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.getSnapshot().items.length === 1)
+    requestResults.length = 0
+
+    session.rows.resetAround({
+      target: { id: 'middle' },
+      rows: [{ id: 'middle' }],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      anchor: { id: 'middle' },
+    })
+    session.commands.scrollToLatest()
+
+    await waitFor(() => internals.getSnapshot().items[0]?.message?.id === 'tail')
+
+    expect(internals.getSnapshot().segmentMeta.hasMoreAfter).toBe(false)
+    expect(requestResults).toContain('latest:applied')
+    expect(requestResults).not.toContain('latest:stale')
+  })
+
+  it('does not let a pending bootstrap overwrite local reset rows', async () => {
+    const pending: Array<(page: MessageListPage<TestRow>) => void> = []
+    const requestResults: string[] = []
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
+          pending.push(resolve)
+        }),
+      }),
+      onRequestResult: (result) => {
+        requestResults.push(`${result.kind}:${result.status}`)
+      },
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => pending.length === 1)
+
+    session.rows.resetLatest(page(['local']))
+
+    expect(internals.getSnapshot().items[0]?.message?.id).toBe('local')
+    expect(internals.getViewState().overlayStatus.status).toBe('idle')
+
+    pending[0](page(['bootstrap']))
+    await wait()
+
+    expect(internals.getSnapshot().items[0]?.message?.id).toBe('local')
+    expect(requestResults).toEqual(['latest:stale'])
+  })
+
+  it('merges edge responses against the current segment flags', async () => {
+    type NeedMoreEvent = Extract<MessageListRuntimeEvent, { edge: 'before' | 'after' }>
+    const pendingBefore: Array<(page: MessageListPage<TestRow>) => void> = []
+    const pendingAfter: Array<(page: MessageListPage<TestRow>) => void> = []
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadBefore: () => new Promise<MessageListPage<TestRow>>((resolve) => {
+          pendingBefore.push(resolve)
+        }),
+        loadAfter: () => new Promise<MessageListPage<TestRow>>((resolve) => {
+          pendingAfter.push(resolve)
+        }),
+      }),
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+    const bridge = session as unknown as {
+      loadEdge(event: NeedMoreEvent): Promise<void>
+    }
+
+    await waitFor(() => internals.getSnapshot().items.length === 1)
+
+    session.rows.resetAround({
+      target: { id: 'middle' },
+      rows: [{ id: 'middle' }],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      anchor: { id: 'middle' },
+    })
+
+    const segment = internals.dataRuntime.getSegment()
+    const beforeRequest = bridge.loadEdge({
+      type: 'needMoreBefore',
+      edge: 'before',
+      feedId: 'feed-a',
+      generation: segment.generation,
+      segmentRevision: segment.segmentRevision,
+      requestToken: 'feed-a:before:test',
+      reason: 'test',
+    })
+    const afterRequest = bridge.loadEdge({
+      type: 'needMoreAfter',
+      edge: 'after',
+      feedId: 'feed-a',
+      generation: segment.generation,
+      segmentRevision: segment.segmentRevision,
+      requestToken: 'feed-a:after:test',
+      reason: 'test',
+    })
+
+    await waitFor(() => pendingBefore.length === 1 && pendingAfter.length === 1)
+
+    pendingBefore[0](page(['before'], {
+      hasMoreBefore: false,
+      hasMoreAfter: true,
+      anchorId: 'middle',
+    }))
+    await beforeRequest
+
+    expect(internals.dataRuntime.getSegment().hasMoreBefore).toBe(false)
+
+    pendingAfter[0](page(['after'], {
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+      anchorId: 'middle',
+    }))
+    await afterRequest
+
+    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+      .toEqual(['before', 'middle', 'after'])
+    expect(internals.dataRuntime.getSegment().hasMoreBefore).toBe(false)
+    expect(internals.dataRuntime.getSegment().hasMoreAfter).toBe(false)
   })
 
   it('rejects stale bootstrap/reload responses without overwriting newer rows', async () => {
@@ -252,12 +434,22 @@ function createAdapter(
   }
 }
 
-function page(ids: string[]): MessageListPage<TestRow> {
+function page(
+  ids: string[],
+  options: Partial<Pick<
+    MessageListPage<TestRow>,
+    'hasMoreBefore' | 'hasMoreAfter'
+  >> & {
+    anchorId?: string
+  } = {},
+): MessageListPage<TestRow> {
   return {
     rows: ids.map((id) => ({ id })),
-    hasMoreBefore: false,
-    hasMoreAfter: false,
-    anchor: ids.at(-1) ? { id: ids.at(-1) } : undefined,
+    hasMoreBefore: options.hasMoreBefore ?? false,
+    hasMoreAfter: options.hasMoreAfter ?? false,
+    anchor: options.anchorId
+      ? { id: options.anchorId }
+      : ids.at(-1) ? { id: ids.at(-1) } : undefined,
   }
 }
 

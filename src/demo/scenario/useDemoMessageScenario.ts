@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type MessageListManager,
   type MessageListSession,
-  type MessageListViewportAnchorChangeEvent,
 } from '../../index'
 import { getMessageListSessionInternals } from '../../x-message-list/core/manager/internal'
 import type { MessageListRuntime } from '../../x-message-list/core/runtime/index'
@@ -10,11 +9,12 @@ import type { MessageListDataRuntime } from '../../x-message-list/core/runtime/d
 import type { DemoMessage } from '../data/demoData'
 import { DEMO_FEEDS, getDemoFeedDefinition } from '../data/demoFeeds'
 import {
-  loadDemoFeedMessages,
   readDemoFeedMessages,
-  saveDemoViewportAnchor,
 } from '../data/demoMessageApi'
-import { clearHighlightTimer } from './demoScenarioHelpers'
+import {
+  clearHighlightTimer,
+  wait,
+} from './demoScenarioHelpers'
 import {
   createDemoManager,
   prepareDemoE2EScenario,
@@ -22,7 +22,6 @@ import {
 import {
   RANDOM_CHAT_FEED_ID,
   resolveDemoSessionDelayMs,
-  toPersistedViewportAnchor,
   type SavedRuntimeAnchor,
 } from './demoScenarioRuntimeHelpers'
 import {
@@ -61,6 +60,11 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     savedAnchors: new Map<string, SavedRuntimeAnchor>(),
     deferredEdgeResponseDelayMs: 0,
     deferredSessionResponseDelayMs: 0,
+    activationToken: 0,
+    delayedWarmActivation: null as {
+      feedId: string
+      token: number
+    } | null,
   })
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null)
   const [highlightToken, setHighlightToken] = useState(0)
@@ -86,6 +90,11 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   const getActiveFeedId = useCallback(() => managerStateRef.current.activeFeedId, [managerStateRef])
   const getSelectedFeedId = useCallback(() => managerStateRef.current.selectedFeedId, [managerStateRef])
   const isFeedLoading = useCallback(() => managerStateRef.current.feedLoading, [managerStateRef])
+  const canCompleteRequestActivation = useCallback((feedId: string) => {
+    const delayedWarmActivation = managerStateRef.current.delayedWarmActivation
+
+    return !delayedWarmActivation || delayedWarmActivation.feedId !== feedId
+  }, [managerStateRef])
   const consumeDeferredEdgeResponseDelay = useCallback(() => {
     const delayMs = managerStateRef.current.deferredEdgeResponseDelayMs
     managerStateRef.current.deferredEdgeResponseDelayMs = 0
@@ -98,15 +107,8 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   }, [managerStateRef])
   const loadAnchor = useCallback((feedId: string) =>
     managerStateRef.current.savedAnchors.get(feedId) ?? null, [managerStateRef])
-  const saveAnchor = useCallback((
-    feedId: string,
-    anchor: SavedRuntimeAnchor['anchor'],
-    offsetWithinMessage?: number,
-  ) => {
-    managerStateRef.current.savedAnchors.set(feedId, {
-      anchor,
-      offsetWithinMessage,
-    })
+  const saveAnchor = useCallback((feedId: string, value: SavedRuntimeAnchor) => {
+    managerStateRef.current.savedAnchors.set(feedId, value)
   }, [managerStateRef])
 
   // eslint-disable-next-line react-hooks/refs -- lazy manager construction stores callbacks; it does not read ref values during render.
@@ -117,6 +119,7 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     const managerInstance = createDemoManager({
       consumeDeferredEdgeResponseDelay,
       consumeDeferredSessionResponseDelay,
+      canCompleteRequestActivation,
       getActiveFeedId,
       getSelectedFeedId,
       isFeedLoading,
@@ -298,35 +301,6 @@ export function useDemoMessageScenario(): DemoMessageScenario {
       highlightTimerRef,
     },
   })
-  const rememberRuntimeViewportAnchor = useCallback((
-    event: MessageListViewportAnchorChangeEvent,
-  ) => {
-    const eventRuntime = getRuntime(event.feedId)
-    const snapshot = eventRuntime.getSnapshot()
-    if (
-      snapshot.generation !== event.generation ||
-      snapshot.segmentRevision !== event.segmentRevision
-    ) {
-      return
-    }
-    const anchor = event.anchor
-    if (anchor) {
-      managerStateRef.current.savedAnchors.set(event.feedId, {
-        anchor,
-        offsetWithinMessage: event.offsetWithinMessage,
-      })
-      void loadDemoFeedMessages(event.feedId).then((feedMessages) => {
-        saveDemoViewportAnchor(
-          event.feedId,
-          toPersistedViewportAnchor(
-            anchor,
-            feedMessages,
-            event.offsetWithinMessage ?? 0,
-          ),
-        )
-      })
-    }
-  }, [getRuntime, managerStateRef])
   const selectFeed = useCallback((feedId: string) => {
     if (feedId === managerStateRef.current.selectedFeedId) {
       return
@@ -334,6 +308,7 @@ export function useDemoMessageScenario(): DemoMessageScenario {
 
     stopLongRunningMocks()
     resetSessionLoadingOverlay()
+    managerStateRef.current.delayedWarmActivation = null
     managerStateRef.current.selectedFeedId = feedId
     setSelectedFeedId(feedId)
     setEdgeLoading('before', false)
@@ -352,7 +327,9 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     const warmSnapshot = warmSession
       ? getMessageListSessionInternals(warmSession).getSnapshot()
       : null
+    const activationToken = managerStateRef.current.activationToken + 1
 
+    managerStateRef.current.activationToken = activationToken
     managerStateRef.current.activeFeedId = feedId
     setActiveFeedId(feedId)
     setPendingFeedId(delayMs > 0 ? feedId : null)
@@ -368,6 +345,29 @@ export function useDemoMessageScenario(): DemoMessageScenario {
       return
     }
 
+    if (delayMs > 0 && warmSnapshot && warmSnapshot.items.length > 0) {
+      managerStateRef.current.deferredSessionResponseDelayMs = 0
+      managerStateRef.current.delayedWarmActivation = {
+        feedId,
+        token: activationToken,
+      }
+      void (async () => {
+        await wait(delayMs)
+        if (
+          managerStateRef.current.activationToken !== activationToken ||
+          managerStateRef.current.activeFeedId !== feedId
+        ) {
+          return
+        }
+
+        managerStateRef.current.delayedWarmActivation = null
+        setPendingFeedId(null)
+        setFeedLoadingState(false)
+        syncLoadedState(feedId, `loaded ${getDemoFeedDefinition(feedId).title}`)
+      })()
+      return
+    }
+
     manager.getSession(feedId)
   }, [
     manager,
@@ -380,6 +380,8 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   ])
   const resetE2EScenario = useCallback(async (scenarioId: string) => {
     stopLongRunningMocks()
+    managerStateRef.current.activationToken += 1
+    managerStateRef.current.delayedWarmActivation = null
     managerStateRef.current.savedAnchors.clear()
     setEdgeLoading('before', false)
     setEdgeLoading('after', false)
@@ -476,7 +478,6 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     followBottom,
     jumpToQuote,
     clearFeed,
-    rememberRuntimeViewportAnchor,
     resetE2EScenario,
     streamCurrentRow,
     deferNextEdgeResponse,
@@ -497,6 +498,10 @@ function syncLoadedStateFromManager(input: {
   setMessageCount: (messageCount: number) => void
   setLastEvent: (eventText: string) => void
 }): void {
+  if (!input.manager.hasSession(input.feedId)) {
+    return
+  }
+
   const internals = getMessageListSessionInternals(
     input.manager.getSession(input.feedId),
   )

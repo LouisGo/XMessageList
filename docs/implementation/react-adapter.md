@@ -92,7 +92,7 @@ App 默认通过 manager adapter 接入：
 
 - `adapter.row`：业务 row key、anchor、version、kind。
 - `adapter.request`：`loadLatest` / `loadBefore` / `loadAfter` / `loadAround`。
-- `adapter.anchorMemory`：可选的 anchor load/save。
+- `adapter.anchorMemory`：可选的 `{ anchor, offsetWithinMessage }` load/save。
 - `adapter.readReceipts`：可选的批量已读回执。
 
 Manager 将 runtime semantic need events 接到 adapter request，负责 request token、stale response、failure ack、segment publish 和 trim。App 不通过 ref 拿 scroll container 来补逻辑。

@@ -10,7 +10,6 @@ import {
 import {
   createMessageListDataRuntime,
   type DataRuntimeRequestKind,
-  type IdentityRemapInput,
   type MessageListDataRuntime,
 } from '../runtime/data/index'
 import { MessageListReadReceiptsWorker } from './readReceipts'
@@ -19,33 +18,26 @@ import {
   normalizeMessageListAnchor,
   toMessageDataItems,
 } from './rowAdapter'
+import {
+  reindexRows,
+  resolveTrimProtectKey,
+  toRuntimeScrollOptions,
+  toSessionIdentityRemaps,
+  toSessionReplaceInput,
+  toSessionResetInput,
+  type AroundRequestOptions,
+  type RuntimeNeedEvent,
+  type SessionOptions,
+} from './sessionHelpers'
 import type {
-  MessageListAdapter,
-  MessageListIdentityRemap,
   MessageListConversationId,
-  MessageListManagerOptions,
   MessageListOverlayStatus,
   MessageListPage,
   MessageListRequestResult,
-  MessageListRowsReplaceInput,
-  MessageListScrollToMessageOptions,
   MessageListSession as PublicMessageListSession,
   MessageListSessionContext,
   MessageListViewState,
 } from './types'
-
-type RuntimeNeedEvent = Extract<
-  MessageListRuntimeEvent,
-  { requestToken: string }
->
-
-type SessionOptions<Row, Conversation> = {
-  id: MessageListConversationId
-  conversation: Conversation
-  adapter: MessageListAdapter<Row, Conversation>
-  defaults: Required<NonNullable<MessageListManagerOptions<Row, Conversation>['defaults']>>
-  onRequestResult?: MessageListManagerOptions<Row, Conversation>['onRequestResult']
-}
 
 export class MessageListSession<Row, Conversation>
   implements PublicMessageListSession<Row> {
@@ -81,7 +73,7 @@ export class MessageListSession<Row, Conversation>
       scrollToMessage: (target, scrollOptions) =>
         this.runtime.scrollToMessage(
           normalizeMessageListAnchor(this.id, target),
-          this.toRuntimeScrollOptions(scrollOptions),
+          toRuntimeScrollOptions(this.id, scrollOptions),
         ),
       reloadLatest: () => {
         void this.loadLatest()
@@ -97,31 +89,39 @@ export class MessageListSession<Row, Conversation>
       },
       replace: (input) => {
         this.publishSegment(this.dataRuntime.replaceItems(
-          this.toReplaceInput(input),
+          toSessionReplaceInput(this.id, input, this.options.adapter),
         ))
       },
       resetLatest: (page) => {
-        this.publishSegment(this.dataRuntime.resetLatest(this.toResetInput(page)))
+        this.publishLocalResetSegment(
+          this.dataRuntime.resetLatest(
+            toSessionResetInput(this.id, page, this.options.adapter),
+          ),
+        )
       },
       resetAround: (input) => {
-        this.publishSegment(this.dataRuntime.resetAround({
-          ...this.toResetInput(input),
-          target: normalizeMessageListAnchor(this.id, input.target),
-          align: input.align,
-          offsetWithinMessage: input.offsetWithinMessage,
-        }))
+        this.publishLocalResetSegment(
+          this.dataRuntime.resetAround({
+            ...toSessionResetInput(this.id, input, this.options.adapter),
+            target: normalizeMessageListAnchor(this.id, input.target),
+            align: input.align,
+            offsetWithinMessage: input.offsetWithinMessage,
+          }),
+        )
       },
       applyIdentityRemap: (remaps) => {
         this.publishSegment(this.dataRuntime.applyIdentityRemap(
-          this.toIdentityRemaps(remaps),
+          toSessionIdentityRemaps(this.id, remaps),
         ))
       },
       clear: () => {
-        this.publishSegment(this.dataRuntime.resetLatest({
-          items: [],
-          hasMoreBefore: false,
-          hasMoreAfter: false,
-        }))
+        this.publishLocalResetSegment(
+          this.dataRuntime.resetLatest({
+            items: [],
+            hasMoreBefore: false,
+            hasMoreAfter: false,
+          }),
+        )
       },
     }
     this.overlayStatus = this.createOverlayStatus('idle')
@@ -216,13 +216,16 @@ export class MessageListSession<Row, Conversation>
   private async bootstrap(): Promise<void> {
     try {
       this.setOverlayStatus('loading')
-      const anchor = await this.options.adapter.anchorMemory?.load(this.context)
-      const runtimeAnchor = anchor
-        ? normalizeMessageListAnchor(this.id, anchor)
+      const memoryValue = await this.options.adapter.anchorMemory?.load(this.context)
+      const runtimeAnchor = memoryValue
+        ? normalizeMessageListAnchor(this.id, memoryValue.anchor)
         : null
 
       if (runtimeAnchor) {
-        await this.loadAround(runtimeAnchor)
+        await this.loadAround(runtimeAnchor, undefined, {
+          align: 'start',
+          offsetWithinMessage: memoryValue?.offsetWithinMessage,
+        })
         return
       }
 
@@ -236,10 +239,20 @@ export class MessageListSession<Row, Conversation>
     this.touch()
 
     if (event.type === 'viewportAnchorChanged' && event.anchor) {
+      const snapshot = this.runtime.getSnapshot()
+      if (
+        snapshot.generation !== event.generation ||
+        snapshot.segmentRevision !== event.segmentRevision
+      ) {
+        return
+      }
+
       void this.options.adapter.anchorMemory?.save(
         this.context,
-        event.anchor,
-        event.offsetWithinMessage,
+        {
+          anchor: event.anchor,
+          offsetWithinMessage: event.offsetWithinMessage,
+        },
       )
       return
     }
@@ -266,6 +279,10 @@ export class MessageListSession<Row, Conversation>
 
   private async loadLatest(event?: RuntimeNeedEvent): Promise<void> {
     const overlayRequestId = this.startOverlayRequest()
+    const requestGeneration = this.dataRuntime.getSegment().generation
+    if (event) {
+      this.adoptRequestToken(event, 'latest')
+    }
     const result = await this.runRequest('latest', event, async () => {
       const page = await this.options.adapter.request.loadLatest({
         ...this.context,
@@ -280,15 +297,23 @@ export class MessageListSession<Row, Conversation>
           applied: false,
         }
       }
-      if (event) this.adoptRequestToken(event, 'latest')
+      if (this.isStaleRequest(event, requestGeneration)) {
+        return {
+          page,
+          segment: this.dataRuntime.getSegment(),
+          applied: false,
+        }
+      }
       const applied = event
         ? this.dataRuntime.resetLatestFromRequest({
-            ...this.toResetInput(page),
+            ...toSessionResetInput(this.id, page, this.options.adapter),
             requestToken: event.requestToken,
           })
         : {
             applied: true,
-            segment: this.dataRuntime.resetLatest(this.toResetInput(page)),
+            segment: this.dataRuntime.resetLatest(
+              toSessionResetInput(this.id, page, this.options.adapter),
+            ),
           }
       return { page, segment: applied.segment, applied: applied.applied }
     })
@@ -298,8 +323,13 @@ export class MessageListSession<Row, Conversation>
   private async loadAround(
     target: MessageIdentityAnchor,
     event?: RuntimeNeedEvent,
+    options: AroundRequestOptions = {},
   ): Promise<void> {
     const overlayRequestId = this.startOverlayRequest()
+    const requestGeneration = this.dataRuntime.getSegment().generation
+    if (event) {
+      this.adoptRequestToken(event, 'around')
+    }
     const result = await this.runRequest('around', event, async () => {
       const page = await this.options.adapter.request.loadAround({
         ...this.context,
@@ -315,18 +345,28 @@ export class MessageListSession<Row, Conversation>
           applied: false,
         }
       }
-      if (event) this.adoptRequestToken(event, 'around')
+      if (this.isStaleRequest(event, requestGeneration)) {
+        return {
+          page,
+          segment: this.dataRuntime.getSegment(),
+          applied: false,
+        }
+      }
       const applied = event
         ? this.dataRuntime.resetAroundFromRequest({
-            ...this.toResetInput(page),
+            ...toSessionResetInput(this.id, page, this.options.adapter),
             target,
             requestToken: event.requestToken,
+            align: options.align,
+            offsetWithinMessage: options.offsetWithinMessage,
           })
         : {
             applied: true,
             segment: this.dataRuntime.resetAround({
-              ...this.toResetInput(page),
+              ...toSessionResetInput(this.id, page, this.options.adapter),
               target,
+              align: options.align,
+              offsetWithinMessage: options.offsetWithinMessage,
             }),
           }
       return { page, segment: applied.segment, applied: applied.applied }
@@ -345,6 +385,8 @@ export class MessageListSession<Row, Conversation>
       return
     }
 
+    this.adoptRequestToken(event, edge)
+
     await this.runRequest(edge, event, async () => {
       const page = await (
         edge === 'before'
@@ -357,18 +399,25 @@ export class MessageListSession<Row, Conversation>
         reason: event.reason,
         boundaryRow,
       })
-      this.adoptRequestToken(event, edge)
+      if (this.isStaleEvent(event)) {
+        return {
+          page,
+          segment: this.dataRuntime.getSegment(),
+          applied: false,
+        }
+      }
+      const currentSegment = this.dataRuntime.getSegment()
       const input = {
-        ...this.toResetInput(page),
+        ...toSessionResetInput(this.id, page, this.options.adapter),
         hasMoreBefore: edge === 'before'
           ? page.hasMoreBefore
-          : segment.hasMoreBefore,
+          : currentSegment.hasMoreBefore,
         hasMoreAfter: edge === 'after'
           ? page.hasMoreAfter
-          : segment.hasMoreAfter,
+          : currentSegment.hasMoreAfter,
         requestToken: event.requestToken,
-        anchor: segment.anchor,
-        anchorStatus: segment.anchorStatus,
+        anchor: currentSegment.anchor,
+        anchorStatus: currentSegment.anchorStatus,
       }
       const applied = edge === 'before'
         ? this.dataRuntime.extendBefore(input)
@@ -389,7 +438,7 @@ export class MessageListSession<Row, Conversation>
     try {
       const result = await request()
 
-      if (!result.applied || this.isStaleEvent(event)) {
+      if (!result.applied) {
         if (kind === 'before' || kind === 'after') {
           this.runtime.reportEdgeRequestFailure(kind, event?.requestToken ?? '')
         }
@@ -415,7 +464,9 @@ export class MessageListSession<Row, Conversation>
     this.applySegmentToRuntime(current)
 
     for (let guard = 0; guard < 4; guard += 1) {
-      const trimmed = this.dataRuntime.trimToBudget(this.resolveTrimProtectKey())
+      const trimmed = this.dataRuntime.trimToBudget(
+        resolveTrimProtectKey(this.runtime, this.dataRuntime),
+      )
 
       if (trimmed === current) {
         return
@@ -427,73 +478,15 @@ export class MessageListSession<Row, Conversation>
   }
 
   private applySegmentToRuntime(segment: LoadedSegment<Row>): void {
-    this.reindexRows(segment.items)
+    reindexRows(this.rowsByKey, segment.items)
     this.runtime.applyLoadedSegment(segment)
   }
 
-  private reindexRows(items: MessageDataItem<Row>[]): void {
-    this.rowsByKey.clear()
-
-    for (const item of items) {
-      if (item.message !== undefined) {
-        this.rowsByKey.set(item.key, item.message)
-      }
-    }
-  }
-
-  private toResetInput(page: MessageListPage<Row>) {
-    return {
-      items: toMessageDataItems(this.id, page.rows, this.options.adapter),
-      hasMoreBefore: page.hasMoreBefore,
-      hasMoreAfter: page.hasMoreAfter,
-      anchor: page.anchor
-        ? normalizeMessageListAnchor(this.id, page.anchor)
-        : undefined,
-      anchorStatus: page.anchorStatus,
-    }
-  }
-
-  private toReplaceInput(input: MessageListRowsReplaceInput<Row>) {
-    return {
-      items: toMessageDataItems(this.id, input.rows, this.options.adapter),
-      changedKeys: input.changedKeys ??
-        input.rows.map((row) => this.options.adapter.row.getKey(row)),
-      hasMoreBefore: input.hasMoreBefore,
-      hasMoreAfter: input.hasMoreAfter,
-      anchor: input.anchor
-        ? normalizeMessageListAnchor(this.id, input.anchor)
-        : undefined,
-      anchorStatus: input.anchorStatus,
-    }
-  }
-
-  private toIdentityRemaps(
-    remaps: MessageListIdentityRemap[],
-  ): IdentityRemapInput {
-    return remaps.map((remap) => ({
-      ...remap,
-      from: normalizeMessageListAnchor(this.id, remap.from),
-      to: normalizeMessageListAnchor(this.id, remap.to),
-    }))
-  }
-
-  private toRuntimeScrollOptions(
-    options: MessageListScrollToMessageOptions | undefined,
-  ): import('../runtime/index').MessageListScrollToMessageOptions | undefined {
-    if (!options) {
-      return undefined
-    }
-
-    return {
-      ...options,
-      motion: options.motion
-        ? {
-            ...options.motion,
-            origin: options.motion.origin
-              ? normalizeMessageListAnchor(this.id, options.motion.origin)
-              : undefined,
-          }
-        : undefined,
+  private publishLocalResetSegment(segment: LoadedSegment<Row>): void {
+    this.overlayRequestId += 1
+    this.publishSegment(segment)
+    if (this.overlayStatus.status === 'loading') {
+      this.setOverlayStatus('idle')
     }
   }
 
@@ -510,6 +503,15 @@ export class MessageListSession<Row, Conversation>
 
   private isStaleEvent(event: RuntimeNeedEvent | undefined): boolean {
     return Boolean(event && this.dataRuntime.getSegment().generation !== event.generation)
+  }
+
+  private isStaleRequest(
+    event: RuntimeNeedEvent | undefined,
+    requestGeneration: number,
+  ): boolean {
+    return event
+      ? this.isStaleEvent(event)
+      : this.dataRuntime.getSegment().generation !== requestGeneration
   }
 
   private emitRequestResult(
@@ -533,28 +535,6 @@ export class MessageListSession<Row, Conversation>
     }
 
     this.setOverlayStatus(result.status === 'failed' ? 'error' : 'idle', result.error)
-  }
-
-  private resolveTrimProtectKey(): string | undefined {
-    const anchor = this.runtime.getViewportAnchor()
-    const segment = this.dataRuntime.getSegment()
-
-    if (!anchor) {
-      return this.runtime.getSnapshot().bottomLockState === 'LOCKED'
-        ? segment.items.at(-1)?.key
-        : segment.items[Math.floor(segment.items.length / 2)]?.key
-    }
-
-    return segment.items.find((item) => {
-      const identity = item.identity
-      return identity &&
-        identity.feedId === anchor.feedId &&
-        (
-          identity.stableId === anchor.stableId ||
-          Boolean(identity.serverId && identity.serverId === anchor.serverId) ||
-          Boolean(identity.localId && identity.localId === anchor.localId)
-        )
-    })?.key
   }
 
   private createOverlayStatus(

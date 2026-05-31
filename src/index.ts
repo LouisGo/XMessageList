@@ -9,6 +9,7 @@ export {
 export type {
   MessageListAdapter,
   MessageListAnchor,
+  MessageListAnchorMemoryValue,
   MessageListConversationId,
   MessageListIdentityRemap,
   MessageListManager,

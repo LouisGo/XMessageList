@@ -459,7 +459,6 @@ export function DemoMessageListContent({
               </div>
             ) : null
           }
-          onViewportAnchorChange={scenario.rememberRuntimeViewportAnchor}
           scrollbar="custom"
         />
         <form className="message-composer" onSubmit={sendDraft}>

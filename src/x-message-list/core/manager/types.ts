@@ -29,6 +29,11 @@ export type MessageListPage<Row> = {
   total?: number
 }
 
+export type MessageListAnchorMemoryValue = {
+  anchor: MessageListAnchor
+  offsetWithinMessage?: number
+}
+
 export type MessageListScrollToMessageOptions = {
   behavior?: ScrollBehavior
   align?: 'start' | 'center' | 'end' | 'nearest'
@@ -73,11 +78,11 @@ export type MessageListAdapter<Row, Conversation = MessageListConversationId> = 
   anchorMemory?: {
     load(
       context: MessageListSessionContext<Conversation>,
-    ): MessageListAnchor | null | Promise<MessageListAnchor | null>
+    ): MessageListAnchorMemoryValue | null |
+      Promise<MessageListAnchorMemoryValue | null>
     save(
       context: MessageListSessionContext<Conversation>,
-      anchor: MessageListResolvedAnchor,
-      offsetWithinMessage?: number,
+      value: MessageListAnchorMemoryValue,
     ): void | Promise<void>
   }
   readReceipts?: {

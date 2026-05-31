@@ -7,6 +7,7 @@ import {
 import { getMessageListAdapterRuntime } from '../internal'
 import {
   createContainer,
+  FakeScheduler,
   setElementMetrics,
 } from '../../../../test/fakes'
 
@@ -33,6 +34,46 @@ describe('MessageList warm attach restore', () => {
     runtime.detachScrollContainer()
     container.scrollTop = 0
     runtime.attachScrollContainer(container)
+
+    expect(container.scrollTop).toBe(75)
+  })
+
+  it('replays warm restore after the reattached container regains scroll range', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = Array.from({ length: 4 }, (_, index) =>
+      createRow(`row-${index + 1}`, index * 50, 50)
+    )
+
+    installClampedScrollTop(container)
+    container.append(...rows)
+    runtime.attachScrollContainer(container)
+    for (const row of rows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+    runtime.applyLoadedSegment(segment(rows.map((row) =>
+      item(row.dataset.runtimeKey as string)
+    )))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    container.scrollTop = 75
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    container.replaceChildren()
+    container.scrollTop = 0
+    runtime.detachScrollContainer()
+
+    runtime.attachScrollContainer(container)
+
+    expect(container.scrollTop).toBe(0)
+
+    container.append(...rows)
+    for (const row of rows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+    scheduler.flushFrame()
 
     expect(container.scrollTop).toBe(75)
   })
@@ -74,4 +115,17 @@ function createRow(key: string, top: number, height: number): HTMLDivElement {
   row.dataset.messageStableId = key
   setElementMetrics(row, { top, height })
   return row
+}
+
+function installClampedScrollTop(element: HTMLElement): void {
+  let scrollTop = 0
+
+  Object.defineProperty(element, 'scrollTop', {
+    configurable: true,
+    get: () => scrollTop,
+    set: (value: number) => {
+      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
+      scrollTop = Math.min(Math.max(0, value), maxScrollTop)
+    },
+  })
 }

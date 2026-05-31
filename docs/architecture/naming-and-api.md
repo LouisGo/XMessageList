@@ -94,8 +94,8 @@ type MessageListAdapter<Row, Conversation> = {
   }
 
   anchorMemory?: {
-    load(ctx): Promise<MessageListAnchor | null> | MessageListAnchor | null
-    save(ctx, anchor: MessageListResolvedAnchor, offsetWithinMessage?): void | Promise<void>
+    load(ctx): Promise<MessageListAnchorMemoryValue | null> | MessageListAnchorMemoryValue | null
+    save(ctx, value: MessageListAnchorMemoryValue): void | Promise<void>
   }
 
   readReceipts?: {

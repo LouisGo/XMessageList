@@ -1,6 +1,7 @@
 import {
   createMessageListManager,
   type MessageListAdapter,
+  type MessageListAnchorMemoryValue,
   type MessageListManager,
   type MessageListPage,
   type MessageListRequestResult,
@@ -14,6 +15,8 @@ import {
 import {
   getLatestMessages,
   getMessagesAround,
+  loadDemoFeedMessages,
+  loadDemoViewportAnchor,
   replaceDemoFeedMessages,
   saveDemoViewportAnchor,
 } from '../data/demoMessageApi'
@@ -26,7 +29,10 @@ import {
   resolveScenarioTotalMessages,
   usesAroundBootstrap,
 } from './demoScenarioHelpers'
-import type { SavedRuntimeAnchor } from './demoScenarioRuntimeHelpers'
+import {
+  toPersistedViewportAnchor,
+  type SavedRuntimeAnchor,
+} from './demoScenarioRuntimeHelpers'
 
 type DemoConversation = {
   id: string
@@ -38,12 +44,9 @@ export type DemoManagerOptions = {
   isFeedLoading: () => boolean
   consumeDeferredEdgeResponseDelay: () => number
   consumeDeferredSessionResponseDelay: () => number
+  canCompleteRequestActivation: (feedId: string) => boolean
   loadAnchor: (feedId: string) => SavedRuntimeAnchor | null
-  saveAnchor: (
-    feedId: string,
-    anchor: MessageListResolvedAnchor,
-    offsetWithinMessage?: number,
-  ) => void
+  saveAnchor: (feedId: string, value: SavedRuntimeAnchor) => void
   setEdgeLoading: (edge: 'before' | 'after', loading: boolean) => void
   setFeedLoading: (loading: boolean) => void
   setLastEvent: (eventText: string) => void
@@ -197,9 +200,49 @@ function createDemoAdapter(
       },
     },
     anchorMemory: {
-      load: (context) => input.loadAnchor(context.id)?.anchor ?? null,
-      save: (context, anchor, offsetWithinMessage) => {
-        input.saveAnchor(context.id, anchor, offsetWithinMessage)
+      load: async (context) => {
+        const cached = input.loadAnchor(context.id)
+        if (cached) {
+          return cached
+        }
+
+        const persisted = await loadDemoViewportAnchor(context.id)
+        if (!persisted) {
+          return null
+        }
+
+        const restored = toSavedRuntimeAnchor(context.id, {
+          anchor: {
+            id: persisted.messageId,
+            feedId: context.id,
+            stableId: persisted.messageId,
+            serverId: persisted.messageId,
+          },
+          offsetWithinMessage: persisted.offsetWithinMessage,
+        })
+
+        if (restored) {
+          input.saveAnchor(context.id, restored)
+        }
+
+        return restored
+      },
+      save: async (context, value) => {
+        const saved = toSavedRuntimeAnchor(context.id, value)
+        if (!saved) {
+          return
+        }
+
+        input.saveAnchor(context.id, saved)
+        const feedMessages = await loadDemoFeedMessages(context.id)
+        saveDemoViewportAnchor(
+          context.id,
+          toPersistedViewportAnchor(
+            saved.anchor,
+            feedMessages,
+            saved.offsetWithinMessage ?? 0,
+          ),
+        )
       },
     },
     readReceipts: {
@@ -269,12 +312,20 @@ function handleDemoRequestResult(
 ): void {
   if (result.status !== 'applied') {
     if (result.id === input.getActiveFeedId() && result.status === 'failed') {
+      if (input.canCompleteRequestActivation(result.id)) {
+        input.setFeedLoading(false)
+        input.setPendingFeedId(null)
+      }
       input.setLastEvent(`request failed: ${String(result.error)}`)
     }
     return
   }
 
   if (result.id !== input.getActiveFeedId()) {
+    return
+  }
+
+  if (!input.canCompleteRequestActivation(result.id)) {
     return
   }
 
@@ -372,6 +423,32 @@ function resolveAnchorMessageId(
   anchor: MessageListResolvedAnchor | undefined,
 ): string {
   return anchor?.serverId ?? anchor?.stableId ?? anchor?.localId ?? ''
+}
+
+function toSavedRuntimeAnchor(
+  feedId: string,
+  value: MessageListAnchorMemoryValue,
+): SavedRuntimeAnchor | null {
+  const messageId = value.anchor.serverId ??
+    value.anchor.stableId ??
+    value.anchor.localId ??
+    value.anchor.id
+
+  if (!messageId) {
+    return null
+  }
+
+  return {
+    anchor: {
+      id: messageId,
+      feedId,
+      stableId: messageId,
+      serverId: messageId,
+      fallbackStableId: value.anchor.fallbackStableId,
+      fallbackReason: value.anchor.fallbackReason,
+    },
+    offsetWithinMessage: value.offsetWithinMessage,
+  }
 }
 
 function toDemoApiAnchor(

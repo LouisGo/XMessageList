@@ -1,7 +1,12 @@
 import { StrictMode, act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { getMessageListSessionInternals } from '../../x-message-list/core/manager/internal'
 import { MessageList } from '../../x-message-list/react/components/MessageList'
+import {
+  readDemoFeedMessages,
+  saveDemoViewportAnchor,
+} from '../data/demoMessageApi'
 import type { DemoMessageScenario } from '../scenario/demoScenarioTypes'
 import {
   RANDOM_CHAT_FEED_ID,
@@ -234,6 +239,207 @@ describe('useDemoMessageScenario feed switching', () => {
     expect(harness.getScenario()?.activeFeedId).toBe(RANDOM_CHAT_FEED_ID)
     expect(harness.getScenario()?.feedLoading).toBe(false)
     expect(harness.getScenario()?.sessionLoadingOverlayVisible).toBe(false)
+
+    await harness.unmount()
+  })
+
+  it('clears delayed overlay when re-entering a warm Random Chat session', async () => {
+    const random = vi.spyOn(Math, 'random')
+    random.mockReturnValue(0.9)
+    const harness = createScenarioHarness()
+
+    await harness.render()
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario && !scenario.feedLoading && scenario.loadedMessageCount > 0)
+    })
+
+    await act(async () => {
+      harness.getScenario()?.selectFeed(RANDOM_CHAT_FEED_ID)
+    })
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(
+        scenario?.activeFeedId === RANDOM_CHAT_FEED_ID &&
+          !scenario.feedLoading &&
+          scenario.loadedMessageCount > 0,
+      )
+    })
+
+    await act(async () => {
+      harness.getScenario()?.selectFeed('feed-runtime')
+    })
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario?.activeFeedId === 'feed-runtime' && !scenario.feedLoading)
+    })
+
+    await act(async () => {
+      harness.getScenario()?.deferNextSessionResponse(340)
+      harness.getScenario()?.selectFeed(RANDOM_CHAT_FEED_ID)
+    })
+
+    expect(harness.getScenario()?.feedLoading).toBe(true)
+    await wait(220)
+    expect(harness.getScenario()?.feedLoading).toBe(true)
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario?.activeFeedId === RANDOM_CHAT_FEED_ID && !scenario.feedLoading)
+    })
+
+    expect(harness.getScenario()?.sessionLoadingOverlayVisible).toBe(false)
+    expect(harness.host.querySelector('[data-testid="session-loading-overlay"]')).toBeNull()
+
+    await harness.unmount()
+  })
+
+  it('restores a persisted feed anchor with its message offset', async () => {
+    const harness = createScenarioHarness()
+    const feedId = 'feed-support'
+    const feedMessages = readDemoFeedMessages(feedId)
+    const target = feedMessages[29]
+
+    expect(target?.id).toBe('feed-support-0030')
+    saveDemoViewportAnchor(feedId, {
+      messageId: target.id,
+      position: target.sequence,
+      offsetWithinMessage: 17,
+    })
+
+    await harness.render()
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario && !scenario.feedLoading && scenario.loadedMessageCount > 0)
+    })
+
+    await act(async () => {
+      harness.getScenario()?.selectFeed(feedId)
+    })
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(
+        scenario?.activeFeedId === feedId &&
+          !scenario.feedLoading &&
+          scenario.activeRuntime.getSnapshot().items.some((item) =>
+            item.message?.id === target.id
+          ),
+      )
+    })
+
+    const scenario = harness.getScenario()
+    const segment = scenario
+      ? getMessageListSessionInternals(scenario.activeSession).dataRuntime.getSegment()
+      : null
+
+    expect(segment?.modifier).toEqual(expect.objectContaining({
+      type: 'reset-around',
+      align: 'start',
+      offsetWithinMessage: 17,
+    }))
+
+    await harness.unmount()
+  })
+
+  it('loads around the target when jumping to a remote quote', async () => {
+    const harness = createScenarioHarness()
+
+    await harness.render()
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario && !scenario.feedLoading && scenario.loadedMessageCount > 0)
+    })
+
+    await act(async () => {
+      harness.getScenario()?.jumpToQuote({
+        origin: { messageId: 'feed-runtime-0070', position: 70 },
+        target: { messageId: 'feed-runtime-0010', position: 10 },
+      })
+    })
+
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario?.activeRuntime.getSnapshot().items.some((item) =>
+        item.message?.id === 'feed-runtime-0010'
+      ))
+    })
+
+    expect(harness.getScenario()?.lastEvent).toBe('loaded around anchor')
+
+    await harness.unmount()
+  })
+
+  it('loads latest when following bottom from a middle window', async () => {
+    const harness = createScenarioHarness()
+
+    await harness.render()
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario && !scenario.feedLoading && scenario.loadedMessageCount > 0)
+    })
+
+    const middle = readDemoFeedMessages('feed-runtime')[39]
+
+    await act(async () => {
+      harness.getScenario()?.activeSession.rows.resetAround({
+        target: { id: middle.id },
+        rows: [middle],
+        hasMoreBefore: true,
+        hasMoreAfter: true,
+        anchor: { id: middle.id },
+      })
+      harness.getScenario()?.followBottom()
+    })
+
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(
+        scenario &&
+          !scenario.hasMoreAfter &&
+          scenario.activeRuntime.getSnapshot().items.at(-1)?.message?.id ===
+            'feed-runtime-0080',
+      )
+    })
+
+    expect(harness.getScenario()?.lastEvent).toBe('loaded 20 latest messages')
+
+    await harness.unmount()
+  })
+
+  it('rebuilds the latest tail after sending from a middle window', async () => {
+    const harness = createScenarioHarness()
+
+    await harness.render()
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario && !scenario.feedLoading && scenario.loadedMessageCount > 0)
+    })
+
+    const beforeSendCount = readDemoFeedMessages('feed-runtime').length
+    const middle = readDemoFeedMessages('feed-runtime')[39]
+
+    await act(async () => {
+      harness.getScenario()?.activeSession.rows.resetAround({
+        target: { id: middle.id },
+        rows: [middle],
+        hasMoreBefore: true,
+        hasMoreAfter: true,
+        anchor: { id: middle.id },
+      })
+      expect(harness.getScenario()?.sendMessage('send from middle')).toBe(true)
+    })
+
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(
+        scenario &&
+          scenario.messageCount === beforeSendCount + 1 &&
+          !scenario.hasMoreAfter &&
+          scenario.activeRuntime.getSnapshot().items.at(-1)?.message?.body ===
+            'send from middle',
+      )
+    })
+
+    expect(harness.getScenario()?.lastEvent).toContain('rebuilt latest')
 
     await harness.unmount()
   })

@@ -1,6 +1,5 @@
 import type {
   MessageListIdentityRemap,
-  MessageListViewportAnchorChangeEvent,
   MessageListResolvedAnchor,
   MessageListSession,
 } from '../../index'
@@ -53,9 +52,6 @@ export type DemoMessageScenario = {
     target: { messageId: string; position?: number }
   }) => void
   clearFeed: (feedId: string) => void
-  rememberRuntimeViewportAnchor: (
-    event: MessageListViewportAnchorChangeEvent,
-  ) => void
   resetE2EScenario: (scenarioId: string) => Promise<void>
   streamCurrentRow: () => void
   deferNextEdgeResponse: (delayMs: number) => void
@@ -94,9 +90,5 @@ export type DemoHighlightState = {
   setHighlightToken: (updater: (token: number) => number) => void
   highlightTimerRef: { current: number | null }
 }
-
-export type RuntimeAnchorChangeHandler = (
-  event: MessageListViewportAnchorChangeEvent,
-) => void
 
 export type PersistedRuntimeAnchor = MessageListResolvedAnchor
