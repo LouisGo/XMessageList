@@ -10,7 +10,7 @@
 - 原生滚动条因为真实 `scrollHeight` 改变而自然离开边缘。
 - 触控板、鼠标滚轮、触摸惯性不被 runtime 人为打断。
 
-这就是 next 分支的底层基座。它不是“虚拟列表更像 Telegram”，而是放弃用估算高度伪装全历史，改用真实 loaded segment 作为浏览器滚动事实。
+这就是当前底层基座。它不是“虚拟列表更像 Telegram”，而是放弃用估算高度伪装全历史，改用真实 loaded segment 作为浏览器滚动事实。
 
 ## 为什么不是 top/bottom spacer
 
@@ -20,7 +20,7 @@ top / bottom spacer 会把未加载或未挂载消息的估算高度注入 `scro
 - 触边分页后，thumb 是否回落取决于估算修正，不取决于真实 DOM 插入。
 - 惯性滚动期间 runtime 很容易在 spacer、window slide、anchor correction 之间争夺 `scrollTop`。
 
-next 分支不再把 spacer 当作滚动连续性的基础。连续性来自短窗口加载、真实 DOM 高度和视觉 anchor correction。
+当前实现不把 spacer 当作滚动连续性的基础。连续性来自短窗口加载、真实 DOM 高度和视觉 anchor correction。
 
 ## 借鉴 Telegram Web A，但不照搬
 
@@ -43,7 +43,7 @@ XMessageList 的取舍是：Telegram-style DOM 形态，加上独立 runtime 的
 
 ## 外部经验准入
 
-next 分支不做多家 virtualizer / recycler 的最佳实践拼装。任何外部经验进入 core 前，必须同时满足：
+当前实现不做多家 virtualizer / recycler 的最佳实践拼装。任何外部经验进入 core 前，必须同时满足：
 
 - 不引入第二套 scroll truth，`scrollHeight` 仍只来自当前 loaded segment 的真实 DOM。
 - 能翻译成 `SegmentModifier`、identity/runtime key、projection transaction、commit ack 或 evidence oracle。

@@ -1,6 +1,7 @@
 # XMessageList 文档入口
 
-本目录是 next 分支的开工依据。所有文档统一转向 **Telegram Web A 风格的 loaded segment native scroll**：
+本目录记录当前 XMessageList 的实现、接入、测试与研究依据。所有现行文档统一以
+**Telegram Web A 风格的 loaded segment native scroll** 为正向模型：
 
 - scroll container 的 `scrollHeight` 只表达当前已加载、已挂载 segment 的真实 DOM 高度。
 - 不再用 top spacer / bottom spacer 伪造未加载历史高度。
@@ -12,34 +13,34 @@
 
 | 目录 | 职责 | 先读 |
 | --- | --- | --- |
-| [architecture](./architecture/README.md) | 模型、所有权、状态边界、术语和 public API | [principles.md](./architecture/principles.md) |
-| [interaction-specs](./interaction-specs/README.md) | 用户可观察的滚动、滚动条、分页、跳转规格 | [scrolling.md](./interaction-specs/scrolling.md) |
+| [architecture](./architecture/README.md) | 模型、所有权、状态边界、术语和 public API | [module-map.md](./architecture/module-map.md) |
 | [implementation](./implementation/README.md) | DOM、transaction、measurement、React adapter、性能施工图 | [dom-layout.md](./implementation/dom-layout.md) |
-| [testing](./testing/README.md) | E2E 场景、oracle、证据结构 | [oracles.md](./testing/oracles.md) |
-| [research](./research/telegram-web-a.md) | Telegram Web A 调研与取舍 | [telegram-web-a.md](./research/telegram-web-a.md) |
-| [migration](./migration/README.md) | 从旧 spacer 文档/实现切换到新基座 | [README.md](./migration/README.md) |
-| [roadmap.md](./roadmap.md) | 文档后的实施阶段和退出标准 | [roadmap.md](./roadmap.md) |
+| [interaction-specs](./interaction-specs/README.md) | 用户可观察的滚动、滚动条、分页、跳转规格 | [README.md](./interaction-specs/README.md) |
+| [testing](./testing/README.md) | E2E 场景、oracle、证据结构 | [e2e-scenarios.md](./testing/e2e-scenarios.md) |
+| [graph](./graph/README.md) | Mermaid 图形式的跨模块关系和时序 | [module-boundaries.md](./graph/module-boundaries.md) |
+| [research](./research/telegram-web-a.md) | 研究快照与架构取舍来源 | [telegram-web-a.md](./research/telegram-web-a.md) |
 
 ## 推荐阅读顺序
 
-1. [architecture/principles.md](./architecture/principles.md)
-2. [architecture/naming-and-api.md](./architecture/naming-and-api.md)
-3. [architecture/layering-and-ownership.md](./architecture/layering-and-ownership.md)
-4. [architecture/anchor-and-data-window.md](./architecture/anchor-and-data-window.md)
-5. [interaction-specs/scrolling.md](./interaction-specs/scrolling.md)
-6. [interaction-specs/paging.md](./interaction-specs/paging.md)
-7. [interaction-specs/scrollbar.md](./interaction-specs/scrollbar.md)
-8. [implementation/dom-layout.md](./implementation/dom-layout.md)
-9. [implementation/transactions-and-measurement.md](./implementation/transactions-and-measurement.md)
-10. [testing/oracles.md](./testing/oracles.md)
-11. [roadmap.md](./roadmap.md)
+1. [architecture/module-map.md](./architecture/module-map.md)
+2. [architecture/layering-and-ownership.md](./architecture/layering-and-ownership.md)
+3. [architecture/naming-and-api.md](./architecture/naming-and-api.md)
+4. [implementation/dom-layout.md](./implementation/dom-layout.md)
+5. [implementation/transactions-and-measurement.md](./implementation/transactions-and-measurement.md)
+6. [interaction-specs/README.md](./interaction-specs/README.md)
+7. [interaction-specs/scrolling.md](./interaction-specs/scrolling.md)
+8. [interaction-specs/paging.md](./interaction-specs/paging.md)
+9. [interaction-specs/scrollbar.md](./interaction-specs/scrollbar.md)
+10. [testing/e2e-scenarios.md](./testing/e2e-scenarios.md)
+11. [testing/oracles.md](./testing/oracles.md)
+12. [graph/README.md](./graph/README.md)
 
 ## 统一口径
 
 - 对外组件、hooks、runtime facade 和 package export 统一使用 `MessageList` 命名。
 - `Viewport` 只用于描述可视区域、滚动容器、anchor、measurement 和 runtime 内部事件。
 - `Projection` 只用于 runtime 到 React adapter 的 commit / snapshot / transaction 合同。
-- 旧 `MessageViewport*`、`renderWindow`、spacer、`viewportEffect` 只能出现在迁移对照或删除清单里。
+- 旧滚动模型只能出现在研究材料或明确禁止事项里，不能作为当前实现依据。
 
 ## 非目标
 

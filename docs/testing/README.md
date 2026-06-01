@@ -1,13 +1,14 @@
 # 测试与验收
 
-本目录定义 next 分支文档对应的验收方式。旧 E2E 报告不再作为目标事实；后续实现必须用这里的 scenarios 和 oracles 重建测试矩阵。
+本目录定义当前实现的浏览器验收方式。旧报告不作为目标事实；场景清单以
+`e2e/runner/scenarioSpecs.ts` 的当前 runner 为准。
 
 ## 文件职责
 
 | 文档 | 内容 |
 | --- | --- |
-| [oracles.md](./oracles.md) | 判定滚动稳定、分页、滚动条是否正确的证据 |
-| [e2e-scenarios.md](./e2e-scenarios.md) | 必须覆盖的浏览器场景 |
+| [e2e-scenarios.md](./e2e-scenarios.md) | 当前 runner 场景清单 |
+| [oracles.md](./oracles.md) | 判定滚动稳定、分页、滚动条和 overlay 是否正确的证据 |
 
 ## 验收原则
 

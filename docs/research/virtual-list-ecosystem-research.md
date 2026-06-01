@@ -1,6 +1,8 @@
 # 虚拟列表与 IM Message List 技术调研报告
 
-本报告以原 `docs/viewport-runtime/research-notes.md` 的外部调研结论为基准，并结合当前 `docs/research/telegram-web-a.md` 与 next 文档的 loaded segment / native scroll 方向扩展。
+本报告保留 2026-05-26 的外部调研快照，并结合
+`docs/research/telegram-web-a.md` 与当前 loaded segment / native scroll 方向整理。
+它是决策输入，不是当前 API 或验收状态来源。
 
 调研目标不是把 XMessageList 改造成一个通用虚拟列表库，而是弄清楚主流虚拟列表、移动端 recycler、IM message list 的底层原理，提炼哪些优化值得吸收，哪些心智会伤害 IM 阅读稳定性。
 
@@ -25,7 +27,7 @@ data index / item identity
 | 确定尺寸 offset manager | react-virtualized, react-window, Angular CDK fixed strategy | index + size function / estimate | 表格、设置页、已知高度列表 | prepend、动态高度、消息流更新需要额外语义 |
 | 动态测量 virtualizer | TanStack Virtual, virtua, React Virtuoso, rc-virtual-list, vue-virtual-scroller | estimate -> DOM measure -> cache correction | 高度不完全固定的 Web 列表 | 仍需业务说明“这次数据变化意味着什么” |
 | recycler | React Native VirtualizedList, RecyclerListView, FlashList | render window + view/cell reuse | 移动端长 feed、高 churn 场景 | 复用 cell 会放大组件状态泄漏风险 |
-| IM message list runtime | Virtuoso Message List, Stream Chat, Telegram Web A/K, XMessageList next | message identity + mutation semantics + visual anchor | 聊天、历史分页、追底、跳转 | 不能退化成 index scroll 思维 |
+| IM message list runtime | Virtuoso Message List, Stream Chat, Telegram Web A/K, XMessageList | message identity + mutation semantics + visual anchor | 聊天、历史分页、追底、跳转 | 不能退化成 index scroll 思维 |
 
 最重要的判断：
 
@@ -33,7 +35,7 @@ data index / item identity
 2. IM 消息列表解决的是“数据变了以后，用户原来的阅读位置应该如何保持”。
 3. 动态高度没有魔法。所有成熟实现都是 estimate -> measure -> compensate，只是缓存结构、时机和补偿策略不同。
 4. ResizeObserver 不是 scroll correction owner。它最多是 dirty signal，真正的修正必须进入 transaction 或稳定化阶段。
-5. XMessageList 当前 next 方向，真实 loaded segment + native scroll range + visual anchor correction，比全历史 spacer 更接近成熟 IM 的本质。
+5. XMessageList 当前方向，真实 loaded segment + native scroll range + visual anchor correction，比全历史 spacer 更接近成熟 IM 的本质。
 
 一句话：通用 virtualizer 管“少画什么”，IM runtime 管“变化之后别把用户眼睛里的那一行弄丢”。
 
@@ -58,7 +60,7 @@ data index / item identity
 
 - 官方文档和 README 作为公开语义来源。
 - npm 包源码作为实现细节来源。
-- 对 IM 相关结论，优先比对 React Virtuoso Message List、Stream Chat、Telegram Web A/K，以及 XMessageList 当前 next 文档。
+- 对 IM 相关结论，优先比对 React Virtuoso Message List、Stream Chat、Telegram Web A/K，以及 XMessageList 当前文档。
 - 对 ChatScope、MUI X Chat、Sendbird UI、react-chat-elements 这类聊天 UI 套件，只把它们作为生态边界观察。它们更多是 message component / conversation UI，不是虚拟列表内核。
 
 ## 2. 一张生态地图
@@ -158,7 +160,7 @@ Web IM 是否要 recycler，需要非常谨慎。XMessageList 当前瓶颈更可
 
 ### 3.4 Message List Runtime
 
-代表：React Virtuoso Message List、Stream Chat 的 VirtualizedMessageList、Telegram Web A/K、XMessageList next。
+代表：React Virtuoso Message List、Stream Chat 的 VirtualizedMessageList、Telegram Web A/K、XMessageList。
 
 基本模型：
 
@@ -413,7 +415,7 @@ Stream Chat React 的 `VirtualizedMessageList` 使用 `react-virtuoso` 渲染 me
 
 Telegram Web A 的实现与通用 virtualizer 最大不同，是它不试图把未加载历史伪造成一个完整全局 scroll range。它维护短 `viewportIds` / loaded segment，DOM 正常文档流，上下用 trigger 触发加载，数据变更前后用 anchor rect diff 修正 scrollTop。
 
-这和当前 XMessageList next 文档高度一致：
+这和当前 XMessageList 文档高度一致：
 
 - scroll container 是真实 native scroll。
 - `scrollHeight` 表达当前已加载 segment 的真实 DOM 高度。
@@ -429,7 +431,7 @@ Telegram Web K 也体现了相同现实：成熟聊天 bubbles 实现直接面�
 - edge observer 只发 signal，不拥有 scroll correction。
 - 远距离跳转通过 around/latest reset，而不是虚构全局百分比。
 
-本质判断：Telegram 路线不是“低技术”，而是把正确性建立在浏览器 native scroll 事实之上。通用 virtualizer 的 spacer 心智很聪明，但在 IM 里会让 scrollHeight 表达估算历史，而不是当前真实阅读区域。next 方向放弃全历史 spacer，是一个正确的产品工程取舍。
+本质判断：Telegram 路线不是“低技术”，而是把正确性建立在浏览器 native scroll 事实之上。通用 virtualizer 的 spacer 心智很聪明，但在 IM 里会让 scrollHeight 表达估算历史，而不是当前真实阅读区域。当前方向放弃全历史 spacer，是一个正确的产品工程取舍。
 
 ## 5. 精华优化手段
 
@@ -572,7 +574,7 @@ XMessageList 可吸收：继续把 correctness lane 与 perf lane 分开，特�
 
 ### 6.3 不应吸收
 
-1. 不应把全历史高度估算注入 native scroll range，next 文档已明确拒绝 spacer 作为基础坐标。
+1. 不应把全历史高度估算注入 native scroll range；当前文档已明确拒绝 spacer 作为基础坐标。
 2. 不应让 React adapter 通过 effect 猜测 scroll correction。
 3. 不应把 edge trigger 的 IntersectionObserver callback 变成数据 mutation 和 scrollTop correction owner。
 4. 不应把“库能虚拟很多行”误当成“库能保证 IM 阅读位置稳定”。
@@ -596,7 +598,7 @@ IM loaded segment 模型则让 `scrollHeight` 只表达当前已加载 DOM。未
 
 这两个选择会决定滚动条是不是自然、分页后 thumb 是否回落、惯性滚动会不会被 spacer correction 打断。
 
-## 8. 推荐给 XMessageList next 的技术路线
+## 8. XMessageList 当前技术路线
 
 保持当前方向：
 

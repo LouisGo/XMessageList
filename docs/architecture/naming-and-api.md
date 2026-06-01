@@ -29,16 +29,31 @@ export {
 export type {
   MessageListAdapter,
   MessageListAnchor,
+  MessageListAnchorMemoryValue,
+  MessageListConversationId,
+  MessageListIdentityRemap,
   MessageListManager,
   MessageListManagerOptions,
+  MessageListOverlayStatus,
   MessageListPage,
   MessageListRequestContext,
+  MessageListRequestResult,
   MessageListResolvedAnchor,
+  MessageListRowsReplaceInput,
+  MessageListRowsResetAroundInput,
+  MessageListScrollToMessageOptions,
   MessageListSession,
+  MessageListSessionContext,
+  EmptySlotInput,
+  EdgeSlotInput,
+  MessageListCommands,
+  MessageListRenderItem,
   MessageListProps,
   MessageListRenderRowInput,
   MessageListViewportAnchorChangeEvent,
   MessageListViewportObservationEvent,
+  OverlayStatusInput,
+  ScrollToLatestSlotInput,
 }
 ```
 
@@ -49,6 +64,7 @@ export type {
 - 不导出 `MessageListSnapshot` / `MessageListRuntimeEvent`。
 - 不导出 `LoadedSegment` / `MessageDataItem`。
 - 不提供 `x-message-list/data` 子路径。
+- 不承诺内部目录 deep import；业务代码只依赖 package exports。
 
 ## Manager API
 

@@ -61,7 +61,7 @@ Before paging 时：
 
 ## 设计转译
 
-| Telegram Web A | XMessageList next |
+| Telegram Web A | XMessageList 当前实现 |
 | --- | --- |
 | `viewportIds` | `LoadedSegment.items` |
 | `backwards-trigger` | `data-edge-trigger="before"` |

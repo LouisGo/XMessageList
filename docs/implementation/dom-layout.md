@@ -21,7 +21,7 @@
 - `data-message-list` 是 `MessageList` component 的 root。
 - `data-message-scroll-container` 是唯一 scroll container。
 - rows、triggers、bottom marker 都在正常文档流中。
-- 不存在 top spacer / bottom spacer。
+- 不用额外占位高度伪造未加载历史。
 - `data-message-flow` 在短内容时按 snapshot 的 short alignment 负责真实布局。
 - `overflow-anchor` 由 runtime 统一关闭或控制，避免浏览器 scroll anchoring 与 runtime correction 竞争。
 
@@ -123,10 +123,8 @@ type MessageListSnapshot = {
 
 Snapshot 不包含：
 
-- top spacer height
-- bottom spacer height
-- estimated total height
-- global offset
+- 未加载历史的估算高度
+- 全局滚动坐标
 - raw scrollTop
 
 Snapshot 规则：

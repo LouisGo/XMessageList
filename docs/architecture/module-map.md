@@ -36,7 +36,7 @@
 - `rowAdapter.ts`：业务 row 到 runtime item/anchor 的归一化。
 - `types.ts` / `index.ts`：manager public contract types 和 exports。
 
-Manager 可以依赖 runtime public/data barrels；runtime 不能反向依赖 manager。
+Manager 可以依赖 runtime public barrel 和 package-internal data runtime；runtime 不能反向依赖 manager。
 
 ## Runtime
 
@@ -87,8 +87,9 @@ metrics，并通过 adapter-private runtime direct-scroll API 写入。
 - Moving files must preserve `src/x-message-list/core/manager`,
   `src/x-message-list/core/runtime`, `src/x-message-list/react` boundaries.
 - Package root must not export runtime/data runtime implementation types.
-- React/demo/e2e must not import runtime private modules except approved public,
-  data, or adapter-private barrels.
+- React adapter must use runtime public or adapter-private barrels; demo and app
+  code must go through manager/session APIs. E2E harness files are the only
+  approved diagnostics exception.
 - Runtime non-controller domains must not import from `runtime/controller/`; move
   cross-domain pure helpers to `runtime/shared/`.
 - Source files should stay below the repository file budget; split by stable

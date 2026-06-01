@@ -114,7 +114,9 @@ type LoadedSegment = {
 };
 ```
 
-`items` 就是 React 要投影的真实 rows。它不是“当前 DataWindow 再切一个 RenderWindow”。next 分支的基础假设是：当前 segment 足够短，可以全部挂载；超过预算时先 transaction trim，而不是用 spacer 隐藏远端消息。
+`items` 就是 React 要投影的真实 rows。当前基础假设是：一个 loaded segment
+足够短，可以全部挂载；超过预算时先通过 data runtime 产生 trim modifier，
+再由 viewport runtime 在 transaction 中修正视觉位置。
 
 ## Segment 操作
 

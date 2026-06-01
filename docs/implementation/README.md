@@ -13,7 +13,7 @@
 
 ## 实现总路线
 
-1. 先建立 loaded segment projection snapshot，不从旧 RenderWindow / spacer 结构迁移。
+1. 以当前 loaded segment projection snapshot 为实现输入。
 2. 再建立 DOM skeleton：before trigger + rows + after trigger + bottom marker。
 3. 然后实现 transaction：viewport 消费 data runtime 的 extend / reset / trim / identity-remap snapshot，并完成 anchor correction。
 4. 最后收敛 scrollbar：overlay 只镜像 native metrics。

@@ -40,7 +40,7 @@ npm run e2e:perf
   effects.
 - `src/demo`: local mock host and scenario wiring for feeds, edge requests, dynamic height, optimistic remap, event storms, and bot push.
 - `src/e2e-app` and `e2e/runner`: real-browser bridge, evidence, oracle, correctness, and perf lanes.
-- `docs`: architecture, interaction specs, implementation constraints, testing contracts, and migration notes.
+- `docs`: architecture, implementation constraints, interaction specs, testing contracts, graphs, and research notes.
 
 ## Minimal Usage
 
