@@ -23,6 +23,7 @@ import {
 import type { MessageIdentityAnchor as DemoApiAnchor } from '../data/demoMessageApiTypes'
 import {
   EDGE_LOAD_DELAY_BASE_MS,
+  INCOMING_FOLLOW_DISTANCE_PX,
   PAGE_SIZE,
 } from './demoScenarioConfig'
 import {
@@ -69,6 +70,17 @@ export function createDemoManager(
     },
     getConversation: (id) => ({ id }),
     getAdapter: (conversation) => createDemoAdapter(conversation, input),
+    incoming: {
+      getPageFocus: () => globalThis.location?.pathname === '/e2e' ||
+        (globalThis.document?.hasFocus?.() ?? true),
+      shouldFollowAppend: (context) =>
+        context.pageFocused &&
+        (
+          context.bottomLockState === 'LOCKED' ||
+          context.pendingIntent === 'follow-bottom' ||
+          context.distanceToBottom <= INCOMING_FOLLOW_DISTANCE_PX
+        ),
+    },
     onRequestResult: (result) => {
       handleDemoRequestResult(result, input)
     },
@@ -171,7 +183,8 @@ function createDemoAdapter(
       loadBefore: (context) => loadDemoEdgePage('before', context, input),
       loadAfter: (context) => loadDemoEdgePage('after', context, input),
       loadAround: async (context) => {
-        await wait(EDGE_LOAD_DELAY_BASE_MS)
+        const delayMs = input.consumeDeferredSessionResponseDelay()
+        await wait(delayMs > 0 ? delayMs : EDGE_LOAD_DELAY_BASE_MS)
         const targetId = resolveAnchorMessageId(context.target)
 
         if (!targetId) {

@@ -64,7 +64,11 @@ export async function runBridgeAction({
       await waitForRuntimeIdle(readEvidence, 2_000)
       return
     case 'append_message':
-      scenario.appendMessage()
+      scenario.appendMessage({
+        follow: payload.follow === 'preserve' ? 'preserve' :
+          payload.follow === 'follow' ? 'follow' : undefined,
+      })
+      await wait(120)
       await waitForRuntimeIdle(readEvidence, 1_500)
       return
     case 'append_many':
@@ -101,10 +105,20 @@ export async function runBridgeAction({
       scenario.streamCurrentRow()
       await waitForRuntimeIdle(readEvidence, 1_500)
       return
+    case 'send_message':
+      scenario.sendMessage(String(payload.body ?? `E2E send ${Date.now()}`))
+      await wait(180)
+      await waitForRuntimeIdle(readEvidence, 2_000)
+      return
+    case 'retry_failed_send':
+      scenario.retryFailedSend(
+        typeof payload.messageId === 'string' ? payload.messageId : undefined,
+      )
+      await wait(180)
+      await waitForRuntimeIdle(readEvidence, 2_000)
+      return
     case 'send_optimistic_message':
       scenario.sendOptimisticMessage()
-      await waitForRuntimeIdle(readEvidence, 1_500)
-      scenario.alignPendingOptimisticAtStart()
       await waitForRuntimeIdle(readEvidence, 1_500)
       return
     case 'resolve_optimistic_remap':

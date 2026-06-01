@@ -407,6 +407,229 @@ describe('createMessageListManager', () => {
     expect(requestResults).toContain('before:stale')
   })
 
+  it('stages outgoing rows into the current latest segment and keeps them patchable', async () => {
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => Promise.resolve(page(['tail'])),
+      }),
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.dataRuntime.getSegment().items[0]?.message?.id === 'tail')
+
+    const scrollToLatest = vi.spyOn(internals.runtime, 'scrollToLatest')
+    session.outgoing.stage({ id: 'local', text: 'sending' })
+    session.outgoing.patch([{ id: 'local', text: 'failed' }])
+    session.outgoing.stage({ rows: [{ id: 'local', text: 'retrying' }], reason: 'retry' })
+
+    expect(scrollToLatest).toHaveBeenCalledTimes(2)
+    expect(internals.dataRuntime.getSegment().items.map((item) => item.message))
+      .toEqual([
+        { id: 'tail' },
+        { id: 'local', text: 'retrying' },
+      ])
+  })
+
+  it('queues outgoing rows from a non-latest segment and merges them into latest', async () => {
+    const pendingLatest: Array<(page: MessageListPage<TestRow>) => void> = []
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
+          pendingLatest.push(resolve)
+        }),
+      }),
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => pendingLatest.length === 1)
+    pendingLatest[0](page(['tail']))
+    await waitFor(() => internals.dataRuntime.getSegment().items[0]?.message?.id === 'tail')
+
+    session.rows.resetAround({
+      target: { id: 'middle' },
+      rows: [{ id: 'middle' }],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      anchor: { id: 'middle' },
+    })
+    const scrollToLatest = vi.spyOn(internals.runtime, 'scrollToLatest')
+    session.outgoing.stage({ id: 'local', text: 'sending' })
+
+    expect(scrollToLatest).toHaveBeenCalledTimes(1)
+    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+      .toEqual(['middle'])
+
+    await waitFor(() => pendingLatest.length === 2)
+    pendingLatest[1](page(['tail-2']))
+    await waitFor(() =>
+      internals.dataRuntime.getSegment().items.some((item) =>
+        item.message?.id === 'local'
+      ),
+    )
+
+    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+      .toEqual(['tail-2', 'local'])
+    expect(internals.dataRuntime.getSegment().hasMoreAfter).toBe(false)
+  })
+
+  it('uses outgoing latest input to rebuild latest without a separate host scroll command', async () => {
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.dataRuntime.getSegment().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'middle' },
+      rows: [{ id: 'middle' }],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      anchor: { id: 'middle' },
+    })
+
+    session.outgoing.stage({
+      rows: [{ id: 'local' }],
+      latest: page(['tail', 'local'], {
+        hasMoreBefore: true,
+        hasMoreAfter: false,
+        anchorId: 'local',
+      }),
+    })
+
+    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+      .toEqual(['tail', 'local'])
+    expect(internals.dataRuntime.getSegment().modifier.type).toBe('reset-latest')
+  })
+
+  it('applies outgoing identity remaps to visible outgoing rows', async () => {
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.dataRuntime.getSegment().items.length > 0)
+
+    session.outgoing.stage({ id: 'local' })
+    session.outgoing.applyIdentityRemap([{
+      from: { localId: 'local', stableId: 'local' },
+      to: { serverId: 'server', stableId: 'server' },
+      previousKey: 'local',
+      nextKey: 'server',
+    }])
+
+    expect(internals.dataRuntime.getSegment().modifier).toEqual(
+      expect.objectContaining({ type: 'identity-remap' }),
+    )
+    expect(internals.dataRuntime.getSegment().items.at(-1)).toMatchObject({
+      key: 'server',
+      identity: expect.objectContaining({
+        stableId: 'server',
+        serverId: 'server',
+      }),
+    })
+  })
+
+  it('stages retry success with an atomic retire and send-style follow decision', async () => {
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => Promise.resolve(page(['tail', 'failed-local'])),
+      }),
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() =>
+      internals.dataRuntime.getSegment().items.at(-1)?.message?.id === 'failed-local'
+    )
+
+    session.outgoing.stage({
+      rows: [{ id: 'retry-server', text: 'sent' }],
+      reason: 'retry',
+      retireKeys: ['failed-local'],
+    })
+
+    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+      .toEqual(['tail', 'retry-server'])
+    expect(internals.dataRuntime.getSegment().modifier).toEqual({
+      type: 'append',
+      changedKeys: ['failed-local', 'retry-server'],
+      follow: 'follow',
+      retireKeys: ['failed-local'],
+    })
+  })
+
+  it('routes incoming append through the configured follow policy', async () => {
+    const shouldFollowAppend = vi.fn(() => 'preserve' as const)
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => Promise.resolve(page(['tail'])),
+      }),
+      incoming: {
+        getPageFocus: () => false,
+        shouldFollowAppend,
+      },
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.dataRuntime.getSegment().items[0]?.message?.id === 'tail')
+
+    session.incoming.append({
+      rows: [{ id: 'remote' }],
+      reason: 'push',
+    })
+
+    expect(shouldFollowAppend).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'feed-a',
+      rows: [{ id: 'remote' }],
+      reason: 'push',
+      pageFocused: false,
+      hasMoreAfter: false,
+      distanceToBottom: expect.any(Number),
+    }))
+    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+      .toEqual(['tail', 'remote'])
+    expect(internals.dataRuntime.getSegment().modifier).toEqual({
+      type: 'append',
+      changedKeys: ['remote'],
+      follow: 'preserve',
+    })
+  })
+
+  it('does not insert incoming append into a non-latest segment', async () => {
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.dataRuntime.getSegment().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'middle' },
+      rows: [{ id: 'middle' }],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      anchor: { id: 'middle' },
+    })
+
+    session.incoming.append({ id: 'remote' })
+
+    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+      .toEqual(['middle'])
+    expect(internals.dataRuntime.getSegment().modifier.type).toBe('reset-around')
+  })
+
   it('rejects stale bootstrap/reload responses without overwriting newer rows', async () => {
     const pending: Array<(page: MessageListPage<TestRow>) => void> = []
     const adapter = createAdapter('normal', {

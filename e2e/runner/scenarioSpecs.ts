@@ -149,6 +149,65 @@ export const CORRECTNESS_SCENARIOS: ScenarioSpec[] = [
     },
   },
   {
+    id: 'incoming.append-follow-motion',
+    priority: 'p1',
+    actions: [
+      { id: 'wait_for_ready' },
+      { id: 'scroll_to_bottom' },
+      { id: 'append_message', payload: { follow: 'follow' } },
+      { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
+    ],
+    oracles: (context) => {
+      const after = mustEvidence(context, 'after')
+
+      return [
+        ...BASE_ORACLES(after),
+        expectModifier(after, 'append'),
+        expectBottomLocked(after, { thresholdPx: 2 }),
+      ]
+    },
+  },
+  {
+    id: 'send.composer-event-storm-follow-bottom',
+    priority: 'p1',
+    actions: [
+      { id: 'wait_for_ready' },
+      { id: 'scroll_to_middle' },
+      { id: 'start_event_storm' },
+      { id: 'send_message', payload: { body: 'E2E composer storm send' } },
+      { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
+      { id: 'stop_event_storm' },
+    ],
+    oracles: (context) => {
+      const after = mustEvidence(context, 'after')
+
+      return [
+        ...BASE_ORACLES(after),
+        expectBottomLocked(after, { thresholdPx: 2 }),
+      ]
+    },
+  },
+  {
+    id: 'send.optimistic-event-storm-follow-bottom',
+    priority: 'p1',
+    actions: [
+      { id: 'wait_for_ready' },
+      { id: 'scroll_to_middle' },
+      { id: 'start_event_storm' },
+      { id: 'send_optimistic_message' },
+      { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
+      { id: 'stop_event_storm' },
+    ],
+    oracles: (context) => {
+      const after = mustEvidence(context, 'after')
+
+      return [
+        ...BASE_ORACLES(after),
+        expectBottomLocked(after, { thresholdPx: 2 }),
+      ]
+    },
+  },
+  {
     id: 'dynamic-height.above-anchor-growth',
     priority: 'p1',
     actions: [

@@ -17,6 +17,7 @@ import { MessageListSessionOverlay } from './sessionOverlay'
 import { createSessionRows } from './sessionRows'
 import { defineMessageListSessionInternals } from './internal'
 import { normalizeMessageListAnchor } from './rowAdapter'
+import { MessageListSessionLiveSemantics } from './sessionLiveSemantics'
 import {
   reindexRows,
   resolveTrimProtectKey,
@@ -35,10 +36,7 @@ import type {
   MessageListViewState,
 } from './types'
 
-type OverlayRequestOptions = {
-  overlayRequestId?: number
-  requestEpoch?: number
-}
+type OverlayRequestOptions = { overlayRequestId?: number; requestEpoch?: number }
 
 export class MessageListSession<Row, Conversation>
   implements PublicMessageListSession<Row> {
@@ -47,12 +45,15 @@ export class MessageListSession<Row, Conversation>
   readonly id: MessageListConversationId
   readonly commands: PublicMessageListSession<Row>['commands']
   readonly rows: PublicMessageListSession<Row>['rows']
+  readonly outgoing: PublicMessageListSession<Row>['outgoing']
+  readonly incoming: PublicMessageListSession<Row>['incoming']
   private readonly context: MessageListSessionContext<Conversation>
   private readonly readReceipts: MessageListReadReceiptsWorker<Row, Conversation>
   private readonly overlay: MessageListSessionOverlay
   private readonly viewListeners = new Set<() => void>()
   private readonly runtimeUnsubscribe: () => void
   private readonly rowsByKey = new Map<string, Row>()
+  private readonly liveSemantics: MessageListSessionLiveSemantics<Row, Conversation>
   private viewRetainCount = 0
   lastUsedAt = Date.now()
 
@@ -99,6 +100,18 @@ export class MessageListSession<Row, Conversation>
       publishSegment: (segment) => this.publishSegment(segment),
       publishLocalResetSegment: (segment) => this.publishLocalResetSegment(segment),
     })
+    this.liveSemantics = new MessageListSessionLiveSemantics({
+      id: this.id,
+      conversation: this.options.conversation,
+      adapter: this.options.adapter,
+      incoming: this.options.incoming,
+      runtime: this.#runtime,
+      dataRuntime: this.#dataRuntime,
+      publishSegment: (segment) => this.publishSegment(segment),
+      publishLocalResetSegment: (segment) => this.publishLocalResetSegment(segment),
+    })
+    this.outgoing = this.liveSemantics.outgoing
+    this.incoming = this.liveSemantics.incoming
     this.readReceipts = new MessageListReadReceiptsWorker(
       options.adapter,
       (keys) => this.getRowsByKeys(keys),
@@ -120,13 +133,9 @@ export class MessageListSession<Row, Conversation>
     void this.bootstrap()
   }
 
-  getSnapshot(): MessageListSnapshot<Row> {
-    return this.#runtime.getSnapshot()
-  }
+  getSnapshot(): MessageListSnapshot<Row> { return this.#runtime.getSnapshot() }
 
-  getViewState(): MessageListViewState {
-    return this.overlay.getViewState()
-  }
+  getViewState(): MessageListViewState { return this.overlay.getViewState() }
 
   subscribeView(listener: () => void): () => void {
     this.viewListeners.add(listener)
@@ -149,13 +158,9 @@ export class MessageListSession<Row, Conversation>
     }
   }
 
-  hasRetainedView(): boolean {
-    return this.viewRetainCount > 0
-  }
+  hasRetainedView(): boolean { return this.viewRetainCount > 0 }
 
-  getRow(item: MessageDataItem<Row>): Row | null {
-    return item.message ?? null
-  }
+  getRow(item: MessageDataItem<Row>): Row | null { return item.message ?? null }
 
   getRowRenderVersion(item: MessageDataItem<Row>): unknown {
     const row = this.getRow(item)
@@ -299,18 +304,19 @@ export class MessageListSession<Row, Conversation>
           applied: false,
         }
       }
+      const outgoing = this.liveSemantics.withPendingOutgoing(page)
       const applied = event
         ? this.#dataRuntime.resetLatestFromRequest({
-            ...toSessionResetInput(this.id, page, this.options.adapter),
+            ...outgoing.resetInput,
             requestToken: event.requestToken,
           })
         : {
             applied: true,
             segment: this.#dataRuntime.resetLatest(
-              toSessionResetInput(this.id, page, this.options.adapter),
+              outgoing.resetInput,
             ),
           }
-      return { page, segment: applied.segment, applied: applied.applied }
+      return { page: outgoing.page, segment: applied.segment, applied: applied.applied }
     })
     this.finishOverlayRequest(result, overlayRequestId)
   }
@@ -508,6 +514,7 @@ export class MessageListSession<Row, Conversation>
   }
 
   private applySegmentToRuntime(segment: LoadedSegment<Row>): void {
+    this.liveSemantics.settlePendingOutgoingForSegment(segment)
     reindexRows(this.rowsByKey, segment.items)
     this.#runtime.applyLoadedSegment(segment)
   }
@@ -584,11 +591,7 @@ export class MessageListSession<Row, Conversation>
     )
   }
 
-  private notifyViewListeners(): void {
-    for (const listener of this.viewListeners) listener()
-  }
+  private notifyViewListeners(): void { for (const listener of this.viewListeners) listener() }
 
-  private touch(): void {
-    this.lastUsedAt = Date.now()
-  }
+  private touch(): void { this.lastUsedAt = Date.now() }
 }

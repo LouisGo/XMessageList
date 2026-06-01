@@ -18,11 +18,15 @@ export function useDemoGeneratedAppends(input: {
   isActiveFeed: (feedId: string) => boolean
   longBurstDelayBaseMs: number
   longBurstSize: number
-  publishActivePatch: (feedId: string, items: DemoMessage[]) => void
+  publishActiveAppend: (
+    feedId: string,
+    items: DemoMessage[],
+    follow?: 'follow' | 'preserve',
+  ) => void
   setLastEvent: (eventText: string) => void
   setMessageCount: (messageCount: number) => void
 }): {
-  appendMessage: () => void
+  appendMessage: (options?: { follow?: 'follow' | 'preserve' }) => void
   appendMessages: (count: number) => void
   appendLongBurst: () => void
 } {
@@ -33,7 +37,7 @@ export function useDemoGeneratedAppends(input: {
     isActiveFeed,
     longBurstDelayBaseMs,
     longBurstSize,
-    publishActivePatch,
+    publishActiveAppend,
     setLastEvent,
     setMessageCount,
   } = input
@@ -44,6 +48,7 @@ export function useDemoGeneratedAppends(input: {
     options: {
       delayBaseMs?: number
       forceLongBurstRow?: boolean
+      follow?: 'follow' | 'preserve'
     } = {},
   ): Promise<{ messages: DemoMessage[]; visibleInCurrentWindow: boolean }> => {
     await waitMockDelay(options.delayBaseMs ?? appendDelayBaseMs)
@@ -64,19 +69,19 @@ export function useDemoGeneratedAppends(input: {
       setMessageCount(persistedMessages.length)
     }
     if (visibleInCurrentWindow) {
-      publishActivePatch(feedId, nextMessages)
+      publishActiveAppend(feedId, nextMessages, options.follow)
     }
     return { messages: nextMessages, visibleInCurrentWindow }
   }, [
     appendDelayBaseMs,
     getHasMoreAfter,
     isActiveFeed,
-    publishActivePatch,
+    publishActiveAppend,
     setMessageCount,
   ])
 
-  const appendMessage = useCallback(() => {
-    void appendGeneratedMessages(activeFeedId, 1).then((result) => {
+  const appendMessage = useCallback((options?: { follow?: 'follow' | 'preserve' }) => {
+    void appendGeneratedMessages(activeFeedId, 1, options).then((result) => {
       if (!isActiveFeed(activeFeedId)) {
         return
       }

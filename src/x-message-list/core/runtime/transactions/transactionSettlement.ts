@@ -8,7 +8,11 @@ import type { MessageListMotionDirection } from '../contracts/options'
 import type { ScrollMotionSource } from '../motion/motionCoordinator'
 
 export type TransactionScrollResolution =
-  | { kind: 'instant'; anchor: MessageIdentityAnchor | null }
+  | {
+      kind: 'instant'
+      anchor: MessageIdentityAnchor | null
+      bottomLockState?: BottomLockState
+    }
   | {
       kind: 'motion'
       source: ScrollMotionSource
@@ -76,12 +80,40 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
     return { kind: 'instant', anchor: correctAnchor(capturedAnchor, segment) }
   }
 
+  if (segment.modifier.type === 'append' && !segment.hasMoreAfter) {
+    const shouldForceBottom = activeFollowBottom ||
+      snapshot.pendingIntent === 'follow-bottom'
+
+    if (segment.modifier.follow === 'follow' || shouldForceBottom) {
+      return settleBottomMotion(
+        domInteractions,
+        'followBottom',
+        segment.anchor ?? getViewportAnchor(),
+        {
+          enforceDirectionHint: segment.modifier.follow === 'follow' &&
+            !segment.modifier.retireKeys?.length,
+        },
+      )
+    }
+
+    return {
+      kind: 'instant',
+      anchor: correctAnchor(capturedAnchor, segment),
+      bottomLockState: 'UNLOCKED',
+    }
+  }
+
   if (
     snapshot.pendingIntent === 'follow-bottom' &&
     segment.modifier.type === 'reset-latest' &&
     !segment.hasMoreAfter
   ) {
-    return settleBottomMotion(domInteractions, 'followBottom', segment.anchor ?? getViewportAnchor())
+    return settleBottomMotion(
+      domInteractions,
+      'followBottom',
+      segment.anchor ?? getViewportAnchor(),
+      { enforceDirectionHint: true },
+    )
   }
 
   if (segment.modifier.type === 'reset-latest') {
@@ -91,6 +123,7 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
           domInteractions,
           activeFollowBottom ? 'followBottom' : 'programmatic',
           segment.anchor ?? getViewportAnchor(),
+          { enforceDirectionHint: activeFollowBottom },
         )
       }
       domInteractions.scrollToNativeBottom()
@@ -106,6 +139,7 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
       domInteractions,
       activeFollowBottom ? 'followBottom' : 'programmatic',
       segment.anchor ?? getViewportAnchor(),
+      { enforceDirectionHint: false },
     )
   }
 
@@ -160,6 +194,7 @@ function settleBottomMotion<TMessage, TOptimistic>(
   domInteractions: RuntimeDomInteractions<TMessage, TOptimistic>,
   source: Extract<ScrollMotionSource, 'programmatic' | 'followBottom'>,
   anchor: MessageIdentityAnchor | null,
+  options: { enforceDirectionHint?: boolean } = {},
 ): TransactionScrollResolution {
   const targetTop = domInteractions.getBottomTargetTop()
 
@@ -175,7 +210,8 @@ function settleBottomMotion<TMessage, TOptimistic>(
     bottomLockState: 'LOCKED',
     destination: null,
     directionHint: source === 'followBottom' ? 'after' : undefined,
-    enforceDirectionHint: source === 'followBottom',
+    enforceDirectionHint: source === 'followBottom' &&
+      options.enforceDirectionHint === true,
   }
 }
 

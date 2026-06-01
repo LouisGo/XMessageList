@@ -8,7 +8,10 @@ Trigger：当前会话收到他人新消息，且用户正在最新消息底部�
 
 Acceptance：
 
-- 新消息追加到列表底部。
+- 接入方通过 `session.incoming.append` 发布新消息，而不是普通 `rows.patch`。
+- 新消息追加到 latest 列表底部。
+- append 的 follow/preserve 决策可由接入方基于 `distanceToBottom`、
+  `pageFocused`、未读策略等上下文给出；决定 follow 时应保留 bottom motion。
 - 列表保持在真实底部。
 - 如果连续收到多条消息，底部位置保持稳定跟随。
 - 新消息插入不能造成底部空白、抖动或先离底再回底。
@@ -33,6 +36,8 @@ Acceptance：
 - 新消息不能强制把列表滚到底部。
 - 可以更新“回到最新消息”或未读提示。
 - 如果当前已加载消息段不是 latest，新消息不应被强行插入当前历史段造成上下文断裂。
+- 如果策略因距离过大、页面失焦或业务未读策略选择 preserve，即便此前处于
+  bottom lock，也要脱离 lock 并保留当前位置。
 
 User-visible result：
 
@@ -52,6 +57,17 @@ Trigger：用户在当前会话发送消息。
 Acceptance：
 
 - 具体交互以 [D4 任意位置发送消息](./bottom-follow-and-destination.md#d4-任意位置发送消息) 为准。
+- Composer / 业务发送逻辑通过 `session.outgoing.stage` 发布 optimistic row；
+  send 请求、失败原因、重试队列和业务状态字段仍由接入方维护。
+- retry 若作为重新发送处理，应先原地展示 retrying/loading，异步成功后再发布新的
+  outgoing row，并用 `retireKeys` 原子移除旧占位；默认按 send 语义进入
+  follow-bottom。
+- 当前 latest 下 retry 成功只允许 append follow 启动一次 bottom motion；`scrollToLatest`
+  只负责打开/确认 follow-bottom intent，不能在已经位于 bottom target 时先播放一次
+  本地 bottom motion 再被 append follow 打断。异步失败则回到 failed，不抢滚动。
+- retry 点击后的 retrying/loading 属于旧 row 的状态 patch，只保持当前位置或当前
+  bottom lock，不允许继承 send/append 的 after 语义 motion；只有异步成功后的新
+  outgoing row append 才进入 send-style motion。
 
 User-visible result：
 
@@ -70,6 +86,10 @@ Acceptance：
 
 - 用户处于追底时，多条消息连续追加并保持底部稳定。
 - 用户不处于追底时，当前阅读位置保持稳定。
+- 用户显式点击 bottom 后，本次 follow-bottom intent 优先级高于此前或并发计算出的
+  `append(preserve)`；pending preserve append 不能把 bottom 点击覆盖掉。
+- Bot push 属于 receive append；纯尾部新消息使用 `incoming.append`，混合
+  edit/reaction/delete 事件继续使用 `rows.replace` 或 `rows.patch`。
 - 多条 push 可以合并呈现，但最终消息顺序必须正确。
 - push 期间不能出现消息重复、临时乱序、先显示后撤回式闪烁。
 

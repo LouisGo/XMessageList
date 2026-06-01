@@ -69,6 +69,22 @@ export function patchSegmentItems<TMessage, TOptimistic>(
   return dedupeItems(next)
 }
 
+export function appendSegmentItems<TMessage, TOptimistic>(
+  current: MessageDataItem<TMessage, TOptimistic>[],
+  patches: MessageDataItem<TMessage, TOptimistic>[],
+  retireKeys: MessageRuntimeItemKey[] = [],
+): MessageDataItem<TMessage, TOptimistic>[] {
+  if (retireKeys.length === 0) {
+    return patchSegmentItems(current, patches)
+  }
+
+  const retired = new Set(retireKeys)
+  return patchSegmentItems(
+    current.filter((item) => !retired.has(item.key)),
+    patches,
+  )
+}
+
 export function applyIdentityRemaps<TMessage, TOptimistic>(
   items: MessageDataItem<TMessage, TOptimistic>[],
   remaps: IdentityRemapInput,

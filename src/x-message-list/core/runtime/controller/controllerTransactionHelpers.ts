@@ -69,6 +69,13 @@ export function resolveTransactionScrollSource<TMessage, TOptimistic>(
     return input.destination.reason === 'jump' ? 'jump' : 'programmatic'
   }
 
+  if (
+    input.segment.modifier.type === 'append' &&
+    input.segment.modifier.follow === 'follow'
+  ) {
+    return 'followBottom'
+  }
+
   if (input.segment.modifier.type === 'reset-latest' ||
     input.segment.modifier.type === 'reset-around' ||
     input.segment.modifier.type === 'bootstrap') {

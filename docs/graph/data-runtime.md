@@ -59,5 +59,6 @@ flowchart TD
   Segment -->|"modifier reset-latest"| RuntimeLatest["Viewport follows latest or bootstraps"]
   Segment -->|"modifier reset-around"| RuntimeAround["Viewport resolves destination or restore"]
   Segment -->|"modifier extend-before / extend-after"| RuntimeEdge["Viewport settles matching edge latch"]
+  Segment -->|"modifier append"| RuntimeAppend["Viewport follows or preserves by append policy"]
   Segment -->|"modifier patch / identity-remap / trim-before / trim-after"| RuntimePatch["Viewport preserves or remaps anchor"]
 ```

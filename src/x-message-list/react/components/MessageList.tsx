@@ -4,6 +4,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   useSyncExternalStore,
 } from 'react'
 import { getMessageListAdapterRuntime } from '../../core/runtime/internal'
@@ -55,6 +56,10 @@ function MessageListInner<TMessage, TOptimistic>({
   const viewState = useMessageListViewState(session)
   const adapterRuntime = getMessageListAdapterRuntime(resolvedRuntime)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const [
+    scrollToLatestObservationRevision,
+    setScrollToLatestObservationRevision,
+  ] = useState(0)
   const commands = useMemo(() => ({
     scrollToLatest: session.commands.scrollToLatest,
     scrollToMessage: session.commands.scrollToMessage,
@@ -63,12 +68,48 @@ function MessageListInner<TMessage, TOptimistic>({
     session.commands.reloadLatest()
   }, [session])
   const scrollToLatestInput = useMemo(
-    () => ({
-      visible: snapshot.bottomLockState === 'UNLOCKED',
-      scrollToLatest: commands.scrollToLatest,
-    }),
-    [snapshot.bottomLockState, commands.scrollToLatest],
+    () => {
+      if (!renderScrollToLatest) {
+        return null
+      }
+
+      void scrollToLatestObservationRevision
+      void snapshot.projectionRevision
+      const evidence = resolvedRuntime.getEvidence()
+      const distanceToBottom = Math.max(
+        0,
+        evidence.scrollHeight - evidence.clientHeight - evidence.scrollTop,
+      )
+
+      return {
+        visible: snapshot.bottomLockState === 'UNLOCKED' &&
+          snapshot.pendingIntent !== 'follow-bottom',
+        scrollToLatest: commands.scrollToLatest,
+        bottomLockState: snapshot.bottomLockState,
+        hasMoreAfter: snapshot.segmentMeta.hasMoreAfter,
+        pendingIntent: snapshot.pendingIntent,
+        viewportPhase: snapshot.viewportPhase,
+        distanceToBottom,
+        pageFocused: resolvePageFocus(),
+      }
+    },
+    [
+      resolvedRuntime,
+      snapshot.bottomLockState,
+      snapshot.pendingIntent,
+      snapshot.projectionRevision,
+      snapshot.segmentMeta.hasMoreAfter,
+      snapshot.viewportPhase,
+      scrollToLatestObservationRevision,
+      commands.scrollToLatest,
+      renderScrollToLatest,
+    ],
   )
+  const handleViewportObservationForSlots = useCallback(() => {
+    if (renderScrollToLatest) {
+      setScrollToLatestObservationRevision((revision) => revision + 1)
+    }
+  }, [renderScrollToLatest])
   const resolveRowRenderVersion = useMemo(() => {
     if (getRowRenderVersion) {
       return getRowRenderVersion
@@ -108,6 +149,7 @@ function MessageListInner<TMessage, TOptimistic>({
           runtime={resolvedRuntime}
           onViewportAnchorChange={onViewportAnchorChange}
           onViewportObservationChange={onViewportObservationChange}
+          onViewportObservationInternal={handleViewportObservationForSlots}
         />
         <MessageFlow
           runtime={adapterRuntime}
@@ -121,7 +163,9 @@ function MessageListInner<TMessage, TOptimistic>({
           renderEmpty={renderEmpty}
           reload={reload}
         />
-        {renderScrollToLatest?.(scrollToLatestInput)}
+        {renderScrollToLatest && scrollToLatestInput
+          ? renderScrollToLatest(scrollToLatestInput)
+          : null}
         <ProjectionCommitAck
           runtime={adapterRuntime}
           token={snapshot.commitToken}
@@ -192,6 +236,10 @@ export const MessageList = memo(
   MessageListInner,
   areMessageListPropsEqual,
 ) as typeof MessageListInner
+
+function resolvePageFocus(): boolean {
+  return globalThis.document?.hasFocus?.() ?? true
+}
 
 function useMessageListViewState(
   session: MessageListSession<unknown>,

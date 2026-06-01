@@ -58,6 +58,7 @@ export class RuntimeScrollIntentCoordinator {
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     measurement: RuntimeMeasurement,
     scrollSource: ScrollSource,
+    previousScrollTop = measurement.scrollTop,
   ): {
     changed: boolean
     snapshot: MessageListSnapshot<TMessage, TOptimistic>
@@ -66,7 +67,9 @@ export class RuntimeScrollIntentCoordinator {
       0,
       measurement.scrollHeight - measurement.clientHeight - measurement.scrollTop,
     )
-    const changed = snapshot.segmentMeta.hasMoreAfter
+    const userScrolledUp = isUserDrivenScroll(scrollSource) &&
+      measurement.scrollTop < previousScrollTop - 1
+    const changed = snapshot.segmentMeta.hasMoreAfter || userScrolledUp
       ? this.scrollIntent.setBottomLockState('UNLOCKED')
       : this.scrollIntent.updateBottomLockFromDistance(
           distanceToBottom,
@@ -86,4 +89,8 @@ export class RuntimeScrollIntentCoordinator {
       },
     }
   }
+}
+
+function isUserDrivenScroll(source: ScrollSource): boolean {
+  return source === 'user' || source === 'momentum'
 }

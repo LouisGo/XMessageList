@@ -55,12 +55,45 @@ describe('MessageList bottom lock observation', () => {
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
 
     runtime.scrollToLatest()
-    scheduler.flushFrame()
+    scheduler.flushFrames(40)
     expect(runtime.getEvidence().bottomLockState).toBe('LOCKED')
 
-    scheduler.flushFrames(13)
     container.scrollTop = 0
     container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+
+    expect(runtime.getEvidence().bottomLockState).toBe('UNLOCKED')
+  })
+
+  it('unlocks immediately when user scrolls upward inside the bottom threshold', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      observers: createFakeObservers(),
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = Array.from({ length: 6 }, (_, index) =>
+      createRow(`row-${index + 1}`, index * 50, 50),
+    )
+
+    container.append(...rows)
+    runtime.attachScrollContainer(container)
+    for (const row of rows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+    runtime.applyLoadedSegment(segment(rows.map((row) =>
+      item(row.dataset.runtimeKey as string)
+    )))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    runtime.scrollToLatest()
+    scheduler.flushFrames(40)
+    expect(container.scrollTop).toBe(200)
+    expect(runtime.getEvidence().bottomLockState).toBe('LOCKED')
+
+    container.scrollTop = 190
+    container.dispatchEvent(new Event('wheel'))
     scheduler.flushFrame()
 
     expect(runtime.getEvidence().bottomLockState).toBe('UNLOCKED')

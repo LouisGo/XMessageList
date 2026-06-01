@@ -13,6 +13,7 @@ import {
   type DemoMessageScenario,
   useDemoMessageScenario,
 } from '../scenario/useDemoMessageScenario'
+import { INCOMING_FOLLOW_DISTANCE_PX } from '../scenario/demoScenarioConfig'
 
 export function DemoMessageList() {
   const scenario = useDemoMessageScenario()
@@ -44,6 +45,7 @@ export function DemoMessageListContent({
     highlightToken,
     jumpToQuote,
     reactToMessage,
+    retryFailedSend,
   } = scenario
 
   const renderDemoItem = useCallback(({
@@ -101,6 +103,7 @@ export function DemoMessageListContent({
           'message-row',
           message.tone,
           message.kind,
+          message.sendStatus ? `send-${message.sendStatus}` : '',
           isHighlighted ? 'jump-highlight' : '',
         ].filter(Boolean).join(' ')}
       >
@@ -108,7 +111,25 @@ export function DemoMessageListContent({
           <strong>{message.author}</strong>
           <div className="message-row-meta">
             <span>{message.id}</span>
+            {message.sendStatus ? (
+              <span
+                className={`message-send-status ${message.sendStatus}`}
+                data-testid={`send-status-${message.id}`}
+              >
+                {getSendStatusLabel(message)}
+              </span>
+            ) : null}
             <div className="message-row-actions">
+              {message.sendStatus === 'failed' ? (
+                <button
+                  type="button"
+                  className="message-row-action retry"
+                  data-testid={`retry-send-${message.id}`}
+                  onClick={() => retryFailedSend(message.id)}
+                >
+                  Retry
+                </button>
+              ) : null}
               {message.tone === 'self' ? (
                 <button
                   type="button"
@@ -189,6 +210,7 @@ export function DemoMessageListContent({
     highlightToken,
     jumpToQuote,
     reactToMessage,
+    retryFailedSend,
   ])
 
   const sendDraft = (event: FormEvent<HTMLFormElement>) => {
@@ -244,7 +266,7 @@ export function DemoMessageListContent({
             type="button"
             data-testid="append-button"
             disabled={scenario.feedLoading}
-            onClick={scenario.appendMessage}
+            onClick={() => scenario.appendMessage()}
           >
             Append
           </button>
@@ -429,15 +451,20 @@ export function DemoMessageListContent({
               </button>
             ) : null
           }
-          renderScrollToLatest={({ visible, scrollToLatest }) =>
-            visible ? (
+          renderScrollToLatest={(input) =>
+            input.visible &&
+            (
+              input.hasMoreAfter ||
+              !input.pageFocused ||
+              input.distanceToBottom > INCOMING_FOLLOW_DISTANCE_PX
+            ) ? (
               <button
                 type="button"
                 className="follow-bottom-button"
                 aria-label="Follow latest messages"
                 data-testid="follow-bottom-button"
                 data-ai-action={e2eEnabled ? 'follow-bottom' : undefined}
-                onClick={scrollToLatest}
+                onClick={input.scrollToLatest}
               >
                 Bottom
               </button>
@@ -488,6 +515,30 @@ export function DemoMessageListContent({
       </section>
     </main>
   )
+}
+
+function getSendStatusLabel(message: DemoMessage): string {
+  if (message.sendStatus === 'sending') {
+    return message.sendAttempt && message.sendAttempt > 1
+      ? `Retrying ${message.sendAttempt}`
+      : 'Sending'
+  }
+
+  if (message.sendStatus === 'retrying') {
+    return message.sendAttempt && message.sendAttempt > 1
+      ? `Retrying ${message.sendAttempt}`
+      : 'Retrying'
+  }
+
+  if (message.sendStatus === 'failed') {
+    return message.sendError ?? 'Failed'
+  }
+
+  if (message.sendStatus === 'sent') {
+    return 'Sent'
+  }
+
+  return ''
 }
 
 function MediaBlock({ message }: { message: DemoMessage }) {

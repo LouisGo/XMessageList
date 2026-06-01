@@ -31,7 +31,7 @@ export type DemoMessageScenario = {
   selectFeed: (feedId: string) => void
   loadHistoryBatch: () => void
   loadFutureBatch: () => void
-  appendMessage: () => void
+  appendMessage: (options?: { follow?: 'follow' | 'preserve' }) => void
   appendMessages: (count: number) => void
   appendLongBurst: () => void
   toggleEventStorm: () => void
@@ -41,7 +41,7 @@ export type DemoMessageScenario = {
   reactToMessage: (messageId: string) => void
   toggleDynamicHeight: () => void
   sendMessage: (body: string) => boolean
-  retryFailedSend: () => boolean
+  retryFailedSend: (messageId?: string) => boolean
   followBottom: () => void
   jumpToQuote: (input?: {
     origin: { messageId: string; position?: number }

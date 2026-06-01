@@ -11,7 +11,11 @@ import {
 } from './demoScenarioHelpers'
 
 type DemoSegmentPublisherOptions = {
-  patchRows: (feedId: string, rows: DemoMessage[]) => void
+  appendRows: (
+    feedId: string,
+    rows: DemoMessage[],
+    follow?: 'follow' | 'preserve',
+  ) => void
   replaceRows: (input: {
     feedId: string
     rows: DemoMessage[]
@@ -27,18 +31,19 @@ type DemoSegmentPublisherOptions = {
 }
 
 export function useDemoSegmentPublisher({
-  patchRows,
+  appendRows,
   replaceRows,
   isActiveFeed,
   setMessageCount,
   setLastEvent,
 }: DemoSegmentPublisherOptions) {
-  const publishActivePatch = useCallback((
+  const publishActiveAppend = useCallback((
     feedId: string,
     items: DemoMessage[],
+    follow?: 'follow' | 'preserve',
   ) => {
-    patchRows(feedId, items)
-  }, [patchRows])
+    appendRows(feedId, items, follow)
+  }, [appendRows])
 
   const replaceLoadedMessages = useCallback(async (input: {
     feedId: string
@@ -77,6 +82,25 @@ export function useDemoSegmentPublisher({
     result: AdvancedMockPublishResult,
     previousMessages: DemoMessage[],
   ) => {
+    if (result.kind === 'append') {
+      const previousIds = new Set(previousMessages.map((message) => message.id))
+      const appendedMessages = result.messages.filter((message) =>
+        !previousIds.has(message.id)
+      )
+      const persistedMessages = replaceDemoFeedMessages(feedId, result.feedMessages)
+      await flushDemoFeedPersistence(feedId)
+
+      if (appendedMessages.length > 0) {
+        appendRows(feedId, appendedMessages)
+      }
+
+      if (isActiveFeed(feedId)) {
+        setMessageCount(persistedMessages.length)
+        setLastEvent(result.eventText)
+      }
+      return
+    }
+
     await replaceLoadedMessages({
       feedId,
       feedMessages: result.feedMessages,
@@ -84,10 +108,16 @@ export function useDemoSegmentPublisher({
       changedKeys: resolveChangedMessageKeys(previousMessages, result.messages),
       eventText: result.eventText,
     })
-  }, [replaceLoadedMessages])
+  }, [
+    appendRows,
+    isActiveFeed,
+    replaceLoadedMessages,
+    setLastEvent,
+    setMessageCount,
+  ])
 
   return {
-    publishActivePatch,
+    publishActiveAppend,
     replaceLoadedMessages,
     applyAdvancedMockResult,
   }

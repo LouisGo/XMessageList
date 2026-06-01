@@ -10,6 +10,7 @@ export type DemoViewportEffect =
   | 'anchor-risk'
 
 export type DemoMessageKind = 'text' | 'longText' | 'image' | 'video' | 'album'
+export type DemoSendStatus = 'sending' | 'retrying' | 'sent' | 'failed'
 
 export type DemoMessage = {
   id: string
@@ -22,6 +23,9 @@ export type DemoMessage = {
   expanded: boolean
   editedAt?: string
   reactions: string[]
+  sendStatus?: DemoSendStatus
+  sendAttempt?: number
+  sendError?: string
   media?: {
     width: number
     height: number
@@ -291,9 +295,28 @@ function normalizeDemoMessage(
       typeof message.editedAt === 'string' && message.editedAt.length > 0
         ? message.editedAt
         : undefined,
+    sendStatus: normalizeSendStatus(message.sendStatus),
+    sendAttempt: Number.isFinite(message.sendAttempt)
+      ? Math.max(1, Math.round(message.sendAttempt as number))
+      : undefined,
+    sendError:
+      typeof message.sendError === 'string' && message.sendError.length > 0
+        ? message.sendError
+        : undefined,
     media: message.media ?? createMedia(kind, Math.abs(sequence)),
     quote: normalizeQuote(message.quote),
   }
+}
+
+function normalizeSendStatus(
+  status: DemoMessage['sendStatus'],
+): DemoMessage['sendStatus'] {
+  return status === 'sending' ||
+      status === 'retrying' ||
+      status === 'sent' ||
+      status === 'failed'
+    ? status
+    : undefined
 }
 
 function createDemoMessage(feedId: string, sequence: number): DemoMessage {

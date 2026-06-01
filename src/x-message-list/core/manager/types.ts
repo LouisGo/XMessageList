@@ -107,6 +107,10 @@ export type MessageListManagerOptions<Row, Conversation = MessageListConversatio
       ttlMs?: number
     }
   }
+  incoming?: {
+    getPageFocus?: () => boolean
+    shouldFollowAppend?: MessageListIncomingAppendPolicy<Row, Conversation>
+  }
   getConversation?: (id: MessageListConversationId) => Conversation
   getAdapter: (
     conversation: Conversation,
@@ -157,6 +161,61 @@ export type MessageListIdentityRemap = {
   nextKey: string
 }
 
+export type MessageListOutgoingStageInput<Row> = {
+  rows: Row[]
+  latest?: MessageListPage<Row>
+  reason?: 'send' | 'retry'
+  retireKeys?: string[]
+}
+
+export type MessageListIncomingAppendFollowDecision = 'follow' | 'preserve'
+
+export type MessageListIncomingAppendContext<
+  Row,
+  Conversation = unknown,
+> = {
+  id: MessageListConversationId
+  conversation: Conversation
+  rows: Row[]
+  reason?: string
+  hasMoreAfter: boolean
+  bottomLockState: 'LOCKED' | 'UNLOCKED'
+  pendingIntent:
+    | 'edge-before'
+    | 'edge-after'
+    | 'underflow-fill'
+    | 'follow-bottom'
+    | 'destination'
+    | null
+  viewportPhase:
+    | 'IDLE'
+    | 'PROJECTING'
+    | 'MEASURING'
+    | 'CORRECTING'
+    | 'MOTION'
+  distanceToBottom: number
+  pageFocused: boolean
+}
+
+export type MessageListIncomingAppendPolicy<
+  Row,
+  Conversation = unknown,
+> = (
+  context: MessageListIncomingAppendContext<Row, Conversation>,
+) => MessageListIncomingAppendFollowDecision | boolean
+
+export type MessageListIncomingAppendFollowInput<Row> =
+  | MessageListIncomingAppendFollowDecision
+  | 'auto'
+  | boolean
+  | MessageListIncomingAppendPolicy<Row>
+
+export type MessageListIncomingAppendInput<Row> = {
+  rows: Row[]
+  reason?: string
+  follow?: MessageListIncomingAppendFollowInput<Row>
+}
+
 export type MessageListSession<Row = unknown> = {
   id: MessageListConversationId
   commands: {
@@ -176,6 +235,14 @@ export type MessageListSession<Row = unknown> = {
     resetAround(input: MessageListRowsResetAroundInput<Row>): void
     applyIdentityRemap(remaps: MessageListIdentityRemap[]): void
     clear(): void
+  }
+  outgoing: {
+    stage(input: Row | Row[] | MessageListOutgoingStageInput<Row>): void
+    patch(rows: Row[]): void
+    applyIdentityRemap(remaps: MessageListIdentityRemap[]): void
+  }
+  incoming: {
+    append(input: Row | Row[] | MessageListIncomingAppendInput<Row>): void
   }
 }
 

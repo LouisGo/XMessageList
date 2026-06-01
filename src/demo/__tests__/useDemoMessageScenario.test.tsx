@@ -437,6 +437,205 @@ describe('useDemoMessageScenario feed switching', () => {
 
     await harness.unmount()
   })
+
+  it('stages composer sends before the mock delivery delay', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(1)
+    const harness = createScenarioHarness()
+
+    await harness.render()
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario && !scenario.feedLoading && scenario.loadedMessageCount > 0)
+    })
+
+    const beforeSendCount = readDemoFeedMessages('feed-runtime').length
+
+    await act(async () => {
+      expect(harness.getScenario()?.sendMessage('instant optimistic send')).toBe(true)
+    })
+
+    const scenario = harness.getScenario()
+    expect(scenario?.messageCount).toBe(beforeSendCount + 1)
+    expect(
+      scenario?.activeRuntime.getSnapshot().items.at(-1)?.message?.body,
+    ).toBe('instant optimistic send')
+    expect(
+      scenario?.activeRuntime.getSnapshot().items.at(-1)?.message?.sendStatus,
+    ).toBe('sending')
+
+    await waitFor(() =>
+      harness.getScenario()?.activeRuntime.getSnapshot().items.at(-1)
+        ?.message?.sendStatus === 'sent'
+    )
+
+    await harness.unmount()
+  })
+
+  it('retries a failed send through a new outgoing row at the latest tail', async () => {
+    const random = vi.spyOn(Math, 'random')
+    random
+      .mockReturnValueOnce(0.9)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0.1)
+      .mockReturnValueOnce(0.9)
+    const harness = createScenarioHarness()
+
+    await harness.render()
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario && !scenario.feedLoading && scenario.loadedMessageCount > 0)
+    })
+
+    const beforeSendCount = readDemoFeedMessages('feed-runtime').length
+
+    await act(async () => {
+      expect(harness.getScenario()?.sendMessage('flaky optimistic send')).toBe(true)
+    })
+
+    const failedId = harness.getScenario()?.activeRuntime
+      .getSnapshot()
+      .items.at(-1)?.message?.id
+
+    expect(failedId).toBeTruthy()
+    await waitFor(() =>
+      harness.getScenario()?.activeRuntime.getSnapshot().items
+        .find((item) => item.message?.id === failedId)
+        ?.message?.sendStatus === 'failed'
+    )
+    expect(readDemoFeedMessages('feed-runtime').length).toBe(beforeSendCount + 1)
+
+    await act(async () => {
+      expect(harness.getScenario()?.retryFailedSend(failedId)).toBe(true)
+    })
+
+    const retrying = harness.getScenario()?.activeRuntime.getSnapshot().items
+      .find((item) => item.message?.id === failedId)
+      ?.message
+    expect(retrying?.id).toBe(failedId)
+    expect(retrying?.body).toBe('flaky optimistic send')
+    expect(retrying?.sendStatus).toBe('retrying')
+    expect(retrying?.sendAttempt).toBe(2)
+    expect(
+      harness.getScenario()?.activeRuntime.getSnapshot().pendingIntent,
+    ).not.toBe('follow-bottom')
+
+    await wait(250)
+    expect(
+      harness.getScenario()?.activeRuntime.getSnapshot().items
+        .find((item) => item.message?.id === failedId)
+        ?.message?.sendStatus,
+    ).toBe('retrying')
+
+    await waitFor(() =>
+      harness.getScenario()?.activeRuntime.getSnapshot().items.some((item) =>
+        item.message?.body === 'flaky optimistic send' &&
+        item.message?.sendStatus === 'sent'
+      )
+    )
+    const retrySent = harness.getScenario()?.activeRuntime.getSnapshot().items
+      .find((item) =>
+        item.message?.body === 'flaky optimistic send' &&
+        item.message?.sendStatus === 'sent'
+      )?.message
+    expect(
+      harness.getScenario()?.activeRuntime.getSnapshot().items
+        .some((item) => item.message?.id === failedId),
+    ).toBe(false)
+    expect(
+      readDemoFeedMessages('feed-runtime').filter((message) =>
+        message.id === failedId
+      ),
+    ).toHaveLength(0)
+    expect(readDemoFeedMessages('feed-runtime')).toHaveLength(beforeSendCount + 1)
+    expect(
+      harness.getScenario()?.activeRuntime.getSnapshot().items.at(-1)
+        ?.message?.body,
+    ).toBe('flaky optimistic send')
+    expect(retrySent?.body).toBe('flaky optimistic send')
+    expect(retrySent?.id).not.toBe(failedId)
+    expect(
+      harness.getScenario()?.activeRuntime.getSnapshot().segmentMeta.modifier.type,
+    ).toBe('append')
+
+    await harness.unmount()
+  })
+
+  it('treats a top-aligned retry success as send-style follow with one append transaction', async () => {
+    const random = vi.spyOn(Math, 'random')
+    random
+      .mockReturnValueOnce(0.9)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0.1)
+      .mockReturnValueOnce(0.9)
+    const harness = createScenarioHarness()
+
+    await harness.render()
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario && !scenario.feedLoading && scenario.loadedMessageCount > 0)
+    })
+
+    await act(async () => {
+      expect(harness.getScenario()?.sendMessage('top aligned retry')).toBe(true)
+    })
+
+    const failedId = harness.getScenario()?.activeRuntime
+      .getSnapshot()
+      .items.at(-1)?.message?.id
+
+    expect(failedId).toBeTruthy()
+    await waitFor(() =>
+      harness.getScenario()?.activeRuntime.getSnapshot().items
+        .find((item) => item.message?.id === failedId)
+        ?.message?.sendStatus === 'failed'
+    )
+
+    const failedMessage = readDemoFeedMessages('feed-runtime')
+      .find((message) => message.id === failedId)
+    expect(failedMessage).toBeTruthy()
+
+    await act(async () => {
+      harness.getScenario()?.activeSession.rows.resetAround({
+        target: { id: failedId as string },
+        rows: [failedMessage as NonNullable<typeof failedMessage>],
+        hasMoreBefore: true,
+        hasMoreAfter: false,
+        anchor: { id: failedId as string },
+        align: 'start',
+      })
+    })
+
+    await act(async () => {
+      expect(harness.getScenario()?.retryFailedSend(failedId)).toBe(true)
+    })
+
+    await waitFor(() =>
+      harness.getScenario()?.activeRuntime.getSnapshot().segmentMeta
+        .shortSegmentAlignment === 'start'
+    )
+    await waitFor(() =>
+      harness.getScenario()?.activeRuntime.getSnapshot().items.some((item) =>
+        item.message?.body === 'top aligned retry' &&
+        item.message?.sendStatus === 'sent'
+      )
+    )
+
+    const snapshot = harness.getScenario()?.activeRuntime.getSnapshot()
+    expect(snapshot?.segmentMeta.modifier).toEqual({
+      type: 'append',
+      changedKeys: expect.arrayContaining([
+        failedId as string,
+        expect.any(String),
+      ]),
+      follow: 'follow',
+      retireKeys: [failedId as string],
+    })
+    expect(
+      snapshot?.items.some((item) => item.message?.id === failedId),
+    ).toBe(false)
+
+    await harness.unmount()
+  })
 })
 
 async function waitFor(

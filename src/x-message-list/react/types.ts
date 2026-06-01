@@ -21,6 +21,23 @@ export type EmptySlotInput = {
 export type ScrollToLatestSlotInput = {
   visible: boolean
   scrollToLatest: () => void
+  bottomLockState: 'LOCKED' | 'UNLOCKED'
+  hasMoreAfter: boolean
+  pendingIntent:
+    | 'edge-before'
+    | 'edge-after'
+    | 'underflow-fill'
+    | 'follow-bottom'
+    | 'destination'
+    | null
+  viewportPhase:
+    | 'IDLE'
+    | 'PROJECTING'
+    | 'MEASURING'
+    | 'CORRECTING'
+    | 'MOTION'
+  distanceToBottom: number
+  pageFocused: boolean
 }
 
 export type MessageListViewportAnchorChangeEvent = {

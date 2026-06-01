@@ -34,7 +34,10 @@ describe('MessageList viewport motion direction', () => {
     container.scrollTop = 250
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
 
-    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'MOTION',
+      bottomLockState: 'LOCKED',
+    })
     expect(container.scrollTop).toBeLessThan(250)
     expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
       name: 'destinationMotion.start',

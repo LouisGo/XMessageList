@@ -63,17 +63,26 @@ capture current visual anchor
 -> preserve anchor
 ```
 
-Locked：
+Locked / Follow：
 
 ```text
-receive extend-after or patch segment from data runtime
+receive extend-after, append(follow), explicit bottom intent, or locked patch segment from data runtime
 -> publish projection snapshot
 -> commit
 -> measure bottom marker
--> scroll to native bottom
+-> start bounded bottom motion or settle native bottom
 ```
 
 `hasMoreAfter=true` 时不得进入 locked bottom。
+
+Receive append 不复用普通 patch 语义。`append(follow)` 表示接入策略允许追底，
+runtime 保留 bottom motion；`append(preserve)` 表示新消息已进入 latest tail，
+但本次必须保持阅读位置并退出 bottom lock。显式 bottom intent 是更高优先级的
+用户命令：如果 append preserve 与 bottom 点击并发，事务结算必须继续吸底。
+
+普通 locked patch 只负责维持 bottom lock，不拥有“新尾部消息”的 after 语义；
+因此不得为了 retrying、status、reaction 等状态更新播放 append-style bottom
+motion。
 
 ## Reset Around / Latest
 

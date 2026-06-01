@@ -41,6 +41,7 @@ export type SessionOptions<Row, Conversation> = {
   conversation: Conversation
   adapter: MessageListAdapter<Row, Conversation>
   defaults: Required<NonNullable<MessageListManagerOptions<Row, Conversation>['defaults']>>
+  incoming?: MessageListManagerOptions<Row, Conversation>['incoming']
   onRequestResult?: MessageListManagerOptions<Row, Conversation>['onRequestResult']
 }
 
@@ -127,13 +128,16 @@ export function resolveTrimProtectKey<Row>(
   runtime: MessageListRuntime<Row>,
   dataRuntime: MessageListDataRuntime<Row>,
 ): string | undefined {
-  const anchor = runtime.getViewportAnchor()
   const segment = dataRuntime.getSegment()
 
+  if (runtime.getSnapshot().bottomLockState === 'LOCKED') {
+    return segment.items.at(-1)?.key
+  }
+
+  const anchor = runtime.getViewportAnchor()
+
   if (!anchor) {
-    return runtime.getSnapshot().bottomLockState === 'LOCKED'
-      ? segment.items.at(-1)?.key
-      : segment.items[Math.floor(segment.items.length / 2)]?.key
+    return segment.items[Math.floor(segment.items.length / 2)]?.key
   }
 
   return segment.items.find((item) => {

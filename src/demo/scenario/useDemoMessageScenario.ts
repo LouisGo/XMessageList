@@ -180,12 +180,16 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   const runtimeSnapshot = runtime.getSnapshot()
 
   const {
-    publishActivePatch,
+    publishActiveAppend,
     replaceLoadedMessages,
     applyAdvancedMockResult,
   } = useDemoSegmentPublisher({
-    patchRows: (feedId, rows) => {
-      getSession(feedId).rows.patch(rows)
+    appendRows: (feedId, rows, follow) => {
+      getSession(feedId).incoming.append({
+        rows,
+        reason: 'demo-append',
+        follow,
+      })
       syncLoadedState(feedId)
     },
     replaceRows: (input) => {
@@ -208,7 +212,7 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     isActiveFeed,
     longBurstDelayBaseMs: LONG_BURST_DELAY_BASE_MS,
     longBurstSize: LONG_BURST_SIZE,
-    publishActivePatch,
+    publishActiveAppend,
     setLastEvent,
     setMessageCount,
   })
@@ -276,6 +280,7 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   })
   const {
     sendMessage,
+    retryFailedSend,
     followBottom,
     jumpToQuote,
     clearFeed,
@@ -385,6 +390,11 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     resetOptimisticRemap()
 
     const feedId = DEMO_FEEDS[0].id
+    for (const sessionId of manager.getSessionIds()) {
+      if (sessionId !== feedId) {
+        manager.destroySession(sessionId)
+      }
+    }
     const prepared = await prepareDemoE2EScenario({
       scenarioId,
       feedId,
@@ -466,7 +476,7 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     reactToMessage,
     toggleDynamicHeight,
     sendMessage,
-    retryFailedSend: () => false,
+    retryFailedSend,
     followBottom,
     jumpToQuote,
     clearFeed,

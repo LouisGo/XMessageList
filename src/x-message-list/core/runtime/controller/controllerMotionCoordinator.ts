@@ -171,7 +171,6 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     this.cancel('restart')
     // queued transaction drain 后再启动 motion 时，目标 DOM 位置可能已经变化，需要以当前 DOM 重新解析。
     const targetTop = this.resolveCurrentTargetTop(resolution)
-    this.prepareSnapshotForMotion(resolution)
     this.host.stateAxes.markMotionActive()
     this.host.stateAxes.markDestinationMotionActive()
     this.host.setViewportPhase('MOTION')
@@ -209,18 +208,6 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     return resolution.targetTop
   }
 
-  private prepareSnapshotForMotion(resolution: MotionResolution): void {
-    if (resolution.source !== 'followBottom') {
-      return
-    }
-
-    this.host.setSnapshot({
-      ...this.host.getSnapshot(),
-      bottomLockState: 'UNLOCKED',
-    })
-    this.host.syncScrollIntentBottomLock()
-  }
-
   private finish(
     resolution: MotionResolution,
     scrollSource: ScrollSource,
@@ -233,6 +220,9 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
       bottomLockState: resolution.bottomLockState,
       pendingIntent: null,
     })
+    if (resolution.source === 'followBottom') {
+      this.host.clearFollowBottom()
+    }
     this.host.stateAxes.markReadyIdle()
     this.host.stateAxes.markDestinationSettled()
     this.host.syncScrollIntentBottomLock()

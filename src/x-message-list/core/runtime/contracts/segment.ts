@@ -21,6 +21,12 @@ export type SegmentModifier =
   | { type: 'trim-after'; trimToken: string }
   | { type: 'patch'; changedKeys: MessageRuntimeItemKey[] }
   | {
+      type: 'append'
+      changedKeys: MessageRuntimeItemKey[]
+      follow: 'follow' | 'preserve'
+      retireKeys?: MessageRuntimeItemKey[]
+    }
+  | {
       type: 'identity-remap'
       remaps: Array<{
         from: MessageIdentityAnchor

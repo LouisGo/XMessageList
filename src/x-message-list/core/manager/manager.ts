@@ -50,6 +50,7 @@ export class ApplicationMessageListManager<Row, Conversation = MessageListConver
       conversation,
       adapter,
       defaults: this.defaults,
+      incoming: this.options.incoming,
       onRequestResult: this.options.onRequestResult,
     })
 

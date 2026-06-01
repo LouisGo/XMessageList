@@ -1,6 +1,6 @@
 # E2E 场景矩阵
 
-本文档只记录当前 `e2e/runner/scenarioSpecs.ts` 中真实存在的场景：21 个
+本文档只记录当前 `e2e/runner/scenarioSpecs.ts` 中真实存在的场景：24 个
 correctness 场景和 1 个 perf 场景。它是 runner catalog，不代表当前所有场景都已通过。
 
 执行入口：
@@ -21,10 +21,13 @@ correctness 场景和 1 个 perf 场景。它是 runner catalog，不代表当�
 | `underflow.dual-edge-arbitration` | 短 segment 下同一 revision 不产生双边请求风暴。 |
 | `identity.optimistic-server-remap` | optimistic row 获得 server id 后，`identity-remap` modifier、row key remap、viewport anchor 全部一致。 |
 
-### P1 Dynamic Height
+### P1 Live Tail And Dynamic Height
 
 | Scenario | 验收重点 |
 | --- | --- |
+| `incoming.append-follow-motion` | latest bottom 下他人新消息通过 `incoming.append` 进入 `append` modifier，并保持 bottom lock。 |
+| `send.composer-event-storm-follow-bottom` | event storm 中普通 Composer send 通过 outgoing 语义回到 latest，并保持 bottom lock。 |
+| `send.optimistic-event-storm-follow-bottom` | event storm 中 optimistic send 不靠历史对齐掩盖行为，发送后保持 bottom lock。 |
 | `dynamic-height.above-anchor-growth` | anchor 上方 row 高度变化后，当前 visual anchor 屏幕位置稳定。 |
 | `dynamic-height.streaming-current-row` | 当前 row streaming 增高时保持阅读位置，不退化成 reset。 |
 

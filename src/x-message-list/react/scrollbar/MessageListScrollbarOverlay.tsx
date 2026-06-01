@@ -58,6 +58,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
   const draggingRef = useRef(false)
   const dragOwnerDocumentRef = useRef<Document | null>(null)
   const hideTimerRef = useRef<number | null>(null)
+  const refreshFrameRef = useRef<number | null>(null)
   const mismatchKeyRef = useRef<string | null>(null)
   const geometry = useMemo(() => resolveScrollbarGeometry(metrics), [metrics])
   const refresh = useCallback(() => {
@@ -65,6 +66,14 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     setMetrics((previous) => areSameMetrics(previous, next) ? previous : next)
     reportMetricMismatch(runtime, next, mismatchKeyRef)
   }, [containerRef, runtime])
+  const cancelScheduledRefresh = useCallback(() => {
+    if (refreshFrameRef.current === null) {
+      return
+    }
+
+    window.cancelAnimationFrame(refreshFrameRef.current)
+    refreshFrameRef.current = null
+  }, [])
   const clearHideTimer = useCallback(() => {
     if (hideTimerRef.current === null) {
       return
@@ -77,6 +86,23 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     setVisible(true)
     clearHideTimer()
   }, [clearHideTimer])
+  const scheduleRefreshFrame = useCallback(() => {
+    if (refreshFrameRef.current !== null) {
+      return
+    }
+
+    refreshFrameRef.current = window.requestAnimationFrame(() => {
+      refreshFrameRef.current = null
+      refresh()
+    })
+  }, [refresh])
+  const scheduleRefresh = useCallback((reveal = false) => {
+    if (reveal) {
+      showScrollbar()
+    }
+
+    scheduleRefreshFrame()
+  }, [scheduleRefreshFrame, showScrollbar])
   const scheduleHide = useCallback(() => {
     clearHideTimer()
     hideTimerRef.current = window.setTimeout(() => {
@@ -115,20 +141,6 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       return
     }
 
-    let frame: number | null = null
-    const scheduleRefresh = (reveal = false) => {
-      if (reveal) {
-        showScrollbar()
-      }
-
-      if (frame !== null) {
-        return
-      }
-      frame = window.requestAnimationFrame(() => {
-        frame = null
-        refresh()
-      })
-    }
     const scheduleRefreshAndReveal = () => {
       scheduleRefresh(true)
     }
@@ -148,7 +160,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       ? null
       : new MutationObserver(scheduleRefreshAndReveal)
 
-    scheduleRefresh()
+    scheduleRefreshFrame()
     container.addEventListener('scroll', scheduleRefreshAndReveal, { passive: true })
     container.addEventListener('pointerenter', handleContainerPointerEnter)
     container.addEventListener('pointerleave', handleContainerPointerLeave)
@@ -160,20 +172,25 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     })
 
     return () => {
-      if (frame !== null) {
-        window.cancelAnimationFrame(frame)
-      }
+      cancelScheduledRefresh()
       container.removeEventListener('scroll', scheduleRefreshAndReveal)
       container.removeEventListener('pointerenter', handleContainerPointerEnter)
       container.removeEventListener('pointerleave', handleContainerPointerLeave)
       resizeObserver?.disconnect()
       mutationObserver?.disconnect()
     }
-  }, [containerRef, refresh, showScrollbar, scheduleHide])
+  }, [
+    cancelScheduledRefresh,
+    containerRef,
+    scheduleHide,
+    scheduleRefresh,
+    scheduleRefreshFrame,
+    showScrollbar,
+  ])
 
   useLayoutEffect(() => {
-    refresh()
-  }, [projectionRevision, refresh])
+    scheduleRefreshFrame()
+  }, [projectionRevision, scheduleRefreshFrame])
 
   useLayoutEffect(() => {
     return () => {

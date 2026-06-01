@@ -37,6 +37,8 @@ const E2E_ACTIONS: E2EActionDescriptor[] = [
   { id: 'jump_to_oldest', label: 'Jump oldest', enabled: true },
   { id: 'toggle_dynamic_height', label: 'Dynamic height', enabled: true },
   { id: 'stream_current_row', label: 'Stream row', enabled: true },
+  { id: 'send_message', label: 'Send message', enabled: true },
+  { id: 'retry_failed_send', label: 'Retry send', enabled: true },
   { id: 'send_optimistic_message', label: 'Send optimistic', enabled: true },
   { id: 'resolve_optimistic_remap', label: 'Resolve remap', enabled: true },
   { id: 'optimistic_server_remap', label: 'Remap optimistic', enabled: true },
@@ -57,10 +59,15 @@ const E2E_ACTIONS: E2EActionDescriptor[] = [
 
 export function E2EMessageListApp() {
   const scenario = useDemoMessageScenario()
+  const scenarioRef = useRef(scenario)
   const rootRef = useRef<HTMLElement | null>(null)
   const eventLogRef = useRef<E2ERuntimeEventRecord[]>([])
   const [viewportRemountKey, setViewportRemountKey] = useState(0)
   const scenarioId = getScenarioId()
+
+  useEffect(() => {
+    scenarioRef.current = scenario
+  }, [scenario])
 
   const recordEvent = useCallback((event: MessageListRuntimeEvent) => {
     eventLogRef.current = [
@@ -75,9 +82,11 @@ export function E2EMessageListApp() {
   ])
 
   const readEvidence = useCallback((checkpointId: string): E2EEvidence => {
-    const snapshot = scenario.activeRuntime.getSnapshot()
+    const currentScenario = scenarioRef.current
+    const runtime = currentScenario.activeRuntime
+    const snapshot = runtime.getSnapshot()
     return {
-      ...scenario.activeRuntime.getEvidence(),
+      ...runtime.getEvidence(),
       schemaVersion: 2,
       scenarioId,
       checkpointId,
@@ -85,11 +94,11 @@ export function E2EMessageListApp() {
       scrollContainerTop: readScrollContainerTop(rootRef.current),
       segment: createSegmentEvidence(snapshot),
       events: [...eventLogRef.current],
-      diagnostics: [...scenario.activeRuntime.getDiagnostics()],
-      overlay: readOverlayEvidence(rootRef.current, scenario.activeRuntime.getEvidence()),
+      diagnostics: [...runtime.getDiagnostics()],
+      overlay: readOverlayEvidence(rootRef.current, runtime.getEvidence()),
       sessionOverlay: readSessionOverlayEvidence(rootRef.current),
     }
-  }, [scenario.activeRuntime, scenarioId])
+  }, [scenarioId])
 
   const runAction = useCallback(async (
     actionId: string,
@@ -108,7 +117,7 @@ export function E2EMessageListApp() {
         actionId,
         payload,
         root: rootRef.current,
-        scenario,
+        scenario: scenarioRef.current,
         remountViewport: () => setViewportRemountKey((key) => key + 1),
         readEvidence,
         captureCheckpoint,
@@ -142,7 +151,7 @@ export function E2EMessageListApp() {
         },
       }
     }
-  }, [readEvidence, scenario])
+  }, [readEvidence])
 
   const bridge = useMemo<XMessageListE2EBridge>(() => ({
     version: 1,
@@ -152,7 +161,7 @@ export function E2EMessageListApp() {
     getEvidence: () => readEvidence('manual'),
     resetScenario: async (nextScenarioId): Promise<E2EActionResult> => {
       eventLogRef.current = []
-      await scenario.resetE2EScenario(nextScenarioId)
+      await scenarioRef.current.resetE2EScenario(nextScenarioId)
       await waitForRuntimeIdle(() => readEvidence('reset'), 2_000)
       return {
         ok: true,
@@ -161,7 +170,7 @@ export function E2EMessageListApp() {
         after: readEvidence('reset'),
       }
     },
-  }), [readEvidence, runAction, scenario, scenarioId])
+  }), [readEvidence, runAction, scenarioId])
 
   useEffect(() => {
     window.__X_MESSAGE_LIST_E2E__ = bridge

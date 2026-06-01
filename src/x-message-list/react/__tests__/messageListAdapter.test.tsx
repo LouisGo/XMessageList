@@ -1,6 +1,6 @@
 import { StrictMode, act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   createMessageListManager,
   type MessageListAdapter,
@@ -100,6 +100,98 @@ describe('MessageList React adapter', () => {
     })
 
     expect(events).toContain('needLatestMessages')
+
+    await act(async () => {
+      root.unmount()
+    })
+    fixture.destroy()
+  })
+
+  it('hides scroll-to-latest slot while follow-bottom is pending', async () => {
+    const fixture = createSessionFixture({
+      rows: ['row-1'],
+      hasMoreAfter: true,
+    })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(
+        <MessageList
+          session={fixture.session}
+          renderRow={({ row }) => <span>{row}</span>}
+          renderScrollToLatest={({ visible, scrollToLatest }) =>
+            visible ? (
+              <button type="button" onClick={scrollToLatest}>Latest</button>
+            ) : null
+          }
+        />,
+      )
+    })
+
+    expect(host.querySelector('button')).not.toBeNull()
+
+    await act(async () => {
+      host.querySelector('button')?.dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      )
+    })
+
+    expect(fixture.runtime.getSnapshot().pendingIntent).toBe('follow-bottom')
+    expect(host.querySelector('button')).toBeNull()
+
+    await act(async () => {
+      root.unmount()
+    })
+    fixture.destroy()
+  })
+
+  it('refreshes scroll-to-latest distance from viewport observations', async () => {
+    const fixture = createSessionFixture({
+      rows: ['row-1', 'row-2'],
+    })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(
+        <MessageList
+          session={fixture.session}
+          renderRow={({ row }) => <span>{row}</span>}
+          renderScrollToLatest={({ distanceToBottom }) =>
+            distanceToBottom > 100 ? (
+              <button type="button">Latest</button>
+            ) : null
+          }
+        />,
+      )
+    })
+
+    const container = host.querySelector<HTMLElement>('[data-message-scroll-container]')
+    expect(container).not.toBeNull()
+
+    Object.defineProperty(container, 'clientHeight', {
+      configurable: true,
+      value: 100,
+    })
+    Object.defineProperty(container, 'scrollHeight', {
+      configurable: true,
+      value: 500,
+    })
+
+    await act(async () => {
+      container!.scrollTop = 350
+      container!.dispatchEvent(new Event('scroll'))
+      await waitForAnimationFrame()
+    })
+    expect(host.querySelector('button')).toBeNull()
+
+    await act(async () => {
+      container!.scrollTop = 200
+      container!.dispatchEvent(new Event('scroll'))
+      await waitForAnimationFrame()
+    })
+    expect(host.querySelector('button')).not.toBeNull()
 
     await act(async () => {
       root.unmount()
@@ -444,6 +536,117 @@ describe('MessageList React adapter', () => {
     fixture.destroy()
   })
 
+  it('keeps custom scrollbar observers and listeners stable across projection revisions', async () => {
+    const installedObservers = installCountingObservers()
+    const fixture = createSessionFixture({
+      rows: ['row-1', 'row-2'],
+    })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    try {
+      await act(async () => {
+        root.render(
+          <MessageList
+            session={fixture.session}
+            renderRow={({ row }) => <span>{row}</span>}
+            scrollbar="custom"
+          />,
+        )
+      })
+
+      const container = host.querySelector<HTMLElement>('[data-message-scroll-container]')
+      expect(container).not.toBeNull()
+      await act(async () => {
+        await waitForAnimationFrame()
+      })
+
+      const addEventListener = vi.spyOn(container!, 'addEventListener')
+      const removeEventListener = vi.spyOn(container!, 'removeEventListener')
+
+      await act(async () => {
+        fixture.session.rows.patch(['row-1', 'row-2', 'row-3'])
+        await waitForAnimationFrame()
+      })
+
+      expect(installedObservers.counters.resizeConstructed).toBe(1)
+      expect(installedObservers.counters.mutationConstructed).toBe(1)
+      expect(installedObservers.counters.resizeDisconnected).toBe(0)
+      expect(installedObservers.counters.mutationDisconnected).toBe(0)
+      expect(addEventListener).not.toHaveBeenCalled()
+      expect(removeEventListener).not.toHaveBeenCalled()
+
+      addEventListener.mockRestore()
+      removeEventListener.mockRestore()
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      fixture.destroy()
+      installedObservers.restore()
+    }
+  })
+
+  it('schedules custom scrollbar projection refresh without synchronous metric reads', async () => {
+    const fixture = createSessionFixture({
+      rows: ['row-1', 'row-2'],
+    })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const getEvidence = vi.spyOn(fixture.runtime, 'getEvidence')
+
+    try {
+      await act(async () => {
+        root.render(
+          <MessageList
+            session={fixture.session}
+            renderRow={({ row }) => <span>{row}</span>}
+            scrollbar="custom"
+          />,
+        )
+      })
+
+      const container = host.querySelector<HTMLElement>('[data-message-scroll-container]')
+      expect(container).not.toBeNull()
+
+      Object.defineProperty(container, 'clientHeight', {
+        configurable: true,
+        value: 100,
+      })
+      Object.defineProperty(container, 'scrollHeight', {
+        configurable: true,
+        value: 300,
+      })
+
+      await act(async () => {
+        await waitForAnimationFrame()
+      })
+      getEvidence.mockClear()
+
+      Object.defineProperty(container, 'scrollHeight', {
+        configurable: true,
+        value: 500,
+      })
+      await act(async () => {
+        fixture.session.rows.patch(['row-1', 'row-2', 'row-3'])
+      })
+
+      expect(getEvidence).not.toHaveBeenCalled()
+
+      await act(async () => {
+        await waitForAnimationFrame()
+      })
+
+      expect(getEvidence).toHaveBeenCalled()
+    } finally {
+      getEvidence.mockRestore()
+      await act(async () => {
+        root.unmount()
+      })
+      fixture.destroy()
+    }
+  })
+
   it('rebases an active custom scrollbar drag after native range changes', async () => {
     const fixture = createSessionFixture({
       rows: ['row-1', 'row-2'],
@@ -598,4 +801,80 @@ function page(
     anchorStatus: overrides.anchorStatus,
     total: overrides.total,
   }
+}
+
+function waitForAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()))
+}
+
+function installCountingObservers(): {
+  counters: {
+    resizeConstructed: number
+    resizeDisconnected: number
+    mutationConstructed: number
+    mutationDisconnected: number
+  }
+  restore: () => void
+} {
+  const previousResizeObserver = globalThis.ResizeObserver
+  const previousMutationObserver = globalThis.MutationObserver
+  const counters = {
+    resizeConstructed: 0,
+    resizeDisconnected: 0,
+    mutationConstructed: 0,
+    mutationDisconnected: 0,
+  }
+
+  class CountingResizeObserver implements ResizeObserver {
+    constructor() {
+      counters.resizeConstructed += 1
+    }
+
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {
+      counters.resizeDisconnected += 1
+    }
+  }
+
+  class CountingMutationObserver implements MutationObserver {
+    constructor() {
+      counters.mutationConstructed += 1
+    }
+
+    observe(): void {}
+    disconnect(): void {
+      counters.mutationDisconnected += 1
+    }
+    takeRecords(): MutationRecord[] {
+      return []
+    }
+  }
+
+  replaceGlobal('ResizeObserver', CountingResizeObserver)
+  replaceGlobal('MutationObserver', CountingMutationObserver)
+
+  return {
+    counters,
+    restore: () => {
+      replaceGlobal('ResizeObserver', previousResizeObserver)
+      replaceGlobal('MutationObserver', previousMutationObserver)
+    },
+  }
+}
+
+function replaceGlobal(
+  name: 'ResizeObserver' | 'MutationObserver',
+  value: unknown,
+): void {
+  if (typeof value === 'undefined') {
+    delete (globalThis as Record<string, unknown>)[name]
+    return
+  }
+
+  Object.defineProperty(globalThis, name, {
+    configurable: true,
+    writable: true,
+    value,
+  })
 }

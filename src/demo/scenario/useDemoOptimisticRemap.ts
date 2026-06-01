@@ -93,7 +93,10 @@ export function useDemoOptimisticRemap(input: {
         nextKey: serverId,
       },
     }
-    session.rows.patch([optimistic, ...tailMessages])
+    session.outgoing.stage({
+      rows: [optimistic, ...tailMessages],
+      reason: 'send',
+    })
     void flushDemoFeedPersistence(activeFeedId)
     if (isActiveFeed(activeFeedId)) {
       setLastEvent('optimistic local identity published')
@@ -124,7 +127,7 @@ export function useDemoOptimisticRemap(input: {
       return
     }
 
-    session.rows.applyIdentityRemap([pending.remap])
+    session.outgoing.applyIdentityRemap([pending.remap])
     pendingOptimisticRemapRef.current = null
     if (isActiveFeed(activeFeedId)) {
       setLastEvent('optimistic identity remapped to server id')

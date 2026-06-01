@@ -10,6 +10,7 @@ import type {
 } from '../contracts/segment'
 import {
   applyIdentityRemaps,
+  appendSegmentItems,
   dedupeItems,
   mergeAfterItems,
   mergeBeforeItems,
@@ -204,6 +205,40 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
         anchor: this.segment.anchor,
         anchorStatus: this.segment.anchorStatus,
         modifier: { type: 'patch', changedKeys: items.map((item) => item.key) },
+      },
+    )
+    return this.segment
+  }
+
+  appendItems(
+    items: MessageDataItem<TMessage, TOptimistic>[],
+    options: {
+      follow: Extract<SegmentModifier, { type: 'append' }>['follow']
+      retireKeys?: MessageRuntimeItemKey[]
+    },
+  ): LoadedSegment<TMessage, TOptimistic> {
+    const retireKeys = options.retireKeys ?? []
+    const changedKeys = [
+      ...new Set([...retireKeys, ...items.map((item) => item.key)]),
+    ]
+    const modifier: Extract<SegmentModifier, { type: 'append' }> = {
+      type: 'append',
+      changedKeys,
+      follow: options.follow,
+    }
+
+    if (retireKeys.length > 0) {
+      modifier.retireKeys = retireKeys
+    }
+
+    this.segment = this.createSegment(
+      appendSegmentItems(this.segment.items, items, retireKeys),
+      {
+        hasMoreBefore: this.segment.hasMoreBefore,
+        hasMoreAfter: this.segment.hasMoreAfter,
+        anchor: this.segment.anchor,
+        anchorStatus: this.segment.anchorStatus,
+        modifier,
       },
     )
     return this.segment

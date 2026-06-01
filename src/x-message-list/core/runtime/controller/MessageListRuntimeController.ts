@@ -214,6 +214,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.domInteractions.recordRowMetrics()
       this.stateAxes.markTransactionSettling()
       this.snapshot = this.interactions.settleSegment(this.snapshot, pending.segment)
+      if (scrollSettlement.kind === 'instant' && scrollSettlement.bottomLockState) this.snapshot = { ...this.snapshot, bottomLockState: scrollSettlement.bottomLockState }
       this.domInteractions.settleDirectScrollSegment(pending.segment.modifier)
       this.syncScrollIntentBottomLock()
       this.transactions.clearPending()
@@ -277,7 +278,11 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     )
     this.applyInteractionUpdate(update)
     if (!update.event) {
-      this.motion.startBottom('followBottom', this.getViewportAnchor())
+      if (!this.isAtBottomTarget()) {
+        this.motion.startBottom('followBottom', this.getViewportAnchor())
+      } else {
+        this.interactions.clearFollowBottom()
+      }
     }
   }
   scrollToMessage(
@@ -440,6 +445,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     if (this.transactions.hasPending() || this.snapshot.viewportPhase !== 'IDLE') {
       return
     }
+    const previousScrollTop = this.lastMeasurement.scrollTop
     const scrollSource = this.scrollIntent.classifyFrameScroll()
     this.lastMeasurement = measureRuntimeDom(this.registry.snapshot(), { rowKeys: this.domInteractions.getScrollSampleKeys() })
     this.snapshot = this.interactions.updateActiveFollowBottomForScroll(
@@ -448,9 +454,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       scrollSource,
     )
     const bottomLockUpdate = this.scrollIntent.updateBottomLock(
-      this.snapshot,
-      this.lastMeasurement,
-      scrollSource,
+      this.snapshot, this.lastMeasurement, scrollSource, previousScrollTop,
     )
     this.snapshot = bottomLockUpdate.snapshot
     if (bottomLockUpdate.changed) {
@@ -594,7 +598,14 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.scrollIntent.syncBottomLock(this.snapshot)
   }
   private readCurrentScrollTop(): number {
-    return this.registry.snapshot().scrollContainer?.scrollTop ??
-      this.lastMeasurement.scrollTop
+    return this.registry.snapshot().scrollContainer?.scrollTop ?? this.lastMeasurement.scrollTop
+  }
+  private isAtBottomTarget(): boolean {
+    const targetTop = this.domInteractions.getBottomTargetTop()
+    if (targetTop === null) {
+      return false
+    }
+
+    return Math.abs(targetTop - this.readCurrentScrollTop()) <= 1
   }
 }

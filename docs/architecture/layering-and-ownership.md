@@ -53,6 +53,10 @@ MessageList Manager 负责：
 - 接收 viewport runtime semantic need events，并调用 adapter request。
 - 处理 request token、stale response、failure ack、segment publish 和 trim。
 - 管理 `anchorMemory` restore/save anchor 与 `readReceipts` batching。
+- 提供 `outgoing` / `incoming.append` 这类 IM 语义入口，把本人发送、他人新消息
+  追加和普通 patch 区分开。
+- 为 receive append 暴露 `distanceToBottom`、`pageFocused`、bottom lock 等策略
+  上下文，并消费业务返回的 follow/preserve 决策。
 - 按 keepAlive 策略或显式 API 销毁 session。
 
 MessageList Manager 不负责：
@@ -107,6 +111,8 @@ React adapter 负责：
 - row wrapper 用 stable key 注册 DOM ref。
 - 在 layout effect 中发送 commit ack。
 - 渲染 before / after loading、error、exhausted、bottom-follow slots。
+- 把 bottom-follow slot 所需的 `distanceToBottom`、`pageFocused` 等只读信号
+  透传给业务渲染。
 
 React adapter 禁止：
 
@@ -122,10 +128,15 @@ Host 负责：
 - 在应用层创建并持有 `MessageListManager`。
 - 通过 `getConversation` / `getAdapter` 注入会话查询、请求、`anchorMemory`
   和 `readReceipts` 等业务依赖。
+- 通过 manager `incoming.shouldFollowAppend` 或单次 `incoming.append({ follow })`
+  决定 receive append 是否跟随；典型策略会同时参考滚动距离、页面焦点、未读
+  计数和会话免打扰状态。
 - 选择 active conversation，并把对应 `MessageListSession` 交给 React adapter。
 - 通过 `session.commands` 发起 scroll / reload 意图。
-- 通过 `session.rows` 接入 send、append、edit、delete、optimistic remap 和
-  clear 等本地 row 变更。
+- 通过 `session.outgoing` 接入本人 send/retry optimistic row。
+- 通过 `session.incoming.append` 接入他人或服务端尾部新消息。
+- 通过 `session.rows` 接入 edit、delete、reaction、streaming patch、
+  identity remap、replace 和 clear 等普通 row 变更。
 - 记录 diagnostics 和 E2E evidence。
 
 Host 禁止：

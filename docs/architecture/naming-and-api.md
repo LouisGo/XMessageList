@@ -32,9 +32,15 @@ export type {
   MessageListAnchorMemoryValue,
   MessageListConversationId,
   MessageListIdentityRemap,
+  MessageListIncomingAppendContext,
+  MessageListIncomingAppendFollowDecision,
+  MessageListIncomingAppendFollowInput,
+  MessageListIncomingAppendInput,
+  MessageListIncomingAppendPolicy,
   MessageListManager,
   MessageListManagerOptions,
   MessageListOverlayStatus,
+  MessageListOutgoingStageInput,
   MessageListPage,
   MessageListRequestContext,
   MessageListRequestResult,
@@ -80,6 +86,11 @@ const manager = createMessageListManager({
   },
   getConversation: (id) => getConversationById(id),
   getAdapter: (conversation) => normalMessageAdapter,
+  incoming: {
+    getPageFocus: () => document.hasFocus(),
+    shouldFollowAppend: ({ pageFocused, bottomLockState, distanceToBottom }) =>
+      pageFocused && (bottomLockState === 'LOCKED' || distanceToBottom <= 96),
+  },
 })
 
 manager.getSession(id)
@@ -90,6 +101,9 @@ manager.destroyAll()
 
 使用 `getConversation/getAdapter`，不用 `resolveConversation/resolveAdapter`，
 因为这里是应用级依赖注入，不是每次 render 的动态解析配置。
+`incoming.shouldFollowAppend` 是 receive append 的应用级策略入口；XMessageList
+提供当前滚动距离、bottom lock、pending intent 和页面焦点等上下文，但不替业务
+定义未读、免打扰或后台标签页策略。
 
 ## Adapter Contract
 
@@ -202,10 +216,50 @@ type MessageListSession<Row> = {
     applyIdentityRemap(remaps): void
     clear(): void
   }
+
+  outgoing: {
+    stage(input): void
+    patch(rows): void
+    applyIdentityRemap(remaps): void
+  }
+
+  incoming: {
+    append(input): void
+  }
 }
 ```
 
-`commands` 表示视口/请求意图；`rows` 表示本地 row 变更入口，用于 send、
-append、edit、delete、optimistic remap、clear 等场景。React adapter 需要的
-runtime/view store/row lookup 通过 package-internal helper 访问，不进入 public
-type。
+```ts
+type MessageListOutgoingStageInput<Row> = {
+  rows: Row[]
+  latest?: MessageListPage<Row>
+  reason?: 'send' | 'retry'
+  retireKeys?: string[]
+}
+```
+
+`commands` 表示视口/请求意图；`rows` 表示普通 row 变更入口，用于 edit、
+delete、reaction、streaming patch、replace、clear 等不带“新尾部消息”语义的
+场景。
+
+`outgoing` 表示本人 send/retry 的 optimistic outgoing 语义：调用方发布本地 row，
+session 负责进入 latest 目标、合入 pending outgoing、处理后续 patch/remap。
+`stage` 始终是 send-style follow-bottom；retry 成功若要作为“重新发送”处理，也应该
+等同一次 send。接入方可以传入 `retireKeys`，让旧 failed/retrying 占位和新
+outgoing row 在同一次 append 事务里完成，避免先 delete 再 send 造成视图状态竞争。
+
+如果接入方把 retry 设计成重新发送，应创建新的业务 row，并把 retry 的业务等待拆成
+两段：先把旧 failed 占位原地 patch 为 retrying/loading，不触发 follow-bottom；
+异步成功后再发布新的 outgoing row，同时用 `retireKeys` 原子移除或归档旧占位。
+不要对旧 row 原地 patch 为 sending 后再触发 follow-bottom。
+
+`incoming.append` 表示他人或服务端在 latest tail 到达的新消息。它不同于普通
+`rows.patch`：append 会携带 follow/preserve 决策进入 runtime modifier，允许
+接入方按 `distanceToBottom`、`pageFocused`、未读策略或会话状态决定是否跟随。
+如果用户已经显式点击 bottom，本次 bottom intent 优先于并发 append 的旧
+preserve 决策；但已经 settled 的 bottom lock 不会强行覆盖接入方显式
+`preserve`。
+非 latest segment 下不会把新消息强插入历史窗口。
+
+React adapter 需要的 runtime/view store/row lookup 通过 package-internal helper
+访问，不进入 public type。

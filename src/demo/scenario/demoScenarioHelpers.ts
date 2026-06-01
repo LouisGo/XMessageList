@@ -177,6 +177,9 @@ function serializeComparableMessage(message: DemoMessage): string {
     expanded: message.expanded,
     editedAt: message.editedAt ?? '',
     reactions: message.reactions,
+    sendStatus: message.sendStatus ?? '',
+    sendAttempt: message.sendAttempt ?? 0,
+    sendError: message.sendError ?? '',
     media: message.media ?? null,
     quote: message.quote ?? null,
   })

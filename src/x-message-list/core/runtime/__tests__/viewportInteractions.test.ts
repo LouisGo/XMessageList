@@ -214,7 +214,10 @@ describe('MessageList viewport interactions', () => {
     ), 1, 1))
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
     runtime.scrollToLatest()
-    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'MOTION',
+      bottomLockState: 'LOCKED',
+    })
     expect(container.scrollTop).toBe(0)
     expect(runtime.getEvidence().scrollTop).toBe(0)
     scheduler.flushFrames(40)
@@ -405,7 +408,7 @@ describe('MessageList viewport interactions', () => {
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
     expect(runtime.getSnapshot()).toMatchObject({
       pendingIntent: null,
-      bottomLockState: 'UNLOCKED',
+      bottomLockState: 'LOCKED',
     })
     expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
     scheduler.flushFrames(40)

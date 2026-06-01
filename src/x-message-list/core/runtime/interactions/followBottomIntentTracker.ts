@@ -56,10 +56,8 @@ export class FollowBottomIntentTracker<TMessage, TOptimistic> {
       return snapshot
     }
 
-    if (
-      source === 'user' &&
-      scrollTop < intent.lastScrollTop - USER_SCROLL_DIRECTION_EPSILON_PX
-    ) {
+    if (isUserDrivenScroll(source) &&
+      scrollTop < intent.lastScrollTop - USER_SCROLL_DIRECTION_EPSILON_PX) {
       this.clear()
       return snapshot.pendingIntent === 'follow-bottom'
         ? { ...snapshot, pendingIntent: null }
@@ -69,4 +67,8 @@ export class FollowBottomIntentTracker<TMessage, TOptimistic> {
     intent.lastScrollTop = scrollTop
     return snapshot
   }
+}
+
+function isUserDrivenScroll(source: ScrollSource): boolean {
+  return source === 'user' || source === 'momentum'
 }

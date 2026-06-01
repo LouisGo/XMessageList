@@ -4,6 +4,11 @@ export {
 } from './manager'
 export type {
   MessageListIdentityRemap,
+  MessageListIncomingAppendContext,
+  MessageListIncomingAppendFollowDecision,
+  MessageListIncomingAppendFollowInput,
+  MessageListIncomingAppendInput,
+  MessageListIncomingAppendPolicy,
   MessageListAdapter,
   MessageListAnchor,
   MessageListAnchorMemoryValue,
@@ -11,6 +16,7 @@ export type {
   MessageListManager,
   MessageListManagerOptions,
   MessageListOverlayStatus,
+  MessageListOutgoingStageInput,
   MessageListPage,
   MessageListRequestContext,
   MessageListRequestResult,

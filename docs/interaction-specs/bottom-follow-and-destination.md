@@ -46,6 +46,13 @@ Trigger：当前 segment 已是 latest，收到新消息。
 Acceptance：
 
 - 具体交互遵循 [实时事件交互规格](./live-events.md#l1-他人新消息到达用户处于追底) 和 [实时事件交互规格](./live-events.md#l2-他人新消息到达用户正在阅读历史)。
+- 接入方使用 `session.incoming.append` 表达“他人/服务端尾部新消息”，不要用
+  普通 `rows.patch` 隐式承担 append 语义。
+- `incoming.append` 的 follow/preserve 策略由接入方配置或单次传入；策略上下文
+  包含 `distanceToBottom`、`pageFocused`、`bottomLockState`、`pendingIntent`
+  等只读信号。
+- 决策为 follow 时，latest tail append 必须保留 bottom motion；决策为 preserve
+  时，即使此前锁底，也要稳定保留当前位置并退出 lock。
 
 User-visible result：
 
@@ -66,6 +73,20 @@ Acceptance：
 - 发送完成后，用户看到自己的消息和最新上下文。
 - 如果发送前正在阅读历史、定位目标或等待边缘加载，发送行为优先于这些未完成状态。
 - 发送后的稳定画面进入追底状态。
+- Composer 只调用 app-level `MessageListSession.outgoing.stage`，不拿
+  `MessageList` ref、不跨组件调用 DOM 或 runtime。
+- 后续 send/push/pull/update/failure 事件通过 `outgoing.patch` 或
+  `outgoing.applyIdentityRemap` 合并到同一逻辑消息。
+- 如果产品把 retry 设计为“重新发送”，retry 必须先把旧 failed 占位原地更新成
+  retrying/loading，等待业务异步结果；结果成功后再创建新的 outgoing row 进入
+  latest tail，并通过 `retireKeys` 在同一次 append 中移除或归档旧 failed
+  占位。
+- retry 成功等同一次 send：无论用户正在历史位置阅读、当前 latest 中远离底部，
+  还是已经吸底，成功上墙后都进入同一条 follow-bottom 语义；当前 latest append
+  只允许由 append 事务自身启动一次 bottom motion。
+- retrying/loading 是失败占位的普通状态 patch；它不能触发 send-style
+  follow-bottom motion，也不能在已吸底时播放一次离开底部再回底部的 after motion。
+- 不能原地把 failed row 改成 sending，同时又触发 bottom-follow。
 
 User-visible result：
 

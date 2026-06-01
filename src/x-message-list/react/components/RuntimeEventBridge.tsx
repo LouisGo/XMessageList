@@ -11,7 +11,7 @@ export type RuntimeEventBridgeProps<TMessage, TOptimistic> = Pick<
   | 'onViewportObservationChange'
 > & {
   runtime: MessageListRuntime<TMessage, TOptimistic>
-  onViewportObservationForOverlay?: (
+  onViewportObservationInternal?: (
     event: ViewportObservationChangedEvent,
   ) => void
 }
@@ -23,7 +23,7 @@ export function RuntimeEventBridge<TMessage, TOptimistic>({
   runtime,
   onViewportAnchorChange,
   onViewportObservationChange,
-  onViewportObservationForOverlay,
+  onViewportObservationInternal,
 }: RuntimeEventBridgeProps<TMessage, TOptimistic>) {
   useLayoutEffect(() => {
     const unsubscribers: Array<() => void> = []
@@ -36,11 +36,11 @@ export function RuntimeEventBridge<TMessage, TOptimistic>({
       }))
     }
 
-    if (onViewportObservationChange || onViewportObservationForOverlay) {
+    if (onViewportObservationChange || onViewportObservationInternal) {
       unsubscribers.push(
         runtime.subscribeViewportObservation((event) => {
           onViewportObservationChange?.(event)
-          onViewportObservationForOverlay?.(event)
+          onViewportObservationInternal?.(event)
         }),
       )
     }
@@ -54,7 +54,7 @@ export function RuntimeEventBridge<TMessage, TOptimistic>({
     runtime,
     onViewportAnchorChange,
     onViewportObservationChange,
-    onViewportObservationForOverlay,
+    onViewportObservationInternal,
   ])
 
   return null

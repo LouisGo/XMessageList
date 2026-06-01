@@ -355,6 +355,53 @@ describe('MessageListDataRuntime', () => {
     expect(segment.hasMoreBefore).toBe(true)
   })
 
+  it('publishes semantic append modifiers for live tail rows', () => {
+    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
+    runtime.resetLatest({
+      items: [item('row-1'), item('row-2')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })
+
+    const segment = runtime.appendItems([item('row-3')], { follow: 'follow' })
+
+    expect(segment.items.map((nextItem) => nextItem.key)).toEqual([
+      'row-1',
+      'row-2',
+      'row-3',
+    ])
+    expect(segment.modifier).toEqual({
+      type: 'append',
+      changedKeys: ['row-3'],
+      follow: 'follow',
+    })
+  })
+
+  it('can retire a visible placeholder in the same semantic append', () => {
+    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
+    runtime.resetLatest({
+      items: [item('row-1'), item('failed-local')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })
+
+    const segment = runtime.appendItems([item('retry-server')], {
+      follow: 'preserve',
+      retireKeys: ['failed-local'],
+    })
+
+    expect(segment.items.map((nextItem) => nextItem.key)).toEqual([
+      'row-1',
+      'retry-server',
+    ])
+    expect(segment.modifier).toEqual({
+      type: 'append',
+      changedKeys: ['failed-local', 'retry-server'],
+      follow: 'preserve',
+      retireKeys: ['failed-local'],
+    })
+  })
+
   it('drops stale responses after generation reset and trims around anchor', () => {
     const runtime = createMessageListDataRuntime<string>({
       feedId: 'feed-a',
