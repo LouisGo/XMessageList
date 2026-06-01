@@ -5,7 +5,6 @@ import type {
 } from '../../index'
 import type { DemoMessage } from '../data/demoData'
 import { DEMO_FEEDS, getDemoFeedDefinition } from '../data/demoFeeds'
-import type { DemoE2ERuntime } from './demoE2EHarnessInternals'
 
 export type DemoMessageScenario = {
   feeds: typeof DEMO_FEEDS
@@ -14,7 +13,6 @@ export type DemoMessageScenario = {
   pendingFeedId: string | null
   activeFeed: ReturnType<typeof getDemoFeedDefinition>
   activeSession: MessageListSession<DemoMessage>
-  activeRuntime: DemoE2ERuntime
   messageCount: number
   loadedMessageCount: number
   hasMoreBefore: boolean

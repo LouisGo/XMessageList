@@ -152,7 +152,7 @@ describe('useDemoMessageScenario feed switching', () => {
 
     expect(harness.getScenario()?.selectedFeedId).toBe(RANDOM_CHAT_FEED_ID)
     expect(harness.getScenario()?.activeFeedId).toBe(RANDOM_CHAT_FEED_ID)
-    expect(harness.getScenario()?.activeRuntime.getSnapshot().feedId)
+    expect(getScenarioSnapshot(harness.getScenario()).feedId)
       .toBe(RANDOM_CHAT_FEED_ID)
     expect(harness.getScenario()?.feedLoading).toBe(true)
     expect(harness.host.textContent).not.toContain('feed-runtime-')
@@ -316,7 +316,7 @@ describe('useDemoMessageScenario feed switching', () => {
       return Boolean(
         scenario?.activeFeedId === feedId &&
           !scenario.feedLoading &&
-          scenario.activeRuntime.getSnapshot().items.some((item) =>
+          getScenarioSnapshot(scenario).items.some((item) =>
             item.message?.id === target.id
           ),
       )
@@ -353,7 +353,7 @@ describe('useDemoMessageScenario feed switching', () => {
     })
     await waitFor(() => {
       const scenario = harness.getScenario()
-      return Boolean(scenario?.activeRuntime.getSnapshot().items.some((item) =>
+      return Boolean(getScenarioSnapshot(scenario).items.some((item) =>
         item.message?.id === 'feed-runtime-0010'
       ))
     })
@@ -389,7 +389,7 @@ describe('useDemoMessageScenario feed switching', () => {
       return Boolean(
         scenario &&
           !scenario.hasMoreAfter &&
-          scenario.activeRuntime.getSnapshot().items.at(-1)?.message?.id ===
+          getScenarioSnapshot(scenario).items.at(-1)?.message?.id ===
             'feed-runtime-0080',
       )
     })
@@ -409,16 +409,23 @@ describe('useDemoMessageScenario feed switching', () => {
     })
 
     const beforeSendCount = readDemoFeedMessages('feed-runtime').length
-    const middle = readDemoFeedMessages('feed-runtime')[39]
+    await act(async () => {
+      harness.getScenario()?.jumpToQuote({
+        origin: { messageId: 'feed-runtime-0080', position: 80 },
+        target: { messageId: 'feed-runtime-0040', position: 40 },
+      })
+    })
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(
+        scenario?.hasMoreAfter &&
+          getScenarioSnapshot(scenario).items.some((item) =>
+            item.message?.id === 'feed-runtime-0040'
+          ),
+      )
+    })
 
     await act(async () => {
-      harness.getScenario()?.activeSession.rows.resetAround({
-        target: { id: middle.id },
-        rows: [middle],
-        hasMoreBefore: true,
-        hasMoreAfter: true,
-        anchor: { id: middle.id },
-      })
       expect(harness.getScenario()?.sendMessage('send from middle')).toBe(true)
     })
 
@@ -428,7 +435,7 @@ describe('useDemoMessageScenario feed switching', () => {
         scenario &&
           scenario.messageCount === beforeSendCount + 1 &&
           !scenario.hasMoreAfter &&
-          scenario.activeRuntime.getSnapshot().items.at(-1)?.message?.body ===
+          getScenarioSnapshot(scenario).items.at(-1)?.message?.body ===
             'send from middle',
       )
     })
@@ -457,14 +464,14 @@ describe('useDemoMessageScenario feed switching', () => {
     const scenario = harness.getScenario()
     expect(scenario?.messageCount).toBe(beforeSendCount + 1)
     expect(
-      scenario?.activeRuntime.getSnapshot().items.at(-1)?.message?.body,
+      getScenarioSnapshot(scenario).items.at(-1)?.message?.body,
     ).toBe('instant optimistic send')
     expect(
-      scenario?.activeRuntime.getSnapshot().items.at(-1)?.message?.sendStatus,
+      getScenarioSnapshot(scenario).items.at(-1)?.message?.sendStatus,
     ).toBe('sending')
 
     await waitFor(() =>
-      harness.getScenario()?.activeRuntime.getSnapshot().items.at(-1)
+      getScenarioSnapshot(harness.getScenario()).items.at(-1)
         ?.message?.sendStatus === 'sent'
     )
 
@@ -492,13 +499,12 @@ describe('useDemoMessageScenario feed switching', () => {
       expect(harness.getScenario()?.sendMessage('flaky optimistic send')).toBe(true)
     })
 
-    const failedId = harness.getScenario()?.activeRuntime
-      .getSnapshot()
+    const failedId = getScenarioSnapshot(harness.getScenario())
       .items.at(-1)?.message?.id
 
     expect(failedId).toBeTruthy()
     await waitFor(() =>
-      harness.getScenario()?.activeRuntime.getSnapshot().items
+      getScenarioSnapshot(harness.getScenario()).items
         .find((item) => item.message?.id === failedId)
         ?.message?.sendStatus === 'failed'
     )
@@ -508,7 +514,7 @@ describe('useDemoMessageScenario feed switching', () => {
       expect(harness.getScenario()?.retryFailedSend(failedId)).toBe(true)
     })
 
-    const retrying = harness.getScenario()?.activeRuntime.getSnapshot().items
+    const retrying = getScenarioSnapshot(harness.getScenario()).items
       .find((item) => item.message?.id === failedId)
       ?.message
     expect(retrying?.id).toBe(failedId)
@@ -516,29 +522,29 @@ describe('useDemoMessageScenario feed switching', () => {
     expect(retrying?.sendStatus).toBe('retrying')
     expect(retrying?.sendAttempt).toBe(2)
     expect(
-      harness.getScenario()?.activeRuntime.getSnapshot().pendingIntent,
+      getScenarioSnapshot(harness.getScenario()).pendingIntent,
     ).not.toBe('follow-bottom')
 
     await wait(250)
     expect(
-      harness.getScenario()?.activeRuntime.getSnapshot().items
+      getScenarioSnapshot(harness.getScenario()).items
         .find((item) => item.message?.id === failedId)
         ?.message?.sendStatus,
     ).toBe('retrying')
 
     await waitFor(() =>
-      harness.getScenario()?.activeRuntime.getSnapshot().items.some((item) =>
+      getScenarioSnapshot(harness.getScenario()).items.some((item) =>
         item.message?.body === 'flaky optimistic send' &&
         item.message?.sendStatus === 'sent'
       )
     )
-    const retrySent = harness.getScenario()?.activeRuntime.getSnapshot().items
+    const retrySent = getScenarioSnapshot(harness.getScenario()).items
       .find((item) =>
         item.message?.body === 'flaky optimistic send' &&
         item.message?.sendStatus === 'sent'
       )?.message
     expect(
-      harness.getScenario()?.activeRuntime.getSnapshot().items
+      getScenarioSnapshot(harness.getScenario()).items
         .some((item) => item.message?.id === failedId),
     ).toBe(false)
     expect(
@@ -548,13 +554,13 @@ describe('useDemoMessageScenario feed switching', () => {
     ).toHaveLength(0)
     expect(readDemoFeedMessages('feed-runtime')).toHaveLength(beforeSendCount + 1)
     expect(
-      harness.getScenario()?.activeRuntime.getSnapshot().items.at(-1)
+      getScenarioSnapshot(harness.getScenario()).items.at(-1)
         ?.message?.body,
     ).toBe('flaky optimistic send')
     expect(retrySent?.body).toBe('flaky optimistic send')
     expect(retrySent?.id).not.toBe(failedId)
     expect(
-      harness.getScenario()?.activeRuntime.getSnapshot().segmentMeta.modifier.type,
+      getScenarioSnapshot(harness.getScenario()).segmentMeta.modifier.type,
     ).toBe('append')
 
     await harness.unmount()
@@ -579,13 +585,12 @@ describe('useDemoMessageScenario feed switching', () => {
       expect(harness.getScenario()?.sendMessage('top aligned retry')).toBe(true)
     })
 
-    const failedId = harness.getScenario()?.activeRuntime
-      .getSnapshot()
+    const failedId = getScenarioSnapshot(harness.getScenario())
       .items.at(-1)?.message?.id
 
     expect(failedId).toBeTruthy()
     await waitFor(() =>
-      harness.getScenario()?.activeRuntime.getSnapshot().items
+      getScenarioSnapshot(harness.getScenario()).items
         .find((item) => item.message?.id === failedId)
         ?.message?.sendStatus === 'failed'
     )
@@ -610,17 +615,17 @@ describe('useDemoMessageScenario feed switching', () => {
     })
 
     await waitFor(() =>
-      harness.getScenario()?.activeRuntime.getSnapshot().segmentMeta
+      getScenarioSnapshot(harness.getScenario()).segmentMeta
         .shortSegmentAlignment === 'start'
     )
     await waitFor(() =>
-      harness.getScenario()?.activeRuntime.getSnapshot().items.some((item) =>
+      getScenarioSnapshot(harness.getScenario()).items.some((item) =>
         item.message?.body === 'top aligned retry' &&
         item.message?.sendStatus === 'sent'
       )
     )
 
-    const snapshot = harness.getScenario()?.activeRuntime.getSnapshot()
+    const snapshot = getScenarioSnapshot(harness.getScenario())
     expect(snapshot?.segmentMeta.modifier).toEqual({
       type: 'append',
       changedKeys: expect.arrayContaining([
@@ -637,6 +642,14 @@ describe('useDemoMessageScenario feed switching', () => {
     await harness.unmount()
   })
 })
+
+function getScenarioSnapshot(scenario: DemoMessageScenario | null | undefined) {
+  if (!scenario) {
+    throw new Error('scenario is not ready')
+  }
+
+  return getMessageListSessionInternals(scenario.activeSession).getSnapshot()
+}
 
 async function waitFor(
   condition: () => boolean,

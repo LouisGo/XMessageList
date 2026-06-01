@@ -78,9 +78,14 @@ metrics，并通过 adapter-private runtime direct-scroll API 写入。
   local mutation wiring。
 - `styles/`：demo/e2e app CSS entry and split style files。
 
-`src/e2e-app` 是 browser-side E2E harness；它通过 demo scenario 暴露的
-`activeRuntime` 采集 runtime evidence，但应用渲染路径仍然是
-`<MessageList session={activeSession} />`。
+普通 `src/demo` 路径必须作为 public session 接入样板：load history/future、
+append/edit/delete/send/clear 都通过 `session.commands`、`session.rows`、
+`session.outgoing` 或 `session.incoming` 完成。demo host 可以用自身持有的
+loaded window 和 persisted feed 推导按钮状态，但不读取 runtime/dataRuntime。
+
+`src/e2e-app` 是 browser-side E2E harness；它可以通过 E2E-only helper 读取
+package-internal runtime snapshot/evidence，用于测试证据和 reset 辅助；应用渲染路径
+仍然是 `<MessageList session={activeSession} />`。
 
 ## Guardrails
 

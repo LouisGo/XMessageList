@@ -23,6 +23,11 @@ export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown>
     notifyDirectScrollRebased(): void
   }
 
+export type MessageListManagerRuntime<TMessage = unknown, TOptimistic = unknown> =
+  MessageListRuntime<TMessage, TOptimistic> & {
+    prepareFollowBottomForLocalReset(): void
+  }
+
 export function getMessageListAdapterRuntime<
   TMessage,
   TOptimistic,
@@ -30,4 +35,13 @@ export function getMessageListAdapterRuntime<
   runtime: MessageListRuntime<TMessage, TOptimistic>,
 ): MessageListAdapterRuntime<TMessage, TOptimistic> {
   return runtime as MessageListAdapterRuntime<TMessage, TOptimistic>
+}
+
+export function getMessageListManagerRuntime<
+  TMessage,
+  TOptimistic,
+>(
+  runtime: MessageListRuntime<TMessage, TOptimistic>,
+): MessageListManagerRuntime<TMessage, TOptimistic> {
+  return runtime as MessageListManagerRuntime<TMessage, TOptimistic>
 }

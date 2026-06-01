@@ -23,6 +23,7 @@ import { ProjectionTransactionQueue } from './transactionQueue'
 import { settleTransactionScrollPosition } from '../transactions/transactionSettlement'
 import { resolveCurrentViewportAnchor, resolveMeasuredViewportAnchor, resolveViewportAnchorEventInput, type ResolvedViewportAnchor, type ViewportAnchorEventInput } from '../dom/viewportAnchorEvents'
 import { ControllerMotionCoordinator } from './controllerMotionCoordinator'
+import { startPendingRuntimeMotion as startPendingRuntimeMotionContinuation } from './controllerSettledContinuations'
 export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unknown>
   implements MessageListAdapterRuntime<TMessage, TOptimistic> {
   private readonly scheduler: RuntimeScheduler
@@ -337,6 +338,10 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   reportEdgeRequestFailure(edge: RuntimeEdge, requestToken: string): void { this.snapshot = this.interactions.reportEdgeError(this.snapshot, edge, requestToken); this.emitSnapshot() }
   retryEdgeRequest(edge: RuntimeEdge): void { const update = this.interactions.retryEdge(this.snapshot, edge); if (update) this.applyInteractionUpdate(update) }
   reportOverlayMetricMismatch(details: Record<string, unknown>): void { this.pushDiagnostic('overlay.metricMismatch', 'warn', details) }
+  prepareFollowBottomForLocalReset(): void {
+    this.cancelCommandMotion()
+    this.applyInteractionUpdate(this.interactions.startFollowBottomForLocalReset(this.snapshot, this.readCurrentScrollTop()))
+  }
   private correctAnchor(
     anchor: VisualAnchor | null,
     segment: LoadedSegment<TMessage, TOptimistic>,
@@ -373,16 +378,14 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     const pendingMotion = this.pendingRuntimeMotion
     if (!pendingMotion) return false
     this.pendingRuntimeMotion = null
-    if (this.motion.startResolution(pendingMotion.settlement, pendingMotion.scrollSource)) {
-      this.emitSegmentTrimPressure(pendingMotion.segment, pendingMotion.settlement.anchor)
-      return true
-    }
-    this.setViewportPhase('IDLE')
-    this.emitViewportObservation('transaction-settle', pendingMotion.scrollSource, pendingMotion.settlement.anchor)
-    this.emitAnchorChanged('transaction-settle', pendingMotion.settlement.anchor)
-    if (pendingMotion.settlement.destination) this.emitDestinationSettled(pendingMotion.settlement.destination, pendingMotion.settlement.anchor)
-    this.emitSegmentTrimPressure(pendingMotion.segment, pendingMotion.settlement.anchor)
-    return false
+    return startPendingRuntimeMotionContinuation(pendingMotion, {
+      motion: this.motion,
+      setViewportPhase: (phase) => this.setViewportPhase(phase),
+      emitViewportObservation: (reason, source, anchor) => this.emitViewportObservation(reason, source, anchor),
+      emitAnchorChanged: (reason, anchor) => this.emitAnchorChanged(reason, anchor),
+      emitDestinationSettled: (destination, anchor) => this.emitDestinationSettled(destination, anchor),
+      emitSegmentTrimPressure: (segment, anchor) => this.emitSegmentTrimPressure(segment, anchor),
+    })
   }
   private applyInteractionUpdate(
     update: InteractionUpdate<TMessage, TOptimistic>,
@@ -572,12 +575,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     })
   }
   private emitSegmentTrimPressure(segment: LoadedSegment<TMessage, TOptimistic>, anchor: MessageIdentityAnchor | null): void {
-    const event = createSegmentTrimPressureEvent({
-      snapshot: this.snapshot,
-      segment,
-      anchor,
-      measurement: this.lastMeasurement,
-    })
+    const event = createSegmentTrimPressureEvent({ snapshot: this.snapshot, segment, anchor, measurement: this.lastMeasurement })
     if (event) this.emitRuntimeEvent(event)
   }
   private applyPostCommitInteractionUpdates(
@@ -597,15 +595,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   private syncScrollIntentBottomLock(): void {
     this.scrollIntent.syncBottomLock(this.snapshot)
   }
-  private readCurrentScrollTop(): number {
-    return this.registry.snapshot().scrollContainer?.scrollTop ?? this.lastMeasurement.scrollTop
-  }
-  private isAtBottomTarget(): boolean {
-    const targetTop = this.domInteractions.getBottomTargetTop()
-    if (targetTop === null) {
-      return false
-    }
-
-    return Math.abs(targetTop - this.readCurrentScrollTop()) <= 1
-  }
+  private readCurrentScrollTop(): number { return this.registry.snapshot().scrollContainer?.scrollTop ?? this.lastMeasurement.scrollTop }
+  private isAtBottomTarget(): boolean { const targetTop = this.domInteractions.getBottomTargetTop(); return targetTop !== null && Math.abs(targetTop - this.readCurrentScrollTop()) <= 1 }
 }

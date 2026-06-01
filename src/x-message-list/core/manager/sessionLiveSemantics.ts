@@ -2,8 +2,8 @@ import type {
   LoadedSegment,
   MessageDataItem,
   MessageIdentityAnchor,
-  MessageListRuntime,
 } from '../runtime/index'
+import type { MessageListManagerRuntime } from '../runtime/internal'
 import type {
   MessageListDataRuntime,
   ResetSegmentInput,
@@ -31,7 +31,7 @@ type SessionLiveSemanticsOptions<Row, Conversation> = {
   conversation: Conversation
   adapter: MessageListAdapter<Row, Conversation>
   incoming?: MessageListManagerOptions<Row, Conversation>['incoming']
-  runtime: MessageListRuntime<Row>
+  runtime: MessageListManagerRuntime<Row>
   dataRuntime: MessageListDataRuntime<Row>
   publishSegment: (segment: LoadedSegment<Row>) => void
   publishLocalResetSegment: (segment: LoadedSegment<Row>) => void
@@ -41,6 +41,7 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
   readonly outgoing: PublicMessageListSession<Row>['outgoing']
   readonly incoming: PublicMessageListSession<Row>['incoming']
   private readonly pendingOutgoingItemsByKey = new Map<string, MessageDataItem<Row>>()
+  private readonly pendingOutgoingRetireKeys = new Set<string>()
 
   constructor(private readonly options: SessionLiveSemanticsOptions<Row, Conversation>) {
     this.outgoing = {
@@ -62,29 +63,33 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
       page,
       this.options.adapter,
     )
-    const pending = [...this.pendingOutgoingItemsByKey.values()]
+    const items = filterRetiredItems(resetInput.items, this.pendingOutgoingRetireKeys)
+    const pending = filterRetiredItems(
+      [...this.pendingOutgoingItemsByKey.values()],
+      this.pendingOutgoingRetireKeys,
+    )
 
-    if (pending.length === 0) {
+    if (pending.length === 0 && items === resetInput.items) {
       return { page, resetInput }
     }
 
-    const items = mergeOutgoingItems(resetInput.items, pending)
+    const mergedItems = mergeOutgoingItems(items, pending)
     return {
       page: {
         ...page,
-        rows: items
+        rows: mergedItems
           .map((item) => item.message)
           .filter((row): row is Row => row !== undefined),
       },
       resetInput: {
         ...resetInput,
-        items,
+        items: mergedItems,
       },
     }
   }
 
   settlePendingOutgoingForSegment(segment: LoadedSegment<Row>): void {
-    if (segment.hasMoreAfter || this.pendingOutgoingItemsByKey.size === 0) {
+    if (segment.hasMoreAfter) {
       return
     }
 
@@ -95,6 +100,15 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
         this.pendingOutgoingItemsByKey.delete(key)
       }
     }
+
+    if (this.pendingOutgoingItemsByKey.size === 0) {
+      this.pendingOutgoingRetireKeys.clear()
+    }
+  }
+
+  clearPendingOutgoing(): void {
+    this.pendingOutgoingItemsByKey.clear()
+    this.pendingOutgoingRetireKeys.clear()
   }
 
   private stageOutgoing(
@@ -107,19 +121,21 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
     }
 
     const items = this.toDataItems(stage.rows)
+    this.rememberRetireKeys(stage.retireKeys)
     this.forgetPendingOutgoingKeys(stage.retireKeys)
     const segment = this.options.dataRuntime.getSegment()
 
-    this.options.runtime.scrollToLatest()
-
     if (stage.latest) {
       this.rememberPendingOutgoing(items)
+      this.options.runtime.prepareFollowBottomForLocalReset()
       const { resetInput } = this.withPendingOutgoing(stage.latest)
       this.options.publishLocalResetSegment(
         this.options.dataRuntime.resetLatest(resetInput),
       )
       return
     }
+
+    this.options.runtime.scrollToLatest()
 
     if (!segment.hasMoreAfter) {
       this.options.publishSegment(
@@ -271,6 +287,16 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
 
     for (const key of keys) {
       this.pendingOutgoingItemsByKey.delete(key)
+    }
+  }
+
+  private rememberRetireKeys(keys: string[] | undefined): void {
+    if (!keys || keys.length === 0) {
+      return
+    }
+
+    for (const key of keys) {
+      this.pendingOutgoingRetireKeys.add(key)
     }
   }
 
@@ -467,6 +493,17 @@ function mergeOutgoingItems<Row>(
   }
 
   return next
+}
+
+function filterRetiredItems<Row>(
+  items: MessageDataItem<Row>[],
+  retireKeys: Set<string>,
+): MessageDataItem<Row>[] {
+  if (retireKeys.size === 0) {
+    return items
+  }
+
+  return items.filter((item) => !retireKeys.has(item.key))
 }
 
 function itemsShareIdentity<Row>(

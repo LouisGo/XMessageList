@@ -5,7 +5,11 @@ import {
   type MessageDataItem,
   type MessageListRuntimeEvent,
 } from '../index'
-import { getMessageListAdapterRuntime, type MessageListAdapterRuntime } from '../internal'
+import {
+  getMessageListAdapterRuntime,
+  getMessageListManagerRuntime,
+  type MessageListAdapterRuntime,
+} from '../internal'
 import type { MessageIdentityAnchor } from '../contracts/identity'
 import type { MessageListRuntime } from '../controller/runtime'
 import { FakeScheduler, createContainer, setElementMetrics } from '../../../../test/fakes'
@@ -718,6 +722,56 @@ describe('MessageList viewport motion', () => {
       bottomLockState: 'LOCKED',
     })
     expect(container.scrollTop).toBeLessThan(250)
+
+    scheduler.flushFrames(40)
+
+    expect(container.scrollTop).toBe(250)
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'IDLE',
+      bottomLockState: 'LOCKED',
+    })
+  })
+
+  it('uses requestless follow-bottom motion for local latest rebuilds', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const previousRows = createRows(2, 50)
+    const latestRows = createRows(7, 50)
+    const events: string[] = []
+
+    runtime.subscribeRuntimeEvent((event) => {
+      events.push(event.type)
+    })
+
+    mountRows(runtime, adapter, container, previousRows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(previousRows), 1, 1, {
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    getMessageListManagerRuntime(runtime).prepareFollowBottomForLocalReset()
+    expect(runtime.getSnapshot()).toMatchObject({
+      pendingIntent: 'follow-bottom',
+      bottomLockState: 'UNLOCKED',
+    })
+    expect(events).not.toContain('needLatestMessages')
+
+    replaceRows(adapter, container, latestRows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(latestRows), 2, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+      modifier: { type: 'reset-latest' },
+    }))
+    container.scrollTop = 250
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'MOTION',
+      pendingIntent: null,
+      bottomLockState: 'LOCKED',
+    })
 
     scheduler.flushFrames(40)
 

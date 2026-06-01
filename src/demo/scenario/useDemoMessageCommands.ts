@@ -20,9 +20,6 @@ import {
   wait,
   waitMockDelay,
 } from './demoScenarioHelpers'
-import {
-  getDemoSessionSnapshot,
-} from './demoE2EHarnessInternals'
 import type {
   DemoHighlightState,
 } from './demoScenarioTypes'
@@ -47,6 +44,8 @@ export function useDemoMessageCommands(input: {
   getSession: (feedId: string) => MessageListSession<DemoMessage>
   getHasMoreAfter: () => boolean
   getLoadedMessages: () => DemoMessage[]
+  getLoadedMessagesForFeed: (feedId: string) => DemoMessage[]
+  setLoadedMessagesForFeed: (feedId: string, messages: DemoMessage[]) => void
   isActiveFeed: (feedId: string) => boolean
   pageSize: number
   sendDelayBaseMs: number
@@ -58,6 +57,7 @@ export function useDemoMessageCommands(input: {
     activeFeedId,
     getHasMoreAfter,
     getLoadedMessages,
+    getLoadedMessagesForFeed,
     getSession,
     highlightState,
     isActiveFeed,
@@ -65,6 +65,7 @@ export function useDemoMessageCommands(input: {
     sendDelayBaseMs,
     session,
     setLastEvent,
+    setLoadedMessagesForFeed,
     setMessageCount,
   } = input
 
@@ -103,6 +104,7 @@ export function useDemoMessageCommands(input: {
         reason,
         retireKeys: options.retireKeys,
       })
+      setLoadedMessagesForFeed(feedId, latest)
       return
     }
 
@@ -111,7 +113,20 @@ export function useDemoMessageCommands(input: {
       reason,
       retireKeys: options.retireKeys,
     })
-  }, [getSession, pageSize])
+    setLoadedMessagesForFeed(
+      feedId,
+      upsertLoadedMessages(
+        getLoadedMessagesForFeed(feedId),
+        [message],
+        options.retireKeys,
+      ),
+    )
+  }, [
+    getLoadedMessagesForFeed,
+    getSession,
+    pageSize,
+    setLoadedMessagesForFeed,
+  ])
 
   const completeSendAttempt = useCallback((
     feedId: string,
@@ -141,6 +156,10 @@ export function useDemoMessageCommands(input: {
       }
 
       getSession(feedId).outgoing.patch([updated.message])
+      setLoadedMessagesForFeed(
+        feedId,
+        upsertLoadedMessages(getLoadedMessagesForFeed(feedId), [updated.message]),
+      )
       await flushDemoFeedPersistence(feedId)
       if (isActiveFeed(feedId)) {
         setLastEvent(
@@ -150,7 +169,14 @@ export function useDemoMessageCommands(input: {
         )
       }
     })()
-  }, [getSession, isActiveFeed, sendDelayBaseMs, setLastEvent])
+  }, [
+    getLoadedMessagesForFeed,
+    getSession,
+    isActiveFeed,
+    sendDelayBaseMs,
+    setLastEvent,
+    setLoadedMessagesForFeed,
+  ])
 
   const completeRetryAttempt = useCallback((
     feedId: string,
@@ -182,6 +208,10 @@ export function useDemoMessageCommands(input: {
         }
 
         getSession(feedId).outgoing.patch([updated.message])
+        setLoadedMessagesForFeed(
+          feedId,
+          upsertLoadedMessages(getLoadedMessagesForFeed(feedId), [updated.message]),
+        )
         await flushDemoFeedPersistence(feedId)
         if (isActiveFeed(feedId)) {
           setLastEvent(`retry failed ${messageId}`)
@@ -200,6 +230,7 @@ export function useDemoMessageCommands(input: {
         return
       }
 
+      const shouldRebuildLatest = getHasMoreAfter()
       const retryMessage = createRetriedOutgoingMessage({
         feedId,
         target,
@@ -222,7 +253,7 @@ export function useDemoMessageCommands(input: {
         targetId: target.id,
         retryMessage,
         persistedMessages,
-        getSession,
+        shouldRebuildLatest,
         stageOutgoingMessage,
       })
       await flushDemoFeedPersistence(feedId)
@@ -231,9 +262,12 @@ export function useDemoMessageCommands(input: {
       }
     })()
   }, [
+    getHasMoreAfter,
+    getLoadedMessagesForFeed,
     getSession,
     isActiveFeed,
     setLastEvent,
+    setLoadedMessagesForFeed,
     setMessageCount,
     stageOutgoingMessage,
   ])
@@ -318,6 +352,13 @@ export function useDemoMessageCommands(input: {
     }
 
     getSession(activeFeedId).outgoing.patch([updated.message])
+    setLoadedMessagesForFeed(
+      activeFeedId,
+      upsertLoadedMessages(
+        getLoadedMessagesForFeed(activeFeedId),
+        [updated.message],
+      ),
+    )
     if (isActiveFeed(activeFeedId)) {
       setLastEvent(`retrying ${target.id}`)
     }
@@ -326,9 +367,11 @@ export function useDemoMessageCommands(input: {
   }, [
     activeFeedId,
     completeRetryAttempt,
+    getLoadedMessagesForFeed,
     getSession,
     isActiveFeed,
     setLastEvent,
+    setLoadedMessagesForFeed,
   ])
 
   const jumpToQuote = useCallback((input?: {
@@ -389,6 +432,7 @@ export function useDemoMessageCommands(input: {
 
   const clearFeed = useCallback((feedId: string) => {
     replaceDemoFeedMessages(feedId, [])
+    setLoadedMessagesForFeed(feedId, [])
     if (isActiveFeed(feedId)) {
       setMessageCount(0)
       getSession(feedId).rows.clear()
@@ -401,6 +445,7 @@ export function useDemoMessageCommands(input: {
     getSession,
     isActiveFeed,
     setLastEvent,
+    setLoadedMessagesForFeed,
     setMessageCount,
   ])
 
@@ -472,7 +517,7 @@ function publishRetriedOutgoingMessage(input: {
   targetId: string
   retryMessage: DemoMessage
   persistedMessages: DemoMessage[]
-  getSession: (feedId: string) => MessageListSession<DemoMessage>
+  shouldRebuildLatest: boolean
   stageOutgoingMessage: (
     feedId: string,
     message: DemoMessage,
@@ -484,31 +529,36 @@ function publishRetriedOutgoingMessage(input: {
     },
   ) => void
 }): void {
-  const session = input.getSession(input.feedId)
-  const snapshot = getDemoSessionSnapshot(session)
-
-  if (!snapshot.segmentMeta.hasMoreAfter) {
-    input.stageOutgoingMessage(
-      input.feedId,
-      input.retryMessage,
-      input.persistedMessages,
-      false,
-      'retry',
-      {
-        retireKeys: [input.targetId],
-      },
-    )
-    return
-  }
-
   input.stageOutgoingMessage(
     input.feedId,
     input.retryMessage,
     input.persistedMessages,
-    true,
+    input.shouldRebuildLatest,
     'retry',
     {
       retireKeys: [input.targetId],
     },
   )
+}
+
+function upsertLoadedMessages(
+  current: DemoMessage[],
+  messages: DemoMessage[],
+  retireKeys: string[] = [],
+): DemoMessage[] {
+  const retired = new Set(retireKeys)
+  const next = current.filter((message) => !retired.has(message.id))
+
+  for (const message of messages) {
+    const existingIndex = next.findIndex((candidate) => candidate.id === message.id)
+
+    if (existingIndex >= 0) {
+      next[existingIndex] = message
+      continue
+    }
+
+    next.push(message)
+  }
+
+  return next
 }

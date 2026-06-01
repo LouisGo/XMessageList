@@ -90,7 +90,7 @@ export async function runBridgeAction({
       await jumpToIdentity({ payload, scenario, readEvidence })
       return
     case 'jump_to_oldest':
-      scenario.activeRuntime.scrollToMessage({
+      scenario.activeSession.commands.scrollToMessage({
         feedId: scenario.activeFeedId,
         stableId: `${scenario.activeFeedId}-0001`,
         serverId: `${scenario.activeFeedId}-0001`,
@@ -273,7 +273,7 @@ async function jumpToIdentity(input: {
     throw new E2EActionError('missing_target_identity', 'jump target stableId missing')
   }
 
-  input.scenario.activeRuntime.scrollToMessage({
+  input.scenario.activeSession.commands.scrollToMessage({
     feedId: input.scenario.activeFeedId,
     stableId,
     serverId: stableId,

@@ -69,6 +69,23 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
     }
   }
 
+  startForLocalReset(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+    scrollTop = 0,
+  ): InteractionUpdate<TMessage, TOptimistic> {
+    this.active.ensure(snapshot, scrollTop)
+    this.axes.markFollowBottomPending()
+    this.axes.markDestinationPendingData()
+
+    return {
+      snapshot: {
+        ...snapshot,
+        bottomLockState: 'UNLOCKED',
+        pendingIntent: 'follow-bottom',
+      },
+    }
+  }
+
   settleSegment(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     segment: LoadedSegment<TMessage, TOptimistic>,

@@ -62,6 +62,10 @@ Acceptance：
 - retry 若作为重新发送处理，应先原地展示 retrying/loading，异步成功后再发布新的
   outgoing row，并用 `retireKeys` 原子移除旧占位；默认按 send 语义进入
   follow-bottom。
+- retry 成功如果使用 `outgoing.stage({ rows, latest, retireKeys })`，`latest`
+  是业务方提供的完整 latest window，组件库只做本地 rebuild 和 follow-bottom
+  继承；旧 failed/retrying row 必须在 rebuild 中被 `retireKeys` 原子移除，不能
+  再额外请求 latest 后二次合并。
 - 当前 latest 下 retry 成功只允许 append follow 启动一次 bottom motion；`scrollToLatest`
   只负责打开/确认 follow-bottom intent，不能在已经位于 bottom target 时先播放一次
   本地 bottom motion 再被 append follow 打断。异步失败则回到 failed，不抢滚动。

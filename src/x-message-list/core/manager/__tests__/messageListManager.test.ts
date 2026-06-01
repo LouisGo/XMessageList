@@ -476,13 +476,17 @@ describe('createMessageListManager', () => {
     expect(internals.dataRuntime.getSegment().hasMoreAfter).toBe(false)
   })
 
-  it('uses outgoing latest input to rebuild latest without a separate host scroll command', async () => {
+  it('uses outgoing latest input to rebuild latest without requesting latest again', async () => {
+    const loadLatest = vi.fn(() => Promise.resolve(page(['normal-latest'])))
     const manager = createMessageListManager<TestRow, TestConversation>({
       getConversation: (id) => ({ id, type: 'normal' }),
-      getAdapter: () => createAdapter('normal'),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest,
+      }),
     })
     const session = manager.getSession('feed-a')
     const internals = getMessageListSessionInternals(session)
+    const runtimeEvents: MessageListRuntimeEvent[] = []
 
     await waitFor(() => internals.dataRuntime.getSegment().items.length > 0)
     session.rows.resetAround({
@@ -491,6 +495,9 @@ describe('createMessageListManager', () => {
       hasMoreBefore: true,
       hasMoreAfter: true,
       anchor: { id: 'middle' },
+    })
+    const unsubscribe = internals.runtime.subscribeRuntimeEvent((event) => {
+      runtimeEvents.push(event)
     })
 
     session.outgoing.stage({
@@ -501,10 +508,93 @@ describe('createMessageListManager', () => {
         anchorId: 'local',
       }),
     })
+    unsubscribe()
 
     expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
       .toEqual(['tail', 'local'])
     expect(internals.dataRuntime.getSegment().modifier.type).toBe('reset-latest')
+    expect(loadLatest).toHaveBeenCalledTimes(1)
+    expect(runtimeEvents.map((event) => event.type))
+      .not.toContain('needLatestMessages')
+    expect(internals.getSnapshot().pendingIntent).toBe('follow-bottom')
+  })
+
+  it('clears pending outgoing rows when the host locally resets the segment', async () => {
+    const pendingLatest: Array<(page: MessageListPage<TestRow>) => void> = []
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
+          pendingLatest.push(resolve)
+        }),
+      }),
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => pendingLatest.length === 1)
+    pendingLatest[0](page(['tail']))
+    await waitFor(() => internals.dataRuntime.getSegment().items[0]?.message?.id === 'tail')
+
+    session.rows.resetAround({
+      target: { id: 'middle' },
+      rows: [{ id: 'middle' }],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      anchor: { id: 'middle' },
+    })
+    session.outgoing.stage({ id: 'local', text: 'sending' })
+    await waitFor(() => pendingLatest.length === 2)
+
+    session.rows.clear()
+    session.commands.reloadLatest()
+    await waitFor(() => pendingLatest.length === 3)
+    pendingLatest[2](page(['fresh']))
+
+    await waitFor(() =>
+      internals.dataRuntime.getSegment().items[0]?.message?.id === 'fresh'
+    )
+
+    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+      .toEqual(['fresh'])
+
+    pendingLatest[1](page(['stale-tail']))
+    await wait()
+
+    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+      .toEqual(['fresh'])
+  })
+
+  it('applies retireKeys while rebuilding latest from outgoing latest input', async () => {
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.dataRuntime.getSegment().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'failed-local' },
+      rows: [{ id: 'failed-local', text: 'failed' }],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      anchor: { id: 'failed-local' },
+    })
+
+    session.outgoing.stage({
+      rows: [{ id: 'retry-server', text: 'sent' }],
+      latest: page(['tail', 'failed-local', 'retry-server'], {
+        hasMoreBefore: true,
+        hasMoreAfter: false,
+        anchorId: 'retry-server',
+      }),
+      reason: 'retry',
+      retireKeys: ['failed-local'],
+    })
+
+    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+      .toEqual(['tail', 'retry-server'])
   })
 
   it('applies outgoing identity remaps to visible outgoing rows', async () => {

@@ -12,6 +12,7 @@ import {
   type DataRuntimeRequestKind,
   type MessageListDataRuntime,
 } from '../runtime/data/index'
+import { getMessageListManagerRuntime } from '../runtime/internal'
 import { MessageListReadReceiptsWorker } from './readReceipts'
 import { MessageListSessionOverlay } from './sessionOverlay'
 import { createSessionRows } from './sessionRows'
@@ -93,22 +94,23 @@ export class MessageListSession<Row, Conversation>
         void this.loadEdgeFromCommand('after')
       },
     }
+    this.liveSemantics = new MessageListSessionLiveSemantics({
+      id: this.id,
+      conversation: this.options.conversation,
+      adapter: this.options.adapter,
+      incoming: this.options.incoming,
+      runtime: getMessageListManagerRuntime(this.#runtime),
+      dataRuntime: this.#dataRuntime,
+      publishSegment: (segment) => this.publishSegment(segment),
+      publishLocalResetSegment: (segment) => this.publishLocalResetSegment(segment),
+    })
     this.rows = createSessionRows({
       id: this.id,
       adapter: this.options.adapter,
       dataRuntime: this.#dataRuntime,
       publishSegment: (segment) => this.publishSegment(segment),
       publishLocalResetSegment: (segment) => this.publishLocalResetSegment(segment),
-    })
-    this.liveSemantics = new MessageListSessionLiveSemantics({
-      id: this.id,
-      conversation: this.options.conversation,
-      adapter: this.options.adapter,
-      incoming: this.options.incoming,
-      runtime: this.#runtime,
-      dataRuntime: this.#dataRuntime,
-      publishSegment: (segment) => this.publishSegment(segment),
-      publishLocalResetSegment: (segment) => this.publishLocalResetSegment(segment),
+      clearPendingOutgoing: () => this.liveSemantics.clearPendingOutgoing(),
     })
     this.outgoing = this.liveSemantics.outgoing
     this.incoming = this.liveSemantics.incoming

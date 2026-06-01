@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type MessageListManager,
+  type MessageListRequestResult,
   type MessageListSession,
 } from '../../index'
 import type { DemoMessage } from '../data/demoData'
@@ -10,13 +11,9 @@ import {
 } from '../data/demoMessageApi'
 import {
   clearHighlightTimer,
+  resolveLoadedBounds,
   wait,
 } from './demoScenarioHelpers'
-import {
-  getDemoSessionLoadedMessages,
-  getDemoSessionRuntime,
-  getDemoSessionSnapshot,
-} from './demoE2EHarnessInternals'
 import {
   createDemoManager,
   prepareDemoE2EScenario,
@@ -28,6 +25,7 @@ import {
 } from './demoScenarioRuntimeHelpers'
 import {
   APPEND_DELAY_BASE_MS,
+  DEMO_MAX_ITEMS,
   LONG_BURST_DELAY_BASE_MS,
   LONG_BURST_SIZE,
   PAGE_SIZE,
@@ -50,7 +48,6 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   const [pendingFeedId, setPendingFeedId] = useState<string | null>(null)
   const [messages, setMessages] = useState<DemoMessage[]>([])
   const [messageCount, setMessageCount] = useState(0)
-  const loadedMessagesRef = useRef<DemoMessage[]>([])
   const [lastEvent, setLastEvent] = useState('bootstrapping latest segment')
   const [feedLoading, setFeedLoading] = useState(true)
   const managerStateRef = useRef({
@@ -70,6 +67,7 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   const [highlightToken, setHighlightToken] = useState(0)
   const highlightTimerRef = useRef<number | null>(null)
   const destroyManagerTimerRef = useRef<number | null>(null)
+  const loadedMessagesByFeedRef = useRef(new Map<string, DemoMessage[]>())
   const { loadingBefore, loadingAfter, setEdgeLoading } = useDemoEdgeLoadingState()
 
   useEffect(() => {
@@ -88,11 +86,59 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   const getActiveFeedId = useCallback(() => managerStateRef.current.activeFeedId, [managerStateRef])
   const getSelectedFeedId = useCallback(() => managerStateRef.current.selectedFeedId, [managerStateRef])
   const isFeedLoading = useCallback(() => managerStateRef.current.feedLoading, [managerStateRef])
-  const setLoadedMessages = useCallback((nextMessages: DemoMessage[]) => {
-    loadedMessagesRef.current = nextMessages
+  const setVisibleLoadedMessages = useCallback((nextMessages: DemoMessage[]) => {
     setMessages(nextMessages)
   }, [])
-  const getLoadedMessages = useCallback(() => loadedMessagesRef.current, [])
+  const setLoadedMessagesForFeed = useCallback((
+    feedId: string,
+    nextMessages: DemoMessage[],
+  ) => {
+    loadedMessagesByFeedRef.current.set(feedId, nextMessages)
+    if (managerStateRef.current.activeFeedId === feedId) {
+      setVisibleLoadedMessages(nextMessages)
+    }
+  }, [managerStateRef, setVisibleLoadedMessages])
+  const getLoadedMessagesForFeed = useCallback((feedId: string) =>
+    loadedMessagesByFeedRef.current.get(feedId) ?? [], [])
+  const getLoadedMessages = useCallback(() =>
+    getLoadedMessagesForFeed(managerStateRef.current.activeFeedId), [
+    getLoadedMessagesForFeed,
+    managerStateRef,
+  ])
+  const getLoadedWindowBounds = useCallback((feedId: string) =>
+    resolveLoadedBounds(
+      readDemoFeedMessages(feedId),
+      getLoadedMessagesForFeed(feedId),
+    ), [getLoadedMessagesForFeed])
+  const syncLoadedStateFromRequest = useCallback((
+    result: MessageListRequestResult<DemoMessage, unknown>,
+    eventText?: string,
+  ) => {
+    if (result.status !== 'applied' || !result.page) {
+      return
+    }
+
+    const nextMessages = resolveLoadedMessagesFromRequest({
+      kind: result.kind,
+      pageRows: result.page.rows,
+      previousMessages: getLoadedMessagesForFeed(result.id),
+      maxItems: DEMO_MAX_ITEMS,
+    })
+
+    setLoadedMessagesForFeed(result.id, nextMessages)
+    if (managerStateRef.current.activeFeedId !== result.id) {
+      return
+    }
+
+    setMessageCount(result.page.total ?? readDemoFeedMessages(result.id).length)
+    if (eventText) {
+      setLastEvent(eventText)
+    }
+  }, [
+    getLoadedMessagesForFeed,
+    managerStateRef,
+    setLoadedMessagesForFeed,
+  ])
   const canCompleteRequestActivation = useCallback((feedId: string) => {
     const delayedWarmActivation = managerStateRef.current.delayedWarmActivation
 
@@ -116,9 +162,6 @@ export function useDemoMessageScenario(): DemoMessageScenario {
 
   // eslint-disable-next-line react-hooks/refs -- lazy manager construction stores callbacks; it does not read ref values during render.
   const [manager] = useState<MessageListManager<DemoMessage>>(() => {
-    const managerBox: {
-      current?: MessageListManager<DemoMessage>
-    } = {}
     const managerInstance = createDemoManager({
       consumeDeferredEdgeResponseDelay,
       consumeDeferredSessionResponseDelay,
@@ -133,51 +176,30 @@ export function useDemoMessageScenario(): DemoMessageScenario {
       setLastEvent,
       setMessageCount,
       setPendingFeedId,
-      syncLoadedState: (feedId, eventText) => {
-        syncLoadedStateFromManager({
-          eventText,
-          feedId,
-          manager: managerBox.current as MessageListManager<DemoMessage>,
-          activeFeedId: getActiveFeedId(),
-          setLastEvent,
-          setMessageCount,
-          setMessages: setLoadedMessages,
-        })
-      },
+      syncLoadedState: syncLoadedStateFromRequest,
     })
 
-    managerBox.current = managerInstance
     return managerInstance
   })
 
   const getSession = useCallback((feedId: string): MessageListSession<DemoMessage> =>
     manager.getSession(feedId), [manager])
   const getHasMoreAfter = useCallback(() =>
-    getDemoSessionSnapshot(
-      getSession(managerStateRef.current.activeFeedId),
-    ).segmentMeta.hasMoreAfter, [getSession, managerStateRef])
-  const syncLoadedState = useCallback((feedId: string, eventText?: string) => {
-    syncLoadedStateFromManager({
-      eventText,
-      feedId,
-      manager,
-      activeFeedId: managerStateRef.current.activeFeedId,
-      setLastEvent,
-      setMessageCount,
-      setMessages: setLoadedMessages,
-    })
-  }, [manager, managerStateRef, setLoadedMessages])
+    getLoadedWindowBounds(managerStateRef.current.activeFeedId).hasMoreAfter ?? false, [
+    getLoadedWindowBounds,
+    managerStateRef,
+  ])
 
   const activeSession = useMemo(
     () => manager.getSession(activeFeedId),
     [activeFeedId, manager],
   )
-  const runtime = useMemo(
-    () => getDemoSessionRuntime(activeSession),
-    [activeSession],
-  )
   const activeFeed = useMemo(() => getDemoFeedDefinition(activeFeedId), [activeFeedId])
-  const runtimeSnapshot = runtime.getSnapshot()
+  const loadedWindowBounds = useMemo(() =>
+    resolveLoadedBounds(readDemoFeedMessages(activeFeedId), messages), [
+    activeFeedId,
+    messages,
+  ])
 
   const {
     publishActiveAppend,
@@ -190,11 +212,21 @@ export function useDemoMessageScenario(): DemoMessageScenario {
         reason: 'demo-append',
         follow,
       })
-      syncLoadedState(feedId)
+      setLoadedMessagesForFeed(
+        feedId,
+        trimLoadedMessages(
+          dedupeDemoMessages([
+            ...getLoadedMessagesForFeed(feedId),
+            ...rows,
+          ]),
+          'after',
+          DEMO_MAX_ITEMS,
+        ),
+      )
     },
     replaceRows: (input) => {
       getSession(input.feedId).rows.replace(input)
-      syncLoadedState(input.feedId)
+      setLoadedMessagesForFeed(input.feedId, input.rows)
     },
     isActiveFeed,
     setMessageCount,
@@ -290,6 +322,8 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     getSession,
     getHasMoreAfter,
     getLoadedMessages,
+    getLoadedMessagesForFeed,
+    setLoadedMessagesForFeed,
     isActiveFeed,
     pageSize: PAGE_SIZE,
     sendDelayBaseMs: SEND_DELAY_BASE_MS,
@@ -320,12 +354,9 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     }
 
     const delayMs = managerStateRef.current.deferredSessionResponseDelayMs
-    const warmSession = manager.hasSession(feedId)
-      ? manager.getSession(feedId)
-      : null
-    const warmSnapshot = warmSession
-      ? getDemoSessionSnapshot(warmSession)
-      : null
+    const warmMessages = manager.hasSession(feedId)
+      ? getLoadedMessagesForFeed(feedId)
+      : []
     const activationToken = managerStateRef.current.activationToken + 1
 
     managerStateRef.current.activationToken = activationToken
@@ -333,18 +364,20 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     setActiveFeedId(feedId)
     setPendingFeedId(delayMs > 0 ? feedId : null)
     setFeedLoadingState(true)
-    setLoadedMessages([])
+    setVisibleLoadedMessages([])
     setMessageCount(0)
     setLastEvent(`loading ${getDemoFeedDefinition(feedId).title}`)
 
-    if (delayMs === 0 && warmSnapshot && warmSnapshot.items.length > 0) {
+    if (delayMs === 0 && warmMessages.length > 0) {
       setPendingFeedId(null)
       setFeedLoadingState(false)
-      syncLoadedState(feedId, `loaded ${getDemoFeedDefinition(feedId).title}`)
+      setLoadedMessagesForFeed(feedId, warmMessages)
+      setMessageCount(readDemoFeedMessages(feedId).length)
+      setLastEvent(`loaded ${getDemoFeedDefinition(feedId).title}`)
       return
     }
 
-    if (delayMs > 0 && warmSnapshot && warmSnapshot.items.length > 0) {
+    if (delayMs > 0 && warmMessages.length > 0) {
       managerStateRef.current.deferredSessionResponseDelayMs = 0
       managerStateRef.current.delayedWarmActivation = {
         feedId,
@@ -362,7 +395,9 @@ export function useDemoMessageScenario(): DemoMessageScenario {
         managerStateRef.current.delayedWarmActivation = null
         setPendingFeedId(null)
         setFeedLoadingState(false)
-        syncLoadedState(feedId, `loaded ${getDemoFeedDefinition(feedId).title}`)
+        setLoadedMessagesForFeed(feedId, warmMessages)
+        setMessageCount(readDemoFeedMessages(feedId).length)
+        setLastEvent(`loaded ${getDemoFeedDefinition(feedId).title}`)
       })()
       return
     }
@@ -371,11 +406,12 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   }, [
     manager,
     managerStateRef,
+    getLoadedMessagesForFeed,
     setEdgeLoading,
     setFeedLoadingState,
-    setLoadedMessages,
+    setLoadedMessagesForFeed,
+    setVisibleLoadedMessages,
     stopLongRunningMocks,
-    syncLoadedState,
   ])
   const resetE2EScenario = useCallback(async (scenarioId: string) => {
     stopLongRunningMocks()
@@ -395,6 +431,7 @@ export function useDemoMessageScenario(): DemoMessageScenario {
         manager.destroySession(sessionId)
       }
     }
+    loadedMessagesByFeedRef.current.clear()
     const prepared = await prepareDemoE2EScenario({
       scenarioId,
       feedId,
@@ -407,13 +444,13 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     setActiveFeedId(prepared.feedId)
     setSelectedFeedId(prepared.feedId)
     setPendingFeedId(null)
-    setLoadedMessages(prepared.messages)
+    setLoadedMessagesForFeed(prepared.feedId, prepared.messages)
     setMessageCount(prepared.messageCount)
     setFeedLoadingState(false)
     setLastEvent(`reset ${scenarioId}`)
     await Promise.resolve()
     if (prepared.shouldScrollToLatest) {
-      getDemoSessionRuntime(manager.getSession(prepared.feedId)).scrollToLatest()
+      manager.getSession(prepared.feedId).commands.scrollToLatest()
     }
   }, [
     manager,
@@ -422,7 +459,7 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     resetOptimisticRemap,
     setEdgeLoading,
     setFeedLoadingState,
-    setLoadedMessages,
+    setLoadedMessagesForFeed,
     stopLongRunningMocks,
   ])
   useEffect(() => () => {
@@ -435,10 +472,6 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   }, [manager])
 
   const canExposeEdgeLoading = !feedLoading
-  const runtimeBeforeLoading = runtimeSnapshot.pendingIntent === 'edge-before' &&
-    runtimeSnapshot.edgeState.before.status === 'loading'
-  const runtimeAfterLoading = runtimeSnapshot.pendingIntent === 'edge-after' &&
-    runtimeSnapshot.edgeState.after.status === 'loading'
 
   return {
     feeds: DEMO_FEEDS,
@@ -447,15 +480,12 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     pendingFeedId,
     activeFeed,
     activeSession,
-    activeRuntime: runtime,
     messageCount,
     loadedMessageCount: messages.length,
-    hasMoreBefore: runtimeSnapshot.segmentMeta.hasMoreBefore,
-    hasMoreAfter: runtimeSnapshot.segmentMeta.hasMoreAfter,
-    loadingBefore: canExposeEdgeLoading &&
-      (loadingBefore || runtimeBeforeLoading),
-    loadingAfter: canExposeEdgeLoading &&
-      (loadingAfter || runtimeAfterLoading),
+    hasMoreBefore: loadedWindowBounds.hasMoreBefore ?? false,
+    hasMoreAfter: loadedWindowBounds.hasMoreAfter ?? false,
+    loadingBefore: canExposeEdgeLoading && loadingBefore,
+    loadingAfter: canExposeEdgeLoading && loadingAfter,
     feedLoading,
     eventStormRunning,
     botPushActive,
@@ -491,30 +521,49 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   }
 }
 
-function syncLoadedStateFromManager(input: {
-  manager: MessageListManager<DemoMessage>
-  feedId: string
-  activeFeedId: string
-  eventText?: string
-  setMessages: (messages: DemoMessage[]) => void
-  setMessageCount: (messageCount: number) => void
-  setLastEvent: (eventText: string) => void
-}): void {
-  if (!input.manager.hasSession(input.feedId)) {
-    return
+function resolveLoadedMessagesFromRequest(input: {
+  kind: MessageListRequestResult<DemoMessage, unknown>['kind']
+  pageRows: DemoMessage[]
+  previousMessages: DemoMessage[]
+  maxItems: number
+}): DemoMessage[] {
+  if (input.kind === 'latest' || input.kind === 'around') {
+    return input.pageRows
   }
 
-  const nextMessages = getDemoSessionLoadedMessages(
-    input.manager.getSession(input.feedId),
-  )
+  const merged = input.kind === 'before'
+    ? dedupeDemoMessages([...input.pageRows, ...input.previousMessages])
+    : dedupeDemoMessages([...input.previousMessages, ...input.pageRows])
 
-  if (input.activeFeedId !== input.feedId) {
-    return
+  return trimLoadedMessages(merged, input.kind, input.maxItems)
+}
+
+function dedupeDemoMessages(messages: DemoMessage[]): DemoMessage[] {
+  const seen = new Set<string>()
+  const next: DemoMessage[] = []
+
+  for (const message of messages) {
+    if (seen.has(message.id)) {
+      continue
+    }
+
+    seen.add(message.id)
+    next.push(message)
   }
 
-  input.setMessages(nextMessages)
-  input.setMessageCount(readDemoFeedMessages(input.feedId).length)
-  if (input.eventText) {
-    input.setLastEvent(input.eventText)
+  return next
+}
+
+function trimLoadedMessages(
+  messages: DemoMessage[],
+  edge: 'before' | 'after',
+  maxItems: number,
+): DemoMessage[] {
+  if (messages.length <= maxItems) {
+    return messages
   }
+
+  return edge === 'before'
+    ? messages.slice(0, maxItems)
+    : messages.slice(messages.length - maxItems)
 }

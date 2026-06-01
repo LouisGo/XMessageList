@@ -21,6 +21,7 @@ export function createSessionRows<Row, Conversation>(input: {
   dataRuntime: MessageListDataRuntime<Row>
   publishSegment: (segment: LoadedSegment<Row>) => void
   publishLocalResetSegment: (segment: LoadedSegment<Row>) => void
+  clearPendingOutgoing: () => void
 }): MessageListSession<Row>['rows'] {
   return {
     patch: (rows) => {
@@ -36,6 +37,7 @@ export function createSessionRows<Row, Conversation>(input: {
       ))
     },
     resetLatest: (page) => {
+      input.clearPendingOutgoing()
       input.publishLocalResetSegment(
         input.dataRuntime.resetLatest(
           toSessionResetInput(input.id, page, input.adapter),
@@ -43,6 +45,7 @@ export function createSessionRows<Row, Conversation>(input: {
       )
     },
     resetAround: (resetInput) => {
+      input.clearPendingOutgoing()
       input.publishLocalResetSegment(
         input.dataRuntime.resetAround({
           ...toSessionResetInput(input.id, resetInput, input.adapter),
@@ -58,6 +61,7 @@ export function createSessionRows<Row, Conversation>(input: {
       ))
     },
     clear: () => {
+      input.clearPendingOutgoing()
       input.publishLocalResetSegment(
         input.dataRuntime.resetLatest({
           items: [],

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MessageListRuntimeEvent, MessageListSnapshot } from '../../x-message-list/core/runtime/index'
 import { DemoMessageListContent } from '../../demo/components/DemoMessageList'
 import type { DemoMessage } from '../../demo/data/demoData'
+import { getDemoSessionRuntime } from '../../demo/scenario/demoE2EHarnessInternals'
 import { useDemoMessageScenario } from '../../demo/scenario/useDemoMessageScenario'
 import {
   createE2EState,
@@ -76,14 +77,18 @@ export function E2EMessageListApp() {
     ].slice(-200)
   }, [])
 
-  useEffect(() => scenario.activeRuntime.subscribeRuntimeEvent(recordEvent), [
+  useEffect(() => {
+    const runtime = getDemoSessionRuntime(scenario.activeSession)
+
+    return runtime.subscribeRuntimeEvent(recordEvent)
+  }, [
     recordEvent,
-    scenario.activeRuntime,
+    scenario.activeSession,
   ])
 
   const readEvidence = useCallback((checkpointId: string): E2EEvidence => {
     const currentScenario = scenarioRef.current
-    const runtime = currentScenario.activeRuntime
+    const runtime = getDemoSessionRuntime(currentScenario.activeSession)
     const snapshot = runtime.getSnapshot()
     return {
       ...runtime.getEvidence(),

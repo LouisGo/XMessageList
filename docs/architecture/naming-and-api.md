@@ -247,6 +247,11 @@ session 负责进入 latest 目标、合入 pending outgoing、处理后续 patc
 `stage` 始终是 send-style follow-bottom；retry 成功若要作为“重新发送”处理，也应该
 等同一次 send。接入方可以传入 `retireKeys`，让旧 failed/retrying 占位和新
 outgoing row 在同一次 append 事务里完成，避免先 delete 再 send 造成视图状态竞争。
+当 `stage` 同时携带 `latest` 时，含义是接入方已经提供了要显示的 latest window；
+session 会用这个 window 做本地 latest rebuild 并继承 send-style follow-bottom，
+不会再额外触发 `loadLatest` 或 runtime 的普通 latest request。`retireKeys` 对
+这条 rebuild 路径同样生效，旧占位必须在 reset latest 和 pending outgoing 合并前
+被过滤掉。
 
 如果接入方把 retry 设计成重新发送，应创建新的业务 row，并把 retry 的业务等待拆成
 两段：先把旧 failed 占位原地 patch 为 retrying/loading，不触发 follow-bottom；

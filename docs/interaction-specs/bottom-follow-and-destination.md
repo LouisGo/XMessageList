@@ -75,6 +75,9 @@ Acceptance：
 - 发送后的稳定画面进入追底状态。
 - Composer 只调用 app-level `MessageListSession.outgoing.stage`，不拿
   `MessageList` ref、不跨组件调用 DOM 或 runtime。
+- 如果 composer 已经拿到最新窗口，可通过 `outgoing.stage({ rows, latest })`
+  本地 rebuild latest；这表示调用方已提供 latest page，组件库不得再额外请求
+  `loadLatest`，也不得通过普通 after paging 追尾。
 - 后续 send/push/pull/update/failure 事件通过 `outgoing.patch` 或
   `outgoing.applyIdentityRemap` 合并到同一逻辑消息。
 - 如果产品把 retry 设计为“重新发送”，retry 必须先把旧 failed 占位原地更新成
@@ -84,6 +87,9 @@ Acceptance：
 - retry 成功等同一次 send：无论用户正在历史位置阅读、当前 latest 中远离底部，
   还是已经吸底，成功上墙后都进入同一条 follow-bottom 语义；当前 latest append
   只允许由 append 事务自身启动一次 bottom motion。
+- retry 成功若携带 `latest`，同样表示业务方已经提供新 latest tail；旧 failed row
+  通过 `retireKeys` 和新 outgoing row 在同一次本地 rebuild 中原子收敛，不再发起
+  第二个 latest request。
 - retrying/loading 是失败占位的普通状态 patch；它不能触发 send-style
   follow-bottom motion，也不能在已吸底时播放一次离开底部再回底部的 after motion。
 - 不能原地把 failed row 改成 sending，同时又触发 bottom-follow。

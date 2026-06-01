@@ -22,6 +22,7 @@ import {
 } from '../data/demoMessageApi'
 import type { MessageIdentityAnchor as DemoApiAnchor } from '../data/demoMessageApiTypes'
 import {
+  DEMO_MAX_ITEMS,
   EDGE_LOAD_DELAY_BASE_MS,
   INCOMING_FOLLOW_DISTANCE_PX,
   PAGE_SIZE,
@@ -53,7 +54,10 @@ export type DemoManagerOptions = {
   setLastEvent: (eventText: string) => void
   setMessageCount: (messageCount: number) => void
   setPendingFeedId: (feedId: string | null) => void
-  syncLoadedState: (feedId: string, eventText?: string) => void
+  syncLoadedState: (
+    result: MessageListRequestResult<DemoMessage, DemoConversation>,
+    eventText?: string,
+  ) => void
 }
 
 export function createDemoManager(
@@ -62,7 +66,7 @@ export function createDemoManager(
   return createMessageListManager<DemoMessage, DemoConversation>({
     defaults: {
       pageSize: PAGE_SIZE,
-      maxItems: 40,
+      maxItems: DEMO_MAX_ITEMS,
       keepAlive: {
         maxSessions: 3,
         ttlMs: 10 * 60_000,
@@ -344,7 +348,7 @@ function handleDemoRequestResult(
 
   input.setFeedLoading(false)
   input.setPendingFeedId(null)
-  input.syncLoadedState(result.id, describeRequestResult(result))
+  input.syncLoadedState(result, describeRequestResult(result))
   if (typeof result.page?.total === 'number') {
     input.setMessageCount(result.page.total)
   }

@@ -18,6 +18,11 @@ const X_MESSAGE_LIST_ROOT = path.join(ROOT, 'src', 'x-message-list')
 const DEMO_ROOT = path.join(ROOT, 'src', 'demo')
 const E2E_APP_ROOT = path.join(ROOT, 'src', 'e2e-app')
 const E2E_RUNNER_ROOT = path.join(ROOT, 'e2e', 'runner')
+const DEMO_E2E_HARNESS_INTERNALS = path.join(
+  DEMO_ROOT,
+  'scenario',
+  'demoE2EHarnessInternals.ts',
+)
 const RUNTIME_ROOT = path.join(X_MESSAGE_LIST_ROOT, 'core', 'runtime')
 const MANAGER_INTERNAL = path.join(X_MESSAGE_LIST_ROOT, 'core', 'manager', 'internal.ts')
 const REACT_ROOT = path.join(X_MESSAGE_LIST_ROOT, 'react')
@@ -204,6 +209,17 @@ function guardReactImport(file, target) {
 }
 
 function guardDemoOrE2EImport(file, target) {
+  if (target === DEMO_E2E_HARNESS_INTERNALS) {
+    if (isE2EHarnessFile(file)) {
+      return
+    }
+
+    violations.push(
+      `${relative(file)} must not import E2E-only demo internals ${relative(target)}`,
+    )
+    return
+  }
+
   const reachesInternalSurface = isUnder(target, RUNTIME_ROOT) ||
     target === MANAGER_INTERNAL
 

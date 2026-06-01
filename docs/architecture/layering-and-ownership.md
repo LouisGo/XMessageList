@@ -137,13 +137,16 @@ Host 负责：
 - 通过 `session.incoming.append` 接入他人或服务端尾部新消息。
 - 通过 `session.rows` 接入 edit、delete、reaction、streaming patch、
   identity remap、replace 和 clear 等普通 row 变更。
-- 记录 diagnostics 和 E2E evidence。
+- demo host 只使用 public session API 作为标准接入样板；E2E-only helper 可以读取
+  runtime snapshot/evidence，但只服务测试证据和 fixture reset。
 
 Host 禁止：
 
 - 监听 raw scroll 触发分页。
 - 通过 query DOM 修正滚动位置。
 - 直接操作 runtime/data runtime 作为业务接入 SOP。
+- 在普通 demo 逻辑里 import E2E/internal helper 来决定分页、send/retry 或 loaded
+  window 状态。
 - 把 conversation 切换伪装成 runtime jump。
 
 ## 所有权判定规则

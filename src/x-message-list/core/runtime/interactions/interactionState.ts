@@ -151,6 +151,14 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     return this.followBottom.start(snapshot, scrollTop)
   }
 
+  startFollowBottomForLocalReset(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+    scrollTop = 0,
+  ): InteractionUpdate<TMessage, TOptimistic> {
+    this.destination.clear()
+    return this.followBottom.startForLocalReset(snapshot, scrollTop)
+  }
+
   startDestination(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     intent: DestinationIntent,
