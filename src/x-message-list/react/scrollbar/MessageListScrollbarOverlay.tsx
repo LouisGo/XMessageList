@@ -168,7 +168,6 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     mutationObserver?.observe(container, {
       childList: true,
       subtree: true,
-      attributes: true,
     })
 
     return () => {
@@ -195,13 +194,18 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
   useLayoutEffect(() => {
     return () => {
       clearHideTimer()
+      if (dragRef.current) {
+        dragRef.current = null
+        dragMetricsKeyRef.current = null
+        runtime.endDirectScroll()
+      }
       draggingRef.current = false
       dragOwnerDocumentRef.current?.body.classList.remove(
         'x-message-scrollbar-dragging',
       )
       dragOwnerDocumentRef.current = null
     }
-  }, [clearHideTimer])
+  }, [clearHideTimer, runtime])
 
   const writeScrollTop = useCallback((scrollTop: number) => {
     runtime.writeDirectScrollTop(scrollTop)
@@ -375,6 +379,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
         onPointerMove={handleThumbPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        onLostPointerCapture={endDrag}
         style={{
           height: geometry.thumbHeight,
           transform: `translate3d(0, ${geometry.thumbTop}px, 0)`,

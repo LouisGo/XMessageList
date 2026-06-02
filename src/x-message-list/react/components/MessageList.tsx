@@ -73,8 +73,6 @@ function MessageListInner<TMessage, TOptimistic>({
         return null
       }
 
-      void scrollToLatestObservationRevision
-      void snapshot.projectionRevision
       const evidence = resolvedRuntime.getEvidence()
       const distanceToBottom = Math.max(
         0,
@@ -132,7 +130,10 @@ function MessageListInner<TMessage, TOptimistic>({
 
     resolvedRuntime.detachScrollContainer()
   }, [resolvedRuntime])
-  useEffect(() => sessionInternals.retainView(), [sessionInternals])
+  useEffect(() => {
+    const release = sessionInternals.retainView()
+    return release
+  }, [sessionInternals])
   return (
     <div
       data-message-list

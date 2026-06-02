@@ -1,4 +1,4 @@
-import { useLayoutEffect } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import type {
   MessageListRuntime,
   ViewportObservationChangedEvent,
@@ -25,37 +25,35 @@ export function RuntimeEventBridge<TMessage, TOptimistic>({
   onViewportObservationChange,
   onViewportObservationInternal,
 }: RuntimeEventBridgeProps<TMessage, TOptimistic>) {
+  const anchorChangeRef = useRef(onViewportAnchorChange)
+  anchorChangeRef.current = onViewportAnchorChange
+  const observationChangeRef = useRef(onViewportObservationChange)
+  observationChangeRef.current = onViewportObservationChange
+  const observationInternalRef = useRef(onViewportObservationInternal)
+  observationInternalRef.current = onViewportObservationInternal
+
   useLayoutEffect(() => {
     const unsubscribers: Array<() => void> = []
 
-    if (onViewportAnchorChange) {
-      unsubscribers.push(runtime.subscribeRuntimeEvent((event) => {
-        if (event.type === 'viewportAnchorChanged') {
-          onViewportAnchorChange(event)
-        }
-      }))
-    }
+    unsubscribers.push(runtime.subscribeRuntimeEvent((event) => {
+      if (event.type === 'viewportAnchorChanged') {
+        anchorChangeRef.current?.(event)
+      }
+    }))
 
-    if (onViewportObservationChange || onViewportObservationInternal) {
-      unsubscribers.push(
-        runtime.subscribeViewportObservation((event) => {
-          onViewportObservationChange?.(event)
-          onViewportObservationInternal?.(event)
-        }),
-      )
-    }
+    unsubscribers.push(
+      runtime.subscribeViewportObservation((event) => {
+        observationChangeRef.current?.(event)
+        observationInternalRef.current?.(event)
+      }),
+    )
 
     return () => {
       for (const unsubscribe of unsubscribers) {
         unsubscribe()
       }
     }
-  }, [
-    runtime,
-    onViewportAnchorChange,
-    onViewportObservationChange,
-    onViewportObservationInternal,
-  ])
+  }, [runtime])
 
   return null
 }
