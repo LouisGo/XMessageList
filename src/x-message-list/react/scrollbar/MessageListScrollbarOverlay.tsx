@@ -8,7 +8,7 @@ import {
   type RefObject,
 } from 'react'
 import type { MessageListAdapterRuntime } from '../../core/runtime/internal'
-import { resolveScrollbarGeometry } from './scrollbarGeometry'
+import { resolveScrollbarGeometry, TRACK_INSET_START } from './scrollbarGeometry'
 import {
   EMPTY_METRICS,
   areSameMetrics,
@@ -60,11 +60,31 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
   const hideTimerRef = useRef<number | null>(null)
   const refreshFrameRef = useRef<number | null>(null)
   const mismatchKeyRef = useRef<string | null>(null)
+  const lastMismatchReportRef = useRef<number>(0)
+  const lastMismatchMetricsRef = useRef<{ clientHeight: number; scrollHeight: number }>({ clientHeight: 0, scrollHeight: 0 })
+  const thumbRef = useRef<HTMLDivElement>(null)
   const geometry = useMemo(() => resolveScrollbarGeometry(metrics), [metrics])
   const refresh = useCallback(() => {
     const next = readMetrics(containerRef.current)
     setMetrics((previous) => areSameMetrics(previous, next) ? previous : next)
-    reportMetricMismatch(runtime, next, mismatchKeyRef)
+    const lastSizes = lastMismatchMetricsRef.current
+    const sizeChanged =
+      next.clientHeight !== lastSizes.clientHeight ||
+      next.scrollHeight !== lastSizes.scrollHeight
+    const now = performance.now()
+    const hasActiveMismatch = mismatchKeyRef.current !== null
+    if (sizeChanged || now - lastMismatchReportRef.current > 500) {
+      if (sizeChanged) {
+        lastMismatchMetricsRef.current = {
+          clientHeight: next.clientHeight,
+          scrollHeight: next.scrollHeight,
+        }
+      }
+      lastMismatchReportRef.current = now
+      reportMetricMismatch(runtime, next, mismatchKeyRef)
+    } else if (hasActiveMismatch) {
+      reportMetricMismatch(runtime, next, mismatchKeyRef)
+    }
   }, [containerRef, runtime])
   const cancelScheduledRefresh = useCallback(() => {
     if (refreshFrameRef.current === null) {
@@ -324,8 +344,24 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     const scrollDelta = drag.maxThumbTop > 0
       ? ((event.clientY - drag.startY) / drag.maxThumbTop) * drag.maxScrollTop
       : 0
-    writeScrollTop(Math.min(Math.max(drag.startScrollTop + scrollDelta, 0), drag.maxScrollTop))
-  }, [writeScrollTop])
+    const scrollTop = Math.min(
+      Math.max(drag.startScrollTop + scrollDelta, 0),
+      drag.maxScrollTop,
+    )
+
+    runtime.writeDirectScrollTop(scrollTop)
+
+    // Direct DOM write for thumb position — bypasses React render during drag.
+    if (thumbRef.current) {
+      const thumbTop = drag.maxScrollTop > 0
+        ? TRACK_INSET_START + (scrollTop / drag.maxScrollTop) * drag.maxThumbTop
+        : TRACK_INSET_START
+      thumbRef.current.style.transform = `translate3d(0, ${thumbTop}px, 0)`
+    }
+
+    // Schedule RAF-batched refresh for telemetry sync (no-op if already pending).
+    scheduleRefreshFrame()
+  }, [runtime, scheduleRefreshFrame])
 
   const endDrag = useCallback(() => {
     if (dragRef.current) {
@@ -333,9 +369,10 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       dragMetricsKeyRef.current = null
       setDraggingState(false)
       runtime.endDirectScroll()
+      refresh()
       scheduleHide()
     }
-  }, [runtime, scheduleHide, setDraggingState])
+  }, [refresh, runtime, scheduleHide, setDraggingState])
 
   const handleScrollbarPointerEnter = useCallback(() => {
     hoveringRef.current = true
@@ -352,13 +389,13 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     }
   }, [scheduleHide])
 
-  const scrollbarClassName = [
+  const scrollbarClassName = useMemo(() => [
     'x-message-scrollbar',
     geometry.visible ? 'is-scrollable' : null,
     visible ? 'is-visible' : null,
     hovering ? 'is-hovering' : null,
     dragging ? 'is-dragging' : null,
-  ].filter(Boolean).join(' ')
+  ].filter(Boolean).join(' '), [geometry.visible, visible, hovering, dragging])
 
   return (
     <div
@@ -372,6 +409,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       onPointerLeave={handleScrollbarPointerLeave}
     >
       <div
+        ref={thumbRef}
         className="x-message-scrollbar-thumb"
         data-message-scrollbar-thumb
         data-testid="custom-scrollbar-thumb"

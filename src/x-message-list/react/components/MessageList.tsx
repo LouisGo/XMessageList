@@ -56,8 +56,7 @@ function MessageListInner<TMessage, TOptimistic>({
   const viewState = useMessageListViewState(session)
   const adapterRuntime = getMessageListAdapterRuntime(resolvedRuntime)
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const [
-    scrollToLatestObservationRevision,
+  const [,
     setScrollToLatestObservationRevision,
   ] = useState(0)
   const commands = useMemo(() => ({
@@ -67,42 +66,27 @@ function MessageListInner<TMessage, TOptimistic>({
   const reload = useCallback(() => {
     session.commands.reloadLatest()
   }, [session])
-  const scrollToLatestInput = useMemo(
-    () => {
-      if (!renderScrollToLatest) {
-        return null
-      }
+  const scrollToLatestInput = renderScrollToLatest
+    ? (() => {
+        const evidence = resolvedRuntime.getEvidence()
+        const distanceToBottom = Math.max(
+          0,
+          evidence.scrollHeight - evidence.clientHeight - evidence.scrollTop,
+        )
 
-      const evidence = resolvedRuntime.getEvidence()
-      const distanceToBottom = Math.max(
-        0,
-        evidence.scrollHeight - evidence.clientHeight - evidence.scrollTop,
-      )
-
-      return {
-        visible: snapshot.bottomLockState === 'UNLOCKED' &&
-          snapshot.pendingIntent !== 'follow-bottom',
-        scrollToLatest: commands.scrollToLatest,
-        bottomLockState: snapshot.bottomLockState,
-        hasMoreAfter: snapshot.segmentMeta.hasMoreAfter,
-        pendingIntent: snapshot.pendingIntent,
-        viewportPhase: snapshot.viewportPhase,
-        distanceToBottom,
-        pageFocused: resolvePageFocus(),
-      }
-    },
-    [
-      resolvedRuntime,
-      snapshot.bottomLockState,
-      snapshot.pendingIntent,
-      snapshot.projectionRevision,
-      snapshot.segmentMeta.hasMoreAfter,
-      snapshot.viewportPhase,
-      scrollToLatestObservationRevision,
-      commands.scrollToLatest,
-      renderScrollToLatest,
-    ],
-  )
+        return {
+          visible: snapshot.bottomLockState === 'UNLOCKED' &&
+            snapshot.pendingIntent !== 'follow-bottom',
+          scrollToLatest: commands.scrollToLatest,
+          bottomLockState: snapshot.bottomLockState,
+          hasMoreAfter: snapshot.segmentMeta.hasMoreAfter,
+          pendingIntent: snapshot.pendingIntent,
+          viewportPhase: snapshot.viewportPhase,
+          distanceToBottom,
+          pageFocused: resolvePageFocus(),
+        }
+      })()
+    : null
   const handleViewportObservationForSlots = useCallback(() => {
     if (renderScrollToLatest) {
       setScrollToLatestObservationRevision((revision) => revision + 1)
@@ -183,12 +167,12 @@ function MessageListInner<TMessage, TOptimistic>({
       ) : null}
       {scrollbar === 'custom'
         ? (
-            <MessageListScrollbarOverlay
-              containerRef={containerRef}
-              runtime={adapterRuntime}
-              projectionRevision={snapshot.projectionRevision}
-            />
-          )
+          <MessageListScrollbarOverlay
+            containerRef={containerRef}
+            runtime={adapterRuntime}
+            projectionRevision={snapshot.projectionRevision}
+          />
+        )
         : null}
     </div>
   )

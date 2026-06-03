@@ -37,6 +37,7 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListFeedId
     SessionRecord<Row, Feed>
   >()
   private defaults: NormalizedDefaults
+  private lastSweepAt = 0
 
   constructor(
     private options: MessageListSessionRegistryOptions<Row, Feed>,
@@ -194,6 +195,9 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListFeedId
 
   sweep(): void {
     const now = Date.now()
+    if (now - this.lastSweepAt < 5_000) return
+    this.lastSweepAt = now
+
     const ttl = this.defaults.keepAlive.ttlMs
 
     if (ttl <= 0) {
@@ -221,30 +225,24 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListFeedId
 
   private evictOverflow(): void {
     const maxSessions = this.defaults.keepAlive.maxSessions
+    if (maxSessions <= 0) return
 
-    if (maxSessions <= 0) {
-      return
-    }
-
-    while (this.getCachedSessionCount() > maxSessions) {
-      const oldest = Array.from(this.sessions.entries())
-        .filter(([, record]) => !this.isActiveRecord(record))
-        .sort((left, right) =>
-          left[1].session.lastUsedAt - right[1].session.lastUsedAt
-        )[0]
-
-      if (!oldest) {
-        return
+    // Single pass: collect cached (non-active) records with their lastUsedAt
+    const cached: Array<[MessageListSessionId, number]> = []
+    for (const [id, record] of this.sessions) {
+      if (!this.isActiveRecord(record)) {
+        cached.push([id, record.session.lastUsedAt])
       }
-
-      this.destroySession(oldest[0])
     }
-  }
 
-  private getCachedSessionCount(): number {
-    return Array.from(this.sessions.values())
-      .filter((record) => !this.isActiveRecord(record))
-      .length
+    const overflow = cached.length - maxSessions
+    if (overflow <= 0) return
+
+    // Sort once by lastUsedAt ascending (oldest first), then destroy the overflow
+    cached.sort((a, b) => a[1] - b[1])
+    for (let i = 0; i < overflow; i++) {
+      this.destroySession(cached[i][0])
+    }
   }
 
   private isActiveRecord(record: SessionRecord<Row, Feed>): boolean {

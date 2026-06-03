@@ -1,7 +1,7 @@
 import type { NativeScrollMetrics } from './scrollbarMetrics'
 
 export const MIN_THUMB_SIZE = 32
-const TRACK_INSET_START = 4
+export const TRACK_INSET_START = 4
 const TRACK_INSET_END = 4
 
 export function resolveScrollbarGeometry(metrics: NativeScrollMetrics) {
