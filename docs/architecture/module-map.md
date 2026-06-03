@@ -25,7 +25,8 @@
 
 `src/x-message-list/core/manager` 负责应用级生命周期：
 
-- `manager.ts`：`createMessageListManager`、`getSession(id)` 和 keepAlive
+- `manager.ts`：`createMessageListSessionRegistry`、deprecated
+  `createMessageListManager`、`getSession(id)` 和 keepAlive
   retention。
 - `session.ts`：单会话 viewport runtime、data runtime、request bridge、
   `anchorMemory` restore/save、`readReceipts` worker 和 public session facade。
@@ -80,7 +81,7 @@ metrics，并通过 adapter-private runtime direct-scroll API 写入。
 
 普通 `src/demo` 路径必须作为 public session 接入样板：load history/future、
 append/edit/delete/send/clear 都通过 `session.commands`、`session.rows`、
-`session.outgoing` 或 `session.incoming` 完成。demo host 的 canonical persisted
+`session.tail.local` 或 `session.tail.remote` 完成。demo host 的 canonical persisted
 feed 仍由 demo data API 管理；当前 loaded rows、edge status 和 viewport status
 只能从 `session.getState()` / `useMessageListState` 推导，不维护独立 loaded-window
 镜像，也不读取 runtime/dataRuntime。

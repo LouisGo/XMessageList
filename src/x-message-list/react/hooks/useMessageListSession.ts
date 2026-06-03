@@ -1,20 +1,23 @@
 import { useContext, useMemo } from 'react'
-import type { MessageListSession } from '../../core/manager/index'
-import { MessageListManagerContext } from '../components/MessageListManagerContext'
+import type {
+  MessageListSession,
+  MessageListSessionId,
+} from '../../core/manager/index'
+import { MessageListSessionRegistryContext } from '../components/MessageListManagerContext'
 
 export function useMessageListSession<Row = unknown>(
-  id: string,
+  id: MessageListSessionId,
 ): MessageListSession<Row> {
-  const manager = useContext(MessageListManagerContext)
+  const registry = useContext(MessageListSessionRegistryContext)
 
-  if (!manager) {
+  if (!registry) {
     throw new Error(
-      'useMessageListSession must be used within MessageListProvider.',
+      'useMessageListSession must be used within MessageListSessionRegistryProvider.',
     )
   }
 
   return useMemo(
-    () => manager.getSession(id) as MessageListSession<Row>,
-    [id, manager],
+    () => registry.getSession(id) as MessageListSession<Row>,
+    [id, registry],
   )
 }

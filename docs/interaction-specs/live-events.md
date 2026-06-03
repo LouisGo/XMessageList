@@ -8,7 +8,7 @@ Trigger：当前会话收到他人新消息，且用户正在最新消息底部�
 
 Acceptance：
 
-- 接入方通过 `session.incoming.append` 发布新消息，而不是普通 `rows.patch`。
+- 接入方通过 `session.tail.remote.append` 发布新消息，而不是普通 `rows.patch`。
 - 新消息追加到 latest 列表底部。
 - append 的 follow/preserve 决策可由接入方基于 `distanceToBottom`、
   `pageFocused`、未读策略等上下文给出；决定 follow 时应保留 bottom motion。
@@ -57,12 +57,12 @@ Trigger：用户在当前会话发送消息。
 Acceptance：
 
 - 具体交互以 [D4 任意位置发送消息](./bottom-follow-and-destination.md#d4-任意位置发送消息) 为准。
-- Composer / 业务发送逻辑通过 `session.outgoing.stage` 发布 optimistic row；
+- Composer / 业务发送逻辑通过 `session.tail.local.stage` 发布 optimistic row；
   send 请求、失败原因、重试队列和业务状态字段仍由接入方维护。
 - retry 若作为重新发送处理，应先原地展示 retrying/loading，异步成功后再发布新的
-  outgoing row，并用 `retireKeys` 原子移除旧占位；默认按 send 语义进入
+  local tail row，并用 `retireKeys` 原子移除旧占位；默认按 send 语义进入
   follow-bottom。
-- retry 成功如果使用 `outgoing.stage({ rows, latest, retireKeys })`，`latest`
+- retry 成功如果使用 `tail.local.stage({ rows, latest, retireKeys })`，`latest`
   是业务方提供的完整 latest window，组件库只做本地 rebuild 和 follow-bottom
   继承；旧 failed/retrying row 必须在 rebuild 中被 `retireKeys` 原子移除，不能
   再额外请求 latest 后二次合并。
@@ -71,7 +71,7 @@ Acceptance：
   本地 bottom motion 再被 append follow 打断。异步失败则回到 failed，不抢滚动。
 - retry 点击后的 retrying/loading 属于旧 row 的状态 patch，只保持当前位置或当前
   bottom lock，不允许继承 send/append 的 after 语义 motion；只有异步成功后的新
-  outgoing row append 才进入 send-style motion。
+  local tail row append 才进入 send-style motion。
 
 User-visible result：
 
@@ -92,7 +92,7 @@ Acceptance：
 - 用户不处于追底时，当前阅读位置保持稳定。
 - 用户显式点击 bottom 后，本次 follow-bottom intent 优先级高于此前或并发计算出的
   `append(preserve)`；pending preserve append 不能把 bottom 点击覆盖掉。
-- Bot push 属于 receive append；纯尾部新消息使用 `incoming.append`，混合
+- Bot push 属于 remote tail append；纯尾部新消息使用 `tail.remote.append`，混合
   edit/reaction/delete/read/media loaded 等 passive update 事件优先归一化为
   `rows.mutate({ patches, removeKeys, invalidateKeys, reason })`；需要重建整个
   loaded window 时才使用 `rows.replace`。

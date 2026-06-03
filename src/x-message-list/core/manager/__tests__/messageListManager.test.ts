@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createMessageListManager,
+  createMessageListSessionRegistry,
   type MessageListAdapter,
   type MessageListPage,
   type MessageListSession,
@@ -31,6 +32,67 @@ afterEach(() => {
 })
 
 describe('createMessageListManager', () => {
+  it('exposes registry naming, session meta, and host retain lifecycle', () => {
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      defaults: {
+        keepAlive: {
+          maxSessions: 0,
+          ttlMs: 10 * 60_000,
+        },
+      },
+      getFeed: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+    })
+
+    const release = registry.retainSession('feed-a', 'active-feed')
+    const activeMeta = registry.getSessionMeta('feed-a')
+
+    expect(activeMeta).toMatchObject({
+      sessionId: 'feed-a',
+      feedId: 'feed-a',
+      mountedRetainCount: 0,
+      hostRetainCount: 1,
+      status: 'active',
+    })
+
+    release()
+
+    expect(registry.getSessionMeta('feed-a')).toMatchObject({
+      hostRetainCount: 0,
+      status: 'cached',
+    })
+
+    registry.destroyAll()
+  })
+
+  it('limits cached sessions without counting host-retained sessions', () => {
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      defaults: {
+        keepAlive: {
+          maxSessions: 1,
+          ttlMs: 10 * 60_000,
+        },
+      },
+      getFeed: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+    })
+
+    const release = registry.retainSession('feed-a', 'active-feed')
+    registry.getSession('feed-b')
+    registry.getSession('feed-c')
+
+    expect(registry.hasSession('feed-a')).toBe(true)
+    expect(registry.hasSession('feed-b')).toBe(false)
+    expect(registry.hasSession('feed-c')).toBe(true)
+
+    release()
+    registry.getSession('feed-d')
+
+    expect(registry.hasSession('feed-a')).toBe(false)
+    expect(registry.hasSession('feed-d')).toBe(true)
+    registry.destroyAll()
+  })
+
   it('lazily creates, routes, and reuses a warm session', async () => {
     const normalAdapter = createAdapter('normal')
     const favoriteAdapter = createAdapter('favorite')
@@ -61,6 +123,26 @@ describe('createMessageListManager', () => {
     await waitFor(() => internals.getSnapshot().items.length === 1)
     expect(internals.getSnapshot().items[0].message?.id)
       .toBe('favorite-latest')
+  })
+
+  it('passes sessionId, feedId, and feed aliases through request context', async () => {
+    const loadLatest = vi.fn((context) => Promise.resolve(page([context.feed.id])))
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'favorite' }),
+      getAdapter: () => createAdapter('normal', { loadLatest }),
+    })
+    const session = registry.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.getSnapshot().items.length === 1)
+
+    expect(loadLatest).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'feed-a',
+      sessionId: 'feed-a',
+      feedId: 'feed-a',
+      conversation: { id: 'feed-a', type: 'favorite' },
+      feed: { id: 'feed-a', type: 'favorite' },
+    }))
   })
 
   it('evicts inactive overflow sessions by keepAlive policy', () => {
@@ -899,6 +981,75 @@ describe('createMessageListManager', () => {
       changedKeys: ['remote'],
       follow: 'preserve',
     })
+  })
+
+  it('routes remote tail append through updated tailEvents policy', async () => {
+    const shouldFollowRemoteAppend = vi.fn(() => 'preserve' as const)
+    const getPageFocus = vi.fn(() => false)
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => Promise.resolve(page(['tail'])),
+      }),
+      tailEvents: {
+        getPageFocus,
+        shouldFollowRemoteAppend: () => 'follow',
+      },
+    })
+    const session = registry.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.dataRuntime.getSegment().items[0]?.message?.id === 'tail')
+
+    registry.updateOptions({
+      tailEvents: {
+        shouldFollowRemoteAppend,
+      },
+    })
+
+    session.tail.remote.append({
+      rows: [{ id: 'remote' }],
+      reason: 'push',
+    })
+
+    expect(shouldFollowRemoteAppend).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'feed-a',
+      sessionId: 'feed-a',
+      feedId: 'feed-a',
+      rows: [{ id: 'remote' }],
+      reason: 'push',
+      pageFocused: false,
+    }))
+    expect(getPageFocus).toHaveBeenCalled()
+    expect(internals.dataRuntime.getSegment().modifier).toEqual({
+      type: 'append',
+      changedKeys: ['remote'],
+      follow: 'preserve',
+    })
+  })
+
+  it('aliases local tail methods to outgoing semantics', async () => {
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => Promise.resolve(page(['tail'])),
+      }),
+    })
+    const session = registry.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.dataRuntime.getSegment().items[0]?.message?.id === 'tail')
+
+    session.tail.local.stage({ id: 'local', text: 'sending' })
+    session.tail.local.patch([{ id: 'local', text: 'sent' }])
+
+    expect(session.outgoing).toBe(session.tail.local)
+    expect(session.incoming).toBe(session.tail.remote)
+    expect(internals.dataRuntime.getSegment().items.map((item) => item.message))
+      .toEqual([
+        { id: 'tail' },
+        { id: 'local', text: 'sent' },
+      ])
   })
 
   it('does not insert incoming append into a non-latest segment', async () => {

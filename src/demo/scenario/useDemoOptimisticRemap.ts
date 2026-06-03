@@ -93,7 +93,7 @@ export function useDemoOptimisticRemap(input: {
         nextKey: serverId,
       },
     }
-    session.outgoing.stage({
+    session.tail.local.stage({
       rows: [optimistic, ...tailMessages],
       reason: 'send',
     })
@@ -127,7 +127,7 @@ export function useDemoOptimisticRemap(input: {
       return
     }
 
-    session.outgoing.applyIdentityRemap([pending.remap])
+    session.tail.local.applyIdentityRemap([pending.remap])
     pendingOptimisticRemapRef.current = null
     if (isActiveFeed(activeFeedId)) {
       setLastEvent('optimistic identity remapped to server id')

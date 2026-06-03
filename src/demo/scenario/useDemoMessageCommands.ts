@@ -81,7 +81,7 @@ export function useDemoMessageCommands(input: {
         Math.max(0, persistedMessages.length - pageSize),
       )
       const latestMessage = latest.at(-1)
-      targetSession.outgoing.stage({
+      targetSession.tail.local.stage({
         rows: [message],
         latest: {
           rows: latest,
@@ -103,7 +103,7 @@ export function useDemoMessageCommands(input: {
       return
     }
 
-    targetSession.outgoing.stage({
+    targetSession.tail.local.stage({
       rows: [message],
       reason,
       retireKeys: options.retireKeys,
@@ -140,7 +140,7 @@ export function useDemoMessageCommands(input: {
         return
       }
 
-      getSession(feedId).outgoing.patch([updated.message])
+      getSession(feedId).tail.local.patch([updated.message])
       await flushDemoFeedPersistence(feedId)
       if (isActiveFeed(feedId)) {
         setLastEvent(
@@ -186,7 +186,7 @@ export function useDemoMessageCommands(input: {
           return
         }
 
-        getSession(feedId).outgoing.patch([updated.message])
+        getSession(feedId).tail.local.patch([updated.message])
         await flushDemoFeedPersistence(feedId)
         if (isActiveFeed(feedId)) {
           setLastEvent(`retry failed ${messageId}`)
@@ -324,7 +324,7 @@ export function useDemoMessageCommands(input: {
       return false
     }
 
-    getSession(activeFeedId).outgoing.patch([updated.message])
+    getSession(activeFeedId).tail.local.patch([updated.message])
     if (isActiveFeed(activeFeedId)) {
       setLastEvent(`retrying ${target.id}`)
     }

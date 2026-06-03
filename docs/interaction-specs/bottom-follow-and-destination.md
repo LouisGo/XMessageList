@@ -46,9 +46,9 @@ Trigger：当前 segment 已是 latest，收到新消息。
 Acceptance：
 
 - 具体交互遵循 [实时事件交互规格](./live-events.md#l1-他人新消息到达用户处于追底) 和 [实时事件交互规格](./live-events.md#l2-他人新消息到达用户正在阅读历史)。
-- 接入方使用 `session.incoming.append` 表达“他人/服务端尾部新消息”，不要用
+- 接入方使用 `session.tail.remote.append` 表达“远端/服务端尾部新消息”，不要用
   普通 `rows.patch` 隐式承担 append 语义。
-- `incoming.append` 的 follow/preserve 策略由接入方配置或单次传入；策略上下文
+- `tail.remote.append` 的 follow/preserve 策略由接入方配置或单次传入；策略上下文
   包含 `distanceToBottom`、`pageFocused`、`bottomLockState`、`pendingIntent`
   等只读信号。
 - 决策为 follow 时，latest tail append 必须保留 bottom motion；决策为 preserve
@@ -73,22 +73,22 @@ Acceptance：
 - 发送完成后，用户看到自己的消息和最新上下文。
 - 如果发送前正在阅读历史、定位目标或等待边缘加载，发送行为优先于这些未完成状态。
 - 发送后的稳定画面进入追底状态。
-- Composer 只调用 app-level `MessageListSession.outgoing.stage`，不拿
+- Composer 只调用 app-level `MessageListSession.tail.local.stage`，不拿
   `MessageList` ref、不跨组件调用 DOM 或 runtime。
-- 如果 composer 已经拿到最新窗口，可通过 `outgoing.stage({ rows, latest })`
+- 如果 composer 已经拿到最新窗口，可通过 `tail.local.stage({ rows, latest })`
   本地 rebuild latest；这表示调用方已提供 latest page，组件库不得再额外请求
   `loadLatest`，也不得通过普通 after paging 追尾。
-- 后续 send/push/pull/update/failure 事件通过 `outgoing.patch` 或
-  `outgoing.applyIdentityRemap` 合并到同一逻辑消息。
+- 后续 send/push/pull/update/failure 事件通过 `tail.local.patch` 或
+  `tail.local.applyIdentityRemap` 合并到同一逻辑消息。
 - 如果产品把 retry 设计为“重新发送”，retry 必须先把旧 failed 占位原地更新成
-  retrying/loading，等待业务异步结果；结果成功后再创建新的 outgoing row 进入
+  retrying/loading，等待业务异步结果；结果成功后再创建新的 local tail row 进入
   latest tail，并通过 `retireKeys` 在同一次 append 中移除或归档旧 failed
   占位。
 - retry 成功等同一次 send：无论用户正在历史位置阅读、当前 latest 中远离底部，
   还是已经吸底，成功上墙后都进入同一条 follow-bottom 语义；当前 latest append
   只允许由 append 事务自身启动一次 bottom motion。
 - retry 成功若携带 `latest`，同样表示业务方已经提供新 latest tail；旧 failed row
-  通过 `retireKeys` 和新 outgoing row 在同一次本地 rebuild 中原子收敛，不再发起
+  通过 `retireKeys` 和新 local tail row 在同一次本地 rebuild 中原子收敛，不再发起
   第二个 latest request。
 - retrying/loading 是失败占位的普通状态 patch；它不能触发 send-style
   follow-bottom motion，也不能在已吸底时播放一次离开底部再回底部的 after motion。

@@ -6,8 +6,8 @@ document flow, while the internal runtime owns native scroll semantics,
 visual-anchor correction, DOM measurement, edge requests, diagnostics and
 evidence.
 
-The public integration model is application-level manager + per-conversation
-session + React projection adapter. Applications configure `request`, `row`,
+The public integration model is application-level session registry +
+per-feed session + React projection adapter. Applications configure `request`, `row`,
 `anchorMemory` and `readReceipts` behavior once through adapters; React renders
 an existing `MessageListSession`.
 
@@ -28,7 +28,7 @@ npm run e2e:perf
 ## Source Layout
 
 - `src/x-message-list/core/manager`: application orchestration. It lazily
-  creates one `MessageListSession` per conversation id, routes adapters, owns
+  creates one `MessageListSession` per session/feed id, routes adapters, owns
   request bridging, keepAlive retention, `anchorMemory` and `readReceipts`.
 - `src/x-message-list/core/runtime`: framework-independent viewport runtime and
   internal data runtime. It consumes already-merged loaded segments, serializes
@@ -47,8 +47,8 @@ npm run e2e:perf
 ```tsx
 import {
   MessageList,
-  MessageListProvider,
-  createMessageListManager,
+  MessageListSessionRegistryProvider,
+  createMessageListSessionRegistry,
   useMessageListSession,
   type MessageListAdapter,
 } from 'x-message-list'
@@ -78,7 +78,7 @@ const messageAdapter: MessageListAdapter<MyMessage, Conversation> = {
   },
 }
 
-const manager = createMessageListManager<MyMessage, Conversation>({
+const registry = createMessageListSessionRegistry<MyMessage, Feed>({
   defaults: {
     pageSize: 30,
     maxItems: 300,
@@ -90,20 +90,20 @@ const manager = createMessageListManager<MyMessage, Conversation>({
   scrollMotion: {
     enabled: () => deviceConfig.messageListMotionEnabled,
   },
-  getConversation: (id) => getConversationById(id),
+  getFeed: (sessionId) => getFeedById(sessionId),
   getAdapter: () => messageAdapter,
 })
 
 export function App() {
   return (
-    <MessageListProvider manager={manager}>
-      <ConversationView conversationId="feed-1" />
-    </MessageListProvider>
+    <MessageListSessionRegistryProvider registry={registry}>
+      <ConversationView feedId="feed-1" />
+    </MessageListSessionRegistryProvider>
   )
 }
 
-function ConversationView({ conversationId }: { conversationId: string }) {
-  const session = useMessageListSession<MyMessage>(conversationId)
+function ConversationView({ feedId }: { feedId: string }) {
+  const session = useMessageListSession<MyMessage>(feedId)
 
   return (
     <MessageList
@@ -122,13 +122,15 @@ function ConversationView({ conversationId }: { conversationId: string }) {
 
 ## Public Contracts
 
-- Package root exports `createMessageListManager`, `MessageListProvider`,
-  `useMessageListSession`, `useMessageListState`, `MessageList` and public
-  manager/session/React contract types.
+- Package root exports `createMessageListSessionRegistry`,
+  `MessageListSessionRegistryProvider`, `useMessageListSession`,
+  `useMessageListState`, `MessageList` and public registry/session/React
+  contract types. `createMessageListManager` and `MessageListProvider` remain as
+  deprecated aliases during migration.
 - Package root does not export `createMessageListRuntime`, `MessageListRuntime`,
   `MessageListSnapshot`, `MessageListRuntimeEvent`, `LoadedSegment`,
   `MessageDataItem`, data runtime types, or a `x-message-list/data` subpath.
-- `MessageListManager` owns all conversation sessions. `MessageList` unmount
+- `MessageListSessionRegistry` owns all feed-backed sessions. `MessageList` unmount
   detaches the view but does not destroy the session.
 - Application stores remain the canonical owner for paged message caches,
   persistence and dirty timestamp checks. XMessageList sessions own only the

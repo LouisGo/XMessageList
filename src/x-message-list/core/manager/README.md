@@ -1,29 +1,30 @@
-# MessageList Manager
+# MessageList Session Registry
 
 `src/x-message-list/core/manager` is the application orchestration layer above
-the framework-independent runtime. It owns per-conversation
+the framework-independent runtime. It owns per-session/feed
 `MessageListSession` instances and keeps them alive independently from React
 component mount state.
 
 ## Responsibilities
 
-- Lazily create one `MessageListSession` per conversation id.
-- Resolve app-level dependencies through `getConversation` and `getAdapter`.
+- Lazily create one `MessageListSession` per session/feed id.
+- Resolve app-level dependencies through `getFeed` and `getAdapter`.
 - Own the current session loaded segment, viewport state, edge state, request
   bridge, `anchorMemory` and `readReceipts` workers.
 - Apply request tokens, stale-response guards, segment merge, trim and failure
   acknowledgement before publishing loaded segments to the viewport runtime.
 - Expose a thin public session with `getState`, `subscribe`, `commands`,
-  `incoming`, `outgoing` and `rows`; runtime internals stay package-internal.
+  `tail.local`, `tail.remote` and `rows`; runtime internals stay
+  package-internal.
 - Keep application pagination caches, persistence and dirty timestamp checks in
   the host store. `rows.mutate` is loaded-only by design.
 
 ## Public Shape
 
-Applications create one manager at app level:
+Applications create one registry at app level:
 
 ```ts
-const manager = createMessageListManager({
+const registry = createMessageListSessionRegistry({
   defaults: {
     pageSize: 30,
     maxItems: 300,
@@ -35,10 +36,10 @@ const manager = createMessageListManager({
   scrollMotion: {
     enabled: () => deviceConfig.messageListMotionEnabled,
   },
-  getConversation: (id) => ({ id }),
-  getAdapter: (conversation) => normalMessageAdapter,
+  getFeed: (sessionId) => ({ id: sessionId }),
+  getAdapter: (feed) => normalMessageAdapter,
 })
 ```
 
 `MessageList` unmount detaches DOM refs only. It does not destroy the session;
-manager retention or explicit `destroySession(id)` owns destruction.
+registry retention or explicit `destroySession(sessionId)` owns destruction.

@@ -44,16 +44,16 @@ Main / Bridge 不负责：
 - 决定 DOM 是否 trim。
 - 读写 renderer scroll container。
 
-## MessageList Manager
+## MessageList Session Registry
 
-MessageList Manager 负责：
+MessageList Session Registry 负责：
 
-- 按 conversation id 懒创建和复用 `MessageListSession`。
+- 按 session id / feed id 懒创建和复用 `MessageListSession`。
 - 通过 app-level adapter 路由 normal / encrypted / favorite 等业务差异。
 - 接收 viewport runtime semantic need events，并调用 adapter request。
 - 处理 request token、stale response、failure ack、segment publish 和 trim。
 - 管理 `anchorMemory` restore/save anchor 与 `readReceipts` batching。
-- 提供 `outgoing` / `incoming.append` 这类 IM 语义入口，把本人发送、他人新消息
+- 提供 `tail.local` / `tail.remote.append` 这类 tail 语义入口，把本地发送、远端新消息
   追加和普通 patch 区分开。
 - 为 receive append 暴露 `distanceToBottom`、`pageFocused`、bottom lock 等策略
   上下文，并消费业务返回的 follow/preserve 决策。
@@ -125,16 +125,17 @@ React adapter 禁止：
 
 Host 负责：
 
-- 在应用层创建并持有 `MessageListManager`。
-- 通过 `getConversation` / `getAdapter` 注入会话查询、请求、`anchorMemory`
+- 在应用层创建并持有 `MessageListSessionRegistry`。
+- 通过 `getFeed` / `getAdapter` 注入会话查询、请求、`anchorMemory`
   和 `readReceipts` 等业务依赖。
-- 通过 manager `incoming.shouldFollowAppend` 或单次 `incoming.append({ follow })`
+- 通过 registry `tailEvents.shouldFollowRemoteAppend` 或单次
+  `tail.remote.append({ follow })`
   决定 receive append 是否跟随；典型策略会同时参考滚动距离、页面焦点、未读
   计数和会话免打扰状态。
-- 选择 active conversation，并把对应 `MessageListSession` 交给 React adapter。
+- 选择 active session/feed，并把对应 `MessageListSession` 交给 React adapter。
 - 通过 `session.commands` 发起 scroll / reload 意图。
-- 通过 `session.outgoing` 接入本人 send/retry optimistic row。
-- 通过 `session.incoming.append` 接入他人或服务端尾部新消息。
+- 通过 `session.tail.local` 接入本 renderer send/retry optimistic row。
+- 通过 `session.tail.remote.append` 接入远端、SDK、main process 或服务端尾部新消息。
 - 通过 `session.rows` 接入 edit、delete、reaction、streaming patch、
   identity remap、replace 和 clear 等普通 row 变更。
 - 作为分页缓存、持久化、dirty timestamp 和未加载页脏检查的 canonical owner；

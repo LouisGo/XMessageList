@@ -38,20 +38,27 @@ type SessionLiveSemanticsOptions<Row, Conversation> = {
 }
 
 export class MessageListSessionLiveSemantics<Row, Conversation> {
+  readonly tail: PublicMessageListSession<Row>['tail']
   readonly outgoing: PublicMessageListSession<Row>['outgoing']
   readonly incoming: PublicMessageListSession<Row>['incoming']
   private readonly pendingOutgoingItemsByKey = new Map<string, MessageDataItem<Row>>()
   private readonly pendingOutgoingRetireKeys = new Set<string>()
 
   constructor(private readonly options: SessionLiveSemanticsOptions<Row, Conversation>) {
-    this.outgoing = {
+    const local = {
       stage: (input) => this.stageOutgoing(input),
       patch: (rows) => this.patchOutgoing(rows),
       applyIdentityRemap: (remaps) => this.applyOutgoingIdentityRemap(remaps),
     }
-    this.incoming = {
+    const remote = {
       append: (input) => this.appendIncoming(input),
     }
+    this.tail = {
+      local,
+      remote,
+    }
+    this.outgoing = local
+    this.incoming = remote
   }
 
   withPendingOutgoing(page: MessageListPage<Row>): {
@@ -258,7 +265,10 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
 
     return {
       id: this.options.id,
+      sessionId: this.options.id,
+      feedId: this.options.id,
       conversation: this.options.conversation,
+      feed: this.options.conversation,
       rows: input.rows,
       reason: input.reason,
       hasMoreAfter: snapshot.segmentMeta.hasMoreAfter,

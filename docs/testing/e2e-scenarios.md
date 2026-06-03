@@ -25,8 +25,8 @@ correctness 场景和 1 个 perf 场景。它是 runner catalog，不代表当�
 
 | Scenario | 验收重点 |
 | --- | --- |
-| `incoming.append-follow-motion` | latest bottom 下他人新消息通过 `incoming.append` 进入 `append` modifier，并保持 bottom lock。 |
-| `send.composer-event-storm-follow-bottom` | event storm 中普通 Composer send 通过 outgoing 语义回到 latest，并保持 bottom lock。 |
+| `incoming.append-follow-motion` | latest bottom 下远端新消息通过 `tail.remote.append` 进入 `append` modifier，并保持 bottom lock。场景 id 暂保留旧名。 |
+| `send.composer-event-storm-follow-bottom` | event storm 中普通 Composer send 通过 `tail.local` 语义回到 latest，并保持 bottom lock。 |
 | `send.optimistic-event-storm-follow-bottom` | event storm 中 optimistic send 不靠历史对齐掩盖行为，发送后保持 bottom lock。 |
 | `dynamic-height.above-anchor-growth` | anchor 上方 row 高度变化后，当前 visual anchor 屏幕位置稳定。 |
 | `dynamic-height.streaming-current-row` | 当前 row streaming 增高时保持阅读位置，不退化成 reset。 |

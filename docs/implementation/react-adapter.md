@@ -4,7 +4,8 @@
 
 React adapter 是 projection 层：
 
-- 默认通过 `MessageListProvider` / `useMessageListSession(id)` 获取应用级
+- 默认通过 `MessageListSessionRegistryProvider` / `useMessageListSession(sessionId)`
+  获取应用级
   `MessageListSession`。
 - 通过 package-internal session internals 读取 runtime snapshot。
 - 渲染固定 DOM skeleton。
@@ -12,7 +13,7 @@ React adapter 是 projection 层：
 - 在 layout effect 中发送 commit ack。
 - 渲染 slots：before status、after status、top placeholder、overlay status、empty、scroll-to-latest。
 
-React adapter 不发起业务请求，不合并请求结果，不保存 anchor，也不实现已读回执。上述职责属于 manager/session adapter。
+React adapter 不发起业务请求，不合并请求结果，不保存 anchor，也不实现已读回执。上述职责属于 session registry/session adapter。
 
 ## External Store
 

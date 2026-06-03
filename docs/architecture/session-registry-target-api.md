@@ -53,6 +53,13 @@ request route、anchor memory 和 read receipt 行为，而不是来自 React �
 const session = registry.getSession(feedId)
 ```
 
+当前 runtime、segment、anchor 和 viewport events 仍使用 `feedId` 表达消息流身份。
+因此 public request/session context 在迁移期同时暴露 `id`、`sessionId` 和 `feedId`：
+`id` 是旧兼容字段，`sessionId` 是 registry key，`feedId` 是 runtime/message identity
+字段。默认情况下 `sessionId === feedId`。如果未来同一个 feed 需要多个独立 view
+scope，必须把 `sessionId` 扩展为包含 view scope，同时继续把真实 feed 身份保留在
+`feedId`，不能把 scoped session id 写入 message identity anchor。
+
 这个约定覆盖以下场景：
 
 - 分屏同时展示两个 chat 消息列表：两个不同 `feed_id`，两个独立 session。
@@ -85,6 +92,8 @@ React，应在 app bootstrap、root store、dependency container 或稳定 memo 
   清空 read receipt worker 和 overlay 状态，并从 registry 删除。
 - `maxSessions` 是缓存容量，不是活跃 session 数。它只约束 unmounted 且未被 host
   retain 的 cached sessions。
+- 当前实现已经按 cached session 计数执行 LRU；mounted 或 host-retained session 不计入
+  `maxSessions`，但仍可被显式 `destroySession(sessionId)` 销毁。
 
 目标 registry surface：
 
@@ -134,8 +143,9 @@ registry 需要支持配置更新，但不是所有配置都应该原地影响�
   request route、anchor memory 和 read receipts 是 session identity 的一部分。
   如果这些语义变化，应 `destroySession(sessionId)` 后重新 `getSession(sessionId)`。
 
-`updateOptions` 应只接受动态配置 patch。需要改变静态语义时，host 必须显式销毁相关
-session，避免一个 session 在生命周期中悄悄换 feed 或换 adapter。
+`updateOptions` 只接受动态配置 patch，不接受 `maxItems`、`getFeed` 或 `getAdapter`。
+需要改变静态语义时，host 必须显式销毁相关 session，避免一个 session 在生命周期中
+悄悄换 feed、adapter、anchor memory 或 read receipts。
 
 ## Public API 目标形态
 
@@ -170,17 +180,18 @@ export type {
   MessageListRowsMutation,
   MessageListRowsReplaceInput,
   MessageListRowsResetAroundInput,
-  MessageListScrollMotionConfig,
-  MessageListScrollToMessageOptions,
-  MessageListSession,
-  MessageListSessionContext,
-  MessageListSessionRegistry,
-  MessageListSessionRegistryEntry,
-  MessageListSessionRegistryOptions,
-  MessageListSessionRegistryOptionsPatch,
-  MessageListSessionRetainReason,
-  MessageListSessionState,
-  EmptySlotInput,
+	  MessageListScrollMotionConfig,
+	  MessageListScrollToMessageOptions,
+	  MessageListSession,
+	  MessageListSessionContext,
+	  MessageListSessionRegistry,
+	  MessageListSessionRegistryEntry,
+	  MessageListSessionRegistryOptions,
+	  MessageListSessionRegistryOptionsPatch,
+	  MessageListSessionRetainReason,
+	  MessageListSessionState,
+	  MessageListOverlayStatus,
+	  EmptySlotInput,
   EdgeSlotInput,
   MessageListCommands,
   MessageListProps,
@@ -195,9 +206,11 @@ export type {
 }
 ```
 
-`MessageListConversationId` 和 `MessageListManager` 系列命名应迁移为
+`MessageListConversationId` 和 `MessageListManager` 系列命名迁移为
 `MessageListSessionId` / `MessageListFeedId` 和 `MessageListSessionRegistry`
-系列命名。对业务接入者可见的 id 不再暗示它一定是 conversation。
+系列命名。对业务接入者可见的 id 不再暗示它一定是 conversation。迁移期保留
+`createMessageListManager`、`MessageListManager`、`MessageListProvider`、
+`outgoing` 和 `incoming` 作为 deprecated alias。
 
 ## Registry API
 

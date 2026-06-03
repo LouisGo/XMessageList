@@ -1,5 +1,8 @@
 import { createContext } from 'react'
-import type { MessageListManager } from '../../core/manager/index'
+import type { MessageListSessionRegistry } from '../../core/manager/index'
 
-export const MessageListManagerContext =
-  createContext<MessageListManager<unknown> | null>(null)
+export const MessageListSessionRegistryContext =
+  createContext<MessageListSessionRegistry<unknown> | null>(null)
+
+/** @deprecated Use MessageListSessionRegistryContext. */
+export const MessageListManagerContext = MessageListSessionRegistryContext

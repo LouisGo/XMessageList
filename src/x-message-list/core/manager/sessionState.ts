@@ -77,6 +77,8 @@ function createState<Row>(
 
   return {
     id,
+    sessionId: id,
+    feedId: snapshot.feedId,
     loaded: {
       rows,
       keys: snapshot.items.map((item) => item.key),

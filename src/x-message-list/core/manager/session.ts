@@ -34,12 +34,11 @@ import type {
   MessageListPage,
   MessageListRequestResult,
   MessageListSession as PublicMessageListSession,
-  MessageListSessionContext,
-  MessageListSessionState,
-  MessageListViewState,
+  MessageListSessionContext, MessageListSessionState, MessageListViewState,
 } from './types'
 
 type OverlayRequestOptions = { overlayRequestId?: number; requestEpoch?: number }
+type RequestResultInput<Row, Conversation> = Omit<MessageListRequestResult<Row, Conversation>, 'id' | 'sessionId' | 'feedId' | 'conversation' | 'feed'>
 
 export class MessageListSession<Row, Conversation>
   implements PublicMessageListSession<Row> {
@@ -48,6 +47,7 @@ export class MessageListSession<Row, Conversation>
   readonly id: MessageListConversationId
   readonly commands: PublicMessageListSession<Row>['commands']
   readonly rows: PublicMessageListSession<Row>['rows']
+  readonly tail: PublicMessageListSession<Row>['tail']
   readonly outgoing: PublicMessageListSession<Row>['outgoing']
   readonly incoming: PublicMessageListSession<Row>['incoming']
   private readonly stateStore: ReturnType<typeof createMessageListSessionState<Row>>
@@ -65,7 +65,10 @@ export class MessageListSession<Row, Conversation>
     this.id = options.id
     this.context = {
       id: options.id,
+      sessionId: options.id,
+      feedId: options.id,
       conversation: options.conversation,
+      feed: options.conversation,
     }
     this.overlay = new MessageListSessionOverlay(
       () => this.notifyViewListeners(),
@@ -120,6 +123,7 @@ export class MessageListSession<Row, Conversation>
       publishLocalResetSegment: (segment) => this.publishLocalResetSegment(segment),
       clearPendingOutgoing: () => this.liveSemantics.clearPendingOutgoing(),
     })
+    this.tail = this.liveSemantics.tail
     this.outgoing = this.liveSemantics.outgoing
     this.incoming = this.liveSemantics.incoming
     this.stateStore = createMessageListSessionState({
@@ -178,6 +182,7 @@ export class MessageListSession<Row, Conversation>
   }
 
   hasRetainedView(): boolean { return this.viewRetainCount > 0 }
+  getViewRetainCount(): number { return this.viewRetainCount }
 
   getRow(item: MessageDataItem<Row>): Row | null { return item.message ?? null }
 
@@ -564,11 +569,14 @@ export class MessageListSession<Row, Conversation>
   }
 
   private emitRequestResult(
-    result: Omit<MessageListRequestResult<Row, Conversation>, 'id' | 'conversation'>,
+    result: RequestResultInput<Row, Conversation>,
   ): MessageListRequestResult<Row, Conversation> {
     const next = {
       id: this.id,
+      sessionId: this.id,
+      feedId: this.id,
       conversation: this.options.conversation,
+      feed: this.options.conversation,
       ...result,
     }
     this.options.onRequestResult?.(next)

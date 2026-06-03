@@ -1,15 +1,17 @@
 # 术语与 Public API 命名
 
 本文档是当前实现的命名基准。用户会 import、配置或在业务代码中直接看到
-的名字，统一使用 `MessageList` / `MessageListSession` / `MessageListManager`。
+的首选名字，统一使用 `MessageList` / `MessageListSession` /
+`MessageListSessionRegistry`。`MessageListManager` 系列作为 deprecated alias
+保留在迁移期。
 `controller` 只允许出现在 runtime 内部实现名中，例如
 `MessageListRuntimeController`。
 
 ## 核心心智
 
 ```text
-MessageListManager 管理多个 MessageListSession
-MessageListSession 代表一个 conversation 的消息列表会话实例
+MessageListSessionRegistry 管理多个 MessageListSession
+MessageListSession 代表一个 sessionId/feedId 对应的消息列表会话实例
 React 只负责把 session 渲染成 <MessageList />
 Runtime 是 framework-independent 内部引擎
 ```
@@ -20,6 +22,9 @@ package 根出口只暴露应用接入所需的 message-list surface：
 
 ```ts
 export {
+  createMessageListSessionRegistry,
+  MessageListSessionRegistryProvider,
+  // deprecated aliases
   createMessageListManager,
   MessageListProvider,
   useMessageListSession,
@@ -31,6 +36,20 @@ export type {
   MessageListAdapter,
   MessageListAnchor,
   MessageListAnchorMemoryValue,
+  MessageListFeedId,
+  MessageListSessionId,
+  MessageListSessionRegistry,
+  MessageListSessionRegistryEntry,
+  MessageListSessionRegistryOptions,
+  MessageListSessionRegistryOptionsPatch,
+  MessageListSessionRetainReason,
+  MessageListLocalTailStageInput,
+  MessageListRemoteTailAppendContext,
+  MessageListRemoteTailAppendInput,
+  MessageListRemoteTailAppendPolicy,
+  MessageListTailAppendFollowDecision,
+  MessageListTailAppendFollowInput,
+  // deprecated aliases
   MessageListConversationId,
   MessageListIdentityRemap,
   MessageListIncomingAppendContext,
@@ -78,10 +97,10 @@ export type {
 - 不提供 `x-message-list/data` 子路径。
 - 不承诺内部目录 deep import；业务代码只依赖 package exports。
 
-## Manager API
+## Registry API
 
 ```ts
-const manager = createMessageListManager({
+const registry = createMessageListSessionRegistry({
   defaults: {
     pageSize: 30,
     maxItems: 300,
@@ -93,24 +112,27 @@ const manager = createMessageListManager({
   scrollMotion: {
     enabled: () => deviceConfig.messageListMotionEnabled,
   },
-  getConversation: (id) => getConversationById(id),
-  getAdapter: (conversation) => normalMessageAdapter,
-  incoming: {
+  getFeed: (sessionId) => getFeedById(sessionId),
+  getAdapter: (feed) => normalMessageAdapter,
+  tailEvents: {
     getPageFocus: () => document.hasFocus(),
-    shouldFollowAppend: ({ pageFocused, bottomLockState, distanceToBottom }) =>
+    shouldFollowRemoteAppend: ({ pageFocused, bottomLockState, distanceToBottom }) =>
       pageFocused && (bottomLockState === 'LOCKED' || distanceToBottom <= 96),
   },
 })
 
-manager.getSession(id)
-manager.hasSession(id)
-manager.destroySession(id)
-manager.destroyAll()
+registry.getSession(sessionId)
+registry.hasSession(sessionId)
+registry.getSessionMeta(sessionId)
+registry.retainSession(sessionId, 'active-feed')
+registry.destroySession(sessionId)
+registry.destroyAll()
 ```
 
-使用 `getConversation/getAdapter`，不用 `resolveConversation/resolveAdapter`，
-因为这里是应用级依赖注入，不是每次 render 的动态解析配置。
-`incoming.shouldFollowAppend` 是 receive append 的应用级策略入口；XMessageList
+使用 `getFeed/getAdapter`，不用 `resolveFeed/resolveAdapter`，
+因为这里是应用级依赖注入，不是每次 render 的动态解析配置。迁移期
+`getConversation` 是 `getFeed` 的 deprecated alias。
+`tailEvents.shouldFollowRemoteAppend` 是 remote tail append 的应用级策略入口；XMessageList
 提供当前滚动距离、bottom lock、pending intent 和页面焦点等上下文，但不替业务
 定义未读、免打扰或后台标签页策略。
 
@@ -158,14 +180,14 @@ Canonical names：
 | 名称 | 类别 | 说明 |
 | --- | --- | --- |
 | `MessageList` | React component | 唯一公开组件名 |
-| `MessageListProvider` | React component | 注入应用级 manager |
-| `useMessageListSession` | hook | 按 conversation id 解析 session |
+| `MessageListSessionRegistryProvider` | React component | 注入应用级 registry |
+| `useMessageListSession` | hook | 按 session/feed id 解析 session |
 | `useMessageListState` | hook | 订阅 session 级只读列表状态 |
-| `MessageListSession` | public object | conversation 的消息列表会话实例 |
+| `MessageListSession` | public object | session/feed 的消息列表会话实例 |
 | `MessageListProps` | React props | 组件 props 类型 |
 
 ```tsx
-const session = useMessageListSession<Message>(conversationId)
+const session = useMessageListSession<Message>(feedId)
 
 return (
   <MessageList
@@ -220,7 +242,7 @@ type MessageListSession<Row> = {
     reloadLatest(): void
   }
 
-  rows: {
+	  rows: {
     patch(rows: Row[]): void
     mutate(input): void
     replace(input): void
@@ -228,22 +250,23 @@ type MessageListSession<Row> = {
     resetAround(input): void
     applyIdentityRemap(remaps): void
     clear(): void
-  }
+	  }
 
-  outgoing: {
-    stage(input): void
-    patch(rows): void
-    applyIdentityRemap(remaps): void
-  }
-
-  incoming: {
-    append(input): void
-  }
-}
+	  tail: {
+	    local: {
+	      stage(input): void
+	      patch(rows): void
+	      applyIdentityRemap(remaps): void
+	    }
+	    remote: {
+	      append(input): void
+	    }
+	  }
+	}
 ```
 
 ```ts
-type MessageListOutgoingStageInput<Row> = {
+type MessageListLocalTailStageInput<Row> = {
   rows: Row[]
   latest?: MessageListPage<Row>
   reason?: 'send' | 'retry'
@@ -265,29 +288,32 @@ store 负责。
 loaded rows/keys、edge status、overlay status 和 viewport bottom/pending/phase
 等稳定列表概念，不暴露 runtime snapshot、loaded segment 或 DOM evidence。
 
-`outgoing` 表示本人 send/retry 的 optimistic outgoing 语义：调用方发布本地 row，
-session 负责进入 latest 目标、合入 pending outgoing、处理后续 patch/remap。
+`tail.local` 表示本 renderer send/retry 的 optimistic tail 语义：调用方发布本地 row，
+session 负责进入 latest 目标、合入 pending local tail、处理后续 patch/remap。
 `stage` 始终是 send-style follow-bottom；retry 成功若要作为“重新发送”处理，也应该
 等同一次 send。接入方可以传入 `retireKeys`，让旧 failed/retrying 占位和新
-outgoing row 在同一次 append 事务里完成，避免先 delete 再 send 造成视图状态竞争。
+local tail row 在同一次 append 事务里完成，避免先 delete 再 send 造成视图状态竞争。
 当 `stage` 同时携带 `latest` 时，含义是接入方已经提供了要显示的 latest window；
 session 会用这个 window 做本地 latest rebuild 并继承 send-style follow-bottom，
 不会再额外触发 `loadLatest` 或 runtime 的普通 latest request。`retireKeys` 对
-这条 rebuild 路径同样生效，旧占位必须在 reset latest 和 pending outgoing 合并前
+这条 rebuild 路径同样生效，旧占位必须在 reset latest 和 pending local tail 合并前
 被过滤掉。
 
 如果接入方把 retry 设计成重新发送，应创建新的业务 row，并把 retry 的业务等待拆成
 两段：先把旧 failed 占位原地 patch 为 retrying/loading，不触发 follow-bottom；
-异步成功后再发布新的 outgoing row，同时用 `retireKeys` 原子移除或归档旧占位。
+异步成功后再发布新的 local tail row，同时用 `retireKeys` 原子移除或归档旧占位。
 不要对旧 row 原地 patch 为 sending 后再触发 follow-bottom。
 
-`incoming.append` 表示他人或服务端在 latest tail 到达的新消息。它不同于普通
+`tail.remote.append` 表示远端、SDK、main process 或服务端在 latest tail 到达的新消息。它不同于普通
 `rows.patch`：append 会携带 follow/preserve 决策进入 runtime modifier，允许
 接入方按 `distanceToBottom`、`pageFocused`、未读策略或会话状态决定是否跟随。
 如果用户已经显式点击 bottom，本次 bottom intent 优先于并发 append 的旧
 preserve 决策；但已经 settled 的 bottom lock 不会强行覆盖接入方显式
 `preserve`。
 非 latest segment 下不会把新消息强插入历史窗口。
+
+迁移期 `MessageListProvider`、`outgoing` 和 `incoming` 仍作为 deprecated alias
+保留，但新接入样板必须使用 registry 与 `tail.local` / `tail.remote`。
 
 React adapter 需要的 runtime/view store/row lookup 通过 package-internal helper
 访问，不进入 public type。

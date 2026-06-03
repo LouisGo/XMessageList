@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  type MessageListManager,
   type MessageListRequestResult,
   type MessageListSession,
+  type MessageListSessionRegistry,
   useMessageListState,
 } from '../../index'
 import type { DemoMessage } from '../data/demoData'
@@ -17,6 +17,7 @@ import {
 } from './demoScenarioHelpers'
 import {
   createDemoManager,
+  type DemoFeed,
   prepareDemoE2EScenario,
 } from './demoMessageListManager'
 import {
@@ -123,7 +124,7 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   }, [managerStateRef])
 
   // eslint-disable-next-line react-hooks/refs -- lazy manager construction stores callbacks; it does not read ref values during render.
-  const [manager] = useState<MessageListManager<DemoMessage>>(() => {
+  const [manager] = useState<MessageListSessionRegistry<DemoMessage, DemoFeed>>(() => {
     const managerInstance = createDemoManager({
       consumeDeferredEdgeResponseDelay,
       consumeDeferredSessionResponseDelay,
@@ -182,7 +183,7 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     applyAdvancedMockResult,
   } = useDemoSegmentPublisher({
     appendRows: (feedId, rows, follow) => {
-      getSession(feedId).incoming.append({
+      getSession(feedId).tail.remote.append({
         rows,
         reason: 'demo-append',
         follow,

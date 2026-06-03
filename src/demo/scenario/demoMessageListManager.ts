@@ -1,12 +1,12 @@
 import {
-  createMessageListManager,
+  createMessageListSessionRegistry,
   type MessageListAdapter,
   type MessageListAnchorMemoryValue,
-  type MessageListManager,
   type MessageListPage,
   type MessageListRequestResult,
   type MessageListResolvedAnchor,
   type MessageListSession,
+  type MessageListSessionRegistry,
 } from '../../index'
 import {
   createDemoMessages,
@@ -40,6 +40,8 @@ type DemoConversation = {
   id: string
 }
 
+export type DemoFeed = DemoConversation
+
 export type DemoManagerOptions = {
   getActiveFeedId: () => string
   getSelectedFeedId: () => string
@@ -61,8 +63,8 @@ export type DemoManagerOptions = {
 
 export function createDemoManager(
   input: DemoManagerOptions,
-): MessageListManager<DemoMessage> {
-  return createMessageListManager<DemoMessage, DemoConversation>({
+): MessageListSessionRegistry<DemoMessage, DemoFeed> {
+  return createMessageListSessionRegistry<DemoMessage, DemoConversation>({
     defaults: {
       pageSize: PAGE_SIZE,
       maxItems: DEMO_MAX_ITEMS,
@@ -74,12 +76,12 @@ export function createDemoManager(
     scrollMotion: {
       enabled: false,
     },
-    getConversation: (id) => ({ id }),
+    getFeed: (id) => ({ id }),
     getAdapter: (conversation) => createDemoAdapter(conversation, input),
-    incoming: {
+    tailEvents: {
       getPageFocus: () => globalThis.location?.pathname === '/e2e' ||
         (globalThis.document?.hasFocus?.() ?? true),
-      shouldFollowAppend: (context) =>
+      shouldFollowRemoteAppend: (context) =>
         context.pageFocused &&
         (
           context.bottomLockState === 'LOCKED' ||
