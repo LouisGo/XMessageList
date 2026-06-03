@@ -1,21 +1,18 @@
 # Runtime
 
-`src/x-message-list/core/runtime` owns viewport correctness for loaded-segment
-native scrolling. It does not own data fetching, React rendering, feed
-selection, or demo behavior.
+`src/x-message-list/core/runtime` 掌管 loaded segment 原生滚动的视口正确性。它不掌管数据获取、React 渲染、feed 选择或 demo 行为。
 
-## Directory Rules
+## 目录规则
 
-- Keep root files limited to `index.ts`, `internal.ts`, and this README.
-- Put public contract types in `contracts/`.
-- Put facade/controller orchestration in `controller/`.
-- Put interaction state machines in `interactions/` and shared axes/types in `state/`.
-- Put DOM refs, measurement, anchor and row metric code in `dom/`.
-- Put scroll source, bottom lock and direct-scroll session code in `scroll/`.
-- Put diagnostics/evidence/event builders in `events/`.
-- Put commit/settlement/correction flows in `transactions/`.
-- Keep data merge, trim and token logic in `data/`.
-- Put cross-domain stateless helpers in `shared/`; other domains should not import from `controller/`.
+- 根文件仅保留 `index.ts`、`internal.ts` 和本 README。
+- 公开契约类型放在 `contracts/`。
+- facade/controller 编排放在 `controller/`。
+- 交互状态机放在 `interactions/`，共享轴/类型放在 `state/`。
+- DOM ref、测量、锚点和行度量代码放在 `dom/`。
+- 滚动源、底部锁定和直接滚动会话代码放在 `scroll/`。
+- 诊断/evidence/事件构建放在 `events/`。
+- 提交/结算/修正流程放在 `transactions/`。
+- 数据合并、裁剪和 token 逻辑放在 `data/`。
+- 跨域无状态辅助放在 `shared/`；其他域不得从 `controller/` 导入。
 
-Runtime code must not import React. Viewport runtime consumes immutable
-`LoadedSegment` snapshots and must not merge, dedupe or reorder business items.
+Runtime 代码不得导入 React。视口 runtime 消费不可变的 `LoadedSegment` 快照，不得合并、去重或重排业务数据项。

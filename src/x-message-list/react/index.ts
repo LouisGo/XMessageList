@@ -1,8 +1,7 @@
 export { MessageList } from './components/MessageList'
 export {
-  MessageListProvider,
   MessageListSessionRegistryProvider,
-} from './components/MessageListProvider'
+} from './components/MessageListSessionRegistryProvider'
 export { useMessageListState } from './hooks/useMessageListState'
 export { useMessageListSession } from './hooks/useMessageListSession'
 export type {

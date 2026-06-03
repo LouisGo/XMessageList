@@ -2,8 +2,7 @@
 
 本文档是当前实现的命名基准。用户会 import、配置或在业务代码中直接看到
 的首选名字，统一使用 `MessageList` / `MessageListSession` /
-`MessageListSessionRegistry`。`MessageListManager` 系列作为 deprecated alias
-保留在迁移期。
+`MessageListSessionRegistry`。开发期不保留 deprecated 兼容别名。
 `controller` 只允许出现在 runtime 内部实现名中，例如
 `MessageListRuntimeController`。
 
@@ -24,9 +23,6 @@ package 根出口只暴露应用接入所需的 message-list surface：
 export {
   createMessageListSessionRegistry,
   MessageListSessionRegistryProvider,
-  // deprecated aliases
-  createMessageListManager,
-  MessageListProvider,
   useMessageListSession,
   useMessageListState,
   MessageList,
@@ -43,24 +39,14 @@ export type {
   MessageListSessionRegistryOptions,
   MessageListSessionRegistryOptionsPatch,
   MessageListSessionRetainReason,
+  MessageListIdentityRemap,
   MessageListLocalTailStageInput,
   MessageListRemoteTailAppendContext,
   MessageListRemoteTailAppendInput,
   MessageListRemoteTailAppendPolicy,
   MessageListTailAppendFollowDecision,
   MessageListTailAppendFollowInput,
-  // deprecated aliases
-  MessageListConversationId,
-  MessageListIdentityRemap,
-  MessageListIncomingAppendContext,
-  MessageListIncomingAppendFollowDecision,
-  MessageListIncomingAppendFollowInput,
-  MessageListIncomingAppendInput,
-  MessageListIncomingAppendPolicy,
-  MessageListManager,
-  MessageListManagerOptions,
   MessageListOverlayStatus,
-  MessageListOutgoingStageInput,
   MessageListPage,
   MessageListRequestContext,
   MessageListRequestResult,
@@ -130,8 +116,7 @@ registry.destroyAll()
 ```
 
 使用 `getFeed/getAdapter`，不用 `resolveFeed/resolveAdapter`，
-因为这里是应用级依赖注入，不是每次 render 的动态解析配置。迁移期
-`getConversation` 是 `getFeed` 的 deprecated alias。
+因为这里是应用级依赖注入，不是每次 render 的动态解析配置。
 `tailEvents.shouldFollowRemoteAppend` 是 remote tail append 的应用级策略入口；XMessageList
 提供当前滚动距离、bottom lock、pending intent 和页面焦点等上下文，但不替业务
 定义未读、免打扰或后台标签页策略。
@@ -311,9 +296,6 @@ session 会用这个 window 做本地 latest rebuild 并继承 send-style follow
 preserve 决策；但已经 settled 的 bottom lock 不会强行覆盖接入方显式
 `preserve`。
 非 latest segment 下不会把新消息强插入历史窗口。
-
-迁移期 `MessageListProvider`、`outgoing` 和 `incoming` 仍作为 deprecated alias
-保留，但新接入样板必须使用 registry 与 `tail.local` / `tail.remote`。
 
 React adapter 需要的 runtime/view store/row lookup 通过 package-internal helper
 访问，不进入 public type。

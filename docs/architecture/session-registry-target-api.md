@@ -1,19 +1,19 @@
 # Session Registry 目标架构与 API 调整方案
 
-本文档描述 `MessageListManager` 向 `MessageListSessionRegistry` 迁移后的目标
-架构和 public API 心智模型。它是阶段性目标，不表示当前代码已经完成重命名。
+本文档描述 `MessageListSessionRegistry` 的目标架构和 public API 心智模型。
+当前实现使用 canonical registry 命名，不保留 deprecated 兼容别名。
 
 ## 背景与结论
 
 当前实现中，真正的消息列表实例是 `MessageListSession`。每个 session 独立持有
 viewport runtime、data runtime、loaded segment、edge state、overlay、
-`anchorMemory`、`readReceipts` 和 tail event 语义。原
-`MessageListManager` 的核心职责是按 id 创建、缓存、复用和销毁 session，并把
-host 提供的 adapter、默认配置和 keepAlive 策略注入 session。
+`anchorMemory`、`readReceipts` 和 tail event 语义。Registry 的核心职责是按 id
+创建、缓存、复用和销毁 session，并把 host 提供的 adapter、默认配置和 keepAlive
+策略注入 session。
 
-因此，目标架构不剥离这层生命周期容器，而是把它重命名为
-`MessageListSessionRegistry`。`registry` 表达的是 session identity 与 lifecycle
-registry/cache/factory，不是业务层的消息管理器，也不是 React adapter 的 owner。
+因此，目标架构不剥离这层生命周期容器。`registry` 表达的是 session identity 与
+lifecycle registry/cache/factory，不是业务层的消息管理器，也不是 React adapter
+的 owner。
 
 借鉴 TanStack Query 的 API 哲学时，应借鉴 identity 和 lifecycle 模型，而不是照搬
 `query` 命名：
@@ -54,8 +54,8 @@ const session = registry.getSession(feedId)
 ```
 
 当前 runtime、segment、anchor 和 viewport events 仍使用 `feedId` 表达消息流身份。
-因此 public request/session context 在迁移期同时暴露 `id`、`sessionId` 和 `feedId`：
-`id` 是旧兼容字段，`sessionId` 是 registry key，`feedId` 是 runtime/message identity
+因此 public request/session context 同时暴露 `id`、`sessionId` 和 `feedId`：
+`id` 与 `sessionId` 是同一个 registry key，`feedId` 是 runtime/message identity
 字段。默认情况下 `sessionId === feedId`。如果未来同一个 feed 需要多个独立 view
 scope，必须把 `sessionId` 扩展为包含 view scope，同时继续把真实 feed 身份保留在
 `feedId`，不能把 scoped session id 写入 message identity anchor。
@@ -206,11 +206,9 @@ export type {
 }
 ```
 
-`MessageListConversationId` 和 `MessageListManager` 系列命名迁移为
-`MessageListSessionId` / `MessageListFeedId` 和 `MessageListSessionRegistry`
-系列命名。对业务接入者可见的 id 不再暗示它一定是 conversation。迁移期保留
-`createMessageListManager`、`MessageListManager`、`MessageListProvider`、
-`outgoing` 和 `incoming` 作为 deprecated alias。
+对业务接入者可见的 id 不暗示它一定是 conversation。Public API 只保留
+`MessageListSessionId` / `MessageListFeedId`、`MessageListSessionRegistry`、
+`MessageListSessionRegistryProvider` 和 `tail.local` / `tail.remote` 口径。
 
 ## Registry API
 
@@ -367,22 +365,11 @@ Electron 应用可以同时展示多个 message list。只要每个列表使用�
 独立滚动状态、独立 loaded segment 或不同 request/adapter 语义，它们必须使用不同
 session id。
 
-## 迁移策略
+## 命名状态
 
-迁移应按低风险重命名推进：
-
-1. 新增 `MessageListSessionRegistry` 命名和 `createMessageListSessionRegistry`
-   export，内部可先复用现有 manager 实现。
-2. 保留 `createMessageListManager` / `MessageListManager` 作为 deprecated alias，
-   避免一次性破坏已有接入。
-3. 将 `outgoing` / `incoming` 命名迁移为 `tail.local` / `tail.remote` 和
-   `tailEvents`，旧命名只作为 deprecated alias 过渡。
-4. 将 public docs、demo 和测试样板迁移到 `registry` / `sessionId` /
-   `feedId` 口径。
-5. 等下游接入完成后，再移除 deprecated manager、outgoing 和 incoming 命名。
-
-迁移期间，runtime/data runtime 仍然不进入 package root public surface；
-React adapter 仍通过 package-internal session internals 访问 runtime/view store。
+当前 public docs、demo 和测试样板使用 `registry` / `sessionId` / `feedId` 口径。
+Runtime/data runtime 仍然不进入 package root public surface；React adapter 仍通过
+package-internal session internals 访问 runtime/view store。
 
 ## 非目标
 

@@ -3,7 +3,7 @@ import type {
   MessageDataItem,
   MessageIdentityAnchor,
 } from '../../runtime/index'
-import type { MessageListManagerRuntime } from '../../runtime/internal'
+import type { MessageListSessionRegistryRuntime } from '../../runtime/internal'
 import type {
   MessageListDataRuntime,
   ResetSegmentInput,
@@ -15,53 +15,47 @@ import {
 } from '../session/helpers'
 import type {
   MessageListAdapter,
-  MessageListConversationId,
   MessageListIdentityRemap,
-  MessageListIncomingAppendContext,
-  MessageListIncomingAppendFollowDecision,
-  MessageListIncomingAppendInput,
-  MessageListManagerOptions,
-  MessageListOutgoingStageInput,
+  MessageListLocalTailStageInput,
   MessageListPage,
+  MessageListRemoteTailAppendConfig,
+  MessageListRemoteTailAppendContext,
+  MessageListRemoteTailAppendInput,
   MessageListSession as PublicMessageListSession,
+  MessageListSessionId,
+  MessageListTailAppendFollowDecision,
 } from '../contracts'
 
-type SessionLiveSemanticsOptions<Row, Conversation> = {
-  id: MessageListConversationId
-  conversation: Conversation
-  adapter: MessageListAdapter<Row, Conversation>
-  incoming?: MessageListManagerOptions<Row, Conversation>['incoming']
-  runtime: MessageListManagerRuntime<Row>
+type SessionLiveSemanticsOptions<Row, Feed> = {
+  id: MessageListSessionId
+  feed: Feed
+  adapter: MessageListAdapter<Row, Feed>
+  tailEvents?: MessageListRemoteTailAppendConfig<Row, Feed>
+  runtime: MessageListSessionRegistryRuntime<Row>
   dataRuntime: MessageListDataRuntime<Row>
   publishSegment: (segment: LoadedSegment<Row>) => void
   publishLocalResetSegment: (segment: LoadedSegment<Row>) => void
 }
 
-export class MessageListSessionLiveSemantics<Row, Conversation> {
+export class MessageListSessionLiveSemantics<Row, Feed> {
   readonly tail: PublicMessageListSession<Row>['tail']
-  readonly outgoing: PublicMessageListSession<Row>['outgoing']
-  readonly incoming: PublicMessageListSession<Row>['incoming']
-  private readonly pendingOutgoingItemsByKey = new Map<string, MessageDataItem<Row>>()
-  private readonly pendingOutgoingRetireKeys = new Set<string>()
+  private readonly pendingLocalItemsByKey = new Map<string, MessageDataItem<Row>>()
+  private readonly pendingLocalRetireKeys = new Set<string>()
 
-  constructor(private readonly options: SessionLiveSemanticsOptions<Row, Conversation>) {
-    const local = {
-      stage: (input) => this.stageOutgoing(input),
-      patch: (rows) => this.patchOutgoing(rows),
-      applyIdentityRemap: (remaps) => this.applyOutgoingIdentityRemap(remaps),
-    }
-    const remote = {
-      append: (input) => this.appendIncoming(input),
-    }
+  constructor(private readonly options: SessionLiveSemanticsOptions<Row, Feed>) {
     this.tail = {
-      local,
-      remote,
+      local: {
+        stage: (input) => this.stageLocal(input),
+        patch: (rows) => this.patchLocal(rows),
+        applyIdentityRemap: (remaps) => this.applyLocalIdentityRemap(remaps),
+      },
+      remote: {
+        append: (input) => this.appendRemote(input),
+      },
     }
-    this.outgoing = local
-    this.incoming = remote
   }
 
-  withPendingOutgoing(page: MessageListPage<Row>): {
+  withPendingLocal(page: MessageListPage<Row>): {
     page: MessageListPage<Row>
     resetInput: ResetSegmentInput<Row, unknown>
   } {
@@ -70,17 +64,17 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
       page,
       this.options.adapter,
     )
-    const items = filterRetiredItems(resetInput.items, this.pendingOutgoingRetireKeys)
+    const items = filterRetiredItems(resetInput.items, this.pendingLocalRetireKeys)
     const pending = filterRetiredItems(
-      [...this.pendingOutgoingItemsByKey.values()],
-      this.pendingOutgoingRetireKeys,
+      [...this.pendingLocalItemsByKey.values()],
+      this.pendingLocalRetireKeys,
     )
 
     if (pending.length === 0 && items === resetInput.items) {
       return { page, resetInput }
     }
 
-    const mergedItems = mergeOutgoingItems(items, pending)
+    const mergedItems = mergeLocalItems(items, pending)
     return {
       page: {
         ...page,
@@ -95,33 +89,33 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
     }
   }
 
-  settlePendingOutgoingForSegment(segment: LoadedSegment<Row>): void {
+  settlePendingLocalForSegment(segment: LoadedSegment<Row>): void {
     if (segment.hasMoreAfter) {
       return
     }
 
-    for (const [key, pending] of [...this.pendingOutgoingItemsByKey]) {
+    for (const [key, pending] of [...this.pendingLocalItemsByKey]) {
       if (segment.items.some((item) =>
         item.key === pending.key || itemsShareIdentity(item, pending)
       )) {
-        this.pendingOutgoingItemsByKey.delete(key)
+        this.pendingLocalItemsByKey.delete(key)
       }
     }
 
-    if (this.pendingOutgoingItemsByKey.size === 0) {
-      this.pendingOutgoingRetireKeys.clear()
+    if (this.pendingLocalItemsByKey.size === 0) {
+      this.pendingLocalRetireKeys.clear()
     }
   }
 
-  clearPendingOutgoing(): void {
-    this.pendingOutgoingItemsByKey.clear()
-    this.pendingOutgoingRetireKeys.clear()
+  clearPendingLocal(): void {
+    this.pendingLocalItemsByKey.clear()
+    this.pendingLocalRetireKeys.clear()
   }
 
-  private stageOutgoing(
-    input: Row | Row[] | MessageListOutgoingStageInput<Row>,
+  private stageLocal(
+    input: Row | Row[] | MessageListLocalTailStageInput<Row>,
   ): void {
-    const stage = normalizeOutgoingStageInput(input)
+    const stage = normalizeLocalTailStageInput(input)
 
     if (stage.rows.length === 0) {
       return
@@ -129,13 +123,13 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
 
     const items = this.toDataItems(stage.rows)
     this.rememberRetireKeys(stage.retireKeys)
-    this.forgetPendingOutgoingKeys(stage.retireKeys)
+    this.forgetPendingLocalKeys(stage.retireKeys)
     const segment = this.options.dataRuntime.getSegment()
 
     if (stage.latest) {
-      this.rememberPendingOutgoing(items)
+      this.rememberPendingLocal(items)
       this.options.runtime.prepareFollowBottomForLocalReset()
-      const { resetInput } = this.withPendingOutgoing(stage.latest)
+      const { resetInput } = this.withPendingLocal(stage.latest)
       this.options.publishLocalResetSegment(
         this.options.dataRuntime.resetLatest(resetInput),
       )
@@ -154,13 +148,13 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
       return
     }
 
-    this.rememberPendingOutgoing(items)
+    this.rememberPendingLocal(items)
   }
 
-  private appendIncoming(
-    input: Row | Row[] | MessageListIncomingAppendInput<Row>,
+  private appendRemote(
+    input: Row | Row[] | MessageListRemoteTailAppendInput<Row>,
   ): void {
-    const append = normalizeIncomingAppendInput(input)
+    const append = normalizeRemoteTailAppendInput(input)
 
     if (append.rows.length === 0) {
       return
@@ -170,7 +164,7 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
       return
     }
 
-    const follow = this.resolveIncomingAppendFollow(append)
+    const follow = this.resolveRemoteAppendFollow(append)
 
     if (follow === 'follow') {
       this.options.runtime.scrollToLatest()
@@ -182,13 +176,13 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
     ))
   }
 
-  private patchOutgoing(rows: Row[]): void {
+  private patchLocal(rows: Row[]): void {
     if (rows.length === 0) {
       return
     }
 
     const items = this.toDataItems(rows)
-    this.updatePendingOutgoing(items)
+    this.updatePendingLocal(items)
 
     const visibleKeys = new Set(
       this.options.dataRuntime.getSegment().items.map((item) => item.key),
@@ -200,13 +194,13 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
     }
   }
 
-  private applyOutgoingIdentityRemap(remaps: MessageListIdentityRemap[]): void {
+  private applyLocalIdentityRemap(remaps: MessageListIdentityRemap[]): void {
     if (remaps.length === 0) {
       return
     }
 
     const runtimeRemaps = toSessionIdentityRemaps(this.options.id, remaps)
-    this.remapPendingOutgoing(runtimeRemaps)
+    this.remapPendingLocal(runtimeRemaps)
 
     const segment = this.options.dataRuntime.getSegment()
     const touchesVisible = runtimeRemaps.some((remap) =>
@@ -224,20 +218,20 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
     }
   }
 
-  private resolveIncomingAppendFollow(
-    input: MessageListIncomingAppendInput<Row>,
-  ): MessageListIncomingAppendFollowDecision {
-    const context = this.createIncomingAppendContext(input)
-    const explicit = resolveIncomingAppendFollowInput(input.follow, context)
+  private resolveRemoteAppendFollow(
+    input: MessageListRemoteTailAppendInput<Row>,
+  ): MessageListTailAppendFollowDecision {
+    const context = this.createRemoteAppendContext(input)
+    const explicit = resolveRemoteAppendFollowInput(input.follow, context)
 
     if (explicit) {
       return explicit
     }
 
-    const configured = this.options.incoming?.shouldFollowAppend?.(
-      context as MessageListIncomingAppendContext<Row, Conversation>,
+    const configured = this.options.tailEvents?.shouldFollowRemoteAppend?.(
+      context,
     )
-    const resolvedConfigured = normalizeIncomingAppendFollowDecision(configured)
+    const resolvedConfigured = normalizeRemoteAppendFollowDecision(configured)
 
     if (resolvedConfigured) {
       return resolvedConfigured
@@ -253,9 +247,9 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
       : 'preserve'
   }
 
-  private createIncomingAppendContext(
-    input: MessageListIncomingAppendInput<Row>,
-  ): MessageListIncomingAppendContext<Row, Conversation> {
+  private createRemoteAppendContext(
+    input: MessageListRemoteTailAppendInput<Row>,
+  ): MessageListRemoteTailAppendContext<Row, Feed> {
     const snapshot = this.options.runtime.getSnapshot()
     const evidence = this.options.runtime.getEvidence()
     const distanceToBottom = Math.max(
@@ -267,8 +261,7 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
       id: this.options.id,
       sessionId: this.options.id,
       feedId: this.options.id,
-      conversation: this.options.conversation,
-      feed: this.options.conversation,
+      feed: this.options.feed,
       rows: input.rows,
       reason: input.reason,
       hasMoreAfter: snapshot.segmentMeta.hasMoreAfter,
@@ -276,7 +269,7 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
       pendingIntent: snapshot.pendingIntent,
       viewportPhase: snapshot.viewportPhase,
       distanceToBottom,
-      pageFocused: resolvePageFocus(this.options.incoming?.getPageFocus),
+      pageFocused: resolvePageFocus(this.options.tailEvents?.getPageFocus),
     }
   }
 
@@ -284,19 +277,19 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
     return toMessageDataItems(this.options.id, rows, this.options.adapter)
   }
 
-  private rememberPendingOutgoing(items: MessageDataItem<Row>[]): void {
+  private rememberPendingLocal(items: MessageDataItem<Row>[]): void {
     for (const item of items) {
-      this.pendingOutgoingItemsByKey.set(item.key, item)
+      this.pendingLocalItemsByKey.set(item.key, item)
     }
   }
 
-  private forgetPendingOutgoingKeys(keys: string[] | undefined): void {
+  private forgetPendingLocalKeys(keys: string[] | undefined): void {
     if (!keys || keys.length === 0) {
       return
     }
 
     for (const key of keys) {
-      this.pendingOutgoingItemsByKey.delete(key)
+      this.pendingLocalItemsByKey.delete(key)
     }
   }
 
@@ -306,28 +299,28 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
     }
 
     for (const key of keys) {
-      this.pendingOutgoingRetireKeys.add(key)
+      this.pendingLocalRetireKeys.add(key)
     }
   }
 
-  private updatePendingOutgoing(items: MessageDataItem<Row>[]): void {
+  private updatePendingLocal(items: MessageDataItem<Row>[]): void {
     for (const item of items) {
-      const existingKey = this.findPendingOutgoingKey(item)
+      const existingKey = this.findPendingLocalKey(item)
 
       if (existingKey && existingKey !== item.key) {
-        this.pendingOutgoingItemsByKey.delete(existingKey)
+        this.pendingLocalItemsByKey.delete(existingKey)
       }
 
-      if (existingKey || this.pendingOutgoingItemsByKey.has(item.key)) {
-        this.pendingOutgoingItemsByKey.set(item.key, item)
+      if (existingKey || this.pendingLocalItemsByKey.has(item.key)) {
+        this.pendingLocalItemsByKey.set(item.key, item)
       }
     }
   }
 
-  private remapPendingOutgoing(
+  private remapPendingLocal(
     remaps: ReturnType<typeof toSessionIdentityRemaps>,
   ): void {
-    for (const [key, item] of [...this.pendingOutgoingItemsByKey]) {
+    for (const [key, item] of [...this.pendingLocalItemsByKey]) {
       const remap = remaps.find((candidate) =>
         candidate.previousKey === item.key || itemMatchesAnchor(item, candidate.from)
       )
@@ -336,8 +329,8 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
         continue
       }
 
-      this.pendingOutgoingItemsByKey.delete(key)
-      this.pendingOutgoingItemsByKey.set(remap.nextKey, {
+      this.pendingLocalItemsByKey.delete(key)
+      this.pendingLocalItemsByKey.set(remap.nextKey, {
         ...item,
         key: remap.nextKey,
         identity: {
@@ -351,12 +344,12 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
     }
   }
 
-  private findPendingOutgoingKey(item: MessageDataItem<Row>): string | null {
-    if (this.pendingOutgoingItemsByKey.has(item.key)) {
+  private findPendingLocalKey(item: MessageDataItem<Row>): string | null {
+    if (this.pendingLocalItemsByKey.has(item.key)) {
       return item.key
     }
 
-    for (const [key, pending] of this.pendingOutgoingItemsByKey) {
+    for (const [key, pending] of this.pendingLocalItemsByKey) {
       if (itemsShareIdentity(pending, item)) {
         return key
       }
@@ -366,14 +359,14 @@ export class MessageListSessionLiveSemantics<Row, Conversation> {
   }
 }
 
-function normalizeOutgoingStageInput<Row>(
-  input: Row | Row[] | MessageListOutgoingStageInput<Row>,
-): MessageListOutgoingStageInput<Row> {
+function normalizeLocalTailStageInput<Row>(
+  input: Row | Row[] | MessageListLocalTailStageInput<Row>,
+): MessageListLocalTailStageInput<Row> {
   if (Array.isArray(input)) {
     return { rows: input, reason: 'send' }
   }
 
-  if (isOutgoingStageInput<Row>(input)) {
+  if (isLocalTailStageInput<Row>(input)) {
     return {
       rows: input.rows,
       latest: input.latest,
@@ -385,14 +378,14 @@ function normalizeOutgoingStageInput<Row>(
   return { rows: [input], reason: 'send' }
 }
 
-function normalizeIncomingAppendInput<Row>(
-  input: Row | Row[] | MessageListIncomingAppendInput<Row>,
-): MessageListIncomingAppendInput<Row> {
+function normalizeRemoteTailAppendInput<Row>(
+  input: Row | Row[] | MessageListRemoteTailAppendInput<Row>,
+): MessageListRemoteTailAppendInput<Row> {
   if (Array.isArray(input)) {
     return { rows: input }
   }
 
-  if (isIncomingAppendInput<Row>(input)) {
+  if (isRemoteTailAppendInput<Row>(input)) {
     return {
       rows: input.rows,
       reason: input.reason,
@@ -403,9 +396,9 @@ function normalizeIncomingAppendInput<Row>(
   return { rows: [input] }
 }
 
-function isOutgoingStageInput<Row>(
-  input: Row | MessageListOutgoingStageInput<Row>,
-): input is MessageListOutgoingStageInput<Row> {
+function isLocalTailStageInput<Row>(
+  input: Row | MessageListLocalTailStageInput<Row>,
+): input is MessageListLocalTailStageInput<Row> {
   if (!input || typeof input !== 'object') {
     return false
   }
@@ -420,9 +413,9 @@ function isOutgoingStageInput<Row>(
     )
 }
 
-function isIncomingAppendInput<Row>(
-  input: Row | MessageListIncomingAppendInput<Row>,
-): input is MessageListIncomingAppendInput<Row> {
+function isRemoteTailAppendInput<Row>(
+  input: Row | MessageListRemoteTailAppendInput<Row>,
+): input is MessageListRemoteTailAppendInput<Row> {
   if (!input || typeof input !== 'object') {
     return false
   }
@@ -436,24 +429,24 @@ function isIncomingAppendInput<Row>(
     )
 }
 
-function resolveIncomingAppendFollowInput<Row>(
-  follow: MessageListIncomingAppendInput<Row>['follow'],
-  context: MessageListIncomingAppendContext<Row>,
-): MessageListIncomingAppendFollowDecision | null {
+function resolveRemoteAppendFollowInput<Row>(
+  follow: MessageListRemoteTailAppendInput<Row>['follow'],
+  context: MessageListRemoteTailAppendContext<Row>,
+): MessageListTailAppendFollowDecision | null {
   if (typeof follow === 'function') {
-    return normalizeIncomingAppendFollowDecision(follow(context))
+    return normalizeRemoteAppendFollowDecision(follow(context))
   }
 
-  return normalizeIncomingAppendFollowDecision(follow)
+  return normalizeRemoteAppendFollowDecision(follow)
 }
 
-function normalizeIncomingAppendFollowDecision(
+function normalizeRemoteAppendFollowDecision(
   decision:
-    | MessageListIncomingAppendInput<unknown>['follow']
-    | MessageListIncomingAppendFollowDecision
+    | MessageListRemoteTailAppendInput<unknown>['follow']
+    | MessageListTailAppendFollowDecision
     | boolean
     | undefined,
-): MessageListIncomingAppendFollowDecision | null {
+): MessageListTailAppendFollowDecision | null {
   if (decision === true || decision === 'follow') {
     return 'follow'
   }
@@ -477,15 +470,15 @@ function resolvePageFocus(getPageFocus?: () => boolean): boolean {
   return maybeDocument.document?.hasFocus?.() ?? true
 }
 
-function mergeOutgoingItems<Row>(
+function mergeLocalItems<Row>(
   items: MessageDataItem<Row>[],
-  outgoingItems: MessageDataItem<Row>[],
+  localItems: MessageDataItem<Row>[],
 ): MessageDataItem<Row>[] {
   const next: MessageDataItem<Row>[] = []
   const seenKeys = new Set<string>()
   const seenIdentityTokens = new Set<string>()
 
-  for (const item of [...items, ...outgoingItems]) {
+  for (const item of [...items, ...localItems]) {
     const tokens = identityTokens(item)
 
     if (

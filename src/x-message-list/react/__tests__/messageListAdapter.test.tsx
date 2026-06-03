@@ -2,7 +2,7 @@ import { StrictMode, act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from 'vitest'
 import {
-  createMessageListManager,
+  createMessageListSessionRegistry,
   type MessageListAdapter,
   type MessageListPage,
   type MessageListSession,
@@ -858,14 +858,14 @@ function createSessionFixture(input: {
   destroy: () => void
 } {
   const feedId = input.feedId ?? 'feed-a'
-  const manager = createMessageListManager<string>({
+  const registry = createMessageListSessionRegistry<string>({
     getAdapter: () => createStringAdapter(input.rows, {
       hasMoreBefore: input.hasMoreBefore,
       hasMoreAfter: input.hasMoreAfter,
       feedId,
     }),
   })
-  const session = manager.getSession(feedId)
+  const session = registry.getSession(feedId)
   const runtime = getMessageListSessionInternals(session).runtime
 
   session.rows.resetLatest(page(input.rows, {
@@ -877,7 +877,7 @@ function createSessionFixture(input: {
   return {
     session,
     runtime,
-    destroy: () => manager.destroyAll(),
+    destroy: () => registry.destroyAll(),
   }
 }
 

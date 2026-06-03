@@ -24,10 +24,15 @@ const DEMO_E2E_HARNESS_INTERNALS = path.join(
   'demoE2EHarnessInternals.ts',
 )
 const RUNTIME_ROOT = path.join(X_MESSAGE_LIST_ROOT, 'core', 'runtime')
-const MANAGER_INTERNAL = path.join(X_MESSAGE_LIST_ROOT, 'core', 'manager', 'internal.ts')
+const SESSION_REGISTRY_INTERNAL = path.join(
+  X_MESSAGE_LIST_ROOT,
+  'core',
+  'session-registry',
+  'internal.ts',
+)
 const REACT_ROOT = path.join(X_MESSAGE_LIST_ROOT, 'react')
 const PUBLIC_TYPE_FILES = [
-  path.join(X_MESSAGE_LIST_ROOT, 'core', 'manager', 'types.ts'),
+  path.join(X_MESSAGE_LIST_ROOT, 'core', 'session-registry', 'contracts', 'index.ts'),
   path.join(REACT_ROOT, 'types.ts'),
 ]
 const RUNTIME_INDEX = path.join(RUNTIME_ROOT, 'index.ts')
@@ -221,7 +226,7 @@ function guardDemoOrE2EImport(file, target) {
   }
 
   const reachesInternalSurface = isUnder(target, RUNTIME_ROOT) ||
-    target === MANAGER_INTERNAL
+    target === SESSION_REGISTRY_INTERNAL
 
   if (!reachesInternalSurface) {
     return

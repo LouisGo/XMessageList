@@ -1,9 +1,6 @@
 export type MessageListSessionId = string
 export type MessageListFeedId = string
 
-/** @deprecated Use MessageListSessionId. */
-export type MessageListConversationId = MessageListSessionId
-
 export type MessageListAnchor = {
   id?: string
   feedId?: string
@@ -48,12 +45,11 @@ export type MessageListScrollToMessageOptions = {
   }
 }
 
-export type MessageListRequestContext<Row, Conversation> = {
+export type MessageListRequestContext<Row, Feed = MessageListFeedId> = {
   id: MessageListSessionId
   sessionId: MessageListSessionId
   feedId: MessageListFeedId
-  conversation: Conversation
-  feed: Conversation
+  feed: Feed
   pageSize: number
   requestToken?: string
   reason?: string
@@ -61,7 +57,7 @@ export type MessageListRequestContext<Row, Conversation> = {
   boundaryRow?: Row
 }
 
-export type MessageListAdapter<Row, Conversation = MessageListConversationId> = {
+export type MessageListAdapter<Row, Feed = MessageListFeedId> = {
   row: {
     getKey(row: Row): string
     getAnchor(row: Row): MessageListAnchor | null
@@ -70,25 +66,25 @@ export type MessageListAdapter<Row, Conversation = MessageListConversationId> = 
   }
   request: {
     loadLatest(
-      context: MessageListRequestContext<Row, Conversation>,
+      context: MessageListRequestContext<Row, Feed>,
     ): Promise<MessageListPage<Row>>
     loadBefore(
-      context: MessageListRequestContext<Row, Conversation>,
+      context: MessageListRequestContext<Row, Feed>,
     ): Promise<MessageListPage<Row>>
     loadAfter(
-      context: MessageListRequestContext<Row, Conversation>,
+      context: MessageListRequestContext<Row, Feed>,
     ): Promise<MessageListPage<Row>>
     loadAround(
-      context: MessageListRequestContext<Row, Conversation>,
+      context: MessageListRequestContext<Row, Feed>,
     ): Promise<MessageListPage<Row>>
   }
   anchorMemory?: {
     load(
-      context: MessageListSessionContext<Conversation>,
+      context: MessageListSessionContext<Feed>,
     ): MessageListAnchorMemoryValue | null |
       Promise<MessageListAnchorMemoryValue | null>
     save(
-      context: MessageListSessionContext<Conversation>,
+      context: MessageListSessionContext<Feed>,
       value: MessageListAnchorMemoryValue,
     ): void | Promise<void>
   }
@@ -100,12 +96,11 @@ export type MessageListAdapter<Row, Conversation = MessageListConversationId> = 
   }
 }
 
-export type MessageListSessionContext<Conversation> = {
+export type MessageListSessionContext<Feed = MessageListFeedId> = {
   id: MessageListSessionId
   sessionId: MessageListSessionId
   feedId: MessageListFeedId
-  conversation: Conversation
-  feed: Conversation
+  feed: Feed
 }
 
 export type MessageListScrollMotionConfig = {
@@ -130,15 +125,8 @@ export type MessageListSessionRegistryOptions<
     }
   }
   tailEvents?: MessageListRemoteTailAppendConfig<Row, Feed>
-  /** @deprecated Use tailEvents. */
-  incoming?: {
-    getPageFocus?: () => boolean
-    shouldFollowAppend?: MessageListIncomingAppendPolicy<Row, Feed>
-  }
   scrollMotion?: MessageListScrollMotionConfig
   getFeed?: (id: MessageListSessionId) => Feed
-  /** @deprecated Use getFeed. */
-  getConversation?: (id: MessageListSessionId) => Feed
   getAdapter: (
     feed: Feed,
   ) => MessageListAdapter<Row, Feed>
@@ -146,12 +134,6 @@ export type MessageListSessionRegistryOptions<
     result: MessageListRequestResult<Row, Feed>,
   ) => void
 }
-
-/** @deprecated Use MessageListSessionRegistryOptions. */
-export type MessageListManagerOptions<
-  Row,
-  Conversation = MessageListFeedId,
-> = MessageListSessionRegistryOptions<Row, Conversation>
 
 export type MessageListSessionRegistryOptionsPatch<
   Row,
@@ -165,8 +147,6 @@ export type MessageListSessionRegistryOptionsPatch<
     }
   }
   tailEvents?: MessageListRemoteTailAppendConfig<Row, Feed>
-  /** @deprecated Use tailEvents. */
-  incoming?: MessageListSessionRegistryOptions<Row, Feed>['incoming']
   scrollMotion?: MessageListScrollMotionConfig
   onRequestResult?: (
     result: MessageListRequestResult<Row, Feed>,
@@ -177,7 +157,6 @@ export type MessageListRequestResult<Row, Feed> = {
   id: MessageListSessionId
   sessionId: MessageListSessionId
   feedId: MessageListFeedId
-  conversation: Feed
   feed: Feed
   kind: 'latest' | 'before' | 'after' | 'around'
   status: 'applied' | 'failed' | 'stale'
@@ -262,29 +241,22 @@ export type MessageListIdentityRemap = {
   nextKey: string
 }
 
-export type MessageListOutgoingStageInput<Row> = {
+export type MessageListLocalTailStageInput<Row> = {
   rows: Row[]
   latest?: MessageListPage<Row>
   reason?: 'send' | 'retry'
   retireKeys?: string[]
 }
 
-export type MessageListLocalTailStageInput<Row> =
-  MessageListOutgoingStageInput<Row>
+export type MessageListTailAppendFollowDecision = 'follow' | 'preserve'
 
-export type MessageListIncomingAppendFollowDecision = 'follow' | 'preserve'
-
-export type MessageListTailAppendFollowDecision =
-  MessageListIncomingAppendFollowDecision
-
-export type MessageListIncomingAppendContext<
+export type MessageListRemoteTailAppendContext<
   Row,
   Feed = unknown,
 > = {
   id: MessageListSessionId
   sessionId: MessageListSessionId
   feedId: MessageListFeedId
-  conversation: Feed
   feed: Feed
   rows: Row[]
   reason?: string
@@ -307,18 +279,6 @@ export type MessageListIncomingAppendContext<
   pageFocused: boolean
 }
 
-export type MessageListRemoteTailAppendContext<
-  Row,
-  Feed = unknown,
-> = MessageListIncomingAppendContext<Row, Feed>
-
-export type MessageListIncomingAppendPolicy<
-  Row,
-  Feed = unknown,
-> = (
-  context: MessageListIncomingAppendContext<Row, Feed>,
-) => MessageListIncomingAppendFollowDecision | boolean
-
 export type MessageListRemoteTailAppendPolicy<
   Row,
   Feed = unknown,
@@ -326,23 +286,17 @@ export type MessageListRemoteTailAppendPolicy<
   context: MessageListRemoteTailAppendContext<Row, Feed>,
 ) => MessageListTailAppendFollowDecision | boolean
 
-export type MessageListIncomingAppendFollowInput<Row> =
-  | MessageListIncomingAppendFollowDecision
+export type MessageListTailAppendFollowInput<Row> =
+  | MessageListTailAppendFollowDecision
   | 'auto'
   | boolean
-  | MessageListIncomingAppendPolicy<Row>
+  | MessageListRemoteTailAppendPolicy<Row>
 
-export type MessageListIncomingAppendInput<Row> = {
+export type MessageListRemoteTailAppendInput<Row> = {
   rows: Row[]
   reason?: string
-  follow?: MessageListIncomingAppendFollowInput<Row>
+  follow?: MessageListTailAppendFollowInput<Row>
 }
-
-export type MessageListTailAppendFollowInput<Row> =
-  MessageListIncomingAppendFollowInput<Row>
-
-export type MessageListRemoteTailAppendInput<Row> =
-  MessageListIncomingAppendInput<Row>
 
 export type MessageListSession<Row = unknown> = {
   id: MessageListSessionId
@@ -376,16 +330,6 @@ export type MessageListSession<Row = unknown> = {
     remote: {
       append(input: Row | Row[] | MessageListRemoteTailAppendInput<Row>): void
     }
-  }
-  /** @deprecated Use tail.local. */
-  outgoing: {
-    stage(input: Row | Row[] | MessageListOutgoingStageInput<Row>): void
-    patch(rows: Row[]): void
-    applyIdentityRemap(remaps: MessageListIdentityRemap[]): void
-  }
-  /** @deprecated Use tail.remote. */
-  incoming: {
-    append(input: Row | Row[] | MessageListIncomingAppendInput<Row>): void
   }
 }
 
@@ -426,9 +370,3 @@ export type MessageListSessionRegistry<
   updateOptions(options: MessageListSessionRegistryOptionsPatch<Row, Feed>): void
   sweep(): void
 }
-
-/** @deprecated Use MessageListSessionRegistry. */
-export type MessageListManager<
-  Row = unknown,
-  Conversation = MessageListFeedId,
-> = MessageListSessionRegistry<Row, Conversation>

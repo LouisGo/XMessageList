@@ -1,8 +1,6 @@
 import { MessageListSession } from '../session/session'
 import type {
-  MessageListConversationId,
-  MessageListManager,
-  MessageListManagerOptions,
+  MessageListFeedId,
   MessageListSessionId,
   MessageListSessionRegistry,
   MessageListSessionRegistryEntry,
@@ -32,7 +30,7 @@ type SessionRecord<Row, Feed> = {
   hostRetains: Map<MessageListSessionRetainReason, number>
 }
 
-export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListConversationId>
+export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListFeedId>
   implements MessageListSessionRegistry<Row, Feed> {
   private readonly sessions = new Map<
     MessageListSessionId,
@@ -59,13 +57,15 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListConver
     const adapter = this.options.getAdapter(feed)
     const session = new MessageListSession({
       id,
-      conversation: feed,
+      feed,
       adapter,
       defaults: this.defaults,
-      incoming: {
-        getPageFocus: () => resolvePageFocus(this.getIncomingOptions()?.getPageFocus),
-        shouldFollowAppend: (context) =>
-          this.getIncomingOptions()?.shouldFollowAppend?.(context),
+      tailEvents: {
+        getPageFocus: () => resolvePageFocus(
+          this.options.tailEvents?.getPageFocus,
+        ),
+        shouldFollowRemoteAppend: (context) =>
+          this.options.tailEvents?.shouldFollowRemoteAppend?.(context),
       },
       scrollMotion: {
         enabled: () => {
@@ -182,9 +182,6 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListConver
       tailEvents: options.tailEvents
         ? { ...this.options.tailEvents, ...options.tailEvents }
         : this.options.tailEvents,
-      incoming: options.incoming
-        ? { ...this.options.incoming, ...options.incoming }
-        : this.options.incoming,
       scrollMotion: options.scrollMotion ?? this.options.scrollMotion,
       onRequestResult: options.onRequestResult ?? this.options.onRequestResult,
     }
@@ -217,10 +214,6 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListConver
   private getFeed(id: MessageListSessionId): Feed {
     if (this.options.getFeed) {
       return this.options.getFeed(id)
-    }
-
-    if (this.options.getConversation) {
-      return this.options.getConversation(id)
     }
 
     return id as Feed
@@ -258,38 +251,19 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListConver
     return record.session.hasRetainedView() || getHostRetainCount(record) > 0
   }
 
-  private getIncomingOptions(): MessageListManagerOptions<Row, Feed>['incoming'] {
-    const tailEvents = this.options.tailEvents
-
-    if (!tailEvents) {
-      return this.options.incoming
-    }
-
-    return {
-      getPageFocus: tailEvents.getPageFocus,
-      shouldFollowAppend: tailEvents.shouldFollowRemoteAppend,
-    }
-  }
 }
 
 export function createMessageListSessionRegistry<
   Row,
-  Feed = MessageListConversationId,
+  Feed = MessageListFeedId,
 >(
   options: MessageListSessionRegistryOptions<Row, Feed>,
 ): MessageListSessionRegistry<Row, Feed> {
   return new ApplicationMessageListSessionRegistry<Row, Feed>(options)
 }
 
-/** @deprecated Use createMessageListSessionRegistry. */
-export function createMessageListManager<Row, Conversation = MessageListConversationId>(
-  options: MessageListManagerOptions<Row, Conversation>,
-): MessageListManager<Row, Conversation> {
-  return createMessageListSessionRegistry<Row, Conversation>(options)
-}
-
 function normalizeDefaults(
-  defaults: MessageListManagerOptions<unknown>['defaults'],
+  defaults: MessageListSessionRegistryOptions<unknown>['defaults'],
 ): NormalizedDefaults {
   return {
     pageSize: defaults?.pageSize ?? DEFAULT_PAGE_SIZE,

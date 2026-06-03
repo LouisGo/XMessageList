@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  createMessageListManager,
   createMessageListSessionRegistry,
   type MessageListAdapter,
   type MessageListPage,
@@ -31,7 +30,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('createMessageListManager', () => {
+describe('createMessageListSessionRegistry', () => {
   it('exposes registry naming, session meta, and host retain lifecycle', () => {
     const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
       defaults: {
@@ -99,8 +98,8 @@ describe('createMessageListManager', () => {
     const getAdapter = vi.fn((conversation: TestConversation) =>
       conversation.type === 'favorite' ? favoriteAdapter : normalAdapter
     )
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({
         id,
         type: id.startsWith('favorite') ? 'favorite' : 'normal',
       }),
@@ -125,7 +124,7 @@ describe('createMessageListManager', () => {
       .toBe('favorite-latest')
   })
 
-  it('passes sessionId, feedId, and feed aliases through request context', async () => {
+  it('passes sessionId, feedId, and feed through request context', async () => {
     const loadLatest = vi.fn((context) => Promise.resolve(page([context.feed.id])))
     const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
       getFeed: (id) => ({ id, type: 'favorite' }),
@@ -140,20 +139,19 @@ describe('createMessageListManager', () => {
       id: 'feed-a',
       sessionId: 'feed-a',
       feedId: 'feed-a',
-      conversation: { id: 'feed-a', type: 'favorite' },
       feed: { id: 'feed-a', type: 'favorite' },
     }))
   })
 
   it('evicts inactive overflow sessions by keepAlive policy', () => {
-    const manager = createMessageListManager<TestRow, TestConversation>({
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
       defaults: {
         keepAlive: {
           maxSessions: 1,
           ttlMs: 10 * 60_000,
         },
       },
-      getConversation: (id) => ({ id, type: 'normal' }),
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
     })
 
@@ -166,8 +164,8 @@ describe('createMessageListManager', () => {
   })
 
   it('destroys sessions only through manager policy or explicit calls', async () => {
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
     })
     const session = manager.getSession('feed-a')
@@ -181,8 +179,8 @@ describe('createMessageListManager', () => {
   })
 
   it('does not expose runtime internals as enumerable session fields', () => {
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
     })
     const session = manager.getSession('feed-a')
@@ -196,8 +194,8 @@ describe('createMessageListManager', () => {
     const loadAround = vi.fn((context) => Promise.resolve(
       page([context.target?.stableId ?? 'missing']),
     ))
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => ({
         ...createAdapter('normal', {
           loadLatest,
@@ -237,8 +235,8 @@ describe('createMessageListManager', () => {
 
   it('publishes event-driven around requests instead of self-staling them', async () => {
     const requestResults: string[] = []
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadAround: (context) => Promise.resolve(page([
           context.target?.stableId ?? 'missing-target',
@@ -268,8 +266,8 @@ describe('createMessageListManager', () => {
   it('keeps around requests alive across same-generation live revisions', async () => {
     const pendingAround: Array<(page: MessageListPage<TestRow>) => void> = []
     const requestResults: string[] = []
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadAround: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pendingAround.push(resolve)
@@ -301,8 +299,8 @@ describe('createMessageListManager', () => {
 
   it('publishes event-driven latest requests instead of self-staling them', async () => {
     const requestResults: string[] = []
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['tail'])),
       }),
@@ -332,10 +330,10 @@ describe('createMessageListManager', () => {
     expect(requestResults).not.toContain('latest:stale')
   })
 
-  it('threads manager scrollMotion into runtime and disables follow-bottom and jump motion without rebuilding the session', async () => {
+  it('threads registry scrollMotion into runtime and disables follow-bottom and jump motion without rebuilding the session', async () => {
     const resolveMotionEnabled = vi.fn(() => false)
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       scrollMotion: {
         enabled: resolveMotionEnabled,
       },
@@ -390,8 +388,8 @@ describe('createMessageListManager', () => {
   })
 
   it('exposes stable session state and publishes selector subscriptions', async () => {
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['row-1', 'row-2'], {
           hasMoreBefore: true,
@@ -433,8 +431,8 @@ describe('createMessageListManager', () => {
   })
 
   it('mutates only loaded rows and invalidates render versions without row data changes', async () => {
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['row-10', 'row-11', 'row-12'])),
       }),
@@ -471,8 +469,8 @@ describe('createMessageListManager', () => {
 
   it('routes command edge loads through runtime edge state', async () => {
     const pendingBefore: Array<(page: MessageListPage<TestRow>) => void> = []
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['row-2'], {
           hasMoreBefore: true,
@@ -503,8 +501,8 @@ describe('createMessageListManager', () => {
   it('does not let a pending bootstrap overwrite local reset rows', async () => {
     const pending: Array<(page: MessageListPage<TestRow>) => void> = []
     const requestResults: string[] = []
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pending.push(resolve)
@@ -534,8 +532,8 @@ describe('createMessageListManager', () => {
   it('cancels bootstrap while anchor memory is still pending', async () => {
     let resolveMemory: ((value: null) => void) | null = null
     const loadLatest = vi.fn(() => Promise.resolve(page(['bootstrap'])))
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => ({
         ...createAdapter('normal', {
           loadLatest,
@@ -565,8 +563,8 @@ describe('createMessageListManager', () => {
     type NeedMoreEvent = Extract<MessageListRuntimeEvent, { edge: 'before' | 'after' }>
     const pendingBefore: Array<(page: MessageListPage<TestRow>) => void> = []
     const pendingAfter: Array<(page: MessageListPage<TestRow>) => void> = []
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadBefore: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pendingBefore.push(resolve)
@@ -640,8 +638,8 @@ describe('createMessageListManager', () => {
     type NeedMoreEvent = Extract<MessageListRuntimeEvent, { edge: 'before' | 'after' }>
     const pendingBefore: Array<(page: MessageListPage<TestRow>) => void> = []
     const requestResults: string[] = []
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadBefore: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pendingBefore.push(resolve)
@@ -694,9 +692,9 @@ describe('createMessageListManager', () => {
     expect(requestResults).toContain('before:stale')
   })
 
-  it('stages outgoing rows into the current latest segment and keeps them patchable', async () => {
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+  it('stages local tail rows into the current latest segment and keeps them patchable', async () => {
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['tail'])),
       }),
@@ -707,9 +705,12 @@ describe('createMessageListManager', () => {
     await waitFor(() => internals.dataRuntime.getSegment().items[0]?.message?.id === 'tail')
 
     const scrollToLatest = vi.spyOn(internals.runtime, 'scrollToLatest')
-    session.outgoing.stage({ id: 'local', text: 'sending' })
-    session.outgoing.patch([{ id: 'local', text: 'failed' }])
-    session.outgoing.stage({ rows: [{ id: 'local', text: 'retrying' }], reason: 'retry' })
+    session.tail.local.stage({ id: 'local', text: 'sending' })
+    session.tail.local.patch([{ id: 'local', text: 'failed' }])
+    session.tail.local.stage({
+      rows: [{ id: 'local', text: 'retrying' }],
+      reason: 'retry',
+    })
 
     expect(scrollToLatest).toHaveBeenCalledTimes(2)
     expect(internals.dataRuntime.getSegment().items.map((item) => item.message))
@@ -719,10 +720,10 @@ describe('createMessageListManager', () => {
       ])
   })
 
-  it('queues outgoing rows from a non-latest segment and merges them into latest', async () => {
+  it('queues local tail rows from a non-latest segment and merges them into latest', async () => {
     const pendingLatest: Array<(page: MessageListPage<TestRow>) => void> = []
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pendingLatest.push(resolve)
@@ -744,7 +745,7 @@ describe('createMessageListManager', () => {
       anchor: { id: 'middle' },
     })
     const scrollToLatest = vi.spyOn(internals.runtime, 'scrollToLatest')
-    session.outgoing.stage({ id: 'local', text: 'sending' })
+    session.tail.local.stage({ id: 'local', text: 'sending' })
 
     expect(scrollToLatest).toHaveBeenCalledTimes(1)
     expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
@@ -763,10 +764,10 @@ describe('createMessageListManager', () => {
     expect(internals.dataRuntime.getSegment().hasMoreAfter).toBe(false)
   })
 
-  it('uses outgoing latest input to rebuild latest without requesting latest again', async () => {
+  it('uses local tail latest input to rebuild latest without requesting latest again', async () => {
     const loadLatest = vi.fn(() => Promise.resolve(page(['normal-latest'])))
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest,
       }),
@@ -787,7 +788,7 @@ describe('createMessageListManager', () => {
       runtimeEvents.push(event)
     })
 
-    session.outgoing.stage({
+    session.tail.local.stage({
       rows: [{ id: 'local' }],
       latest: page(['tail', 'local'], {
         hasMoreBefore: true,
@@ -806,10 +807,10 @@ describe('createMessageListManager', () => {
     expect(internals.getSnapshot().pendingIntent).toBe('follow-bottom')
   })
 
-  it('clears pending outgoing rows when the host locally resets the segment', async () => {
+  it('clears pending local tail rows when the host locally resets the segment', async () => {
     const pendingLatest: Array<(page: MessageListPage<TestRow>) => void> = []
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pendingLatest.push(resolve)
@@ -830,7 +831,7 @@ describe('createMessageListManager', () => {
       hasMoreAfter: true,
       anchor: { id: 'middle' },
     })
-    session.outgoing.stage({ id: 'local', text: 'sending' })
+    session.tail.local.stage({ id: 'local', text: 'sending' })
     await waitFor(() => pendingLatest.length === 2)
 
     session.rows.clear()
@@ -852,9 +853,9 @@ describe('createMessageListManager', () => {
       .toEqual(['fresh'])
   })
 
-  it('applies retireKeys while rebuilding latest from outgoing latest input', async () => {
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+  it('applies retireKeys while rebuilding latest from local tail latest input', async () => {
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
     })
     const session = manager.getSession('feed-a')
@@ -869,7 +870,7 @@ describe('createMessageListManager', () => {
       anchor: { id: 'failed-local' },
     })
 
-    session.outgoing.stage({
+    session.tail.local.stage({
       rows: [{ id: 'retry-server', text: 'sent' }],
       latest: page(['tail', 'failed-local', 'retry-server'], {
         hasMoreBefore: true,
@@ -884,9 +885,9 @@ describe('createMessageListManager', () => {
       .toEqual(['tail', 'retry-server'])
   })
 
-  it('applies outgoing identity remaps to visible outgoing rows', async () => {
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+  it('applies local tail identity remaps to visible local tail rows', async () => {
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
     })
     const session = manager.getSession('feed-a')
@@ -894,8 +895,8 @@ describe('createMessageListManager', () => {
 
     await waitFor(() => internals.dataRuntime.getSegment().items.length > 0)
 
-    session.outgoing.stage({ id: 'local' })
-    session.outgoing.applyIdentityRemap([{
+    session.tail.local.stage({ id: 'local' })
+    session.tail.local.applyIdentityRemap([{
       from: { localId: 'local', stableId: 'local' },
       to: { serverId: 'server', stableId: 'server' },
       previousKey: 'local',
@@ -915,8 +916,8 @@ describe('createMessageListManager', () => {
   })
 
   it('stages retry success with an atomic retire and send-style follow decision', async () => {
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['tail', 'failed-local'])),
       }),
@@ -928,7 +929,7 @@ describe('createMessageListManager', () => {
       internals.dataRuntime.getSegment().items.at(-1)?.message?.id === 'failed-local'
     )
 
-    session.outgoing.stage({
+    session.tail.local.stage({
       rows: [{ id: 'retry-server', text: 'sent' }],
       reason: 'retry',
       retireKeys: ['failed-local'],
@@ -944,16 +945,16 @@ describe('createMessageListManager', () => {
     })
   })
 
-  it('routes incoming append through the configured follow policy', async () => {
-    const shouldFollowAppend = vi.fn(() => 'preserve' as const)
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+  it('routes remote tail append through the configured follow policy', async () => {
+    const shouldFollowRemoteAppend = vi.fn(() => 'preserve' as const)
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['tail'])),
       }),
-      incoming: {
+      tailEvents: {
         getPageFocus: () => false,
-        shouldFollowAppend,
+        shouldFollowRemoteAppend,
       },
     })
     const session = manager.getSession('feed-a')
@@ -961,12 +962,12 @@ describe('createMessageListManager', () => {
 
     await waitFor(() => internals.dataRuntime.getSegment().items[0]?.message?.id === 'tail')
 
-    session.incoming.append({
+    session.tail.remote.append({
       rows: [{ id: 'remote' }],
       reason: 'push',
     })
 
-    expect(shouldFollowAppend).toHaveBeenCalledWith(expect.objectContaining({
+    expect(shouldFollowRemoteAppend).toHaveBeenCalledWith(expect.objectContaining({
       id: 'feed-a',
       rows: [{ id: 'remote' }],
       reason: 'push',
@@ -1028,7 +1029,7 @@ describe('createMessageListManager', () => {
     })
   })
 
-  it('aliases local tail methods to outgoing semantics', async () => {
+  it('keeps local tail rows patchable through canonical tail API', async () => {
     const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
       getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
@@ -1043,8 +1044,6 @@ describe('createMessageListManager', () => {
     session.tail.local.stage({ id: 'local', text: 'sending' })
     session.tail.local.patch([{ id: 'local', text: 'sent' }])
 
-    expect(session.outgoing).toBe(session.tail.local)
-    expect(session.incoming).toBe(session.tail.remote)
     expect(internals.dataRuntime.getSegment().items.map((item) => item.message))
       .toEqual([
         { id: 'tail' },
@@ -1052,9 +1051,9 @@ describe('createMessageListManager', () => {
       ])
   })
 
-  it('does not insert incoming append into a non-latest segment', async () => {
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+  it('does not insert remote tail append into a non-latest segment', async () => {
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
     })
     const session = manager.getSession('feed-a')
@@ -1069,7 +1068,7 @@ describe('createMessageListManager', () => {
       anchor: { id: 'middle' },
     })
 
-    session.incoming.append({ id: 'remote' })
+    session.tail.remote.append({ id: 'remote' })
 
     expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
       .toEqual(['middle'])
@@ -1084,8 +1083,8 @@ describe('createMessageListManager', () => {
       }),
     })
     const requestResults: string[] = []
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => adapter,
       onRequestResult: (result) => {
         requestResults.push(`${result.kind}:${result.status}`)
@@ -1111,8 +1110,8 @@ describe('createMessageListManager', () => {
   it('keeps overlay idle when a bootstrap request finishes before the delay', async () => {
     vi.useFakeTimers()
     const pending: Array<(page: MessageListPage<TestRow>) => void> = []
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pending.push(resolve)
@@ -1137,8 +1136,8 @@ describe('createMessageListManager', () => {
   it('publishes overlay loading only after a slow request crosses the delay', async () => {
     vi.useFakeTimers()
     const pending: Array<(page: MessageListPage<TestRow>) => void> = []
-    const manager = createMessageListManager<TestRow, TestConversation>({
-      getConversation: (id) => ({ id, type: 'normal' }),
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getFeed: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pending.push(resolve)

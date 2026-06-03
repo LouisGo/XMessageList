@@ -36,13 +36,13 @@ import {
   type SavedRuntimeAnchor,
 } from './demoScenarioRuntimeHelpers'
 
-type DemoConversation = {
+type DemoFeedRecord = {
   id: string
 }
 
-export type DemoFeed = DemoConversation
+export type DemoFeed = DemoFeedRecord
 
-export type DemoManagerOptions = {
+export type DemoRegistryOptions = {
   getActiveFeedId: () => string
   getSelectedFeedId: () => string
   isFeedLoading: () => boolean
@@ -56,15 +56,15 @@ export type DemoManagerOptions = {
   setMessageCount: (messageCount: number) => void
   setPendingFeedId: (feedId: string | null) => void
   syncLoadedState: (
-    result: MessageListRequestResult<DemoMessage, DemoConversation>,
+    result: MessageListRequestResult<DemoMessage, DemoFeedRecord>,
     eventText?: string,
   ) => void
 }
 
-export function createDemoManager(
-  input: DemoManagerOptions,
+export function createDemoRegistry(
+  input: DemoRegistryOptions,
 ): MessageListSessionRegistry<DemoMessage, DemoFeed> {
-  return createMessageListSessionRegistry<DemoMessage, DemoConversation>({
+  return createMessageListSessionRegistry<DemoMessage, DemoFeedRecord>({
     defaults: {
       pageSize: PAGE_SIZE,
       maxItems: DEMO_MAX_ITEMS,
@@ -77,7 +77,7 @@ export function createDemoManager(
       enabled: false,
     },
     getFeed: (id) => ({ id }),
-    getAdapter: (conversation) => createDemoAdapter(conversation, input),
+    getAdapter: (feed) => createDemoAdapter(feed, input),
     tailEvents: {
       getPageFocus: () => globalThis.location?.pathname === '/e2e' ||
         (globalThis.document?.hasFocus?.() ?? true),
@@ -144,9 +144,9 @@ export async function prepareDemoE2EScenario(input: {
 }
 
 function createDemoAdapter(
-  conversation: DemoConversation,
-  input: DemoManagerOptions,
-): MessageListAdapter<DemoMessage, DemoConversation> {
+  feed: DemoFeedRecord,
+  input: DemoRegistryOptions,
+): MessageListAdapter<DemoMessage, DemoFeedRecord> {
   return {
     row: {
       getKey: (row) => row.id,
@@ -171,7 +171,7 @@ function createDemoAdapter(
           await wait(delayMs)
         }
         const resp = await getLatestMessages({
-          feedId: conversation.id,
+          feedId: feed.id,
           count: context.pageSize,
         })
 
@@ -200,7 +200,7 @@ function createDemoAdapter(
         }
 
         const resp = await getMessagesAround({
-          feedId: conversation.id,
+          feedId: feed.id,
           anchor: toDemoApiAnchor(context.target),
           before: Math.floor(context.pageSize / 2),
           after: Math.ceil(context.pageSize / 2),
@@ -275,8 +275,8 @@ function createDemoAdapter(
 
 async function loadDemoEdgePage(
   edge: 'before' | 'after',
-  context: Parameters<MessageListAdapter<DemoMessage, DemoConversation>['request']['loadBefore']>[0],
-  input: DemoManagerOptions,
+  context: Parameters<MessageListAdapter<DemoMessage, DemoFeedRecord>['request']['loadBefore']>[0],
+  input: DemoRegistryOptions,
 ): Promise<MessageListPage<DemoMessage>> {
   const boundaryMessage = context.boundaryRow
 
@@ -314,8 +314,8 @@ async function loadDemoEdgePage(
 }
 
 function handleDemoRequestResult(
-  result: MessageListRequestResult<DemoMessage, DemoConversation>,
-  input: DemoManagerOptions,
+  result: MessageListRequestResult<DemoMessage, DemoFeedRecord>,
+  input: DemoRegistryOptions,
 ): void {
   if (result.status !== 'applied') {
     if (result.id === input.getActiveFeedId() && result.status === 'failed') {
@@ -345,7 +345,7 @@ function handleDemoRequestResult(
 }
 
 function describeRequestResult(
-  result: MessageListRequestResult<DemoMessage, DemoConversation>,
+  result: MessageListRequestResult<DemoMessage, DemoFeedRecord>,
 ): string {
   const count = result.page?.rows.length ?? 0
 

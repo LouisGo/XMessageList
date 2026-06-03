@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | [principles.md](./principles.md) | 为什么选择 loaded segment native scroll | 具体 API 命名 |
 | [naming-and-api.md](./naming-and-api.md) | 统一术语、组件名、package root export 和 public API | 单个事务内部实现 |
-| [session-registry-target-api.md](./session-registry-target-api.md) | `MessageListManager` 到 `MessageListSessionRegistry` 的目标架构和 API 调整方案 | 当前实现完成度 |
+| [session-registry-target-api.md](./session-registry-target-api.md) | `MessageListSessionRegistry` 的目标架构和 API 调整方案 | 当前实现完成度 |
 | [layering-and-ownership.md](./layering-and-ownership.md) | main、data runtime、viewport runtime、React、host 的边界 | 单个事务时序 |
 | [anchor-and-data-window.md](./anchor-and-data-window.md) | identity anchor、visual anchor、loaded segment、数据窗口关系 | DOM class 细节 |
 | [runtime-state-machine.md](./runtime-state-machine.md) | runtime 的生命周期、transaction、pending intent、edge latch 状态轴 | E2E 场景列表 |

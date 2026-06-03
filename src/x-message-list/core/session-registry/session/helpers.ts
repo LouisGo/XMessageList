@@ -18,12 +18,13 @@ import {
 } from '../adapters/rowAdapter'
 import type {
   MessageListAdapter,
-  MessageListConversationId,
+  MessageListFeedId,
   MessageListIdentityRemap,
-  MessageListManagerOptions,
   MessageListPage,
   MessageListRowsReplaceInput,
   MessageListScrollToMessageOptions,
+  MessageListSessionId,
+  MessageListSessionRegistryOptions,
 } from '../contracts'
 
 export type RuntimeNeedEvent = Extract<
@@ -36,20 +37,29 @@ export type AroundRequestOptions = {
   offsetWithinMessage?: number
 }
 
-export type SessionOptions<Row, Conversation> = {
-  id: MessageListConversationId
-  conversation: Conversation
-  adapter: MessageListAdapter<Row, Conversation>
-  defaults: Required<NonNullable<MessageListManagerOptions<Row, Conversation>['defaults']>>
-  incoming?: MessageListManagerOptions<Row, Conversation>['incoming']
-  scrollMotion?: MessageListManagerOptions<Row, Conversation>['scrollMotion']
-  onRequestResult?: MessageListManagerOptions<Row, Conversation>['onRequestResult']
+export type SessionDefaults = {
+  pageSize: number
+  maxItems: number
+  keepAlive: {
+    maxSessions: number
+    ttlMs: number
+  }
 }
 
-export function toSessionResetInput<Row, Conversation>(
-  id: MessageListConversationId,
+export type SessionOptions<Row, Feed = MessageListFeedId> = {
+  id: MessageListSessionId
+  feed: Feed
+  adapter: MessageListAdapter<Row, Feed>
+  defaults: SessionDefaults
+  tailEvents?: MessageListSessionRegistryOptions<Row, Feed>['tailEvents']
+  scrollMotion?: MessageListSessionRegistryOptions<Row, Feed>['scrollMotion']
+  onRequestResult?: MessageListSessionRegistryOptions<Row, Feed>['onRequestResult']
+}
+
+export function toSessionResetInput<Row, Feed>(
+  id: MessageListSessionId,
   page: MessageListPage<Row>,
-  adapter: MessageListAdapter<Row, Conversation>,
+  adapter: MessageListAdapter<Row, Feed>,
 ): ResetSegmentInput<Row, unknown> {
   return {
     items: toMessageDataItems(id, page.rows, adapter),
@@ -62,10 +72,10 @@ export function toSessionResetInput<Row, Conversation>(
   }
 }
 
-export function toSessionReplaceInput<Row, Conversation>(
-  id: MessageListConversationId,
+export function toSessionReplaceInput<Row, Feed>(
+  id: MessageListSessionId,
   input: MessageListRowsReplaceInput<Row>,
-  adapter: MessageListAdapter<Row, Conversation>,
+  adapter: MessageListAdapter<Row, Feed>,
 ): ReplaceSegmentInput<Row, unknown> {
   return {
     items: toMessageDataItems(id, input.rows, adapter),
@@ -81,7 +91,7 @@ export function toSessionReplaceInput<Row, Conversation>(
 }
 
 export function toSessionIdentityRemaps(
-  id: MessageListConversationId,
+  id: MessageListSessionId,
   remaps: MessageListIdentityRemap[],
 ): IdentityRemapInput {
   return remaps.map((remap) => ({
@@ -92,7 +102,7 @@ export function toSessionIdentityRemaps(
 }
 
 export function toRuntimeScrollOptions(
-  id: MessageListConversationId,
+  id: MessageListSessionId,
   options: MessageListScrollToMessageOptions | undefined,
 ): RuntimeScrollToMessageOptions | undefined {
   if (!options) {

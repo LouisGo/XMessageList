@@ -1,25 +1,17 @@
-# React Adapter
+# React 适配器
 
-`src/x-message-list/react` projects a `MessageListSession` into DOM and reports
-commit acknowledgements back to runtime. It does not own data requests, data
-merge, scroll correction, edge latches, read receipts or anchor persistence.
+`src/x-message-list/react` 将 `MessageListSession` 投射到 DOM，并向 runtime 报告提交确认。它不掌管数据请求、数据合并、滚动修正、边缘锁定、已读回执或锚点持久化。
 
-## Directory Rules
+## 目录规则
 
-- `components/` owns the projection shell, rows, commit ack, provider context and
-  runtime event bridge.
-- `hooks/` owns provider-backed React integration such as
-  `useMessageListSession` and selector-backed session state reads via
-  `useMessageListState`.
-- `scrollbar/` owns the optional custom scrollbar overlay, metric reading,
-  geometry and styles.
-- `types.ts` and `index.ts` remain the public React adapter surface.
+- `components/`：投射外壳、行、提交确认、provider context 和 runtime 事件桥接。
+- `hooks/`：provider 支撑的 React 集成，如 `useMessageListSession` 和基于 selector 的 session 状态读取 `useMessageListState`。
+- `scrollbar/`：可选的自定义滚动条浮层、度量读取、几何与样式。
+- `types.ts` 和 `index.ts`：React 适配器的公开接口面。
 
-React may use runtime public/adapter-private barrels and manager internal
-session access. It must not import runtime private implementation files from
-adapter components.
+React 可使用 runtime 的公开/适配器私有 barrel 和 manager 内部 session 访问，但适配器组件不得导入 runtime 私有实现文件。
 
-`MessageList` accepts `session` as the application integration point:
+`MessageList` 接收 `session` 作为应用集成入口：
 
 ```tsx
 const session = useMessageListSession<Message>(conversationId)

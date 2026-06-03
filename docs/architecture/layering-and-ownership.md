@@ -6,8 +6,8 @@
 Main / Bridge
   resolves message identity and server query contracts
 
-MessageList Manager
-  owns per-conversation session lifecycle, adapter routing, request bridge,
+MessageList Session Registry
+  owns per-feed session lifecycle, adapter routing, request bridge,
   `anchorMemory`, `readReceipts` workers and keepAlive retention
 
 Renderer Data Runtime
@@ -21,7 +21,7 @@ React Adapter
   renders slots, sends commit ack
 
 App / Demo Host
-  owns active conversation selection, manager construction, adapters and logging UI
+  owns active feed selection, registry construction, adapters and logging UI
 ```
 
 对外命名以 `MessageList` 为准：公开组件是 `MessageList`，公开会话对象是
@@ -59,7 +59,7 @@ MessageList Session Registry 负责：
   上下文，并消费业务返回的 follow/preserve 决策。
 - 按 keepAlive 策略或显式 API 销毁 session。
 
-MessageList Manager 不负责：
+MessageList Session Registry 不负责：
 
 - 渲染 DOM。
 - 读取 row DOM 或 scrollTop。
@@ -139,7 +139,7 @@ Host 负责：
 - 通过 `session.rows` 接入 edit、delete、reaction、streaming patch、
   identity remap、replace 和 clear 等普通 row 变更。
 - 作为分页缓存、持久化、dirty timestamp 和未加载页脏检查的 canonical owner；
-  XMessageList manager 只接收归一化后的当前 loaded segment 变更。
+  XMessageList session registry 只接收归一化后的当前 loaded segment 变更。
 - demo host 只使用 public session API 作为标准接入样板；E2E-only helper 可以读取
   runtime snapshot/evidence，但只服务测试证据和 fixture reset。
 

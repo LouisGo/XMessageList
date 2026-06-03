@@ -23,7 +23,7 @@ export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown>
     notifyDirectScrollRebased(): void
   }
 
-export type MessageListManagerRuntime<TMessage = unknown, TOptimistic = unknown> =
+export type MessageListSessionRegistryRuntime<TMessage = unknown, TOptimistic = unknown> =
   MessageListRuntime<TMessage, TOptimistic> & {
     prepareFollowBottomForLocalReset(): void
     startEdgeRequest(edge: 'before' | 'after', reason: string): void
@@ -38,11 +38,11 @@ export function getMessageListAdapterRuntime<
   return runtime as MessageListAdapterRuntime<TMessage, TOptimistic>
 }
 
-export function getMessageListManagerRuntime<
+export function getMessageListSessionRegistryRuntime<
   TMessage,
   TOptimistic,
 >(
   runtime: MessageListRuntime<TMessage, TOptimistic>,
-): MessageListManagerRuntime<TMessage, TOptimistic> {
-  return runtime as MessageListManagerRuntime<TMessage, TOptimistic>
+): MessageListSessionRegistryRuntime<TMessage, TOptimistic> {
+  return runtime as MessageListSessionRegistryRuntime<TMessage, TOptimistic>
 }

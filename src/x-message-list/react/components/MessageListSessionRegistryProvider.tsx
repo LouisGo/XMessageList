@@ -1,15 +1,8 @@
 import type { ReactNode } from 'react'
 import type {
-  MessageListManager,
   MessageListSessionRegistry,
 } from '../../core/session-registry/index'
 import { MessageListSessionRegistryContext } from './MessageListSessionRegistryContext'
-
-export type MessageListProviderProps<Row> = {
-  /** @deprecated Use registry. */
-  manager: MessageListManager<Row>
-  children: ReactNode
-}
 
 export type MessageListSessionRegistryProviderProps<Row, Feed = string> = {
   registry: MessageListSessionRegistry<Row, Feed>
@@ -26,17 +19,5 @@ export function MessageListSessionRegistryProvider<Row, Feed = string>({
     >
       {children}
     </MessageListSessionRegistryContext.Provider>
-  )
-}
-
-/** @deprecated Use MessageListSessionRegistryProvider. */
-export function MessageListProvider<Row>({
-  manager,
-  children,
-}: MessageListProviderProps<Row>) {
-  return (
-    <MessageListSessionRegistryProvider registry={manager}>
-      {children}
-    </MessageListSessionRegistryProvider>
   )
 }

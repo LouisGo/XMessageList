@@ -5,7 +5,7 @@
 
 ## Package Entries
 
-- `src/index.ts` 是 package 根出口，只暴露 manager entry、React adapter、
+- `src/index.ts` 是 package 根出口，只暴露 session registry entry、React adapter、
   public session/adapter contract types。
 - 不再提供 `x-message-list/data` 子路径；runtime/data runtime 是
   package-internal implementation。
@@ -17,27 +17,28 @@
 
 核心实现集中在 `src/x-message-list/core`：
 
-- `manager/`：应用级会话编排层，创建并保留每个 conversation 的
+- `session-registry/`：应用级会话编排层，创建并保留每个 session/feed 的
   `MessageListSession`。
 - `runtime/`：framework-independent viewport runtime 和 internal data runtime。
 
-## Manager
+## Session Registry
 
 `src/x-message-list/core/session-registry` 负责应用级生命周期：
 
-- `manager.ts`：`createMessageListSessionRegistry`、deprecated
-  `createMessageListManager`、`getSession(id)` 和 keepAlive
-  retention。
-- `session.ts`：单会话 viewport runtime、data runtime、request bridge、
+- `registry/registry.ts`：`createMessageListSessionRegistry`、`getSession(id)`
+  和 keepAlive retention。
+- `session/session.ts`：单会话 viewport runtime、data runtime、request bridge、
   `anchorMemory` restore/save、`readReceipts` worker 和 public session facade。
 - `internal.ts`：package-internal session internals access，供 React adapter
   访问 runtime/view store；不从 package root 导出。
-- `readReceipts.ts`：基于 viewport observation 的批量已读 worker，不经过
+- `read-receipts/readReceipts.ts`：基于 viewport observation 的批量已读 worker，不经过
   React state。
-- `rowAdapter.ts`：业务 row 到 runtime item/anchor 的归一化。
-- `types.ts` / `index.ts`：manager public contract types 和 exports。
+- `adapters/rowAdapter.ts`：业务 row 到 runtime item/anchor 的归一化。
+- `rows/sessionRows.ts`：loaded segment 内普通 row mutation 入口。
+- `tail/tailSemantics.ts`：`tail.local` / `tail.remote` 的尾部消息语义。
+- `contracts/index.ts` / `index.ts`：session registry public contract types 和 exports。
 
-Manager 可以依赖 runtime public barrel 和 package-internal data runtime；runtime 不能反向依赖 manager。
+Session registry 可以依赖 runtime public barrel 和 package-internal data runtime；runtime 不能反向依赖 session registry。
 
 ## Runtime
 
@@ -75,7 +76,7 @@ metrics，并通过 adapter-private runtime direct-scroll API 写入。
 - `components/`：demo UI shell。
 - `data/`：feeds、mock persistence 和 message API。
 - `mocks/`：advanced mock scenarios。
-- `scenario/`：demo manager adapter、scenario orchestration hooks、commands and
+- `scenario/`：demo registry adapter、scenario orchestration hooks、commands and
   local mutation wiring。
 - `styles/`：demo/e2e app CSS entry and split style files。
 
@@ -96,7 +97,7 @@ package-internal runtime snapshot/evidence，用于测试证据和 reset 辅助�
   `src/x-message-list/core/runtime`, `src/x-message-list/react` boundaries.
 - Package root must not export runtime/data runtime implementation types.
 - React adapter must use runtime public or adapter-private barrels; demo and app
-  code must go through manager/session APIs. E2E harness files are the only
+  code must go through registry/session APIs. E2E harness files are the only
   approved diagnostics exception.
 - Runtime non-controller domains must not import from `runtime/controller/`; move
   cross-domain pure helpers to `runtime/shared/`.

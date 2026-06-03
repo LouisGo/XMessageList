@@ -11,17 +11,17 @@ import {
 } from '../session/helpers'
 import type {
   MessageListAdapter,
-  MessageListConversationId,
+  MessageListSessionId,
   MessageListSession,
 } from '../contracts'
 
-export function createSessionRows<Row, Conversation>(input: {
-  id: MessageListConversationId
-  adapter: MessageListAdapter<Row, Conversation>
+export function createSessionRows<Row, Feed>(input: {
+  id: MessageListSessionId
+  adapter: MessageListAdapter<Row, Feed>
   dataRuntime: MessageListDataRuntime<Row>
   publishSegment: (segment: LoadedSegment<Row>) => void
   publishLocalResetSegment: (segment: LoadedSegment<Row>) => void
-  clearPendingOutgoing: () => void
+  clearPendingLocal: () => void
 }): MessageListSession<Row>['rows'] {
   return {
     patch: (rows) => {
@@ -53,7 +53,7 @@ export function createSessionRows<Row, Conversation>(input: {
       ))
     },
     resetLatest: (page) => {
-      input.clearPendingOutgoing()
+      input.clearPendingLocal()
       input.publishLocalResetSegment(
         input.dataRuntime.resetLatest(
           toSessionResetInput(input.id, page, input.adapter),
@@ -61,7 +61,7 @@ export function createSessionRows<Row, Conversation>(input: {
       )
     },
     resetAround: (resetInput) => {
-      input.clearPendingOutgoing()
+      input.clearPendingLocal()
       input.publishLocalResetSegment(
         input.dataRuntime.resetAround({
           ...toSessionResetInput(input.id, resetInput, input.adapter),
@@ -77,7 +77,7 @@ export function createSessionRows<Row, Conversation>(input: {
       ))
     },
     clear: () => {
-      input.clearPendingOutgoing()
+      input.clearPendingLocal()
       input.publishLocalResetSegment(
         input.dataRuntime.resetLatest({
           items: [],

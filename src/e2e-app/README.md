@@ -1,14 +1,12 @@
 # E2E App
 
-`src/e2e-app` is the browser-side harness used by `e2e/runner`. It exposes
-deterministic actions, evidence and oracles through the E2E bridge.
+`src/e2e-app` 是 `e2e/runner` 使用的浏览器端 harness。通过 E2E 桥接暴露确定性动作、evidence 和 oracle。
 
-## Directory Rules
+## 目录规则
 
-- `app/` owns the E2E React app shell.
-- `actions/` owns action dispatch and DOM action helpers.
-- `bridge/` owns the browser bridge, evidence serialization and failure artifacts.
-- `oracles/` owns evidence, runtime, scroll and overlay assertions.
+- `app/`：E2E React app 外壳。
+- `actions/`：动作分发与 DOM 动作辅助。
+- `bridge/`：浏览器桥接、evidence 序列化与失败产物。
+- `oracles/`：evidence、runtime、滚动及浮层断言。
 
-The E2E app may read public evidence and DOM attributes created for testing. It
-must not reach into runtime private controller objects to pass an oracle.
+E2E app 可读取为测试创建的公开 evidence 和 DOM 属性，但不得触及 runtime 私有 controller 对象以通过 oracle。

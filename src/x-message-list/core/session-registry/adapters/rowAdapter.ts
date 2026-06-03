@@ -7,13 +7,13 @@ import type {
 import type {
   MessageListAdapter,
   MessageListAnchor,
-  MessageListConversationId,
+  MessageListSessionId,
 } from '../contracts'
 
-export function toMessageDataItems<Row, Conversation>(
-  id: MessageListConversationId,
+export function toMessageDataItems<Row, Feed>(
+  id: MessageListSessionId,
   rows: Row[],
-  adapter: MessageListAdapter<Row, Conversation>,
+  adapter: MessageListAdapter<Row, Feed>,
 ): MessageDataItem<Row>[] {
   return rows.map((row) => {
     const anchor = adapter.row.getAnchor(row)
@@ -52,7 +52,7 @@ export function resolveRowsByKeys<Row>(
 }
 
 export function normalizeMessageListAnchor(
-  id: MessageListConversationId,
+  id: MessageListSessionId,
   anchor: MessageListAnchor,
 ): MessageIdentityAnchor {
   const stableId = anchor.stableId ??
@@ -72,7 +72,7 @@ export function normalizeMessageListAnchor(
 }
 
 function toMessageIdentity(
-  id: MessageListConversationId,
+  id: MessageListSessionId,
   anchor: MessageIdentityAnchor,
   version: unknown,
 ): MessageIdentity {

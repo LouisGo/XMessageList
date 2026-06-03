@@ -16,10 +16,10 @@ import {
   wait,
 } from './demoScenarioHelpers'
 import {
-  createDemoManager,
+  createDemoRegistry,
   type DemoFeed,
   prepareDemoE2EScenario,
-} from './demoMessageListManager'
+} from './demoMessageListRegistry'
 import {
   RANDOM_CHAT_FEED_ID,
   resolveDemoSessionDelayMs,
@@ -49,7 +49,7 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   const [messageCount, setMessageCount] = useState(0)
   const [lastEvent, setLastEvent] = useState('bootstrapping latest segment')
   const [feedLoading, setFeedLoading] = useState(true)
-  const managerStateRef = useRef({
+  const registryStateRef = useRef({
     activeFeedId: DEMO_FEEDS[0].id,
     selectedFeedId: DEMO_FEEDS[0].id,
     feedLoading: true,
@@ -65,24 +65,24 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null)
   const [highlightToken, setHighlightToken] = useState(0)
   const highlightTimerRef = useRef<number | null>(null)
-  const destroyManagerTimerRef = useRef<number | null>(null)
+  const destroyRegistryTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
-    managerStateRef.current.activeFeedId = activeFeedId
-  }, [activeFeedId, managerStateRef])
+    registryStateRef.current.activeFeedId = activeFeedId
+  }, [activeFeedId, registryStateRef])
   useEffect(() => {
-    managerStateRef.current.selectedFeedId = selectedFeedId
-  }, [managerStateRef, selectedFeedId])
+    registryStateRef.current.selectedFeedId = selectedFeedId
+  }, [registryStateRef, selectedFeedId])
 
   const isActiveFeed = useCallback((feedId: string) =>
-    managerStateRef.current.activeFeedId === feedId, [managerStateRef])
+    registryStateRef.current.activeFeedId === feedId, [registryStateRef])
   const setFeedLoadingState = useCallback((loading: boolean) => {
-    managerStateRef.current.feedLoading = loading
+    registryStateRef.current.feedLoading = loading
     setFeedLoading(loading)
-  }, [managerStateRef])
-  const getActiveFeedId = useCallback(() => managerStateRef.current.activeFeedId, [managerStateRef])
-  const getSelectedFeedId = useCallback(() => managerStateRef.current.selectedFeedId, [managerStateRef])
-  const isFeedLoading = useCallback(() => managerStateRef.current.feedLoading, [managerStateRef])
+  }, [registryStateRef])
+  const getActiveFeedId = useCallback(() => registryStateRef.current.activeFeedId, [registryStateRef])
+  const getSelectedFeedId = useCallback(() => registryStateRef.current.selectedFeedId, [registryStateRef])
+  const isFeedLoading = useCallback(() => registryStateRef.current.feedLoading, [registryStateRef])
   const syncLoadedStateFromRequest = useCallback((
     result: MessageListRequestResult<DemoMessage, unknown>,
     eventText?: string,
@@ -91,7 +91,7 @@ export function useDemoMessageScenario(): DemoMessageScenario {
       return
     }
 
-    if (managerStateRef.current.activeFeedId !== result.id) {
+    if (registryStateRef.current.activeFeedId !== result.id) {
       return
     }
 
@@ -100,32 +100,32 @@ export function useDemoMessageScenario(): DemoMessageScenario {
       setLastEvent(eventText)
     }
   }, [
-    managerStateRef,
+    registryStateRef,
   ])
   const canCompleteRequestActivation = useCallback((feedId: string) => {
-    const delayedWarmActivation = managerStateRef.current.delayedWarmActivation
+    const delayedWarmActivation = registryStateRef.current.delayedWarmActivation
 
     return !delayedWarmActivation || delayedWarmActivation.feedId !== feedId
-  }, [managerStateRef])
+  }, [registryStateRef])
   const consumeDeferredEdgeResponseDelay = useCallback(() => {
-    const delayMs = managerStateRef.current.deferredEdgeResponseDelayMs
-    managerStateRef.current.deferredEdgeResponseDelayMs = 0
+    const delayMs = registryStateRef.current.deferredEdgeResponseDelayMs
+    registryStateRef.current.deferredEdgeResponseDelayMs = 0
     return delayMs
-  }, [managerStateRef])
+  }, [registryStateRef])
   const consumeDeferredSessionResponseDelay = useCallback(() => {
-    const delayMs = managerStateRef.current.deferredSessionResponseDelayMs
-    managerStateRef.current.deferredSessionResponseDelayMs = 0
+    const delayMs = registryStateRef.current.deferredSessionResponseDelayMs
+    registryStateRef.current.deferredSessionResponseDelayMs = 0
     return delayMs
-  }, [managerStateRef])
+  }, [registryStateRef])
   const loadAnchor = useCallback((feedId: string) =>
-    managerStateRef.current.savedAnchors.get(feedId) ?? null, [managerStateRef])
+    registryStateRef.current.savedAnchors.get(feedId) ?? null, [registryStateRef])
   const saveAnchor = useCallback((feedId: string, value: SavedRuntimeAnchor) => {
-    managerStateRef.current.savedAnchors.set(feedId, value)
-  }, [managerStateRef])
+    registryStateRef.current.savedAnchors.set(feedId, value)
+  }, [registryStateRef])
 
-  // eslint-disable-next-line react-hooks/refs -- lazy manager construction stores callbacks; it does not read ref values during render.
-  const [manager] = useState<MessageListSessionRegistry<DemoMessage, DemoFeed>>(() => {
-    const managerInstance = createDemoManager({
+  // eslint-disable-next-line react-hooks/refs -- lazy registry construction stores callbacks; it does not read ref values during render.
+  const [registry] = useState<MessageListSessionRegistry<DemoMessage, DemoFeed>>(() => {
+    const registryInstance = createDemoRegistry({
       consumeDeferredEdgeResponseDelay,
       consumeDeferredSessionResponseDelay,
       canCompleteRequestActivation,
@@ -141,26 +141,26 @@ export function useDemoMessageScenario(): DemoMessageScenario {
       syncLoadedState: syncLoadedStateFromRequest,
     })
 
-    return managerInstance
+    return registryInstance
   })
 
   const getSession = useCallback((feedId: string): MessageListSession<DemoMessage> =>
-    manager.getSession(feedId), [manager])
+    registry.getSession(feedId), [registry])
 
   const activeSession = useMemo(
-    () => manager.getSession(activeFeedId),
-    [activeFeedId, manager],
+    () => registry.getSession(activeFeedId),
+    [activeFeedId, registry],
   )
   const activeSessionState = useMessageListState(activeSession)
   const activeLoadedMessages = activeSessionState.loaded.rows
   const activeFeed = useMemo(() => getDemoFeedDefinition(activeFeedId), [activeFeedId])
   const getLoadedMessagesForFeed = useCallback((feedId: string) =>
-    manager.getSession(feedId).getState().loaded.rows, [manager])
+    registry.getSession(feedId).getState().loaded.rows, [registry])
   const getLoadedMessages = useCallback(() =>
-    manager.getSession(managerStateRef.current.activeFeedId)
+    registry.getSession(registryStateRef.current.activeFeedId)
       .getState().loaded.rows, [
-    manager,
-    managerStateRef,
+    registry,
+    registryStateRef,
   ])
   const getLoadedWindowBounds = useCallback((feedId: string) =>
     resolveLoadedBounds(
@@ -168,9 +168,9 @@ export function useDemoMessageScenario(): DemoMessageScenario {
       getLoadedMessagesForFeed(feedId),
     ), [getLoadedMessagesForFeed])
   const getHasMoreAfter = useCallback(() =>
-    getLoadedWindowBounds(managerStateRef.current.activeFeedId).hasMoreAfter ?? false, [
+    getLoadedWindowBounds(registryStateRef.current.activeFeedId).hasMoreAfter ?? false, [
     getLoadedWindowBounds,
-    managerStateRef,
+    registryStateRef,
   ])
   const loadedWindowBounds = useMemo(() =>
     resolveLoadedBounds(readDemoFeedMessages(activeFeedId), activeLoadedMessages), [
@@ -244,11 +244,11 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     onMessageCountChange: setMessageCount,
   })
   const deferNextEdgeResponse = useCallback((delayMs: number) => {
-    managerStateRef.current.deferredEdgeResponseDelayMs = Math.max(0, delayMs)
-  }, [managerStateRef])
+    registryStateRef.current.deferredEdgeResponseDelayMs = Math.max(0, delayMs)
+  }, [registryStateRef])
   const deferNextSessionResponse = useCallback((delayMs: number) => {
-    managerStateRef.current.deferredSessionResponseDelayMs = Math.max(0, delayMs)
-  }, [managerStateRef])
+    registryStateRef.current.deferredSessionResponseDelayMs = Math.max(0, delayMs)
+  }, [registryStateRef])
   const {
     eventStormRunning,
     botPushActive,
@@ -269,9 +269,9 @@ export function useDemoMessageScenario(): DemoMessageScenario {
   }, [stopLongRunningMocks])
 
   useEffect(() => {
-    if (destroyManagerTimerRef.current !== null) {
-      window.clearTimeout(destroyManagerTimerRef.current)
-      destroyManagerTimerRef.current = null
+    if (destroyRegistryTimerRef.current !== null) {
+      window.clearTimeout(destroyRegistryTimerRef.current)
+      destroyRegistryTimerRef.current = null
     }
   })
   const {
@@ -298,33 +298,33 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     },
   })
   const selectFeed = useCallback((feedId: string) => {
-    if (feedId === managerStateRef.current.selectedFeedId) {
+    if (feedId === registryStateRef.current.selectedFeedId) {
       return
     }
 
     stopLongRunningMocks()
-    managerStateRef.current.delayedWarmActivation = null
-    managerStateRef.current.selectedFeedId = feedId
+    registryStateRef.current.delayedWarmActivation = null
+    registryStateRef.current.selectedFeedId = feedId
     setSelectedFeedId(feedId)
     if (
       feedId === RANDOM_CHAT_FEED_ID &&
-      managerStateRef.current.deferredSessionResponseDelayMs === 0
+      registryStateRef.current.deferredSessionResponseDelayMs === 0
     ) {
-      managerStateRef.current.deferredSessionResponseDelayMs = resolveDemoSessionDelayMs(feedId)
+      registryStateRef.current.deferredSessionResponseDelayMs = resolveDemoSessionDelayMs(feedId)
     }
 
-    const delayMs = managerStateRef.current.deferredSessionResponseDelayMs
-    const activationToken = managerStateRef.current.activationToken + 1
+    const delayMs = registryStateRef.current.deferredSessionResponseDelayMs
+    const activationToken = registryStateRef.current.activationToken + 1
 
-    managerStateRef.current.activationToken = activationToken
-    managerStateRef.current.activeFeedId = feedId
+    registryStateRef.current.activationToken = activationToken
+    registryStateRef.current.activeFeedId = feedId
     setActiveFeedId(feedId)
     setPendingFeedId(delayMs > 0 ? feedId : null)
     setFeedLoadingState(true)
     setMessageCount(0)
     setLastEvent(`loading ${getDemoFeedDefinition(feedId).title}`)
 
-    if (delayMs === 0 && manager.hasSession(feedId)) {
+    if (delayMs === 0 && registry.hasSession(feedId)) {
       setPendingFeedId(null)
       setFeedLoadingState(false)
       setMessageCount(readDemoFeedMessages(feedId).length)
@@ -332,22 +332,22 @@ export function useDemoMessageScenario(): DemoMessageScenario {
       return
     }
 
-    if (delayMs > 0 && manager.hasSession(feedId)) {
-      managerStateRef.current.deferredSessionResponseDelayMs = 0
-      managerStateRef.current.delayedWarmActivation = {
+    if (delayMs > 0 && registry.hasSession(feedId)) {
+      registryStateRef.current.deferredSessionResponseDelayMs = 0
+      registryStateRef.current.delayedWarmActivation = {
         feedId,
         token: activationToken,
       }
       void (async () => {
         await wait(delayMs)
         if (
-          managerStateRef.current.activationToken !== activationToken ||
-          managerStateRef.current.activeFeedId !== feedId
+          registryStateRef.current.activationToken !== activationToken ||
+          registryStateRef.current.activeFeedId !== feedId
         ) {
           return
         }
 
-        managerStateRef.current.delayedWarmActivation = null
+        registryStateRef.current.delayedWarmActivation = null
         setPendingFeedId(null)
         setFeedLoadingState(false)
         setMessageCount(readDemoFeedMessages(feedId).length)
@@ -356,38 +356,38 @@ export function useDemoMessageScenario(): DemoMessageScenario {
       return
     }
 
-    manager.getSession(feedId)
+    registry.getSession(feedId)
   }, [
-    manager,
-    managerStateRef,
+    registry,
+    registryStateRef,
     setFeedLoadingState,
     stopLongRunningMocks,
   ])
   const resetE2EScenario = useCallback(async (scenarioId: string) => {
     stopLongRunningMocks()
-    managerStateRef.current.activationToken += 1
-    managerStateRef.current.delayedWarmActivation = null
-    managerStateRef.current.savedAnchors.clear()
-    managerStateRef.current.deferredEdgeResponseDelayMs = 0
-    managerStateRef.current.deferredSessionResponseDelayMs = 0
+    registryStateRef.current.activationToken += 1
+    registryStateRef.current.delayedWarmActivation = null
+    registryStateRef.current.savedAnchors.clear()
+    registryStateRef.current.deferredEdgeResponseDelayMs = 0
+    registryStateRef.current.deferredSessionResponseDelayMs = 0
     resetMessageMutationState()
     resetOptimisticRemap()
 
     const feedId = DEMO_FEEDS[0].id
-    for (const sessionId of manager.getSessionIds()) {
+    for (const sessionId of registry.getSessionIds()) {
       if (sessionId !== feedId) {
-        manager.destroySession(sessionId)
+        registry.destroySession(sessionId)
       }
     }
     const prepared = await prepareDemoE2EScenario({
       scenarioId,
       feedId,
       pageSize: PAGE_SIZE,
-      session: manager.getSession(feedId),
+      session: registry.getSession(feedId),
     })
 
-    managerStateRef.current.activeFeedId = prepared.feedId
-    managerStateRef.current.selectedFeedId = prepared.feedId
+    registryStateRef.current.activeFeedId = prepared.feedId
+    registryStateRef.current.selectedFeedId = prepared.feedId
     setActiveFeedId(prepared.feedId)
     setSelectedFeedId(prepared.feedId)
     setPendingFeedId(null)
@@ -396,24 +396,24 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     setLastEvent(`reset ${scenarioId}`)
     await Promise.resolve()
     if (prepared.shouldScrollToLatest) {
-      manager.getSession(prepared.feedId).commands.scrollToLatest()
+      registry.getSession(prepared.feedId).commands.scrollToLatest()
     }
   }, [
-    manager,
-    managerStateRef,
+    registry,
+    registryStateRef,
     resetMessageMutationState,
     resetOptimisticRemap,
     setFeedLoadingState,
     stopLongRunningMocks,
   ])
   useEffect(() => () => {
-    destroyManagerTimerRef.current = window.setTimeout(() => {
+    destroyRegistryTimerRef.current = window.setTimeout(() => {
       stopLongRunningMocksRef.current()
-      manager.destroyAll()
+      registry.destroyAll()
       clearHighlightTimer(highlightTimerRef)
-      destroyManagerTimerRef.current = null
+      destroyRegistryTimerRef.current = null
     }, 0)
-  }, [manager])
+  }, [registry])
 
   const canExposeEdgeLoading = !feedLoading &&
     activeSessionState.viewport.pendingIntent !== 'underflow-fill'

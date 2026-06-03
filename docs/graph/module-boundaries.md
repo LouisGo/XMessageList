@@ -6,7 +6,7 @@
 flowchart LR
   Host["App / Demo Host"]
   Source["Main / Bridge or mock API"]
-  Manager["MessageList Manager<br/>sessions, adapter routing, request bridge"]
+  Registry["MessageList Session Registry<br/>sessions, adapter routing, request bridge"]
   Data["Renderer Data Runtime<br/>merge, dedupe, trim, request tokens"]
   Runtime["Viewport Runtime<br/>scroll, motion, measurement, correction, latches"]
   React["React Adapter<br/>snapshot projection, DOM refs, commit ack"]
@@ -14,19 +14,19 @@ flowchart LR
   Overlay["Custom Scrollbar Overlay<br/>native metric mirror"]
   E2E["E2E Harness<br/>actions, evidence, oracles"]
 
-  Host -->|"create manager, provide adapters"| Manager
-  React -->|"useMessageListSession(id)"| Manager
-  Manager -->|"query latest / around / before / after"| Source
-  Source -->|"ordered messages + boundary state"| Manager
-  Host -->|"session.commands / session.rows"| Manager
-  Manager -->|"request result or local mutation"| Data
+  Host -->|"create registry, provide adapters"| Registry
+  React -->|"useMessageListSession(id)"| Registry
+  Registry -->|"query latest / around / before / after"| Source
+  Source -->|"ordered messages + boundary state"| Registry
+  Host -->|"session.commands / session.rows"| Registry
+  Registry -->|"request result or local mutation"| Data
   Data -->|"immutable LoadedSegment"| Runtime
   Runtime -->|"MessageListSnapshot"| React
   React -->|"render rows, triggers, bottom marker"| DOM
   React -->|"register refs + ProjectionCommitAck"| Runtime
   Runtime -->|"read rects / heights; write scrollTop"| DOM
   DOM -->|"scroll, resize, intersection"| Runtime
-  Runtime -->|"semantic runtime events"| Manager
+  Runtime -->|"semantic runtime events"| Registry
   Overlay -->|"begin / write / end direct scroll"| Runtime
   Overlay -->|"read native scroll metrics"| DOM
   E2E -->|"bridge actions"| Host

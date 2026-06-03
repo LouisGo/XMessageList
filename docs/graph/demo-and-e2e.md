@@ -1,43 +1,43 @@
 # Demo And E2E
 
-## Demo Manager Adapter
+## Demo Registry Adapter
 
 ```mermaid
 sequenceDiagram
   participant Runtime as Viewport Runtime
-  participant Manager as MessageList Manager
+  participant Registry as MessageList Session Registry
   participant Adapter as Demo Adapter
   participant API as Demo Message API
   participant Data as Data Runtime
   participant UI as Demo UI State
 
-  Runtime-->>Manager: needLatestMessages / needMessagesAround / needMoreBefore / needMoreAfter
-  Manager->>Data: adopt runtime requestToken by kind
-  Manager->>Adapter: request.loadLatest / loadAround / loadBefore / loadAfter
+  Runtime-->>Registry: needLatestMessages / needMessagesAround / needMoreBefore / needMoreAfter
+  Registry->>Data: adopt runtime requestToken by kind
+  Registry->>Adapter: request.loadLatest / loadAround / loadBefore / loadAfter
   Adapter->>API: load latest, around, before, or after messages
 
   alt stale feed or stale generation
-    Manager-->>UI: keep active feed state unchanged
+    Registry-->>UI: keep active feed state unchanged
     opt edge request
-      Manager->>Runtime: reportEdgeRequestFailure(edge, requestToken)
+      Registry->>Runtime: reportEdgeRequestFailure(edge, requestToken)
     end
   else API failure
     opt edge request
-      Manager->>Runtime: reportEdgeRequestFailure(edge, requestToken)
+      Registry->>Runtime: reportEdgeRequestFailure(edge, requestToken)
     end
-    Manager-->>UI: publish edge failure through session state
+    Registry-->>UI: publish edge failure through session state
   else response applies
-    Manager->>Data: resetLatest, resetAround, extendBefore, or extendAfter
-    Manager->>Runtime: applyLoadedSegment(committed segment)
-    Manager->>Data: trimToBudget(protected key)
+    Registry->>Data: resetLatest, resetAround, extendBefore, or extendAfter
+    Registry->>Runtime: applyLoadedSegment(committed segment)
+    Registry->>Data: trimToBudget(protected key)
     opt trim produced a new segment
-      Manager->>Runtime: applyLoadedSegment(trim segment)
+      Registry->>Runtime: applyLoadedSegment(trim segment)
     end
-    Manager-->>UI: publish loaded rows and edge status through session state
+    Registry-->>UI: publish loaded rows and edge status through session state
   end
 ```
 
-Demo host 通过 manager adapter 响应 runtime semantic events；canonical
+Demo host 通过 registry adapter 响应 runtime semantic events；canonical
 persisted feed 由 demo data API 管理，当前 loaded rows、edge status 和 viewport
 status 从 `session.getState()` / `useMessageListState` 派生。它不维护独立
 loaded-window 镜像，也不读取 projection DOM 来补救 scroll 行为。

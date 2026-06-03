@@ -7,7 +7,7 @@ import {
 } from '../index'
 import {
   getMessageListAdapterRuntime,
-  getMessageListManagerRuntime,
+  getMessageListSessionRegistryRuntime,
   type MessageListAdapterRuntime,
 } from '../internal'
 import type { MessageIdentityAnchor } from '../contracts/identity'
@@ -848,7 +848,7 @@ describe('MessageList viewport motion', () => {
     }))
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
 
-    getMessageListManagerRuntime(runtime).prepareFollowBottomForLocalReset()
+    getMessageListSessionRegistryRuntime(runtime).prepareFollowBottomForLocalReset()
     expect(runtime.getSnapshot()).toMatchObject({
       pendingIntent: 'follow-bottom',
       bottomLockState: 'UNLOCKED',
