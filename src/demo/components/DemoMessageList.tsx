@@ -7,7 +7,11 @@ import {
   useCallback,
   useState,
 } from 'react'
-import { MessageList, type MessageListRenderRowInput } from '../../index'
+import {
+  MessageList,
+  type MessageListRenderItem,
+  type MessageListRenderRowInput,
+} from '../../index'
 import type { DemoMessage } from '../data/demoData'
 import {
   type DemoMessageScenario,
@@ -47,6 +51,32 @@ export function DemoMessageListContent({
     reactToMessage,
     retryFailedSend,
   } = scenario
+
+  const getDemoRowRenderVersion = useCallback((
+    item: MessageListRenderItem<DemoMessage>,
+  ) => {
+    const message = item.message
+
+    if (!message) {
+      return item.renderVersion
+    }
+
+    const highlightVersion = highlightedMessageId === message.id
+      ? highlightToken
+      : 0
+
+    return [
+      item.renderVersion,
+      message.body,
+      message.editedAt ?? '',
+      message.expanded ? 'expanded' : 'collapsed',
+      message.reactions.join(','),
+      message.sendStatus ?? '',
+      message.sendAttempt ?? '',
+      message.sendError ?? '',
+      highlightVersion,
+    ].join('|')
+  }, [highlightedMessageId, highlightToken])
 
   const renderDemoItem = useCallback(({
     row: message,
@@ -427,6 +457,7 @@ export function DemoMessageListContent({
             scenario.feedLoading ? 'session-loading' : '',
           ].filter(Boolean).join(' ')}
           renderRow={renderDemoItem}
+          getRowRenderVersion={getDemoRowRenderVersion}
           renderBeforeStatus={({ status, retry }) =>
             scenario.loadingBefore ? (
               <div className="history-loading">Loading older messages...</div>
