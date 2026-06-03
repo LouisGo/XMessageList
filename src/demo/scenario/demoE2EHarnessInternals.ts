@@ -1,5 +1,5 @@
 import type { MessageListSession } from '../../index'
-import { getMessageListSessionInternals } from '../../x-message-list/core/manager/internal'
+import { getMessageListSessionInternals } from '../../x-message-list/core/session-registry/internal'
 import type {
   MessageListRuntime,
   MessageListSnapshot,

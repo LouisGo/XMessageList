@@ -5,17 +5,17 @@ import type {
   MessageListRuntimeEvent,
   MessageListScrollToMessageOptions as RuntimeScrollToMessageOptions,
   ResetAroundAlign,
-} from '../runtime/index'
+} from '../../runtime/index'
 import type {
   IdentityRemapInput,
   MessageListDataRuntime,
   ReplaceSegmentInput,
   ResetSegmentInput,
-} from '../runtime/data/index'
+} from '../../runtime/data/index'
 import {
   normalizeMessageListAnchor,
   toMessageDataItems,
-} from './rowAdapter'
+} from '../adapters/rowAdapter'
 import type {
   MessageListAdapter,
   MessageListConversationId,
@@ -24,7 +24,7 @@ import type {
   MessageListPage,
   MessageListRowsReplaceInput,
   MessageListScrollToMessageOptions,
-} from './types'
+} from '../contracts'
 
 export type RuntimeNeedEvent = Extract<
   MessageListRuntimeEvent,

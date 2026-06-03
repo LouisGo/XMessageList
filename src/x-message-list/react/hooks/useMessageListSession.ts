@@ -2,8 +2,8 @@ import { useContext, useMemo } from 'react'
 import type {
   MessageListSession,
   MessageListSessionId,
-} from '../../core/manager/index'
-import { MessageListSessionRegistryContext } from '../components/MessageListManagerContext'
+} from '../../core/session-registry/index'
+import { MessageListSessionRegistryContext } from '../components/MessageListSessionRegistryContext'
 
 export function useMessageListSession<Row = unknown>(
   id: MessageListSessionId,

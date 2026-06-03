@@ -1,7 +1,7 @@
 import type {
   MessageListOverlayStatus,
   MessageListViewState,
-} from './types'
+} from '../contracts'
 
 const OVERLAY_LOADING_DELAY_MS = 200
 

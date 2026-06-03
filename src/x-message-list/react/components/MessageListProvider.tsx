@@ -2,8 +2,8 @@ import type { ReactNode } from 'react'
 import type {
   MessageListManager,
   MessageListSessionRegistry,
-} from '../../core/manager/index'
-import { MessageListSessionRegistryContext } from './MessageListManagerContext'
+} from '../../core/session-registry/index'
+import { MessageListSessionRegistryContext } from './MessageListSessionRegistryContext'
 
 export type MessageListProviderProps<Row> = {
   /** @deprecated Use registry. */

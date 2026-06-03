@@ -14,8 +14,8 @@ import type {
 import type {
   MessageListSession,
   MessageListViewState,
-} from '../../core/manager/index'
-import { getMessageListSessionInternals } from '../../core/manager/internal'
+} from '../../core/session-registry/index'
+import { getMessageListSessionInternals } from '../../core/session-registry/internal'
 import { MessageFlow } from './MessageFlow'
 import { MessageListScrollbarOverlay } from '../scrollbar/MessageListScrollbarOverlay'
 import { useMessageListSnapshot } from '../hooks/useMessageListSnapshot'

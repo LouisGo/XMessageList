@@ -1,7 +1,7 @@
 import { StrictMode, act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getMessageListSessionInternals } from '../../x-message-list/core/manager/internal'
+import { getMessageListSessionInternals } from '../../x-message-list/core/session-registry/internal'
 import { MessageList } from '../../x-message-list/react/components/MessageList'
 import {
   readDemoFeedMessages,

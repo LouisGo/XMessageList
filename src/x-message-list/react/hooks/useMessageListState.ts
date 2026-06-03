@@ -3,7 +3,7 @@ import { useSyncExternalStoreWithSelector } from 'use-sync-external-store/with-s
 import type {
   MessageListSession,
   MessageListSessionState,
-} from '../../core/manager/index'
+} from '../../core/session-registry/index'
 
 export type MessageListStateSelector<Row, Selected> = (
   state: MessageListSessionState<Row>,

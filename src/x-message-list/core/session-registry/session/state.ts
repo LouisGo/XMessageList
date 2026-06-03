@@ -1,11 +1,11 @@
 import type {
   MessageListRuntime,
   MessageListSnapshot,
-} from '../runtime/index'
+} from '../../runtime/index'
 import type {
   MessageListSessionState,
   MessageListViewState,
-} from './types'
+} from '../contracts'
 
 export function createMessageListSessionState<Row>(input: {
   id: string

@@ -5,7 +5,7 @@ import {
   createMessageListManager,
   type MessageListAdapter,
   type MessageListPage,
-} from '../../core/manager/index'
+} from '../../core/session-registry/index'
 import { MessageList } from '../components/MessageList'
 import { MessageListProvider } from '../components/MessageListProvider'
 import { useMessageListSession } from '../hooks/useMessageListSession'

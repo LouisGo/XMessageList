@@ -7,7 +7,7 @@ import {
   type MessageListSession,
 } from '../index'
 import { getMessageListSessionInternals } from '../internal'
-import { MessageListReadReceiptsWorker } from '../readReceipts'
+import { MessageListReadReceiptsWorker } from '../read-receipts/readReceipts'
 import type {
   MessageListRuntimeEvent,
   ViewportObservationChangedEvent,

@@ -6,20 +6,20 @@ import {
   type MessageListRuntime,
   type MessageListRuntimeEvent,
   type MessageListSnapshot,
-} from '../runtime/index'
+} from '../../runtime/index'
 import {
   createMessageListDataRuntime,
   type DataRuntimeRequestKind,
   type MessageListDataRuntime,
-} from '../runtime/data/index'
-import { getMessageListManagerRuntime } from '../runtime/internal'
-import { MessageListReadReceiptsWorker } from './readReceipts'
-import { MessageListSessionOverlay } from './sessionOverlay'
-import { createMessageListSessionState } from './sessionState'
-import { createSessionRows } from './sessionRows'
-import { defineMessageListSessionInternals } from './internal'
-import { normalizeMessageListAnchor } from './rowAdapter'
-import { MessageListSessionLiveSemantics } from './sessionLiveSemantics'
+} from '../../runtime/data/index'
+import { getMessageListManagerRuntime } from '../../runtime/internal'
+import { MessageListReadReceiptsWorker } from '../read-receipts/readReceipts'
+import { MessageListSessionOverlay } from './overlay'
+import { createMessageListSessionState } from './state'
+import { createSessionRows } from '../rows/sessionRows'
+import { defineMessageListSessionInternals } from '../internal'
+import { normalizeMessageListAnchor } from '../adapters/rowAdapter'
+import { MessageListSessionLiveSemantics } from '../tail/tailSemantics'
 import {
   reindexRows,
   resolveTrimProtectKey,
@@ -28,14 +28,14 @@ import {
   type AroundRequestOptions,
   type RuntimeNeedEvent,
   type SessionOptions,
-} from './sessionHelpers'
+} from './helpers'
 import type {
   MessageListConversationId,
   MessageListPage,
   MessageListRequestResult,
   MessageListSession as PublicMessageListSession,
   MessageListSessionContext, MessageListSessionState, MessageListViewState,
-} from './types'
+} from '../contracts'
 
 type OverlayRequestOptions = { overlayRequestId?: number; requestEpoch?: number }
 type RequestResultInput<Row, Conversation> = Omit<MessageListRequestResult<Row, Conversation>, 'id' | 'sessionId' | 'feedId' | 'conversation' | 'feed'>

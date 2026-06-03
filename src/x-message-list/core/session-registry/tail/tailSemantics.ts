@@ -2,17 +2,17 @@ import type {
   LoadedSegment,
   MessageDataItem,
   MessageIdentityAnchor,
-} from '../runtime/index'
-import type { MessageListManagerRuntime } from '../runtime/internal'
+} from '../../runtime/index'
+import type { MessageListManagerRuntime } from '../../runtime/internal'
 import type {
   MessageListDataRuntime,
   ResetSegmentInput,
-} from '../runtime/data/index'
-import { toMessageDataItems } from './rowAdapter'
+} from '../../runtime/data/index'
+import { toMessageDataItems } from '../adapters/rowAdapter'
 import {
   toSessionIdentityRemaps,
   toSessionResetInput,
-} from './sessionHelpers'
+} from '../session/helpers'
 import type {
   MessageListAdapter,
   MessageListConversationId,
@@ -24,7 +24,7 @@ import type {
   MessageListOutgoingStageInput,
   MessageListPage,
   MessageListSession as PublicMessageListSession,
-} from './types'
+} from '../contracts'
 
 type SessionLiveSemanticsOptions<Row, Conversation> = {
   id: MessageListConversationId

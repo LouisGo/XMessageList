@@ -1,19 +1,19 @@
-import type { LoadedSegment } from '../runtime/index'
-import type { MessageListDataRuntime } from '../runtime/data/index'
+import type { LoadedSegment } from '../../runtime/index'
+import type { MessageListDataRuntime } from '../../runtime/data/index'
 import {
   normalizeMessageListAnchor,
   toMessageDataItems,
-} from './rowAdapter'
+} from '../adapters/rowAdapter'
 import {
   toSessionIdentityRemaps,
   toSessionReplaceInput,
   toSessionResetInput,
-} from './sessionHelpers'
+} from '../session/helpers'
 import type {
   MessageListAdapter,
   MessageListConversationId,
   MessageListSession,
-} from './types'
+} from '../contracts'
 
 export function createSessionRows<Row, Conversation>(input: {
   id: MessageListConversationId

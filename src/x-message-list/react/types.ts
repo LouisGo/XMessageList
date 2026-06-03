@@ -5,7 +5,7 @@ import type {
   MessageListResolvedAnchor,
   MessageListScrollToMessageOptions,
   MessageListSession,
-} from '../core/manager/index'
+} from '../core/session-registry/index'
 
 export type EdgeSlotInput = {
   status: 'idle' | 'loading' | 'error' | 'exhausted'

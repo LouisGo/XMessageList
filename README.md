@@ -27,7 +27,7 @@ npm run e2e:perf
 
 ## Source Layout
 
-- `src/x-message-list/core/manager`: application orchestration. It lazily
+- `src/x-message-list/core/session-registry`: application orchestration. It lazily
   creates one `MessageListSession` per session/feed id, routes adapters, owns
   request bridging, keepAlive retention, `anchorMemory` and `readReceipts`.
 - `src/x-message-list/core/runtime`: framework-independent viewport runtime and

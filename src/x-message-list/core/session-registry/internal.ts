@@ -7,7 +7,7 @@ import type { MessageListDataRuntime } from '../runtime/data/index'
 import type {
   MessageListSession,
   MessageListViewState,
-} from './types'
+} from './contracts'
 
 const MESSAGE_LIST_SESSION_INTERNALS: unique symbol =
   Symbol('MessageListSessionInternals')

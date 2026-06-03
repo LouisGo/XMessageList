@@ -1,6 +1,6 @@
 # MessageList Session Registry
 
-`src/x-message-list/core/manager` is the application orchestration layer above
+`src/x-message-list/core/session-registry` is the application orchestration layer above
 the framework-independent runtime. It owns per-session/feed
 `MessageListSession` instances and keeps them alive independently from React
 component mount state.

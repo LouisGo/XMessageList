@@ -23,7 +23,7 @@
 
 ## Manager
 
-`src/x-message-list/core/manager` 负责应用级生命周期：
+`src/x-message-list/core/session-registry` 负责应用级生命周期：
 
 - `manager.ts`：`createMessageListSessionRegistry`、deprecated
   `createMessageListManager`、`getSession(id)` 和 keepAlive
@@ -43,7 +43,7 @@ Manager 可以依赖 runtime public barrel 和 package-internal data runtime；r
 
 `src/x-message-list/core/runtime` 是 framework-independent viewport runtime：
 
-- `index.ts`：runtime public contract barrel，供 core/manager 与内部测试使用。
+- `index.ts`：runtime public contract barrel，供 core/session-registry 与内部测试使用。
 - `internal.ts`：React adapter-private barrel。
 - `contracts/`：identity、segment、snapshot、events、options。
 - `controller/`：runtime facade、controller、transaction queue、scheduler。
@@ -92,7 +92,7 @@ package-internal runtime snapshot/evidence，用于测试证据和 reset 辅助�
 
 ## Guardrails
 
-- Moving files must preserve `src/x-message-list/core/manager`,
+- Moving files must preserve `src/x-message-list/core/session-registry`,
   `src/x-message-list/core/runtime`, `src/x-message-list/react` boundaries.
 - Package root must not export runtime/data runtime implementation types.
 - React adapter must use runtime public or adapter-private barrels; demo and app

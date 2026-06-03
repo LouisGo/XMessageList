@@ -1,5 +1,5 @@
-import type { ViewportObservationChangedEvent } from '../runtime/index'
-import type { MessageListAdapter } from './types'
+import type { ViewportObservationChangedEvent } from '../../runtime/index'
+import type { MessageListAdapter } from '../contracts'
 
 export class MessageListReadReceiptsWorker<Row, Conversation> {
   private readonly pendingRows = new Map<string, Row>()

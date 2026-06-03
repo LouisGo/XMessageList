@@ -1,4 +1,4 @@
-import { MessageListSession } from './session'
+import { MessageListSession } from '../session/session'
 import type {
   MessageListConversationId,
   MessageListManager,
@@ -10,7 +10,7 @@ import type {
   MessageListSessionRegistryOptionsPatch,
   MessageListSessionRetainReason,
   MessageListSession as PublicMessageListSession,
-} from './types'
+} from '../contracts'
 
 const DEFAULT_PAGE_SIZE = 30
 const DEFAULT_MAX_ITEMS = 300
@@ -32,7 +32,7 @@ type SessionRecord<Row, Feed> = {
   hostRetains: Map<MessageListSessionRetainReason, number>
 }
 
-export class ApplicationMessageListManager<Row, Feed = MessageListConversationId>
+export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListConversationId>
   implements MessageListSessionRegistry<Row, Feed> {
   private readonly sessions = new Map<
     MessageListSessionId,
@@ -278,7 +278,7 @@ export function createMessageListSessionRegistry<
 >(
   options: MessageListSessionRegistryOptions<Row, Feed>,
 ): MessageListSessionRegistry<Row, Feed> {
-  return new ApplicationMessageListManager<Row, Feed>(options)
+  return new ApplicationMessageListSessionRegistry<Row, Feed>(options)
 }
 
 /** @deprecated Use createMessageListSessionRegistry. */

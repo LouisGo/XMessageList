@@ -1,7 +1,7 @@
 export {
   createMessageListManager,
   createMessageListSessionRegistry,
-} from './x-message-list/core/manager/index'
+} from './x-message-list/core/session-registry/index'
 export {
   MessageList,
   MessageListProvider,
@@ -49,7 +49,7 @@ export type {
   MessageListSessionState,
   MessageListTailAppendFollowDecision,
   MessageListTailAppendFollowInput,
-} from './x-message-list/core/manager/index'
+} from './x-message-list/core/session-registry/index'
 export type {
   EmptySlotInput,
   EdgeSlotInput,

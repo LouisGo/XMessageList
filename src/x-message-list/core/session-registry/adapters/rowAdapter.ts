@@ -3,12 +3,12 @@ import type {
   MessageIdentity,
   MessageIdentityAnchor,
   MessageRuntimeItemKey,
-} from '../runtime/index'
+} from '../../runtime/index'
 import type {
   MessageListAdapter,
   MessageListAnchor,
   MessageListConversationId,
-} from './types'
+} from '../contracts'
 
 export function toMessageDataItems<Row, Conversation>(
   id: MessageListConversationId,

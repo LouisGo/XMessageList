@@ -1,8 +1,8 @@
 export {
-  ApplicationMessageListManager,
+  ApplicationMessageListSessionRegistry,
   createMessageListManager,
   createMessageListSessionRegistry,
-} from './manager'
+} from './registry/registry'
 export type {
   MessageListIdentityRemap,
   MessageListIncomingAppendContext,
@@ -44,4 +44,4 @@ export type {
   MessageListTailAppendFollowDecision,
   MessageListTailAppendFollowInput,
   MessageListViewState,
-} from './types'
+} from './contracts'

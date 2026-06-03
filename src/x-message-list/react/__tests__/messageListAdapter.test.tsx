@@ -6,8 +6,8 @@ import {
   type MessageListAdapter,
   type MessageListPage,
   type MessageListSession,
-} from '../../core/manager/index'
-import { getMessageListSessionInternals } from '../../core/manager/internal'
+} from '../../core/session-registry/index'
+import { getMessageListSessionInternals } from '../../core/session-registry/internal'
 import type {
   MessageDataItem,
   MessageListRuntime,
