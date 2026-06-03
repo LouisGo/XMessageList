@@ -120,18 +120,23 @@ function ConversationView({ conversationId }: { conversationId: string }) {
 ## Public Contracts
 
 - Package root exports `createMessageListManager`, `MessageListProvider`,
-  `useMessageListSession`, `MessageList` and public manager/session/React
-  contract types.
+  `useMessageListSession`, `useMessageListState`, `MessageList` and public
+  manager/session/React contract types.
 - Package root does not export `createMessageListRuntime`, `MessageListRuntime`,
   `MessageListSnapshot`, `MessageListRuntimeEvent`, `LoadedSegment`,
   `MessageDataItem`, data runtime types, or a `x-message-list/data` subpath.
 - `MessageListManager` owns all conversation sessions. `MessageList` unmount
   detaches the view but does not destroy the session.
+- Application stores remain the canonical owner for paged message caches,
+  persistence and dirty timestamp checks. XMessageList sessions own only the
+  current loaded segment, edge state, viewport state and loaded-only row
+  mutations.
 - `MessageListSession` exposes only public application commands and local row
   mutation entry points: `commands.scrollToLatest`, `commands.scrollToMessage`,
   `commands.loadBefore`, `commands.loadAfter`, `commands.reloadLatest`,
-  `rows.patch`, `rows.replace`, `rows.resetLatest`, `rows.resetAround`,
-  `rows.applyIdentityRemap` and `rows.clear`.
+  `getState`, `subscribe`, `rows.patch`, `rows.mutate`, `rows.replace`,
+  `rows.resetLatest`, `rows.resetAround`, `rows.applyIdentityRemap` and
+  `rows.clear`.
 - React is an adapter over `MessageListSession`; it must not call request APIs,
   merge data, persist anchors or run read receipts.
 - Runtime and data runtime stay package-internal implementation details.

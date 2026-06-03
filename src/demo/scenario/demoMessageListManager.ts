@@ -49,7 +49,6 @@ export type DemoManagerOptions = {
   canCompleteRequestActivation: (feedId: string) => boolean
   loadAnchor: (feedId: string) => SavedRuntimeAnchor | null
   saveAnchor: (feedId: string, value: SavedRuntimeAnchor) => void
-  setEdgeLoading: (edge: 'before' | 'after', loading: boolean) => void
   setFeedLoading: (loading: boolean) => void
   setLastEvent: (eventText: string) => void
   setMessageCount: (messageCount: number) => void
@@ -280,47 +279,33 @@ async function loadDemoEdgePage(
     throw new Error(`missing ${edge} boundary message`)
   }
 
-  const isSelectedFeed = input.getSelectedFeedId() === context.id
-  const canExposeEdgeLoading = isSelectedFeed &&
-    !input.isFeedLoading() &&
-    context.reason !== 'underflow-fill'
-  const deferredDelayMs = isSelectedFeed
+  const deferredDelayMs = input.getSelectedFeedId() === context.id
     ? input.consumeDeferredEdgeResponseDelay()
     : 0
 
-  if (canExposeEdgeLoading) {
-    input.setEdgeLoading(edge, true)
+  await wait(deferredDelayMs > 0 ? deferredDelayMs : EDGE_LOAD_DELAY_BASE_MS)
+  const resp = await getMessagesAround({
+    feedId: context.id,
+    anchor: {
+      messageId: boundaryMessage.id,
+      position: boundaryMessage.sequence,
+    },
+    before: edge === 'before' ? context.pageSize : 0,
+    after: edge === 'after' ? context.pageSize : 0,
+  })
+
+  if (resp.ok === false) {
+    throw new Error(resp.errorMessage)
   }
 
-  try {
-    await wait(deferredDelayMs > 0 ? deferredDelayMs : EDGE_LOAD_DELAY_BASE_MS)
-    const resp = await getMessagesAround({
-      feedId: context.id,
-      anchor: {
-        messageId: boundaryMessage.id,
-        position: boundaryMessage.sequence,
-      },
-      before: edge === 'before' ? context.pageSize : 0,
-      after: edge === 'after' ? context.pageSize : 0,
-    })
-
-    if (resp.ok === false) {
-      throw new Error(resp.errorMessage)
-    }
-
-    return toDemoPage(resp.messages, {
-      feedId: resp.feedId,
-      hasMoreBefore: resp.hasMoreBefore,
-      hasMoreAfter: resp.hasMoreAfter,
-      anchorMessageId: resp.anchor.messageId,
-      anchorStatus: resp.anchorStatus,
-      total: resp.total,
-    })
-  } finally {
-    if (canExposeEdgeLoading && input.getSelectedFeedId() === context.id) {
-      input.setEdgeLoading(edge, false)
-    }
-  }
+  return toDemoPage(resp.messages, {
+    feedId: resp.feedId,
+    hasMoreBefore: resp.hasMoreBefore,
+    hasMoreAfter: resp.hasMoreAfter,
+    anchorMessageId: resp.anchor.messageId,
+    anchorStatus: resp.anchorStatus,
+    total: resp.total,
+  })
 }
 
 function handleDemoRequestResult(

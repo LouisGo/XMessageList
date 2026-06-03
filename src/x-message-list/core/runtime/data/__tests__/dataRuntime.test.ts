@@ -355,6 +355,68 @@ describe('MessageListDataRuntime', () => {
     expect(segment.hasMoreBefore).toBe(true)
   })
 
+  it('mutates loaded rows with patch, remove, and invalidate in one patch segment', () => {
+    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
+    runtime.resetLatest({
+      items: [
+        item('row-10'),
+        item('row-11'),
+        item('row-12'),
+        item('row-13'),
+        itemWithVersion('row-14', 1),
+      ],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })
+
+    const previous = runtime.getSegment()
+    const row14 = previous.items.find((nextItem) => nextItem.key === 'row-14')
+    const segment = runtime.mutateItems({
+      patches: [itemWithVersion('row-12', 7)],
+      removeKeys: ['row-13'],
+      invalidateKeys: ['row-14'],
+    })
+
+    expect(segment.items.map((nextItem) => nextItem.key)).toEqual([
+      'row-10',
+      'row-11',
+      'row-12',
+      'row-14',
+    ])
+    expect(segment.items.find((nextItem) => nextItem.key === 'row-10'))
+      .toBe(previous.items[0])
+    expect(segment.items.find((nextItem) => nextItem.key === 'row-11'))
+      .toBe(previous.items[1])
+    expect(segment.items.find((nextItem) => nextItem.key === 'row-12')?.renderVersion)
+      .toBe(7)
+    expect(segment.items.find((nextItem) => nextItem.key === 'row-14')?.renderVersion)
+      .toBe(2)
+    expect(segment.items.find((nextItem) => nextItem.key === 'row-14'))
+      .not.toBe(row14)
+    expect(segment.modifier).toEqual({
+      type: 'patch',
+      changedKeys: ['row-12', 'row-13', 'row-14'],
+    })
+  })
+
+  it('ignores mutate inputs that do not touch the loaded segment', () => {
+    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
+    runtime.resetLatest({
+      items: [item('row-1')],
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+    })
+    const previous = runtime.getSegment()
+
+    const segment = runtime.mutateItems({
+      patches: [item('missing')],
+      removeKeys: ['gone'],
+      invalidateKeys: ['outside'],
+    })
+
+    expect(segment).toBe(previous)
+  })
+
   it('publishes semantic append modifiers for live tail rows', () => {
     const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
     runtime.resetLatest({
@@ -490,6 +552,21 @@ function item(
       stableId: key,
       version: 1,
       ...identity,
+    },
+  }
+}
+
+function itemWithVersion(
+  key: string,
+  renderVersion: number,
+): MessageDataItem<string> {
+  return {
+    ...item(key),
+    renderVersion,
+    identity: {
+      feedId: 'feed-a',
+      stableId: key,
+      version: renderVersion,
     },
   }
 }

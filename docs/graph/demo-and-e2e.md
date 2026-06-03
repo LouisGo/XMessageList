@@ -25,7 +25,7 @@ sequenceDiagram
     opt edge request
       Manager->>Runtime: reportEdgeRequestFailure(edge, requestToken)
     end
-    Manager-->>UI: clear visible edge loading for selected feed
+    Manager-->>UI: publish edge failure through session state
   else response applies
     Manager->>Data: resetLatest, resetAround, extendBefore, or extendAfter
     Manager->>Runtime: applyLoadedSegment(committed segment)
@@ -33,12 +33,14 @@ sequenceDiagram
     opt trim produced a new segment
       Manager->>Runtime: applyLoadedSegment(trim segment)
     end
-    Manager-->>UI: update active feed messages and counts
+    Manager-->>UI: publish loaded rows and edge status through session state
   end
 ```
 
-Demo host 通过 manager adapter 响应 runtime semantic events；它不读取 projection
-DOM 来补救 scroll 行为。
+Demo host 通过 manager adapter 响应 runtime semantic events；canonical
+persisted feed 由 demo data API 管理，当前 loaded rows、edge status 和 viewport
+status 从 `session.getState()` / `useMessageListState` 派生。它不维护独立
+loaded-window 镜像，也不读取 projection DOM 来补救 scroll 行为。
 
 ## E2E Harness
 

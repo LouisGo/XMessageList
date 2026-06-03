@@ -66,6 +66,7 @@ describe('useDemoMessageScenario feed switching', () => {
     })
     await wait(220)
 
+    await wait(360)
     await waitFor(() =>
       !scenario?.loadingBefore
     )

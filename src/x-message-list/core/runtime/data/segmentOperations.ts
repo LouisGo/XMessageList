@@ -5,6 +5,12 @@ import type {
 } from '../contracts/identity'
 import type { IdentityRemapInput } from './dataRuntime'
 
+export type MutateSegmentItemsInput<TMessage, TOptimistic> = {
+  patches: MessageDataItem<TMessage, TOptimistic>[]
+  removeKeys: MessageRuntimeItemKey[]
+  invalidateKeys: MessageRuntimeItemKey[]
+}
+
 export function mergeBeforeItems<TMessage, TOptimistic>(
   incoming: MessageDataItem<TMessage, TOptimistic>[],
   current: MessageDataItem<TMessage, TOptimistic>[],
@@ -67,6 +73,47 @@ export function patchSegmentItems<TMessage, TOptimistic>(
   }
 
   return dedupeItems(next)
+}
+
+export function mutateSegmentItems<TMessage, TOptimistic>(
+  current: MessageDataItem<TMessage, TOptimistic>[],
+  input: MutateSegmentItemsInput<TMessage, TOptimistic>,
+): {
+  items: MessageDataItem<TMessage, TOptimistic>[]
+  changedKeys: MessageRuntimeItemKey[]
+} {
+  const patchByKey = new Map(input.patches.map((item) => [item.key, item]))
+  const removeKeys = new Set(input.removeKeys)
+  const invalidateKeys = new Set(input.invalidateKeys)
+  const changedKeys = new Set<MessageRuntimeItemKey>()
+  const next: MessageDataItem<TMessage, TOptimistic>[] = []
+
+  for (const item of current) {
+    if (removeKeys.has(item.key)) {
+      changedKeys.add(item.key)
+      continue
+    }
+
+    const patch = patchByKey.get(item.key)
+    if (patch) {
+      changedKeys.add(item.key)
+      next.push(patch)
+      continue
+    }
+
+    if (invalidateKeys.has(item.key)) {
+      changedKeys.add(item.key)
+      next.push(bumpItemRenderVersion(item))
+      continue
+    }
+
+    next.push(item)
+  }
+
+  return {
+    items: dedupeItems(next),
+    changedKeys: [...changedKeys],
+  }
 }
 
 export function appendSegmentItems<TMessage, TOptimistic>(
@@ -145,6 +192,23 @@ export function trimAroundKey<TMessage, TOptimistic>(
     items: items.slice(start, end),
     removedBefore,
     removedAfter,
+  }
+}
+
+function bumpItemRenderVersion<TMessage, TOptimistic>(
+  item: MessageDataItem<TMessage, TOptimistic>,
+): MessageDataItem<TMessage, TOptimistic> {
+  const renderVersion = item.renderVersion + 1
+
+  return {
+    ...item,
+    renderVersion,
+    identity: item.identity
+      ? {
+          ...item.identity,
+          version: renderVersion,
+        }
+      : item.identity,
   }
 }
 

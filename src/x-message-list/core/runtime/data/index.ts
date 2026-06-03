@@ -7,6 +7,7 @@ export {
   type ExtendSegmentInput,
   type IdentityRemapInput,
   type MessageListDataRuntimeOptions,
+  type MutateSegmentInput,
   type ReplaceSegmentInput,
   type ResetSegmentInput,
 } from './dataRuntime'

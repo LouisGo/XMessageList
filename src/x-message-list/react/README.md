@@ -9,7 +9,8 @@ merge, scroll correction, edge latches, read receipts or anchor persistence.
 - `components/` owns the projection shell, rows, commit ack, provider context and
   runtime event bridge.
 - `hooks/` owns provider-backed React integration such as
-  `useMessageListSession`.
+  `useMessageListSession` and selector-backed session state reads via
+  `useMessageListState`.
 - `scrollbar/` owns the optional custom scrollbar overlay, metric reading,
   geometry and styles.
 - `types.ts` and `index.ts` remain the public React adapter surface.
@@ -22,6 +23,7 @@ adapter components.
 
 ```tsx
 const session = useMessageListSession<Message>(conversationId)
+const loadedCount = useMessageListState(session, (state) => state.loaded.keys.length)
 
 return (
   <MessageList

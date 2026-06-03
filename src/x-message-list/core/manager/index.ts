@@ -21,10 +21,12 @@ export type {
   MessageListRequestContext,
   MessageListRequestResult,
   MessageListResolvedAnchor,
+  MessageListRowsMutation,
   MessageListRowsReplaceInput,
   MessageListRowsResetAroundInput,
   MessageListScrollToMessageOptions,
   MessageListSession,
   MessageListSessionContext,
+  MessageListSessionState,
   MessageListViewState,
 } from './types'

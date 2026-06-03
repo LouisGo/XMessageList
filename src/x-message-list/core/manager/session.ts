@@ -15,6 +15,7 @@ import {
 import { getMessageListManagerRuntime } from '../runtime/internal'
 import { MessageListReadReceiptsWorker } from './readReceipts'
 import { MessageListSessionOverlay } from './sessionOverlay'
+import { createMessageListSessionState } from './sessionState'
 import { createSessionRows } from './sessionRows'
 import { defineMessageListSessionInternals } from './internal'
 import { normalizeMessageListAnchor } from './rowAdapter'
@@ -34,6 +35,7 @@ import type {
   MessageListRequestResult,
   MessageListSession as PublicMessageListSession,
   MessageListSessionContext,
+  MessageListSessionState,
   MessageListViewState,
 } from './types'
 
@@ -48,6 +50,7 @@ export class MessageListSession<Row, Conversation>
   readonly rows: PublicMessageListSession<Row>['rows']
   readonly outgoing: PublicMessageListSession<Row>['outgoing']
   readonly incoming: PublicMessageListSession<Row>['incoming']
+  private readonly stateStore: ReturnType<typeof createMessageListSessionState<Row>>
   private readonly context: MessageListSessionContext<Conversation>
   private readonly readReceipts: MessageListReadReceiptsWorker<Row, Conversation>
   private readonly overlay: MessageListSessionOverlay
@@ -88,10 +91,12 @@ export class MessageListSession<Row, Conversation>
         void this.loadLatest()
       },
       loadBefore: () => {
-        void this.loadEdgeFromCommand('before')
+        getMessageListManagerRuntime(this.#runtime)
+          .startEdgeRequest('before', 'command-before')
       },
       loadAfter: () => {
-        void this.loadEdgeFromCommand('after')
+        getMessageListManagerRuntime(this.#runtime)
+          .startEdgeRequest('after', 'command-after')
       },
     }
     this.liveSemantics = new MessageListSessionLiveSemantics({
@@ -114,6 +119,11 @@ export class MessageListSession<Row, Conversation>
     })
     this.outgoing = this.liveSemantics.outgoing
     this.incoming = this.liveSemantics.incoming
+    this.stateStore = createMessageListSessionState({
+      id: this.id,
+      runtime: this.#runtime,
+      getViewState: () => this.getViewState(),
+    })
     this.readReceipts = new MessageListReadReceiptsWorker(
       options.adapter,
       (keys) => this.getRowsByKeys(keys),
@@ -138,6 +148,10 @@ export class MessageListSession<Row, Conversation>
   getSnapshot(): MessageListSnapshot<Row> { return this.#runtime.getSnapshot() }
 
   getViewState(): MessageListViewState { return this.overlay.getViewState() }
+
+  getState(): MessageListSessionState<Row> { return this.stateStore.getState() }
+
+  subscribe(listener: () => void): () => void { return this.stateStore.subscribe(listener) }
 
   subscribeView(listener: () => void): () => void {
     this.viewListeners.add(listener)
@@ -188,6 +202,7 @@ export class MessageListSession<Row, Conversation>
     this.runtimeUnsubscribe()
     this.readReceipts.destroy()
     this.overlay.destroy()
+    this.stateStore.destroy()
     this.#runtime.destroy()
     this.viewListeners.clear()
   }
@@ -439,31 +454,6 @@ export class MessageListSession<Row, Conversation>
     })
   }
 
-  private async loadEdgeFromCommand(edge: 'before' | 'after'): Promise<void> {
-    const request = this.#dataRuntime.createRequestToken(edge)
-    const event: RuntimeNeedEvent = edge === 'before'
-      ? {
-          type: 'needMoreBefore',
-          edge: 'before',
-          feedId: this.id,
-          generation: request.generation,
-          segmentRevision: request.segmentRevision,
-          requestToken: request.requestToken,
-          reason: 'command-before',
-        }
-      : {
-          type: 'needMoreAfter',
-          edge: 'after',
-          feedId: this.id,
-          generation: request.generation,
-          segmentRevision: request.segmentRevision,
-          requestToken: request.requestToken,
-          reason: 'command-after',
-        }
-
-    await this.loadEdge(event)
-  }
-
   private async runRequest(
     kind: 'latest' | 'before' | 'after' | 'around',
     event: RuntimeNeedEvent | undefined,
@@ -593,7 +583,7 @@ export class MessageListSession<Row, Conversation>
     )
   }
 
-  private notifyViewListeners(): void { for (const listener of this.viewListeners) listener() }
+  private notifyViewListeners(): void { this.stateStore.notifyViewChanged(); for (const listener of this.viewListeners) listener() }
 
   private touch(): void { this.lastUsedAt = Date.now() }
 }

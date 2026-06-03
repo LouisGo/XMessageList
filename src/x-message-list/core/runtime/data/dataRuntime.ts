@@ -14,6 +14,7 @@ import {
   dedupeItems,
   mergeAfterItems,
   mergeBeforeItems,
+  mutateSegmentItems,
   patchSegmentItems,
   trimAroundKey,
 } from './segmentOperations'
@@ -59,6 +60,12 @@ export type ReplaceSegmentInput<TMessage, TOptimistic> = {
   hasMoreAfter?: boolean
   anchor?: MessageIdentityAnchor
   anchorStatus?: LoadedSegment['anchorStatus']
+}
+
+export type MutateSegmentInput<TMessage, TOptimistic> = {
+  patches?: MessageDataItem<TMessage, TOptimistic>[]
+  removeKeys?: MessageRuntimeItemKey[]
+  invalidateKeys?: MessageRuntimeItemKey[]
 }
 
 export type IdentityRemapInput = Extract<
@@ -207,6 +214,32 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
         modifier: { type: 'patch', changedKeys: items.map((item) => item.key) },
       },
     )
+    return this.segment
+  }
+
+  mutateItems(
+    input: MutateSegmentInput<TMessage, TOptimistic>,
+  ): LoadedSegment<TMessage, TOptimistic> {
+    const mutation = mutateSegmentItems(this.segment.items, {
+      patches: input.patches ?? [],
+      removeKeys: input.removeKeys ?? [],
+      invalidateKeys: input.invalidateKeys ?? [],
+    })
+
+    if (mutation.changedKeys.length === 0) {
+      return this.segment
+    }
+
+    this.segment = this.createSegment(mutation.items, {
+      hasMoreBefore: this.segment.hasMoreBefore,
+      hasMoreAfter: this.segment.hasMoreAfter,
+      anchor: this.segment.anchor,
+      anchorStatus: this.segment.anchorStatus,
+      modifier: {
+        type: 'patch',
+        changedKeys: mutation.changedKeys,
+      },
+    })
     return this.segment
   }
 

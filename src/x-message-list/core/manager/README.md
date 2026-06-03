@@ -9,12 +9,14 @@ component mount state.
 
 - Lazily create one `MessageListSession` per conversation id.
 - Resolve app-level dependencies through `getConversation` and `getAdapter`.
-- Own viewport runtime, data runtime, request bridge, `anchorMemory` and
-  `readReceipts` workers for each session.
+- Own the current session loaded segment, viewport state, edge state, request
+  bridge, `anchorMemory` and `readReceipts` workers.
 - Apply request tokens, stale-response guards, segment merge, trim and failure
   acknowledgement before publishing loaded segments to the viewport runtime.
-- Expose a thin public session with `commands` and `rows`; runtime internals stay
-  package-internal.
+- Expose a thin public session with `getState`, `subscribe`, `commands`,
+  `incoming`, `outgoing` and `rows`; runtime internals stay package-internal.
+- Keep application pagination caches, persistence and dirty timestamp checks in
+  the host store. `rows.mutate` is loaded-only by design.
 
 ## Public Shape
 

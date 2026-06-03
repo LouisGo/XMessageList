@@ -26,6 +26,7 @@ export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown>
 export type MessageListManagerRuntime<TMessage = unknown, TOptimistic = unknown> =
   MessageListRuntime<TMessage, TOptimistic> & {
     prepareFollowBottomForLocalReset(): void
+    startEdgeRequest(edge: 'before' | 'after', reason: string): void
   }
 
 export function getMessageListAdapterRuntime<

@@ -4,6 +4,7 @@ export {
 export {
   MessageList,
   MessageListProvider,
+  useMessageListState,
   useMessageListSession,
 } from './x-message-list/react/index'
 export type {
@@ -25,11 +26,13 @@ export type {
   MessageListRequestContext,
   MessageListRequestResult,
   MessageListResolvedAnchor,
+  MessageListRowsMutation,
   MessageListRowsReplaceInput,
   MessageListRowsResetAroundInput,
   MessageListScrollToMessageOptions,
   MessageListSession,
   MessageListSessionContext,
+  MessageListSessionState,
 } from './x-message-list/core/manager/index'
 export type {
   EmptySlotInput,
@@ -38,6 +41,8 @@ export type {
   MessageListRenderItem,
   MessageListProps,
   MessageListRenderRowInput,
+  MessageListStateEqualityFn,
+  MessageListStateSelector,
   MessageListViewportAnchorChangeEvent,
   MessageListViewportObservationEvent,
   OverlayStatusInput,

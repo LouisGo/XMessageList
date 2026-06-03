@@ -23,6 +23,7 @@ export {
   createMessageListManager,
   MessageListProvider,
   useMessageListSession,
+  useMessageListState,
   MessageList,
 }
 
@@ -45,17 +46,21 @@ export type {
   MessageListRequestContext,
   MessageListRequestResult,
   MessageListResolvedAnchor,
+  MessageListRowsMutation,
   MessageListRowsReplaceInput,
   MessageListRowsResetAroundInput,
   MessageListScrollToMessageOptions,
   MessageListSession,
   MessageListSessionContext,
+  MessageListSessionState,
   EmptySlotInput,
   EdgeSlotInput,
   MessageListCommands,
   MessageListRenderItem,
   MessageListProps,
   MessageListRenderRowInput,
+  MessageListStateEqualityFn,
+  MessageListStateSelector,
   MessageListViewportAnchorChangeEvent,
   MessageListViewportObservationEvent,
   OverlayStatusInput,
@@ -151,6 +156,7 @@ Canonical names：
 | `MessageList` | React component | 唯一公开组件名 |
 | `MessageListProvider` | React component | 注入应用级 manager |
 | `useMessageListSession` | hook | 按 conversation id 解析 session |
+| `useMessageListState` | hook | 订阅 session 级只读列表状态 |
 | `MessageListSession` | public object | conversation 的消息列表会话实例 |
 | `MessageListProps` | React props | 组件 props 类型 |
 
@@ -199,6 +205,8 @@ Public `MessageListSession<Row>` 只暴露使用方需要的能力：
 ```ts
 type MessageListSession<Row> = {
   id: string
+  getState(): MessageListSessionState<Row>
+  subscribe(listener): () => void
 
   commands: {
     scrollToLatest(): void
@@ -210,6 +218,7 @@ type MessageListSession<Row> = {
 
   rows: {
     patch(rows: Row[]): void
+    mutate(input): void
     replace(input): void
     resetLatest(page): void
     resetAround(input): void
@@ -239,8 +248,18 @@ type MessageListOutgoingStageInput<Row> = {
 ```
 
 `commands` 表示视口/请求意图；`rows` 表示普通 row 变更入口，用于 edit、
-delete、reaction、streaming patch、replace、clear 等不带“新尾部消息”语义的
-场景。
+delete、reaction、read marker、media loaded、streaming patch、replace、clear
+等不带“新尾部消息”语义的场景。推荐普通服务端 update 推送统一翻译成
+`rows.mutate({ patches, removeKeys, invalidateKeys, reason })`：`patches` 只更新
+当前 loaded segment 内已存在的 row，`removeKeys` 原子删除 loaded row，
+`invalidateKeys` 只 bump row render version，用于相邻分组、日期分割、read marker
+或绝对序号等上下文渲染依赖。未加载页的脏检查、分页缓存和持久化继续由外部业务
+store 负责。
+
+`getState` / `subscribe` 是 session 级只读 store；React 侧使用
+`useMessageListState(session, selector, equality?)` 做 selector 订阅。state 暴露
+loaded rows/keys、edge status、overlay status 和 viewport bottom/pending/phase
+等稳定列表概念，不暴露 runtime snapshot、loaded segment 或 DOM evidence。
 
 `outgoing` 表示本人 send/retry 的 optimistic outgoing 语义：调用方发布本地 row，
 session 负责进入 latest 目标、合入 pending outgoing、处理后续 patch/remap。

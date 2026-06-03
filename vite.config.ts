@@ -17,6 +17,7 @@ export default defineConfig({
         'src/x-message-list/core/manager/types.ts',
         'src/x-message-list/react/index.ts',
         'src/x-message-list/react/components/MessageList.tsx',
+        'src/x-message-list/react/hooks/useMessageListState.ts',
         'src/x-message-list/react/types.ts',
       ],
       insertTypesEntry: true,
@@ -35,12 +36,18 @@ export default defineConfig({
       },
     },
     rollupOptions: {
-      external: ['react', 'react-dom', 'react/jsx-runtime'],
+      external: [
+        'react',
+        'react-dom',
+        'react/jsx-runtime',
+        'use-sync-external-store/with-selector',
+      ],
       output: {
         globals: {
           react: 'React',
           'react-dom': 'ReactDOM',
           'react/jsx-runtime': 'jsxRuntime',
+          'use-sync-external-store/with-selector': 'useSyncExternalStoreWithSelector',
         },
       },
     },

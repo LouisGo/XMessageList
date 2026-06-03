@@ -14,7 +14,9 @@ import type {
   ViewportAnchorChangedEvent,
   ViewportObservationChangedEvent,
 } from '../../core/runtime/index'
+import { getMessageListAdapterRuntime } from '../../core/runtime/internal'
 import { MessageList } from '../components/MessageList'
+import { useMessageListState } from '../hooks/useMessageListState'
 import type { OverlayStatusInput } from '../types'
 
 describe('MessageList React adapter', () => {
@@ -346,6 +348,116 @@ describe('MessageList React adapter', () => {
 
     expect(renderCounts.get('row-1')).toBe(1)
     expect(renderCounts.get('row-2')).toBe(2)
+
+    await act(async () => {
+      root.unmount()
+    })
+    fixture.destroy()
+  })
+
+  it('keeps row rerenders scoped for mutate patch, remove, and invalidate', async () => {
+    const fixture = createSessionFixture({
+      rows: ['row-10', 'row-11', 'row-12', 'row-13', 'row-14'],
+    })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const renderCounts = new Map<string, number>()
+
+    await act(async () => {
+      root.render(
+        <MessageList
+          session={fixture.session}
+          renderRow={({ row }) => {
+            renderCounts.set(row, (renderCounts.get(row) ?? 0) + 1)
+            return <span>{row}</span>
+          }}
+        />,
+      )
+    })
+    renderCounts.clear()
+
+    await act(async () => {
+      fixture.session.rows.mutate({
+        patches: ['row-13-edited'],
+        removeKeys: ['row-13'],
+        invalidateKeys: ['row-14'],
+      })
+      await waitForAnimationFrame()
+    })
+
+    expect(host.querySelector('[data-runtime-key="row-13"]')).toBeNull()
+    expect(host.querySelector('[data-runtime-key="row-13-edited"]')).toBeNull()
+    expect(renderCounts.get('row-10') ?? 0).toBe(0)
+    expect(renderCounts.get('row-11') ?? 0).toBe(0)
+    expect(renderCounts.get('row-12') ?? 0).toBe(0)
+    expect(renderCounts.get('row-14')).toBe(1)
+
+    await act(async () => {
+      root.unmount()
+    })
+    fixture.destroy()
+  })
+
+  it('selects session state without rerendering unchanged selections', async () => {
+    const fixture = createSessionFixture({
+      rows: ['row-1', 'row-2'],
+    })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const renderCounts = {
+      loaded: 0,
+      beforeStatus: 0,
+    }
+
+    function LoadedCount() {
+      const count = useMessageListState(
+        fixture.session,
+        (state) => state.loaded.keys.length,
+      )
+      renderCounts.loaded += 1
+      return <span data-testid="loaded-count">{count}</span>
+    }
+
+    function BeforeStatus() {
+      const status = useMessageListState(
+        fixture.session,
+        (state) => state.edge.before.status,
+      )
+      renderCounts.beforeStatus += 1
+      return <span data-testid="before-status">{status}</span>
+    }
+
+    await act(async () => {
+      root.render(
+        <>
+          <LoadedCount />
+          <BeforeStatus />
+        </>,
+      )
+    })
+    ackRuntimeCommit(fixture.runtime)
+
+    const loadedRenders = renderCounts.loaded
+    const beforeStatusRenders = renderCounts.beforeStatus
+
+    await act(async () => {
+      fixture.session.rows.mutate({ invalidateKeys: ['row-2'] })
+      ackRuntimeCommit(fixture.runtime)
+      await waitForAnimationFrame()
+    })
+
+    expect(renderCounts.loaded).toBe(loadedRenders)
+    expect(renderCounts.beforeStatus).toBe(beforeStatusRenders)
+
+    await act(async () => {
+      fixture.session.rows.mutate({ removeKeys: ['row-2'] })
+      await waitForAnimationFrame()
+    })
+
+    expect(host.querySelector('[data-testid="loaded-count"]')?.textContent)
+      .toBe('1')
+    expect(renderCounts.loaded).toBe(loadedRenders + 1)
+    expect(renderCounts.beforeStatus).toBe(beforeStatusRenders)
 
     await act(async () => {
       root.unmount()
@@ -767,6 +879,11 @@ function createSessionFixture(input: {
     runtime,
     destroy: () => manager.destroyAll(),
   }
+}
+
+function ackRuntimeCommit(runtime: MessageListRuntime<string>): void {
+  getMessageListAdapterRuntime(runtime)
+    .ackProjectionCommit(runtime.getSnapshot().commitToken)
 }
 
 function createStringAdapter(

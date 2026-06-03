@@ -24,6 +24,7 @@ import { settleTransactionScrollPosition } from '../transactions/transactionSett
 import { resolveCurrentViewportAnchor, resolveMeasuredViewportAnchor, resolveViewportAnchorEventInput, type ResolvedViewportAnchor, type ViewportAnchorEventInput } from '../dom/viewportAnchorEvents'
 import { ControllerMotionCoordinator } from './controllerMotionCoordinator'
 import { startPendingRuntimeMotion as startPendingRuntimeMotionContinuation } from './controllerSettledContinuations'
+import { createCommandEdgeRequest } from './controllerEdgeRequests'
 export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unknown>
   implements MessageListAdapterRuntime<TMessage, TOptimistic> {
   private readonly scheduler: RuntimeScheduler
@@ -331,11 +332,10 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.registry.setRow(key, element)
     if (element) this.resizeObserver?.observe(element)
   }
-  beginDirectScroll(): void { this.domInteractions.beginDirectScroll() }
-  writeDirectScrollTop(scrollTop: number): boolean { return this.domInteractions.writeDirectScrollTop(scrollTop) }
-  endDirectScroll(): void { this.domInteractions.endDirectScroll() }
-  notifyDirectScrollRebased(): void { this.domInteractions.notifyDirectScrollRebased() }
+  beginDirectScroll(): void { this.domInteractions.beginDirectScroll() } writeDirectScrollTop(scrollTop: number): boolean { return this.domInteractions.writeDirectScrollTop(scrollTop) }
+  endDirectScroll(): void { this.domInteractions.endDirectScroll() } notifyDirectScrollRebased(): void { this.domInteractions.notifyDirectScrollRebased() }
   reportEdgeRequestFailure(edge: RuntimeEdge, requestToken: string): void { this.snapshot = this.interactions.reportEdgeError(this.snapshot, edge, requestToken); this.emitSnapshot() }
+  startEdgeRequest(edge: RuntimeEdge, reason: string): void { const update = createCommandEdgeRequest({ interactions: this.interactions, snapshot: this.snapshot, edge, reason }); if (update) this.applyInteractionUpdate(update) }
   retryEdgeRequest(edge: RuntimeEdge): void { const update = this.interactions.retryEdge(this.snapshot, edge); if (update) this.applyInteractionUpdate(update) }
   reportOverlayMetricMismatch(details: Record<string, unknown>): void { this.pushDiagnostic('overlay.metricMismatch', 'warn', details) }
   prepareFollowBottomForLocalReset(): void {

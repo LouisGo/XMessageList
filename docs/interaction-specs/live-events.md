@@ -93,7 +93,9 @@ Acceptance：
 - 用户显式点击 bottom 后，本次 follow-bottom intent 优先级高于此前或并发计算出的
   `append(preserve)`；pending preserve append 不能把 bottom 点击覆盖掉。
 - Bot push 属于 receive append；纯尾部新消息使用 `incoming.append`，混合
-  edit/reaction/delete 事件继续使用 `rows.replace` 或 `rows.patch`。
+  edit/reaction/delete/read/media loaded 等 passive update 事件优先归一化为
+  `rows.mutate({ patches, removeKeys, invalidateKeys, reason })`；需要重建整个
+  loaded window 时才使用 `rows.replace`。
 - 多条 push 可以合并呈现，但最终消息顺序必须正确。
 - push 期间不能出现消息重复、临时乱序、先显示后撤回式闪烁。
 

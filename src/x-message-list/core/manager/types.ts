@@ -139,6 +139,42 @@ export type MessageListViewState = {
   overlayStatus: MessageListOverlayStatus
 }
 
+export type MessageListSessionState<Row = unknown> = {
+  id: MessageListConversationId
+  loaded: {
+    rows: Row[]
+    keys: string[]
+    hasMoreBefore: boolean
+    hasMoreAfter: boolean
+  }
+  edge: {
+    before: {
+      status: 'idle' | 'loading' | 'error' | 'exhausted'
+    }
+    after: {
+      status: 'idle' | 'loading' | 'error' | 'exhausted'
+    }
+  }
+  overlayStatus: MessageListOverlayStatus
+  viewport: {
+    bottomLockState: 'LOCKED' | 'UNLOCKED'
+    pendingIntent:
+      | 'edge-before'
+      | 'edge-after'
+      | 'underflow-fill'
+      | 'follow-bottom'
+      | 'destination'
+      | null
+    phase:
+      | 'IDLE'
+      | 'PROJECTING'
+      | 'MEASURING'
+      | 'CORRECTING'
+      | 'MOTION'
+    distanceToBottom: number
+  }
+}
+
 export type MessageListRowsReplaceInput<Row> = {
   rows: Row[]
   changedKeys?: string[]
@@ -152,6 +188,13 @@ export type MessageListRowsResetAroundInput<Row> = MessageListPage<Row> & {
   target: MessageListAnchor
   align?: 'start' | 'center' | 'end' | 'nearest'
   offsetWithinMessage?: number
+}
+
+export type MessageListRowsMutation<Row> = {
+  patches?: Row[]
+  removeKeys?: string[]
+  invalidateKeys?: string[]
+  reason?: string
 }
 
 export type MessageListIdentityRemap = {
@@ -218,6 +261,8 @@ export type MessageListIncomingAppendInput<Row> = {
 
 export type MessageListSession<Row = unknown> = {
   id: MessageListConversationId
+  getState(): MessageListSessionState<Row>
+  subscribe(listener: () => void): () => void
   commands: {
     scrollToLatest(): void
     scrollToMessage(
@@ -230,6 +275,7 @@ export type MessageListSession<Row = unknown> = {
   }
   rows: {
     patch(rows: Row[]): void
+    mutate(input: MessageListRowsMutation<Row>): void
     replace(input: MessageListRowsReplaceInput<Row>): void
     resetLatest(page: MessageListPage<Row>): void
     resetAround(input: MessageListRowsResetAroundInput<Row>): void

@@ -116,6 +116,26 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     return update
   }
 
+  startCommandEdgeNeed(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+    edge: RuntimeEdge,
+    reason: string,
+  ): InteractionUpdate<TMessage, TOptimistic> | null {
+    const update = this.edge.start(
+      snapshot,
+      edge,
+      reason,
+      edge === 'before' ? 'edge-before' : 'edge-after',
+      { ignoreScrollSource: true },
+    )
+
+    if (update) {
+      this.axes.markEdgePending()
+    }
+
+    return update
+  }
+
   retryEdge(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     edge: RuntimeEdge,

@@ -56,5 +56,8 @@
     "vite": "8.0.12",
     "vite-plugin-dts": "5.0.0",
     "vitest": "3.2.4"
+  },
+  "dependencies": {
+    "use-sync-external-store": "^1.6.0"
   }
 }

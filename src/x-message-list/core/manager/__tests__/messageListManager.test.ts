@@ -3,6 +3,7 @@ import {
   createMessageListManager,
   type MessageListAdapter,
   type MessageListPage,
+  type MessageListSession,
 } from '../index'
 import { getMessageListSessionInternals } from '../internal'
 import { MessageListReadReceiptsWorker } from '../readReceipts'
@@ -10,6 +11,7 @@ import type {
   MessageListRuntimeEvent,
   ViewportObservationChangedEvent,
 } from '../../runtime/index'
+import { getMessageListAdapterRuntime } from '../../runtime/internal'
 
 type TestRow = {
   id: string
@@ -211,6 +213,117 @@ describe('createMessageListManager', () => {
     expect(internals.getSnapshot().segmentMeta.hasMoreAfter).toBe(false)
     expect(requestResults).toContain('latest:applied')
     expect(requestResults).not.toContain('latest:stale')
+  })
+
+  it('exposes stable session state and publishes selector subscriptions', async () => {
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => Promise.resolve(page(['row-1', 'row-2'], {
+          hasMoreBefore: true,
+          hasMoreAfter: false,
+        })),
+      }),
+    })
+    const session = manager.getSession('feed-a')
+    const events: string[] = []
+    const unsubscribe = session.subscribe(() => {
+      events.push(session.getState().loaded.keys.join(','))
+    })
+
+    await waitFor(() => session.getState().loaded.keys.length === 2)
+    const state = session.getState()
+
+    expect(state).toBe(session.getState())
+    expect(state).toMatchObject({
+      id: 'feed-a',
+      loaded: {
+        keys: ['row-1', 'row-2'],
+        hasMoreBefore: true,
+        hasMoreAfter: false,
+      },
+      edge: {
+        before: { status: 'idle' },
+        after: { status: 'idle' },
+      },
+      overlayStatus: { status: 'idle' },
+      viewport: {
+        bottomLockState: 'UNLOCKED',
+        pendingIntent: null,
+      },
+    })
+
+    session.rows.mutate({ invalidateKeys: ['row-2'] })
+    await waitFor(() => events.some((event) => event === 'row-1,row-2'))
+    unsubscribe()
+  })
+
+  it('mutates only loaded rows and invalidates render versions without row data changes', async () => {
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => Promise.resolve(page(['row-10', 'row-11', 'row-12'])),
+      }),
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.getSnapshot().items.length === 3)
+    ackSessionCommit(session)
+    const before = internals.getSnapshot().items
+
+    session.rows.mutate({
+      patches: [
+        { id: 'row-12', text: 'edited' },
+        { id: 'missing', text: 'ignored' },
+      ],
+      removeKeys: ['row-11', 'outside-remove'],
+      invalidateKeys: ['row-10', 'outside-invalidate'],
+      reason: 'push-update',
+    })
+
+    const snapshot = internals.getSnapshot()
+    expect(snapshot.items.map((item) => item.key)).toEqual(['row-10', 'row-12'])
+    expect(snapshot.items[0]).not.toBe(before[0])
+    expect(snapshot.items[0]?.message).toEqual({ id: 'row-10' })
+    expect(snapshot.items[0]?.renderVersion).toBe(before[0].renderVersion + 1)
+    expect(snapshot.items[1]?.message).toEqual({ id: 'row-12', text: 'edited' })
+    expect(snapshot.segmentMeta.modifier).toEqual({
+      type: 'patch',
+      changedKeys: ['row-10', 'row-11', 'row-12'],
+    })
+    expect(session.getState().loaded.keys).toEqual(['row-10', 'row-12'])
+  })
+
+  it('routes command edge loads through runtime edge state', async () => {
+    const pendingBefore: Array<(page: MessageListPage<TestRow>) => void> = []
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => Promise.resolve(page(['row-2'], {
+          hasMoreBefore: true,
+          hasMoreAfter: false,
+        })),
+        loadBefore: () => new Promise<MessageListPage<TestRow>>((resolve) => {
+          pendingBefore.push(resolve)
+        }),
+      }),
+    })
+    const session = manager.getSession('feed-a')
+
+    await waitFor(() => session.getState().loaded.keys.length === 1)
+    ackSessionCommit(session)
+    session.commands.loadBefore()
+    await waitFor(() => session.getState().edge.before.status === 'loading')
+
+    pendingBefore[0](page(['row-1'], {
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+    }))
+
+    await waitFor(() => session.getState().loaded.keys[0] === 'row-1')
+    ackSessionCommit(session)
+    expect(session.getState().edge.before.status).toBe('exhausted')
   })
 
   it('does not let a pending bootstrap overwrite local reset rows', async () => {
@@ -939,6 +1052,12 @@ function rowsByKey(rows: TestRow[]): (keys: string[]) => TestRow[] {
 
     return nextRows
   }
+}
+
+function ackSessionCommit(session: MessageListSession<TestRow>): void {
+  const internals = getMessageListSessionInternals(session)
+  getMessageListAdapterRuntime(internals.runtime)
+    .ackProjectionCommit(internals.runtime.getSnapshot().commitToken)
 }
 
 function observation(keys: string[]): ViewportObservationChangedEvent {

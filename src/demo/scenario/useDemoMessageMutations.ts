@@ -1,9 +1,11 @@
 import { useCallback, useRef } from 'react'
+import type { MessageListSession } from '../../index'
 import type { DemoMessage } from '../data/demoData'
-import { readDemoFeedMessages } from '../data/demoMessageApi'
-import type {
-  DemoLoadedMessagesReplacer,
-} from './demoScenarioTypes'
+import {
+  flushDemoFeedPersistence,
+  readDemoFeedMessages,
+  replaceDemoFeedMessages,
+} from '../data/demoMessageApi'
 
 const REACTION_EMOJIS = ['😀', '😂', '🔥', '👍', '🎉', '😭', '👀', '❤️', '🚀', '🥲']
 
@@ -18,14 +20,14 @@ export type DemoMessageMutationActions = {
 
 export function useDemoMessageMutations(input: {
   activeFeedId: string
+  session: MessageListSession<DemoMessage>
   getLoadedMessages: () => DemoMessage[]
-  replaceLoadedMessages: DemoLoadedMessagesReplacer
   setLastEvent: (eventText: string) => void
 }): DemoMessageMutationActions {
   const {
     activeFeedId,
     getLoadedMessages,
-    replaceLoadedMessages,
+    session,
     setLastEvent,
   } = input
   const dynamicHeightExpandedRef = useRef(false)
@@ -57,23 +59,26 @@ export function useDemoMessageMutations(input: {
       return
     }
 
-    const nextMessages = currentMessages.flatMap((message) => {
-      if (message.id !== messageId) {
-        return [message]
-      }
+    const loadedMatch = currentMessages.find((message) => message.id === messageId)
+    const nextLoadedMessage = loadedMatch ? mutate(loadedMatch) : undefined
 
-      const nextMessage = mutate(message)
-      return nextMessage ? [nextMessage] : []
-    })
+    replaceDemoFeedMessages(activeFeedId, nextFeedMessages)
+    void flushDemoFeedPersistence(activeFeedId)
 
-    void replaceLoadedMessages({
-      feedId: activeFeedId,
-      feedMessages: nextFeedMessages,
-      messages: nextMessages,
-      changedKeys: [messageId],
-      eventText,
-    })
-  }, [activeFeedId, getLoadedMessages, replaceLoadedMessages, setLastEvent])
+    if (nextLoadedMessage === null) {
+      session.rows.mutate({
+        removeKeys: [messageId],
+        reason: eventText,
+      })
+    } else if (nextLoadedMessage) {
+      session.rows.mutate({
+        patches: [nextLoadedMessage],
+        reason: eventText,
+      })
+    }
+
+    setLastEvent(eventText)
+  }, [activeFeedId, getLoadedMessages, session, setLastEvent])
 
   const toggleDynamicHeight = useCallback(() => {
     const currentMessages = getLoadedMessages()

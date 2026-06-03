@@ -31,6 +31,22 @@ export function createSessionRows<Row, Conversation>(input: {
         ),
       )
     },
+    mutate: (mutation) => {
+      const previousSegment = input.dataRuntime.getSegment()
+      const segment = input.dataRuntime.mutateItems({
+        patches: mutation.patches
+          ? toMessageDataItems(input.id, mutation.patches, input.adapter)
+          : undefined,
+        removeKeys: mutation.removeKeys,
+        invalidateKeys: mutation.invalidateKeys,
+      })
+
+      if (segment === previousSegment) {
+        return
+      }
+
+      input.publishSegment(segment)
+    },
     replace: (replaceInput) => {
       input.publishSegment(input.dataRuntime.replaceItems(
         toSessionReplaceInput(input.id, replaceInput, input.adapter),

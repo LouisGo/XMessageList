@@ -26,11 +26,18 @@ export function RuntimeEventBridge<TMessage, TOptimistic>({
   onViewportObservationInternal,
 }: RuntimeEventBridgeProps<TMessage, TOptimistic>) {
   const anchorChangeRef = useRef(onViewportAnchorChange)
-  anchorChangeRef.current = onViewportAnchorChange
   const observationChangeRef = useRef(onViewportObservationChange)
-  observationChangeRef.current = onViewportObservationChange
   const observationInternalRef = useRef(onViewportObservationInternal)
-  observationInternalRef.current = onViewportObservationInternal
+
+  useLayoutEffect(() => {
+    anchorChangeRef.current = onViewportAnchorChange
+    observationChangeRef.current = onViewportObservationChange
+    observationInternalRef.current = onViewportObservationInternal
+  }, [
+    onViewportAnchorChange,
+    onViewportObservationChange,
+    onViewportObservationInternal,
+  ])
 
   useLayoutEffect(() => {
     const unsubscribers: Array<() => void> = []

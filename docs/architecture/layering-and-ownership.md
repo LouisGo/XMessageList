@@ -137,6 +137,8 @@ Host 负责：
 - 通过 `session.incoming.append` 接入他人或服务端尾部新消息。
 - 通过 `session.rows` 接入 edit、delete、reaction、streaming patch、
   identity remap、replace 和 clear 等普通 row 变更。
+- 作为分页缓存、持久化、dirty timestamp 和未加载页脏检查的 canonical owner；
+  XMessageList manager 只接收归一化后的当前 loaded segment 变更。
 - demo host 只使用 public session API 作为标准接入样板；E2E-only helper 可以读取
   runtime snapshot/evidence，但只服务测试证据和 fixture reset。
 
