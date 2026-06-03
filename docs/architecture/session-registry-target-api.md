@@ -90,12 +90,11 @@ React，应在 app bootstrap、root store、dependency container 或稳定 memo 
 
 ```ts
 type MessageListSessionRetainReason =
-  | 'mounted'
   | 'active-feed'
   | 'split-view'
   | 'prefetch'
 
-type MessageListSessionRegistry<Row> = {
+type MessageListSessionRegistry<Row, Feed = MessageListFeedId> = {
   getSession(sessionId: MessageListSessionId): MessageListSession<Row>
   hasSession(sessionId: MessageListSessionId): boolean
   destroySession(sessionId: MessageListSessionId): boolean
@@ -103,7 +102,7 @@ type MessageListSessionRegistry<Row> = {
   getSessionIds(): MessageListSessionId[]
   getSessionMeta(sessionId: MessageListSessionId): MessageListSessionRegistryEntry | null
   retainSession(sessionId: MessageListSessionId, reason: MessageListSessionRetainReason): () => void
-  updateOptions(options: MessageListSessionRegistryOptionsPatch<Row>): void
+  updateOptions(options: MessageListSessionRegistryOptionsPatch<Row, Feed>): void
   sweep(): void
 }
 ```
