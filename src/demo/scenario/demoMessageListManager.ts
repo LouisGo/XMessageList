@@ -71,6 +71,9 @@ export function createDemoManager(
         ttlMs: 10 * 60_000,
       },
     },
+    scrollMotion: {
+      enabled: false,
+    },
     getConversation: (id) => ({ id }),
     getAdapter: (conversation) => createDemoAdapter(conversation, input),
     incoming: {

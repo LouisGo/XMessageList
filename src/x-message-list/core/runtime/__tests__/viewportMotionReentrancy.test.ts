@@ -11,7 +11,7 @@ import type { MessageListRuntime } from '../controller/runtime'
 import { FakeScheduler, createContainer, setElementMetrics } from '../../../../test/fakes'
 
 describe('MessageList viewport motion reentrancy', () => {
-  it('does not carry deferred destination motion across detach and restore', () => {
+  it('drains queued passive mutations before destination motion', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -43,21 +43,65 @@ describe('MessageList viewport motion reentrancy', () => {
     }))
 
     adapter.ackProjectionCommit(resetToken)
-    runtime.detachScrollContainer()
-    runtime.attachScrollContainer(container)
-    for (const row of targetRows) adapter.registerRowElement(row.dataset.runtimeKey as string, row)
-    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
-    scheduler.flushFrames(40)
 
-    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'PROJECTING',
+      segmentRevision: 2,
+    })
     expect(events.some((event) =>
       event.type === 'destinationSettled' &&
       event.target.stableId === target.stableId
     )).toBe(false)
-    expect(runtime.getDiagnostics()).not.toContainEqual(expect.objectContaining({
-      name: 'destinationMotion.start',
-      details: expect.objectContaining({ source: 'jump' }),
+
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+
+    scheduler.flushFrames(40)
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'destinationSettled',
+      target,
     }))
+
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
+    expect(runtime.getSnapshot().segmentRevision).toBe(2)
+  })
+
+  it('queues passive mutations while destination motion is active', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      commitTimeoutMs: 10_000,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(5, 50)
+    const target = anchor('row-1')
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    container.scrollTop = 150
+    positionRows(rows, 150)
+    runtime.scrollToMessage(target, { align: 'start' })
+
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 2, {
+      modifier: { type: 'patch', changedKeys: ['row-3'] },
+    }))
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'MOTION',
+      segmentRevision: 1,
+    })
+
+    scheduler.flushFrames(40)
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'PROJECTING',
+      segmentRevision: 2,
+    })
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
   })
 
   it('settles underflow fill without bottom motion after a restored latest lock', () => {
@@ -216,6 +260,13 @@ function createRows(count: number, height: number): HTMLDivElement[] {
     setElementMetrics(row, { top: index * height, height })
     return row
   })
+}
+
+function positionRows(rows: HTMLDivElement[], scrollTop: number): void {
+  rows.forEach((row, index) => setElementMetrics(row, {
+    top: index * 50 - scrollTop,
+    height: 50,
+  }))
 }
 
 function itemsFromRows(rows: HTMLDivElement[]): MessageDataItem<string>[] {

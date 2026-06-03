@@ -201,6 +201,35 @@ describe('MessageListDataRuntime', () => {
     ])
   })
 
+  it('keeps reset requests current across same-generation passive revisions', () => {
+    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
+    runtime.resetLatest({
+      items: [item('row-1')],
+      hasMoreBefore: false,
+      hasMoreAfter: true,
+    })
+    const around = runtime.createRequestToken('around')
+    runtime.patchItems([item('row-1')])
+
+    expect(runtime.resetAroundFromRequest({
+      requestToken: around.requestToken,
+      target: { feedId: 'feed-a', stableId: 'row-2' },
+      items: [item('row-2')],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    })).toMatchObject({ applied: true })
+
+    const latest = runtime.createRequestToken('latest')
+    runtime.patchItems([item('row-2')])
+
+    expect(runtime.resetLatestFromRequest({
+      requestToken: latest.requestToken,
+      items: [item('tail')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })).toMatchObject({ applied: true })
+  })
+
   it('keeps a newer current token after an older same-kind token is rejected', () => {
     const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
     runtime.resetLatest({

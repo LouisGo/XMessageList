@@ -32,6 +32,9 @@ const manager = createMessageListManager({
       ttlMs: 10 * 60_000,
     },
   },
+  scrollMotion: {
+    enabled: () => deviceConfig.messageListMotionEnabled,
+  },
   getConversation: (id) => ({ id }),
   getAdapter: (conversation) => normalMessageAdapter,
 })

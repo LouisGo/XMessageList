@@ -49,6 +49,7 @@ export type {
   MessageListRowsMutation,
   MessageListRowsReplaceInput,
   MessageListRowsResetAroundInput,
+  MessageListScrollMotionConfig,
   MessageListScrollToMessageOptions,
   MessageListSession,
   MessageListSessionContext,
@@ -88,6 +89,9 @@ const manager = createMessageListManager({
       maxSessions: 20,
       ttlMs: 10 * 60_000,
     },
+  },
+  scrollMotion: {
+    enabled: () => deviceConfig.messageListMotionEnabled,
   },
   getConversation: (id) => getConversationById(id),
   getAdapter: (conversation) => normalMessageAdapter,

@@ -12,6 +12,7 @@ import type {
   ViewportObservationChangedEvent,
 } from '../../runtime/index'
 import { getMessageListAdapterRuntime } from '../../runtime/internal'
+import { createContainer, setElementMetrics } from '../../../../test/fakes'
 
 type TestRow = {
   id: string
@@ -182,6 +183,40 @@ describe('createMessageListManager', () => {
     expect(requestResults).not.toContain('around:stale')
   })
 
+  it('keeps around requests alive across same-generation live revisions', async () => {
+    const pendingAround: Array<(page: MessageListPage<TestRow>) => void> = []
+    const requestResults: string[] = []
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => new Promise<MessageListPage<TestRow>>((resolve) => {
+          pendingAround.push(resolve)
+        }),
+      }),
+      onRequestResult: (result) => {
+        requestResults.push(`${result.kind}:${result.status}`)
+      },
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.getSnapshot().items.length === 1)
+    requestResults.length = 0
+
+    session.commands.scrollToMessage({ id: 'remote' })
+    await waitFor(() => pendingAround.length === 1)
+    session.rows.mutate({ patches: [{ id: 'normal-latest', text: 'edited' }] })
+    pendingAround[0](page(['remote'], {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    }))
+
+    await waitFor(() => internals.getSnapshot().items[0]?.message?.id === 'remote')
+
+    expect(requestResults).toContain('around:applied')
+    expect(requestResults).not.toContain('around:stale')
+  })
+
   it('publishes event-driven latest requests instead of self-staling them', async () => {
     const requestResults: string[] = []
     const manager = createMessageListManager<TestRow, TestConversation>({
@@ -213,6 +248,63 @@ describe('createMessageListManager', () => {
     expect(internals.getSnapshot().segmentMeta.hasMoreAfter).toBe(false)
     expect(requestResults).toContain('latest:applied')
     expect(requestResults).not.toContain('latest:stale')
+  })
+
+  it('threads manager scrollMotion into runtime and disables follow-bottom and jump motion without rebuilding the session', async () => {
+    const resolveMotionEnabled = vi.fn(() => false)
+    const manager = createMessageListManager<TestRow, TestConversation>({
+      getConversation: (id) => ({ id, type: 'normal' }),
+      scrollMotion: {
+        enabled: resolveMotionEnabled,
+      },
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => Promise.resolve(page([
+          'row-1',
+          'row-2',
+          'row-3',
+          'row-4',
+          'row-5',
+          'row-6',
+        ])),
+      }),
+    })
+    const session = manager.getSession('feed-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.getSnapshot().items.length === 6)
+    const { container, rows } = attachSessionRows(session, [
+      'row-1',
+      'row-2',
+      'row-3',
+      'row-4',
+      'row-5',
+      'row-6',
+    ])
+    ackSessionCommit(session)
+    container.scrollTop = 0
+    positionRuntimeRows(rows, 0)
+
+    session.commands.scrollToLatest()
+
+    expect(resolveMotionEnabled).toHaveBeenCalledTimes(1)
+    expect(internals.getSnapshot()).toMatchObject({
+      viewportPhase: 'IDLE',
+      bottomLockState: 'LOCKED',
+      pendingIntent: null,
+    })
+    expect(container.scrollTop).toBe(200)
+
+    positionRuntimeRows(rows, 200)
+    session.commands.scrollToMessage({ id: 'row-1' }, { align: 'start' })
+
+    expect(resolveMotionEnabled).toHaveBeenCalledTimes(2)
+    expect(internals.getSnapshot()).toMatchObject({
+      viewportPhase: 'IDLE',
+      bottomLockState: 'UNLOCKED',
+      pendingIntent: null,
+    })
+    expect(container.scrollTop).toBe(0)
+    expect(manager.getSession('feed-a')).toBe(session)
   })
 
   it('exposes stable session state and publishes selector subscriptions', async () => {
@@ -1060,6 +1152,24 @@ function ackSessionCommit(session: MessageListSession<TestRow>): void {
     .ackProjectionCommit(internals.runtime.getSnapshot().commitToken)
 }
 
+function attachSessionRows(
+  session: MessageListSession<TestRow>,
+  ids: string[],
+): { container: HTMLDivElement; rows: HTMLDivElement[] } {
+  const internals = getMessageListSessionInternals(session)
+  const adapter = getMessageListAdapterRuntime(internals.runtime)
+  const container = createContainer({ height: 100 })
+  const rows = createRuntimeRows(ids, 50)
+
+  container.append(...rows)
+  internals.runtime.attachScrollContainer(container)
+  for (const row of rows) {
+    adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+  }
+
+  return { container, rows }
+}
+
 function observation(keys: string[]): ViewportObservationChangedEvent {
   return {
     type: 'viewportObservationChanged',
@@ -1107,4 +1217,25 @@ async function waitFor(
   }
 
   expect(condition()).toBe(true)
+}
+
+function createRuntimeRows(ids: string[], height: number): HTMLDivElement[] {
+  return ids.map((id, index) => {
+    const row = document.createElement('div')
+    row.dataset.runtimeKey = id
+    row.dataset.rowKind = 'message'
+    row.dataset.messageStableId = id
+    row.dataset.messageServerId = id
+    setElementMetrics(row, { top: index * height, height })
+    return row
+  })
+}
+
+function positionRuntimeRows(rows: HTMLDivElement[], scrollTop: number): void {
+  rows.forEach((row, index) => {
+    setElementMetrics(row, {
+      top: index * 50 - scrollTop,
+      height: 50,
+    })
+  })
 }

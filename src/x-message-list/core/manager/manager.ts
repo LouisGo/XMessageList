@@ -51,6 +51,7 @@ export class ApplicationMessageListManager<Row, Conversation = MessageListConver
       adapter,
       defaults: this.defaults,
       incoming: this.options.incoming,
+      scrollMotion: this.options.scrollMotion,
       onRequestResult: this.options.onRequestResult,
     })
 

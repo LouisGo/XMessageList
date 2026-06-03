@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   createMessageListRuntime,
   type LoadedSegment,
@@ -90,6 +90,50 @@ describe('MessageList viewport motion', () => {
       viewportPhase: 'IDLE',
       bottomLockState: 'LOCKED',
     })
+  })
+
+  it('settles disabled motion synchronously while preserving follow-bottom and destination semantics', () => {
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scrollMotion: { enabled: false },
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(6, 50)
+    const events: MessageListRuntimeEvent[] = []
+    const target = anchor('row-1')
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    runtime.scrollToLatest()
+
+    expect(container.scrollTop).toBe(200)
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'IDLE',
+      bottomLockState: 'LOCKED',
+      pendingIntent: null,
+    })
+
+    positionRows(rows, 200)
+    runtime.scrollToMessage(target, { align: 'start' })
+
+    expect(container.scrollTop).toBe(0)
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'IDLE',
+      bottomLockState: 'UNLOCKED',
+      pendingIntent: null,
+    })
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'destinationSettled',
+      intent: 'jump',
+      target,
+      resolvedTarget: target,
+    }))
   })
 
   it('continues bottom motion when append supersedes follow-bottom motion', () => {
@@ -412,8 +456,9 @@ describe('MessageList viewport motion', () => {
     runtime.scrollToMessage(target, { align: 'start' })
     const phaseCountBeforeSupersede = phases.length
 
-    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 2, {
-      modifier: { type: 'patch', changedKeys: ['row-2'] },
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 2, 1, {
+      hasMoreAfter: true,
+      modifier: { type: 'reset-latest' },
     }))
 
     expect(phases.slice(phaseCountBeforeSupersede)).toEqual(['PROJECTING'])
@@ -572,7 +617,6 @@ describe('MessageList viewport motion', () => {
     expect(runtime.getSnapshot()).toMatchObject({
       segmentRevision: 3,
       viewportPhase: 'MOTION',
-      bottomLockState: 'LOCKED',
     })
     scheduler.flushFrames(40)
     expect(runtime.getSnapshot()).toMatchObject({
@@ -581,6 +625,59 @@ describe('MessageList viewport motion', () => {
       bottomLockState: 'LOCKED',
     })
     expect(container.scrollTop).toBe(250)
+  })
+
+  it('does not project stale queued revisions after a newer same-generation segment', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(6, 50)
+
+    mountRows(runtime, adapter, container, rows.slice(1, 5))
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows.slice(1, 5)), 1, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+    const initialToken = runtime.getSnapshot().commitToken
+
+    container.prepend(rows[0])
+    container.append(rows[5])
+    adapter.registerRowElement('row-1', rows[0])
+    adapter.registerRowElement('row-6', rows[5])
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows.slice(0, 5)), 1, 2, {
+      modifier: { type: 'extend-before', requestToken: 'before:1' },
+    }))
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 3, {
+      modifier: { type: 'append', changedKeys: ['row-6'], follow: 'follow' },
+    }))
+
+    adapter.ackProjectionCommit(initialToken)
+    expect(runtime.getSnapshot()).toMatchObject({
+      segmentRevision: 3,
+      viewportPhase: 'PROJECTING',
+    })
+
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getSnapshot()).toMatchObject({
+      segmentRevision: 3,
+      viewportPhase: 'MOTION',
+    })
+
+    scheduler.flushFrames(40)
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      segmentRevision: 3,
+      viewportPhase: 'IDLE',
+      bottomLockState: 'LOCKED',
+    })
+    expect(runtime.getSnapshot().items.map((item) => item.key)).toEqual([
+      'row-1',
+      'row-2',
+      'row-3',
+      'row-4',
+      'row-5',
+      'row-6',
+    ])
   })
 
   it('carries destination motion until queued transactions drain', () => {
@@ -833,6 +930,96 @@ describe('MessageList viewport motion', () => {
 
     expect(container.scrollTop).toBe(1_050)
     expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
+  })
+
+  it('re-reads the motion toggle at each motion start', () => {
+    const scheduler = new FakeScheduler()
+    let motionEnabled = true
+    const resolveMotionEnabled = vi.fn(() => motionEnabled)
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      scrollMotion: {
+        enabled: resolveMotionEnabled,
+      },
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(6, 50)
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    container.scrollTop = 200
+    positionRows(rows, 200)
+
+    runtime.scrollToMessage(anchor('row-1'), { align: 'start' })
+
+    expect(resolveMotionEnabled).toHaveBeenCalledTimes(1)
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+
+    scheduler.flushFrames(40)
+
+    expect(container.scrollTop).toBe(0)
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
+
+    motionEnabled = false
+    positionRows(rows, 0)
+    runtime.scrollToLatest()
+
+    expect(resolveMotionEnabled).toHaveBeenCalledTimes(2)
+    expect(container.scrollTop).toBe(200)
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'IDLE',
+      bottomLockState: 'LOCKED',
+    })
+  })
+
+  it('does not cancel an in-flight motion when the toggle flips off mid-animation', () => {
+    const scheduler = new FakeScheduler()
+    let motionEnabled = true
+    const resolveMotionEnabled = vi.fn(() => motionEnabled)
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      scrollMotion: {
+        enabled: resolveMotionEnabled,
+      },
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(6, 50)
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    container.scrollTop = 0
+    positionRows(rows, 0)
+
+    runtime.scrollToLatest()
+
+    expect(resolveMotionEnabled).toHaveBeenCalledTimes(1)
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+
+    motionEnabled = false
+    scheduler.flushFrame()
+
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+
+    scheduler.flushFrames(40)
+
+    expect(container.scrollTop).toBe(200)
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'IDLE',
+      bottomLockState: 'LOCKED',
+    })
+    expect(runtime.getDiagnostics()).not.toContainEqual(expect.objectContaining({
+      name: 'destinationMotion.cancel',
+    }))
   })
 })
 

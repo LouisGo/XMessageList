@@ -48,7 +48,10 @@ export class DataRuntimeRequestTokenRegistry {
   ): void {
     if (
       request.generation !== generation ||
-      request.segmentRevision !== segmentRevision
+      (
+        !isResetRequestKind(request.kind) &&
+        request.segmentRevision !== segmentRevision
+      )
     ) {
       return
     }
@@ -78,7 +81,10 @@ export class DataRuntimeRequestTokenRegistry {
     if (
       request.kind !== expectedKind ||
       request.generation !== generation ||
-      request.segmentRevision !== segmentRevision ||
+      (
+        !isResetRequestKind(request.kind) &&
+        request.segmentRevision !== segmentRevision
+      ) ||
       !isCurrent
     ) {
       if (isCurrent) {
@@ -105,4 +111,8 @@ export class DataRuntimeRequestTokenRegistry {
     this.currentRequestByKind.delete('before')
     this.currentRequestByKind.delete('after')
   }
+}
+
+function isResetRequestKind(kind: DataRuntimeRequestKind): boolean {
+  return kind === 'latest' || kind === 'around'
 }

@@ -6,6 +6,7 @@ import type { LoadedSegment } from '../contracts/segment'
 import type { MessageListSnapshot, ProjectionCommitToken } from '../contracts/snapshot'
 import type { ScrollSource } from '../scroll/scrollIntentEngine'
 import type { TransactionScrollResolution } from '../transactions/transactionSettlement'
+import type { ProjectionTransactionPolicy } from './transactionQueue'
 
 export type PendingTransaction<TMessage, TOptimistic> = {
   token: ProjectionCommitToken
@@ -23,6 +24,39 @@ export type PendingRuntimeMotion<TMessage, TOptimistic> = {
   settlement: Extract<TransactionScrollResolution, { kind: 'motion' }>
   scrollSource: ScrollSource
   segment: LoadedSegment<TMessage, TOptimistic>
+}
+
+export function resolveProjectionTransactionPolicy<TMessage, TOptimistic>(
+  segment: LoadedSegment<TMessage, TOptimistic>,
+  snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+  activeFollowBottom: boolean,
+): ProjectionTransactionPolicy {
+  switch (segment.modifier.type) {
+    case 'reset-around':
+    case 'bootstrap':
+      return transactionPolicy('destination', 100, false, false)
+    case 'reset-latest':
+      return transactionPolicy('latest-follow', 90, false, false)
+    case 'extend-before':
+    case 'extend-after':
+      return transactionPolicy('edge', 70, false, true)
+    case 'append':
+      if (
+        segment.modifier.follow === 'follow' ||
+        snapshot.pendingIntent === 'follow-bottom' ||
+        activeFollowBottom
+      ) {
+        return transactionPolicy('latest-follow', 90, false, false)
+      }
+      return transactionPolicy('live-append', 50, true, true)
+    case 'identity-remap':
+      return transactionPolicy('passive', 35, false, true)
+    case 'patch':
+      return transactionPolicy('passive', 30, true, true)
+    case 'trim-before':
+    case 'trim-after':
+      return transactionPolicy('maintenance', 10, true, true)
+  }
 }
 
 export function shouldWaitForAnchorRef<TMessage, TOptimistic>(
@@ -96,4 +130,13 @@ export function shouldPreservePendingIntentForSegment<TMessage, TOptimistic>(
     snapshot.pendingIntent === 'destination' &&
     segment.modifier.type === 'reset-around'
   )
+}
+
+function transactionPolicy(
+  lane: ProjectionTransactionPolicy['lane'],
+  priority: number,
+  coalescible: boolean,
+  queueDuringMotion: boolean,
+): ProjectionTransactionPolicy {
+  return { lane, priority, coalescible, queueDuringMotion }
 }

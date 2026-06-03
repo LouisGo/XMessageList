@@ -2,10 +2,35 @@ import type { LoadedSegment } from '../contracts/segment'
 import type { MessageListSnapshot, ProjectionCommitToken } from '../contracts/snapshot'
 import type { PendingTransaction } from './controllerTransactionHelpers'
 
+export type ProjectionTransactionLane =
+  | 'destination'
+  | 'latest-follow'
+  | 'edge'
+  | 'live-append'
+  | 'passive'
+  | 'maintenance'
+
+export type ProjectionTransactionPolicy = {
+  lane: ProjectionTransactionLane
+  priority: number
+  coalescible: boolean
+  queueDuringMotion: boolean
+}
+
+export type ProjectionTransactionQueueEntry<TMessage, TOptimistic> = {
+  segment: LoadedSegment<TMessage, TOptimistic>
+  policy: ProjectionTransactionPolicy
+}
+
+export type ProjectionTransactionEnqueueResult = {
+  queueLength: number
+  dropped: number
+}
+
 export class ProjectionTransactionQueue<TMessage, TOptimistic> {
   private pending: PendingTransaction<TMessage, TOptimistic> | null = null
 
-  private readonly queue: Array<LoadedSegment<TMessage, TOptimistic>> = []
+  private readonly queue: Array<ProjectionTransactionQueueEntry<TMessage, TOptimistic>> = []
 
   private advancing = false
 
@@ -45,17 +70,42 @@ export class ProjectionTransactionQueue<TMessage, TOptimistic> {
     return pending
   }
 
-  enqueue(segment: LoadedSegment<TMessage, TOptimistic>): number {
-    this.queue.push(segment)
-    return this.queue.length
+  enqueue(
+    segment: LoadedSegment<TMessage, TOptimistic>,
+    policy: ProjectionTransactionPolicy,
+  ): ProjectionTransactionEnqueueResult {
+    const dropped = this.dropSupersededQueuedSegments(segment, policy)
+    const entry = { segment, policy }
+    const index = this.queue.findIndex((queued) =>
+      queued.policy.priority < policy.priority
+    )
+
+    if (index >= 0) {
+      this.queue.splice(index, 0, entry)
+    } else {
+      this.queue.push(entry)
+    }
+
+    return { queueLength: this.queue.length, dropped }
   }
 
-  dequeueReady(): LoadedSegment<TMessage, TOptimistic> | undefined {
+  dequeueReady(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+  ): ProjectionTransactionQueueEntry<TMessage, TOptimistic> | undefined {
     if (this.pending || this.advancing) {
       return undefined
     }
 
-    return this.queue.shift()
+    while (this.queue.length > 0) {
+      const next = this.queue.shift()
+      if (!next || isStaleLoadedSegment(next.segment, undefined, snapshot)) {
+        continue
+      }
+
+      return next
+    }
+
+    return undefined
   }
 
   hasPending(): boolean {
@@ -90,18 +140,48 @@ export class ProjectionTransactionQueue<TMessage, TOptimistic> {
   ): boolean {
     return isStaleLoadedSegment(
       segment,
-      this.queue.at(-1) ?? this.pending?.segment,
+      this.getLatestQueuedOrPendingSegment(),
       snapshot,
     )
+  }
+
+  private getLatestQueuedOrPendingSegment(): LoadedSegment<TMessage, TOptimistic> | undefined {
+    let latest = this.pending?.segment
+
+    for (const queued of this.queue) {
+      if (!latest || isNewerSegment(queued.segment, latest)) {
+        latest = queued.segment
+      }
+    }
+
+    return latest
+  }
+
+  private dropSupersededQueuedSegments(
+    segment: LoadedSegment<TMessage, TOptimistic>,
+    policy: ProjectionTransactionPolicy,
+  ): number {
+    let dropped = 0
+
+    for (let index = this.queue.length - 1; index >= 0; index -= 1) {
+      const queued = this.queue[index]
+      if (!queued || !shouldDropQueuedSegment(queued, segment, policy)) {
+        continue
+      }
+      this.queue.splice(index, 1)
+      dropped += 1
+    }
+
+    return dropped
   }
 }
 
 export function removeQueuedSegmentsBeforeGeneration<TMessage, TOptimistic>(
-  queue: Array<LoadedSegment<TMessage, TOptimistic>>,
+  queue: Array<ProjectionTransactionQueueEntry<TMessage, TOptimistic>>,
   generation: number,
 ): void {
   for (let index = queue.length - 1; index >= 0; index -= 1) {
-    if (queue[index].generation < generation) {
+    if (queue[index].segment.generation < generation) {
       queue.splice(index, 1)
     }
   }
@@ -131,4 +211,37 @@ function isSameProjectionToken(
     left.generation === right.generation &&
     left.segmentRevision === right.segmentRevision &&
     left.projectionRevision === right.projectionRevision
+}
+
+function isNewerSegment<TMessage, TOptimistic>(
+  left: LoadedSegment<TMessage, TOptimistic>,
+  right: LoadedSegment<TMessage, TOptimistic>,
+): boolean {
+  return left.generation > right.generation ||
+    (
+      left.generation === right.generation &&
+      left.segmentRevision > right.segmentRevision
+    )
+}
+
+function shouldDropQueuedSegment<TMessage, TOptimistic>(
+  queued: ProjectionTransactionQueueEntry<TMessage, TOptimistic>,
+  incoming: LoadedSegment<TMessage, TOptimistic>,
+  policy: ProjectionTransactionPolicy,
+): boolean {
+  if (
+    queued.segment.feedId !== incoming.feedId ||
+    queued.segment.generation !== incoming.generation ||
+    queued.segment.segmentRevision >= incoming.segmentRevision
+  ) {
+    return false
+  }
+
+  if (policy.priority > queued.policy.priority && queued.policy.coalescible) {
+    return true
+  }
+
+  return policy.coalescible &&
+    queued.policy.coalescible &&
+    policy.priority >= queued.policy.priority
 }

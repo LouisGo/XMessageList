@@ -42,6 +42,7 @@ export type SessionOptions<Row, Conversation> = {
   adapter: MessageListAdapter<Row, Conversation>
   defaults: Required<NonNullable<MessageListManagerOptions<Row, Conversation>['defaults']>>
   incoming?: MessageListManagerOptions<Row, Conversation>['incoming']
+  scrollMotion?: MessageListManagerOptions<Row, Conversation>['scrollMotion']
   onRequestResult?: MessageListManagerOptions<Row, Conversation>['onRequestResult']
 }
 

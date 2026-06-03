@@ -98,6 +98,10 @@ export type MessageListSessionContext<Conversation> = {
   conversation: Conversation
 }
 
+export type MessageListScrollMotionConfig = {
+  enabled?: boolean | (() => boolean)
+}
+
 export type MessageListManagerOptions<Row, Conversation = MessageListConversationId> = {
   defaults?: {
     pageSize?: number
@@ -111,6 +115,7 @@ export type MessageListManagerOptions<Row, Conversation = MessageListConversatio
     getPageFocus?: () => boolean
     shouldFollowAppend?: MessageListIncomingAppendPolicy<Row, Conversation>
   }
+  scrollMotion?: MessageListScrollMotionConfig
   getConversation?: (id: MessageListConversationId) => Conversation
   getAdapter: (
     conversation: Conversation,

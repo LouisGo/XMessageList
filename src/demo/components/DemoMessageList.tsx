@@ -517,6 +517,9 @@ export function DemoMessageListContent({
               </div>
             ) : null
           }
+          renderTopPlaceholder={() => {
+            return <div>test</div>
+          }}
           scrollbar="custom"
         />
         <form className="message-composer" onSubmit={sendDraft}>

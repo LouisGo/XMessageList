@@ -24,6 +24,7 @@ export type {
   MessageListRowsMutation,
   MessageListRowsReplaceInput,
   MessageListRowsResetAroundInput,
+  MessageListScrollMotionConfig,
   MessageListScrollToMessageOptions,
   MessageListSession,
   MessageListSessionContext,

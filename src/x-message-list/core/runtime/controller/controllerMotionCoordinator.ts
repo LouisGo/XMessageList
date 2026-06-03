@@ -55,6 +55,7 @@ type MotionHost<TMessage, TOptimistic> = {
     resolvedTarget: MessageIdentityAnchor | null,
   ) => void
   applyPostCommitInteractionUpdates: () => void
+  continueAfterMotionSettle: () => void
 }
 
 /**
@@ -84,6 +85,10 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
 
   reset(): void {
     this.motion.reset()
+  }
+
+  isActive(): boolean {
+    return this.motion.isActive()
   }
 
   cancel(reason: ScrollMotionCancelReason): void {
@@ -239,6 +244,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
       this.host.emitDestinationSettled(resolution.destination, resolution.anchor)
     }
     this.host.applyPostCommitInteractionUpdates()
+    this.host.continueAfterMotionSettle()
   }
 
   private handleCancel(

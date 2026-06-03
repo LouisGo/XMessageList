@@ -54,12 +54,14 @@ export type MessageListRestoreOptions = {
   offsetWithinMessage?: number
 }
 
+export type ScrollMotionEnabled = boolean | (() => boolean)
+
 /**
  * runtime 自管滚动动画的边界配置。关闭动画或命中 reduced-motion 时，会同步写入目标 scrollTop 并完成 settle。
  */
 export type ScrollMotionOptions = {
   /** 是否启用 JS bounded motion；false 时直接落到目标位置。 */
-  enabled?: boolean
+  enabled?: ScrollMotionEnabled
   /** 是否尊重系统 reduced-motion 偏好。 */
   respectReducedMotion?: boolean
   /** 单次动画前允许保留的最大可见滚动距离，超出时先做 bounded preposition。 */

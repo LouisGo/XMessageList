@@ -1,4 +1,9 @@
-import type { MessageListMotionDirection, RuntimeScheduler, ScrollMotionOptions } from '../contracts/options'
+import type {
+  MessageListMotionDirection,
+  RuntimeScheduler,
+  ScrollMotionEnabled,
+  ScrollMotionOptions,
+} from '../contracts/options'
 import {
   ScrollMotionEngine,
   type ScrollMotionCancelReason,
@@ -34,13 +39,17 @@ const DEFAULT_SCROLL_MOTION_OPTIONS: Required<ScrollMotionOptions> = {
   targetEpsilonPx: 1,
 }
 
+type NormalizedScrollMotionOptions = Omit<Required<ScrollMotionOptions>, 'enabled'> & {
+  enabled: NonNullable<ScrollMotionOptions['enabled']>
+}
+
 /**
  * MotionCoordinator 把配置、reduced-motion、诊断和底层帧动画合并成一个 runtime-owned motion slot。
  */
 export class MotionCoordinator {
   private readonly engine = new ScrollMotionEngine()
 
-  private readonly options: Required<ScrollMotionOptions>
+  private readonly options: NormalizedScrollMotionOptions
 
   private state: MotionState = 'idle'
 
@@ -89,7 +98,10 @@ export class MotionCoordinator {
       clientHeight: input.container.clientHeight,
     })
 
-    if (!this.options.enabled || isReducedMotionRequested(input.container, this.options)) {
+    if (
+      !resolveMotionEnabled(this.options.enabled) ||
+      isReducedMotionRequested(input.container, this.options)
+    ) {
       // 关闭动画时仍走 settle 回调，保证 pendingIntent、bottom lock 和事件链保持一致。
       input.writeScrollTop(input.targetTop, input.source)
       input.onSettle()
@@ -152,13 +164,17 @@ export class MotionCoordinator {
 
 function isReducedMotionRequested(
   container: HTMLElement,
-  options: Required<ScrollMotionOptions>,
+  options: NormalizedScrollMotionOptions,
 ): boolean {
   if (!options.respectReducedMotion) return false
   return Boolean(
     container.ownerDocument.defaultView
       ?.matchMedia?.('(prefers-reduced-motion: reduce)').matches,
   )
+}
+
+function resolveMotionEnabled(enabled: ScrollMotionEnabled): boolean {
+  return typeof enabled === 'function' ? enabled() : enabled
 }
 
 function resolveMotionDirection(currentTop: number, targetTop: number): 'up' | 'down' | 'none' {

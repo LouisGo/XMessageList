@@ -42,5 +42,6 @@ export type {
   MessageListRestoreOptions,
   RuntimeObserverFactory,
   RuntimeScheduler,
+  ScrollMotionEnabled,
   ScrollMotionOptions,
 } from './contracts/options'

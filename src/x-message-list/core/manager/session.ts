@@ -74,7 +74,10 @@ export class MessageListSession<Row, Conversation>
         void this.bootstrap()
       },
     )
-    this.#runtime = createMessageListRuntime<Row>({ feedId: options.id })
+    this.#runtime = createMessageListRuntime<Row>({
+      feedId: options.id,
+      scrollMotion: options.scrollMotion,
+    })
     this.#dataRuntime = createMessageListDataRuntime<Row>({
       feedId: options.id,
       itemBudget: options.defaults.maxItems,
@@ -314,7 +317,7 @@ export class MessageListSession<Row, Conversation>
           applied: false,
         }
       }
-      if (this.isStaleRequest(event, requestGeneration, requestSegmentRevision)) {
+      if (this.isStaleResetRequest(event, requestGeneration, requestSegmentRevision)) {
         return {
           page,
           segment: this.#dataRuntime.getSegment(),
@@ -367,7 +370,7 @@ export class MessageListSession<Row, Conversation>
           applied: false,
         }
       }
-      if (this.isStaleRequest(event, requestGeneration, requestSegmentRevision)) {
+      if (this.isStaleResetRequest(event, requestGeneration, requestSegmentRevision)) {
         return {
           page,
           segment: this.#dataRuntime.getSegment(),
@@ -540,13 +543,13 @@ export class MessageListSession<Row, Conversation>
       segment.segmentRevision !== event.segmentRevision
   }
 
-  private isStaleRequest(
+  private isStaleResetRequest(
     event: RuntimeNeedEvent | undefined,
     requestGeneration: number,
     requestSegmentRevision: number,
   ): boolean {
     return event
-      ? this.isStaleEvent(event)
+      ? this.#dataRuntime.getSegment().generation !== event.generation
       : this.isStaleSegment(requestGeneration, requestSegmentRevision)
   }
 
