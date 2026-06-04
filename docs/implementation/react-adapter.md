@@ -64,6 +64,10 @@ Slots 接收 runtime semantic state，不接收 raw DOM metrics：
 - `renderEmpty(input)`
 - `renderScrollToLatest(input)`
 
+`renderTopPlaceholder()` 只在 `snapshot.segmentMeta.hasMoreBefore=false` 时
+渲染，表示当前 segment 已经抵达真实历史开头；它不是当前已加载窗口顶部的常驻
+装饰。
+
 `renderOverlayStatus(input)` 接收 `status` / `retry` / `error`，来源是
 session view state。overlay slot 不订阅 viewport observation，避免滚动过程被
 额外 React state 打断。

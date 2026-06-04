@@ -10,11 +10,16 @@ import {
 import { getMessageListSessionInternals } from '../../core/session-registry/internal'
 import type {
   MessageDataItem,
+  MessageListSnapshot,
   MessageListRuntime,
   ViewportAnchorChangedEvent,
   ViewportObservationChangedEvent,
 } from '../../core/runtime/index'
-import { getMessageListAdapterRuntime } from '../../core/runtime/internal'
+import {
+  getMessageListAdapterRuntime,
+  type MessageListAdapterRuntime,
+} from '../../core/runtime/internal'
+import { MessageFlow } from '../components/MessageFlow'
 import { MessageList } from '../components/MessageList'
 import { useMessageListState } from '../hooks/useMessageListState'
 import type { OverlayStatusInput } from '../types'
@@ -68,6 +73,51 @@ describe('MessageList React adapter', () => {
       root.unmount()
     })
     fixture.destroy()
+  })
+
+  it('renders the top placeholder only after the loaded segment reaches history start', async () => {
+    const runtime = createFlowRuntime()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    await act(async () => {
+      root.render(
+        <MessageFlow
+          runtime={runtime}
+          snapshot={createFlowSnapshot({ hasMoreBefore: true })}
+          renderRow={({ row }) => <span>{row}</span>}
+          renderTopPlaceholder={() => <div data-testid="top-placeholder" />}
+          reload={() => undefined}
+          usesRowRenderVersion={false}
+        />,
+      )
+    })
+
+    expect(host.querySelector('[data-message-top-placeholder]')).toBeNull()
+
+    await act(async () => {
+      root.render(
+        <MessageFlow
+          runtime={runtime}
+          snapshot={createFlowSnapshot({ hasMoreBefore: false })}
+          renderRow={({ row }) => <span>{row}</span>}
+          renderTopPlaceholder={() => <div data-testid="top-placeholder" />}
+          reload={() => undefined}
+          usesRowRenderVersion={false}
+        />,
+      )
+    })
+
+    const top = host.querySelector('[data-message-top-placeholder]')
+    const firstRow = host.querySelector('[data-runtime-key="row-1"]')
+
+    expect(top).not.toBeNull()
+    expect(top?.compareDocumentPosition(firstRow as Node))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+
+    await act(async () => {
+      root.unmount()
+    })
   })
 
   it('uses session command for scroll-to-latest slot', async () => {
@@ -878,6 +928,63 @@ function createSessionFixture(input: {
     session,
     runtime,
     destroy: () => registry.destroyAll(),
+  }
+}
+
+function createFlowRuntime(): MessageListAdapterRuntime<string> {
+  return {
+    registerMessageFlowElement: vi.fn(),
+    registerBeforeTriggerElement: vi.fn(),
+    registerAfterTriggerElement: vi.fn(),
+    registerBottomMarkerElement: vi.fn(),
+    registerRowElement: vi.fn(),
+    retryEdgeRequest: vi.fn(),
+  } as unknown as MessageListAdapterRuntime<string>
+}
+
+function createFlowSnapshot(input: {
+  hasMoreBefore: boolean
+}): MessageListSnapshot<string> {
+  const projectionRevision = input.hasMoreBefore ? 1 : 2
+  const commitToken = {
+    feedId: 'feed-a',
+    generation: 1,
+    segmentRevision: 1,
+    projectionRevision,
+  }
+
+  return {
+    ...commitToken,
+    commitToken,
+    items: [createFlowItem('row-1')],
+    segmentMeta: {
+      hasMoreBefore: input.hasMoreBefore,
+      hasMoreAfter: false,
+      modifier: { type: 'reset-latest' },
+      shortSegmentAlignment: 'start',
+      underflow: 'settled',
+    },
+    edgeState: {
+      before: { status: input.hasMoreBefore ? 'idle' : 'exhausted' },
+      after: { status: 'idle' },
+    },
+    bottomLockState: 'UNLOCKED',
+    pendingIntent: null,
+    viewportPhase: 'IDLE',
+  }
+}
+
+function createFlowItem(row: string): MessageDataItem<string> {
+  return {
+    key: row,
+    rowKind: 'message',
+    identity: {
+      feedId: 'feed-a',
+      stableId: row,
+      version: 1,
+    },
+    renderVersion: 1,
+    message: row,
   }
 }
 

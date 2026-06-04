@@ -74,7 +74,7 @@ export function createDemoRegistry(
       },
     },
     scrollMotion: {
-      enabled: false,
+      enabled: true,
     },
     getFeed: (id) => ({ id }),
     getAdapter: (feed) => createDemoAdapter(feed, input),
@@ -127,11 +127,11 @@ export async function prepareDemoE2EScenario(input: {
     hasMoreAfter: false,
     anchor: latestMessage
       ? {
-          id: latestMessage.id,
-          feedId: input.feedId,
-          stableId: latestMessage.id,
-          serverId: latestMessage.id,
-        }
+        id: latestMessage.id,
+        feedId: input.feedId,
+        stableId: latestMessage.id,
+        serverId: latestMessage.id,
+      }
       : undefined,
     anchorStatus: 'normal',
   })
@@ -377,11 +377,11 @@ function toDemoPage(
     hasMoreAfter: input.hasMoreAfter,
     anchor: input.anchorMessageId
       ? {
-          id: input.anchorMessageId,
-          feedId: input.feedId,
-          stableId: input.anchorMessageId,
-          serverId: input.anchorMessageId,
-        }
+        id: input.anchorMessageId,
+        feedId: input.feedId,
+        stableId: input.anchorMessageId,
+        serverId: input.anchorMessageId,
+      }
       : undefined,
     anchorStatus: input.anchorStatus,
     total: input.total,

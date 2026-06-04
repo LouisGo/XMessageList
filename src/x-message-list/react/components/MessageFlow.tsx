@@ -59,6 +59,9 @@ export function MessageFlow<TMessage, TOptimistic>({
     () => toEdgeSlotInput(snapshot.edgeState.after.status, retryAfter),
     [snapshot.edgeState.after.status, retryAfter],
   )
+  const shouldRenderTopPlaceholder = Boolean(renderTopPlaceholder) &&
+    snapshot.items.length > 0 &&
+    !snapshot.segmentMeta.hasMoreBefore
 
   return (
     <div
@@ -69,9 +72,9 @@ export function MessageFlow<TMessage, TOptimistic>({
       <div ref={registerBefore} data-edge-trigger="before">
         {renderBeforeStatus?.(beforeSlotInput)}
       </div>
-      {renderTopPlaceholder ? (
+      {shouldRenderTopPlaceholder ? (
         <div data-message-top-placeholder>
-          {renderTopPlaceholder()}
+          {renderTopPlaceholder?.()}
         </div>
       ) : null}
       {snapshot.items.length === 0

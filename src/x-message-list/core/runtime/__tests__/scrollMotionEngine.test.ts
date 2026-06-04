@@ -176,4 +176,61 @@ describe('ScrollMotionEngine', () => {
     expect(writes).toHaveLength(0)
     expect(engine.isActive()).toBe(false)
   })
+
+  it('selects short and long motion curves by remaining distance', () => {
+    const scheduler = new FakeScheduler()
+    const engine = new ScrollMotionEngine()
+    const container = createContainer({ height: 100 })
+    const decisions: ScrollMotionDecisionDiagnostic[] = []
+
+    engine.start({
+      container,
+      source: 'jump',
+      targetTop: 200,
+      maxDistancePx: 800,
+      minDurationMs: 300,
+      maxDurationMs: 600,
+      targetEpsilonPx: 1,
+      now: () => scheduler.now(),
+      requestFrame: (callback) => scheduler.requestAnimationFrame(callback),
+      cancelFrame: (handle) => scheduler.cancelAnimationFrame(handle),
+      onFrameWrite: (scrollTop) => { container.scrollTop = scrollTop },
+      onSettle: () => {},
+      onCancel: () => {},
+      onDecision: (decision) => { decisions.push(decision) },
+    })
+
+    expect(decisions[0]).toMatchObject({
+      decision: 'bounded-animate',
+      curve: 'short',
+      durationMs: 375,
+    })
+
+    engine.cancel('restart')
+    container.scrollTop = 0
+    decisions.length = 0
+
+    engine.start({
+      container,
+      source: 'jump',
+      targetTop: 500,
+      maxDistancePx: 800,
+      minDurationMs: 300,
+      maxDurationMs: 600,
+      targetEpsilonPx: 1,
+      now: () => scheduler.now(),
+      requestFrame: (callback) => scheduler.requestAnimationFrame(callback),
+      cancelFrame: (handle) => scheduler.cancelAnimationFrame(handle),
+      onFrameWrite: (scrollTop) => { container.scrollTop = scrollTop },
+      onSettle: () => {},
+      onCancel: () => {},
+      onDecision: (decision) => { decisions.push(decision) },
+    })
+
+    expect(decisions[0]).toMatchObject({
+      decision: 'bounded-animate',
+      curve: 'long',
+      durationMs: 487.5,
+    })
+  })
 })

@@ -2,6 +2,7 @@ import type { ViewportDiagnosticRecord } from '../contracts/events'
 import type { MessageRuntimeItemKey } from '../contracts/identity'
 import type { RuntimeScheduler } from '../contracts/options'
 import type { RuntimeDomRegistry } from './domRegistry'
+import type { RuntimeMeasurement } from './measurement'
 
 type RowMetricCacheOptions = {
   scheduler: RuntimeScheduler
@@ -37,28 +38,37 @@ export class RuntimeRowMetricCache {
     return this.rowMetricsByKey.get(key)?.top
   }
 
-  record(snapshot: ReturnType<RuntimeDomRegistry['snapshot']>): void {
+  record(
+    snapshot: ReturnType<RuntimeDomRegistry['snapshot']>,
+    measurement?: RuntimeMeasurement,
+  ): void {
     const previousKeys = new Set(this.rowMetricsByKey.keys())
     let hits = 0
     let misses = 0
+    const measuredMetrics = createMetricsFromMeasurement(snapshot, measurement)
 
     this.clear()
-    this.rowMetricsScrollTop = snapshot.scrollContainer?.scrollTop ?? 0
+    this.rowMetricsScrollTop = measurement?.scrollTop ??
+      snapshot.scrollContainer?.scrollTop ??
+      0
 
-    for (const [key, row] of snapshot.rows) {
+    const metrics = measuredMetrics ?? Array.from(snapshot.rows, ([key, row]) => {
       const rect = row.getBoundingClientRect()
-      if (previousKeys.delete(key)) {
-        hits += 1
-      } else {
-        misses += 1
-      }
-      const metric: RowMetric = {
+      return {
         key,
         top: rect.top,
         bottom: rect.bottom,
         height: rect.height,
       }
-      this.rowMetricsByKey.set(key, metric)
+    })
+
+    for (const metric of metrics) {
+      if (previousKeys.delete(metric.key)) {
+        hits += 1
+      } else {
+        misses += 1
+      }
+      this.rowMetricsByKey.set(metric.key, metric)
       this.rowMetricOrder.push(metric)
     }
     this.rowMetricOrder.sort((first, second) => first.top - second.top)
@@ -69,7 +79,7 @@ export class RuntimeRowMetricCache {
       invalidated: previousKeys.size,
       rowCount: snapshot.rows.size,
     })
-    this.emitBlankAreaSample(snapshot)
+    this.emitBlankAreaSample(snapshot, measurement)
     this.emitFrameGapSample()
   }
 
@@ -163,6 +173,7 @@ export class RuntimeRowMetricCache {
 
   private emitBlankAreaSample(
     snapshot: ReturnType<RuntimeDomRegistry['snapshot']>,
+    measurement?: RuntimeMeasurement,
   ): void {
     const container = snapshot.scrollContainer
 
@@ -170,17 +181,16 @@ export class RuntimeRowMetricCache {
       return
     }
 
-    const containerRect = container.getBoundingClientRect()
-    const rowRects = Array.from(snapshot.rows.values(), (row) =>
-      row.getBoundingClientRect(),
-    )
-    const first = rowRects[0]
-    const last = rowRects.at(-1)
+    const containerRect = measurement
+      ? { top: measurement.viewportTop, bottom: measurement.viewportBottom }
+      : container.getBoundingClientRect()
+    const first = this.rowMetricOrder[0]
+    const last = this.rowMetricOrder.at(-1)
     this.options.onDiagnostic('blank-area.sample', 'debug', {
-      scrollTop: container.scrollTop,
-      clientHeight: container.clientHeight,
-      scrollHeight: container.scrollHeight,
-      rowCount: rowRects.length,
+      scrollTop: measurement?.scrollTop ?? container.scrollTop,
+      clientHeight: measurement?.clientHeight ?? container.clientHeight,
+      scrollHeight: measurement?.scrollHeight ?? container.scrollHeight,
+      rowCount: this.rowMetricOrder.length,
       blankBefore: first ? Math.max(0, first.top - containerRect.top) : 0,
       blankAfter: last ? Math.max(0, containerRect.bottom - last.bottom) : 0,
     })
@@ -197,6 +207,32 @@ export class RuntimeRowMetricCache {
 
     this.lastMetricRecordAt = now
   }
+}
+
+function createMetricsFromMeasurement(
+  snapshot: ReturnType<RuntimeDomRegistry['snapshot']>,
+  measurement?: RuntimeMeasurement,
+): RowMetric[] | null {
+  if (!measurement || measurement.visibleRows.length !== snapshot.rows.size) {
+    return null
+  }
+
+  const remainingKeys = new Set(snapshot.rows.keys())
+  const metrics: RowMetric[] = []
+
+  for (const row of measurement.visibleRows) {
+    if (!remainingKeys.delete(row.key)) {
+      return null
+    }
+    metrics.push({
+      key: row.key,
+      top: row.top,
+      bottom: row.bottom,
+      height: row.bottom - row.top,
+    })
+  }
+
+  return remainingKeys.size === 0 ? metrics : null
 }
 
 function collectMetricWindow(

@@ -8,6 +8,7 @@ import {
   ScrollMotionEngine,
   type ScrollMotionCancelReason,
   type ScrollMotionDecisionDiagnostic,
+  type ScrollMotionRetargetDiagnostic,
   type ScrollMotionSource,
 } from './scrollMotionEngine'
 
@@ -34,8 +35,8 @@ const DEFAULT_SCROLL_MOTION_OPTIONS: Required<ScrollMotionOptions> = {
   enabled: true,
   respectReducedMotion: true,
   maxDistancePx: 800,
-  minDurationMs: 180,
-  maxDurationMs: 420,
+  minDurationMs: 300,
+  maxDurationMs: 600,
   targetEpsilonPx: 1,
 }
 
@@ -79,7 +80,7 @@ export class MotionCoordinator {
     return this.isActive()
   }
 
-  start(input: MotionStartInput): void {
+  start(input: MotionStartInput): boolean {
     this.cancel('restart')
     const rawDirection = resolveMotionDirection(input.container.scrollTop, input.targetTop)
     const direction = input.enforceDirectionHint === true
@@ -105,12 +106,12 @@ export class MotionCoordinator {
       // 关闭动画时仍走 settle 回调，保证 pendingIntent、bottom lock 和事件链保持一致。
       input.writeScrollTop(input.targetTop, input.source)
       input.onSettle()
-      return
+      return false
     }
 
     this.state = 'active'
     this.activeSource = input.source
-    this.engine.start({
+    const active = this.engine.start({
       container: input.container,
       source: input.source,
       targetTop: input.targetTop,
@@ -143,6 +144,7 @@ export class MotionCoordinator {
         })
       },
     })
+    return active
   }
 
   cancel(reason: ScrollMotionCancelReason): void {
@@ -153,6 +155,15 @@ export class MotionCoordinator {
     }
 
     this.engine.cancel(reason)
+  }
+
+  retarget(targetTop: number, onDiagnostic: MotionStartInput['onDiagnostic']): boolean {
+    return this.engine.retarget(targetTop, (decision) => {
+      onDiagnostic('scrollMotion.retarget', 'debug', {
+        source: this.activeSource,
+        ...retargetDecisionToDetails(decision),
+      })
+    })
   }
 
   reset(): void {
@@ -193,6 +204,12 @@ function directionHintToMotionDirection(
 
 function decisionToDetails(
   decision: ScrollMotionDecisionDiagnostic,
+): Record<string, unknown> {
+  return decision
+}
+
+function retargetDecisionToDetails(
+  decision: ScrollMotionRetargetDiagnostic,
 ): Record<string, unknown> {
   return decision
 }

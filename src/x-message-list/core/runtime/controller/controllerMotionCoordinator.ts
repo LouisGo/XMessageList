@@ -30,7 +30,7 @@ type MotionHost<TMessage, TOptimistic> = {
     source: ScrollSource,
   ) => void
   measureRuntimeDom: () => RuntimeMeasurement
-  recordRowMetrics: () => void
+  recordRowMetrics: (measurement?: RuntimeMeasurement) => void
   setViewportPhase: (phase: MessageListSnapshot['viewportPhase']) => void
   syncScrollIntentBottomLock: () => void
   clearFollowBottom: () => void
@@ -58,6 +58,17 @@ type MotionHost<TMessage, TOptimistic> = {
   continueAfterMotionSettle: () => void
 }
 
+type ActiveControllerMotion = {
+  resolution: MotionResolution
+  targetTop: number
+}
+
+export type MotionResizeHandlingResult =
+  | 'inactive'
+  | 'active'
+  | 'settled'
+  | 'cancelled'
+
 /**
  * ControllerMotionCoordinator 是 controller 和 motion engine 的隔离层，负责把 motion settle/cancel 写回 snapshot 与 runtime events。
  */
@@ -75,6 +86,8 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
 
   private readonly host: MotionHost<TMessage, TOptimistic>
 
+  private activeMotion: ActiveControllerMotion | null = null
+
   reservePostCommitOpportunity(): void {
     this.motion.reservePostCommitOpportunity()
   }
@@ -85,6 +98,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
 
   reset(): void {
     this.motion.reset()
+    this.activeMotion = null
   }
 
   isActive(): boolean {
@@ -93,6 +107,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
 
   cancel(reason: ScrollMotionCancelReason): void {
     this.motion.cancel(reason)
+    this.activeMotion = null
   }
 
   alignLocalDestination(
@@ -176,10 +191,16 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     this.cancel('restart')
     // queued transaction drain 后再启动 motion 时，目标 DOM 位置可能已经变化，需要以当前 DOM 重新解析。
     const targetTop = this.resolveCurrentTargetTop(resolution)
+    const resolvedScrollSource = scrollSource ?? resolution.source
+    this.activeMotion = {
+      resolution,
+      targetTop,
+    }
     this.host.stateAxes.markMotionActive()
     this.host.stateAxes.markDestinationMotionActive()
     this.host.setViewportPhase('MOTION')
-    this.motion.start({
+    let settledSynchronously = false
+    const isActive = this.motion.start({
       container,
       source: resolution.source,
       targetTop,
@@ -188,12 +209,47 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
       enforceDirectionHint: resolution.enforceDirectionHint,
       writeScrollTop: (scrollTop, source) =>
         this.host.writeProgrammaticScroll(container, scrollTop, source),
-      onSettle: () => this.finish(resolution, scrollSource ?? resolution.source, targetTop),
+      onSettle: () => {
+        settledSynchronously = true
+        this.finish(
+          resolution,
+          resolvedScrollSource,
+          this.activeMotion?.targetTop ?? targetTop,
+        )
+      },
       onCancel: (reason, source) => this.handleCancel(reason, source),
       onDiagnostic: (name, severity, details) =>
         this.host.pushDiagnostic(name, severity, details),
     })
+    if (!isActive && !settledSynchronously) {
+      this.activeMotion = null
+      this.host.stateAxes.markReadyIdle()
+      this.host.stateAxes.markDestinationInterrupted()
+      this.host.setViewportPhase('IDLE')
+      return false
+    }
     return true
+  }
+
+  handleResizeDuringMotion(): MotionResizeHandlingResult {
+    if (!this.motion.isActive() || !this.activeMotion) {
+      return 'inactive'
+    }
+
+    const targetTop = this.resolveRetargetTop(this.activeMotion.resolution)
+
+    if (targetTop === null) {
+      this.motion.cancel('target-missing')
+      return 'cancelled'
+    }
+
+    this.activeMotion.targetTop = targetTop
+    this.motion.retarget(
+      targetTop,
+      (name, severity, details) => this.host.pushDiagnostic(name, severity, details),
+    )
+
+    return this.motion.isActive() ? 'active' : 'settled'
   }
 
   private resolveCurrentTargetTop(resolution: MotionResolution): number {
@@ -213,13 +269,28 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     return resolution.targetTop
   }
 
+  private resolveRetargetTop(resolution: MotionResolution): number | null {
+    if (resolution.destination) {
+      if (!resolution.anchor) return null
+      return this.host.resolveAlignedScrollTarget(
+        this.host.getSnapshot(),
+        resolution.anchor,
+        resolution.destination.align,
+        resolution.destination.offsetWithinMessage,
+      )?.scrollTop ?? null
+    }
+
+    return this.host.getBottomTargetTop()
+  }
+
   private finish(
     resolution: MotionResolution,
     scrollSource: ScrollSource,
     targetTop: number,
   ): void {
-    this.host.measureRuntimeDom()
-    this.host.recordRowMetrics()
+    const measurement = this.host.measureRuntimeDom()
+    this.host.recordRowMetrics(measurement)
+    this.activeMotion = null
     this.host.setSnapshot({
       ...this.host.getSnapshot(),
       bottomLockState: resolution.bottomLockState,
@@ -256,6 +327,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
       source,
       scrollTop: this.host.readCurrentScrollTop(),
     })
+    this.activeMotion = null
 
     if (this.host.getSnapshot().viewportPhase !== 'MOTION') {
       return
@@ -269,7 +341,11 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
       return
     }
 
-    if (reason === 'user-interrupt') {
+    if (
+      reason === 'user-interrupt' ||
+      reason === 'target-missing' ||
+      reason === 'resize-during-motion'
+    ) {
       this.host.stateAxes.markDestinationInterrupted()
       this.host.clearFollowBottom()
       this.host.setSnapshot({

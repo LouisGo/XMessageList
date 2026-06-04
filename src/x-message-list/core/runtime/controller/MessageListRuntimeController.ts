@@ -77,7 +77,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
         writeProgrammaticScroll: (container, scrollTop, source) =>
           this.domInteractions.writeProgrammaticScroll(container, scrollTop, source),
         measureRuntimeDom: () => (this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())),
-        recordRowMetrics: () => this.domInteractions.recordRowMetrics(),
+        recordRowMetrics: (measurement) => this.domInteractions.recordRowMetrics(measurement),
         setViewportPhase: (phase) => this.setViewportPhase(phase),
         syncScrollIntentBottomLock: () => this.syncScrollIntentBottomLock(),
         clearFollowBottom: () => this.interactions.clearFollowBottom(),
@@ -212,7 +212,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
         getViewportAnchor: () => this.getViewportAnchor(),
       })
       this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
-      this.domInteractions.recordRowMetrics()
+      this.domInteractions.recordRowMetrics(this.lastMeasurement)
       this.stateAxes.markTransactionSettling()
       this.snapshot = this.interactions.settleSegment(this.snapshot, pending.segment)
       if (scrollSettlement.kind === 'instant' && scrollSettlement.bottomLockState) this.snapshot = { ...this.snapshot, bottomLockState: scrollSettlement.bottomLockState }
@@ -417,12 +417,14 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     }
   }
   private scheduleResizeMeasurement(): void {
-    if (this.resizeFrame !== null) {
-      return
-    }
+    if (this.resizeFrame !== null) return
     this.resizeFrame = this.scheduler.requestAnimationFrame(() => {
       this.scrollIntent.incrementFrame()
       this.resizeFrame = null
+      if (this.snapshot.viewportPhase === 'MOTION') {
+        const result = this.motion.handleResizeDuringMotion()
+        if (result !== 'inactive' && result !== 'cancelled') return
+      }
       if (this.transactions.hasPending() || this.snapshot.viewportPhase !== 'IDLE') {
         this.scheduleResizeMeasurement()
         return
@@ -433,7 +435,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.setViewportPhase('CORRECTING')
       this.domInteractions.preserveVisualAnchor(anchor)
       this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
-      this.domInteractions.recordRowMetrics()
+      this.domInteractions.recordRowMetrics(this.lastMeasurement)
       this.stateAxes.markTransactionSettling()
       this.pushDiagnostic('measurement.resizeDirty', 'info', {
         rowCount: this.lastMeasurement.visibleRows.length,
@@ -444,9 +446,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     })
   }
   private handleScrollFrame(): void {
-    if (this.transactions.hasPending() || this.snapshot.viewportPhase !== 'IDLE') {
-      return
-    }
+    if (this.transactions.hasPending() || this.snapshot.viewportPhase !== 'IDLE') return
     const previousScrollTop = this.lastMeasurement.scrollTop
     const scrollSource = this.scrollIntent.classifyFrameScroll()
     this.lastMeasurement = measureRuntimeDom(this.registry.snapshot(), { rowKeys: this.domInteractions.getScrollSampleKeys() })

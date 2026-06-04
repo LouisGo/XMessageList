@@ -395,7 +395,7 @@ describe('useDemoMessageScenario feed switching', () => {
       )
     })
 
-    expect(harness.getScenario()?.lastEvent).toBe('loaded 20 latest messages')
+    expect(harness.getScenario()?.lastEvent).toBe('loaded 32 latest messages')
 
     await harness.unmount()
   })

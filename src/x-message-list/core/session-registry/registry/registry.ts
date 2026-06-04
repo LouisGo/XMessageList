@@ -10,7 +10,7 @@ import type {
   MessageListSession as PublicMessageListSession,
 } from '../contracts'
 
-const DEFAULT_PAGE_SIZE = 30
+const DEFAULT_PAGE_SIZE = 32
 const DEFAULT_MAX_ITEMS = 300
 const DEFAULT_MAX_SESSIONS = 20
 const DEFAULT_TTL_MS = 10 * 60_000

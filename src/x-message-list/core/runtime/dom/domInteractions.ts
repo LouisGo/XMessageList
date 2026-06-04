@@ -5,7 +5,7 @@ import type { RuntimeDomRegistry } from './domRegistry'
 import { DirectScrollSession } from '../scroll/directScrollSession'
 import type { ViewportDiagnosticRecord } from '../contracts/events'
 import type { MessageIdentityAnchor } from '../contracts/identity'
-import type { VisualAnchor } from './measurement'
+import type { RuntimeMeasurement, VisualAnchor } from './measurement'
 import type { RuntimeObserverFactory, RuntimeScheduler } from '../contracts/options'
 import type { SegmentModifier } from '../contracts/segment'
 import type { MessageListSnapshot } from '../contracts/snapshot'
@@ -286,8 +286,8 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     }
   }
 
-  recordRowMetrics(): void {
-    this.rowMetrics.record(this.options.registry.snapshot())
+  recordRowMetrics(measurement?: RuntimeMeasurement): void {
+    this.rowMetrics.record(this.options.registry.snapshot(), measurement)
   }
 
   getScrollSampleKeys(limit = 32, overscanPx = 160): string[] | undefined {

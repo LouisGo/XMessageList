@@ -60,9 +60,37 @@ export type ScrollMotionDecisionDiagnostic =
       startTop: number
       remainingDistancePx: number
       durationMs: number
+      curve: ScrollMotionCurve
       directionHint: MessageListMotionDirection | null
       enforceDirectionHint: boolean
     }
+
+export type ScrollMotionRetargetDiagnostic =
+  | {
+      decision: 'retarget-unchanged'
+      currentTop: number
+      targetTop: number
+      distancePx: number
+      epsilonPx: number
+    }
+  | {
+      decision: 'retarget-settle'
+      currentTop: number
+      targetTop: number
+      distancePx: number
+      epsilonPx: number
+    }
+  | {
+      decision: 'retarget-animate'
+      currentTop: number
+      previousTargetTop: number
+      targetTop: number
+      remainingDistancePx: number
+      durationMs: number
+      curve: ScrollMotionCurve
+    }
+
+type ScrollMotionCurve = 'short' | 'long'
 
 type ActiveMotion = {
   id: number
@@ -71,8 +99,11 @@ type ActiveMotion = {
   startedAt: number
   startTop: number
   durationMs: number
+  curve: ScrollMotionCurve
   input: ScrollMotionStart
 }
+
+const SHORT_DISTANCE_CURVE_THRESHOLD_PX = 300
 
 /**
  * ScrollMotionEngine 只处理可取消的 bounded scrollTop 动画；它不理解 pendingIntent 或 viewport 状态。
@@ -82,7 +113,7 @@ export class ScrollMotionEngine {
 
   private nextMotionId = 1
 
-  start(input: ScrollMotionStart): void {
+  start(input: ScrollMotionStart): boolean {
     this.cancel('restart')
     const targetTop = Math.max(0, input.targetTop)
     const currentTop = input.container.scrollTop
@@ -123,7 +154,7 @@ export class ScrollMotionEngine {
         enforceDirectionHint,
       })
       input.onSettle()
-      return
+      return false
     }
 
     const id = this.nextMotionId
@@ -141,7 +172,7 @@ export class ScrollMotionEngine {
     }
 
     const remainingDistance = Math.abs(targetTop - startTop)
-    const durationMs = computeDuration({
+    const timing = computeMotionTiming({
       distancePx: remainingDistance,
       maxDistancePx,
       minDurationMs: input.minDurationMs,
@@ -158,7 +189,8 @@ export class ScrollMotionEngine {
       semanticPrepositionTop,
       startTop,
       remainingDistancePx: remainingDistance,
-      durationMs,
+      durationMs: timing.durationMs,
+      curve: timing.curve,
       directionHint,
       enforceDirectionHint,
     })
@@ -168,12 +200,14 @@ export class ScrollMotionEngine {
       targetTop,
       startedAt: input.now(),
       startTop,
-      durationMs,
+      durationMs: timing.durationMs,
+      curve: timing.curve,
       input,
     }
 
     this.active = active
     active.frameId = input.requestFrame((time) => this.step(id, time))
+    return true
   }
 
   cancel(reason: ScrollMotionCancelReason): void {
@@ -188,12 +222,77 @@ export class ScrollMotionEngine {
     return this.active !== null
   }
 
+  retarget(
+    targetTop: number,
+    onDecision?: (decision: ScrollMotionRetargetDiagnostic) => void,
+  ): boolean {
+    const active = this.active
+    if (!active) return false
+
+    const nextTargetTop = Math.max(0, targetTop)
+    const currentTop = active.input.container.scrollTop
+    const epsilon = active.input.targetEpsilonPx || 1
+    const distancePx = nextTargetTop - currentTop
+
+    if (Math.abs(active.targetTop - nextTargetTop) <= epsilon) {
+      onDecision?.({
+        decision: 'retarget-unchanged',
+        currentTop,
+        targetTop: nextTargetTop,
+        distancePx,
+        epsilonPx: epsilon,
+      })
+      return true
+    }
+
+    if (Math.abs(distancePx) <= epsilon) {
+      if (active.frameId !== null) active.input.cancelFrame(active.frameId)
+      this.active = null
+      active.frameId = null
+      onDecision?.({
+        decision: 'retarget-settle',
+        currentTop,
+        targetTop: nextTargetTop,
+        distancePx,
+        epsilonPx: epsilon,
+      })
+      active.input.onFrameWrite(nextTargetTop, active.input.source)
+      active.input.onSettle()
+      return true
+    }
+
+    const previousTargetTop = active.targetTop
+    const timing = computeMotionTiming({
+      distancePx: Math.abs(distancePx),
+      maxDistancePx: Math.max(1, active.input.maxDistancePx),
+      minDurationMs: active.input.minDurationMs,
+      maxDurationMs: active.input.maxDurationMs,
+    })
+
+    active.targetTop = nextTargetTop
+    active.startTop = currentTop
+    active.startedAt = active.input.now()
+    active.durationMs = timing.durationMs
+    active.curve = timing.curve
+    onDecision?.({
+      decision: 'retarget-animate',
+      currentTop,
+      previousTargetTop,
+      targetTop: nextTargetTop,
+      remainingDistancePx: Math.abs(distancePx),
+      durationMs: timing.durationMs,
+      curve: timing.curve,
+    })
+    return true
+  }
+
   private step(id: number, time: DOMHighResTimeStamp): void {
     const active = this.active
     if (!active || active.id !== id) return
     const elapsed = Math.max(0, time - active.startedAt)
     const progress = active.durationMs <= 0 ? 1 : Math.min(1, elapsed / active.durationMs)
-    const nextTop = active.startTop + (active.targetTop - active.startTop) * easeOutQuint(progress)
+    const nextTop = active.startTop +
+      (active.targetTop - active.startTop) * applyCurve(progress, active.curve)
     active.input.onFrameWrite(nextTop, active.input.source)
 
     if (progress >= 1 || Math.abs(active.targetTop - nextTop) <= active.input.targetEpsilonPx) {
@@ -208,16 +307,22 @@ export class ScrollMotionEngine {
   }
 }
 
-function computeDuration(input: {
+function computeMotionTiming(input: {
   distancePx: number
   maxDistancePx: number
   minDurationMs: number
   maxDurationMs: number
-}): number {
+}): {
+  durationMs: number
+  curve: ScrollMotionCurve
+} {
   const minDurationMs = Math.max(0, input.minDurationMs)
   const maxDurationMs = Math.max(minDurationMs, input.maxDurationMs)
   const ratio = Math.min(1, input.distancePx / input.maxDistancePx)
-  return minDurationMs + (maxDurationMs - minDurationMs) * ratio
+  return {
+    durationMs: minDurationMs + (maxDurationMs - minDurationMs) * ratio,
+    curve: input.distancePx <= SHORT_DISTANCE_CURVE_THRESHOLD_PX ? 'short' : 'long',
+  }
 }
 
 function resolveSemanticPrepositionTop(input: {
@@ -256,6 +361,12 @@ function directionHintToSign(
   return null
 }
 
-function easeOutQuint(t: number): number {
-  return 1 - (1 - t) ** 5
+function applyCurve(t: number, curve: ScrollMotionCurve): number {
+  return curve === 'short'
+    ? easeOutPower(t, 3.5)
+    : easeOutPower(t, 6)
+}
+
+function easeOutPower(t: number, power: number): number {
+  return 1 - (1 - t) ** power
 }

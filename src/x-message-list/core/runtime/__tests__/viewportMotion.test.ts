@@ -12,7 +12,9 @@ import {
 } from '../internal'
 import type { MessageIdentityAnchor } from '../contracts/identity'
 import type { MessageListRuntime } from '../controller/runtime'
-import { FakeScheduler, createContainer, setElementMetrics } from '../../../../test/fakes'
+import { measureRuntimeDom } from '../dom/measurement'
+import { RuntimeRowMetricCache } from '../dom/rowMetricCache'
+import { FakeScheduler, createContainer, createFakeObservers, setElementMetrics } from '../../../../test/fakes'
 
 describe('MessageList viewport motion', () => {
   it('animates local jump destinations and settles the destination after motion', () => {
@@ -432,6 +434,118 @@ describe('MessageList viewport motion', () => {
       name: 'destinationMotion.cancel',
       details: expect.objectContaining({ reason: 'user-interrupt' }),
     }))
+  })
+
+  it('retargets active destination motion when resize changes the target geometry', () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      observers,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(6, 50)
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    container.scrollTop = 0
+    positionRows(rows, 0)
+
+    runtime.scrollToMessage(anchor('row-5'), { align: 'start' })
+    scheduler.flushFrame()
+
+    const currentTop = container.scrollTop
+    positionRowsWithHeights(rows, [90, 50, 50, 50, 50, 50], currentTop)
+    observers.resizeObservers[0]?.trigger(rows[0], 90)
+    scheduler.flushFrame()
+
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'scrollMotion.retarget',
+      details: expect.objectContaining({
+        decision: 'retarget-animate',
+        targetTop: 240,
+      }),
+    }))
+
+    scheduler.flushFrames(60)
+
+    expect(container.scrollTop).toBe(240)
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
+  })
+
+  it('cancels active destination motion when resize loses the target row', () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({
+      feedId: 'feed-a',
+      scheduler,
+      observers,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(6, 50)
+    const events: MessageListRuntimeEvent[] = []
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    container.scrollTop = 0
+    positionRows(rows, 0)
+    runtime.scrollToMessage(anchor('row-5'), { align: 'start' })
+
+    rows[4].remove()
+    adapter.registerRowElement('row-5', null)
+    observers.resizeObservers[0]?.trigger(rows[3], 50)
+    scheduler.flushFrame()
+    scheduler.flushFrames(20)
+
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'destinationMotion.cancel',
+      details: expect.objectContaining({ reason: 'target-missing' }),
+    }))
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: 'destinationSettled',
+      target: anchor('row-5'),
+    }))
+  })
+
+  it('reuses measured row rects when recording row metrics', () => {
+    const scheduler = new FakeScheduler()
+    const container = createContainer({ height: 100 })
+    const rows = createRows(6, 50)
+    container.append(...rows)
+    const counter = countRowRectReads(rows)
+    const snapshot = {
+      scrollContainer: container,
+      messageFlow: null,
+      beforeTrigger: null,
+      afterTrigger: null,
+      bottomMarker: null,
+      rows: new Map(rows.map((row) => [
+        row.dataset.runtimeKey as string,
+        row,
+      ])),
+    }
+    const measurement = measureRuntimeDom(snapshot)
+    const rowMetrics = new RuntimeRowMetricCache({
+      scheduler,
+      onDiagnostic: () => {},
+    })
+
+    counter.reset()
+
+    rowMetrics.record(snapshot, measurement)
+
+    expect(counter.reads()).toBe(0)
   })
 
   it('lets a new transaction supersede motion without publishing a cancelled destination settle', () => {
@@ -1058,6 +1172,38 @@ function positionRows(rows: HTMLDivElement[], scrollTop: number): void {
   rows.forEach((row, index) => {
     setElementMetrics(row, { top: index * 50 - scrollTop, height: 50 })
   })
+}
+
+function positionRowsWithHeights(
+  rows: HTMLDivElement[],
+  heights: number[],
+  scrollTop: number,
+): void {
+  let top = -scrollTop
+  rows.forEach((row, index) => {
+    const height = heights[index] ?? 50
+    setElementMetrics(row, { top, height })
+    top += height
+  })
+}
+
+function countRowRectReads(rows: HTMLDivElement[]): {
+  reads: () => number
+  reset: () => void
+} {
+  let reads = 0
+  for (const row of rows) {
+    const readRect = row.getBoundingClientRect.bind(row)
+    row.getBoundingClientRect = () => {
+      reads += 1
+      return readRect()
+    }
+  }
+
+  return {
+    reads: () => reads,
+    reset: () => { reads = 0 },
+  }
 }
 
 function itemsFromRows(rows: HTMLDivElement[]): MessageDataItem<string>[] {

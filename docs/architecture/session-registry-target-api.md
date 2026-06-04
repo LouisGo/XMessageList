@@ -217,7 +217,7 @@ export type {
 ```ts
 const registry = createMessageListSessionRegistry<Message, Feed>({
   defaults: {
-    pageSize: 30,
+    pageSize: 32,
     maxItems: 300,
     keepAlive: {
       maxSessions: 20,

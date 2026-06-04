@@ -140,6 +140,7 @@ describe('createMessageListSessionRegistry', () => {
       sessionId: 'feed-a',
       feedId: 'feed-a',
       feed: { id: 'feed-a', type: 'favorite' },
+      pageSize: 32,
     }))
   })
 
