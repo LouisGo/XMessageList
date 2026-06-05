@@ -91,11 +91,11 @@ export function useDemoMessageScenario(): DemoMessageScenario {
       return
     }
 
-    if (registryStateRef.current.activeFeedId !== result.id) {
+    if (registryStateRef.current.activeFeedId !== result.sessionId) {
       return
     }
 
-    setMessageCount(result.page.total ?? readDemoFeedMessages(result.id).length)
+    setMessageCount(result.page.total ?? readDemoFeedMessages(result.sessionId).length)
     if (eventText) {
       setLastEvent(eventText)
     }

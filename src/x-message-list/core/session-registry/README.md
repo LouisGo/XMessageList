@@ -5,7 +5,7 @@
 ## 职责
 
 - 按 `sessionId` 懒创建 `MessageListSession`。
-- 通过 `getFeed` 和 `getAdapter` 解析应用级依赖。
+- 通过 `getSessionSource` 和 `getAdapter` 解析应用级依赖。
 - 掌管当前 session 的 loaded segment、视口状态、边缘状态、请求桥接、`anchorMemory` 和 `readReceipts` worker。
 - 在向视口 runtime 发布 loaded segment 之前，执行请求 token、过期响应防护、segment 合并、裁剪和失败确认。
 - 通过 `loaded-segment-store/` 持有 Loaded Segment Store；viewport runtime 只消费发布后的 segment。
@@ -29,8 +29,8 @@ const registry = createMessageListSessionRegistry({
   scrollMotion: {
     enabled: () => deviceConfig.messageListMotionEnabled,
   },
-  getFeed: (sessionId) => ({ id: sessionId }),
-  getAdapter: (feed) => normalMessageAdapter,
+  getSessionSource: (sessionId) => ({ id: sessionId }),
+  getAdapter: (source) => normalMessageAdapter,
 })
 ```
 

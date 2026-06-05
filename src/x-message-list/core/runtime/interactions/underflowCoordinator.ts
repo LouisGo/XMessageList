@@ -4,7 +4,7 @@ import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import type { InteractionUpdate, RuntimeEdge, UnderflowInput } from '../state/interactionTypes'
 
 /**
- * 在 viewport idle 且无 pending intent 时补齐过短窗口；按 feed/generation/revision/edge 去重，避免 underflow fill 自旋。
+ * 在 viewport idle 且无 pending intent 时补齐过短窗口；按 source/generation/revision/edge 去重，避免 underflow fill 自旋。
  */
 export class UnderflowCoordinator<TMessage, TOptimistic> {
   private lastEdge: RuntimeEdge | null = null

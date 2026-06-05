@@ -15,14 +15,14 @@ import {
 describe('MessageList destination default alignment', () => {
   it('centers local and reset-around jump destinations by default', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = Array.from({ length: 5 }, (_, index) =>
       createRow(`row-${index + 1}`, index * 50, 50)
     )
-    const localTarget = { sessionId: 'feed-a', stableId: 'row-4', serverId: 'row-4' }
-    const remoteTarget = { sessionId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
+    const localTarget = { sessionId: 'source-a', stableId: 'row-4', serverId: 'row-4' }
+    const remoteTarget = { sessionId: 'source-a', stableId: 'row-3', serverId: 'row-3' }
     const events: MessageListRuntimeEvent[] = []
 
     container.append(...rows)
@@ -73,13 +73,13 @@ describe('MessageList destination default alignment', () => {
   })
 
   it('uses reset-around restore alignment before the first settled paint', () => {
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = Array.from({ length: 5 }, (_, index) =>
       createRow(`row-${index + 1}`, index * 50, 50)
     )
-    const target = { sessionId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
+    const target = { sessionId: 'source-a', stableId: 'row-3', serverId: 'row-3' }
 
     container.append(...rows)
     runtime.attachScrollContainer(container)
@@ -113,7 +113,7 @@ function item(key: string): MessageDataItem<string> {
     renderVersion: 1,
     message: key,
     identity: {
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       stableId: key,
       serverId: key,
       version: 1,
@@ -128,7 +128,7 @@ function segment(
   overrides: Partial<LoadedSegment<string>> = {},
 ): LoadedSegment<string> {
   return {
-    sessionId: 'feed-a',
+    sessionId: 'source-a',
     generation,
     segmentRevision,
     items,

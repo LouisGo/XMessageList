@@ -33,6 +33,7 @@ export type {
   MessageListAnchor,
   MessageListAnchorMemoryValue,
   MessageListSessionId,
+  MessageListSessionSource,
   MessageListSegmentRetention,
   MessageListSessionRegistry,
   MessageListSessionRegistryEntry,
@@ -98,8 +99,8 @@ const registry = createMessageListSessionRegistry({
   scrollMotion: {
     enabled: () => deviceConfig.messageListMotionEnabled,
   },
-  getFeed: (sessionId) => getFeedById(sessionId),
-  getAdapter: (feed) => normalMessageAdapter,
+  getSessionSource: (sessionId) => getSessionSourceById(sessionId),
+  getAdapter: (source) => normalMessageAdapter,
   tailEvents: {
     getPageFocus: () => document.hasFocus(),
     shouldFollowRemoteAppend: ({ pageFocused, bottomLockState, distanceToBottom }) =>
@@ -115,7 +116,7 @@ registry.destroySession(sessionId)
 registry.destroyAll()
 ```
 
-使用 `getFeed/getAdapter`，不用 `resolveFeed/resolveAdapter`，
+使用 `getSessionSource/getAdapter`，不用 `resolveSource/resolveAdapter`，
 因为这里是应用级依赖注入，不是每次 render 的动态解析配置。
 `tailEvents.shouldFollowRemoteAppend` 是 remote tail append 的应用级策略入口；XMessageList
 提供当前滚动距离、bottom lock、pending intent 和页面焦点等上下文，但不替业务
@@ -166,7 +167,7 @@ Canonical names：
 | --- | --- | --- |
 | `MessageList` | React component | 唯一公开组件名 |
 | `MessageListSessionRegistryProvider` | React component | 注入应用级 registry |
-| `useMessageListSession` | hook | 按 session id 解析 session |
+| `useMessageListSession` | hook | 按 `sessionId` 解析 session |
 | `useMessageListState` | hook | 订阅 session 级只读列表状态 |
 | `MessageListSession` | public object | session 的消息列表会话实例 |
 | `MessageListProps` | React props | 组件 props 类型 |
@@ -215,7 +216,7 @@ Public `MessageListSession<Row>` 只暴露使用方需要的能力：
 
 ```ts
 type MessageListSession<Row> = {
-  id: string
+  sessionId: MessageListSessionId
   getState(): MessageListSessionState<Row>
   subscribe(listener): () => void
 
@@ -227,7 +228,7 @@ type MessageListSession<Row> = {
     reloadLatest(): void
   }
 
-	  rows: {
+  rows: {
     patch(rows: Row[]): void
     mutate(input): void
     replace(input): void
@@ -235,19 +236,19 @@ type MessageListSession<Row> = {
     resetAround(input): void
     applyIdentityRemap(remaps): void
     clear(): void
-	  }
+  }
 
-	  tail: {
-	    local: {
-	      stage(input): void
-	      patch(rows): void
-	      applyIdentityRemap(remaps): void
-	    }
-	    remote: {
-	      append(input): void
-	    }
-	  }
-	}
+  tail: {
+    local: {
+      stage(input): void
+      patch(rows): void
+      applyIdentityRemap(remaps): void
+    }
+    remote: {
+      append(input): void
+    }
+  }
+}
 ```
 
 ```ts

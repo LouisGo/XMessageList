@@ -104,7 +104,7 @@ oracle 都不能通过这些字段补答案。
 | Underflow | 短 segment 一轮最多一个 edge request；两侧 exhausted 后不循环重试。 |
 | Bottom follow | `hasMoreAfter=true` 时 follow bottom 发 latest need；latest reset 后 `hasMoreAfter=false` 才 locked。 |
 | Destination | segment 内目标只 local align；segment 外目标发 around need；完成后目标或 fallback 可见并按可达位置对齐。 |
-| Feed switch | detach 前发布 identity anchor checkpoint；切回后通过 around/latest restore，不保存 raw scrollTop。 |
+| Session switch | detach 前发布 identity anchor checkpoint；切回后通过 around/latest restore，不保存 raw scrollTop。 |
 | Dynamic height | height change 由 DOM/ResizeObserver 触发；above-anchor growth 后 visual anchor 稳定；不通过 reset 掩盖。 |
 | Segment trim | item count 低于预算；trim modifier 方向符合场景预期；visual anchor 或 bottom lock 保持稳定。 |
 | Identity remap | modifier 显式携带 `from` / `to` 与 `previousKey -> nextKey`；remap 后 anchor 和 persisted identity 更新。 |

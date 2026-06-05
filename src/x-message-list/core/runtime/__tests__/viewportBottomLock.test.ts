@@ -14,7 +14,7 @@ describe('MessageList bottom lock observation', () => {
   it('connects edge observers when triggers register before the scroll container', () => {
     const observers = createFakeObservers()
     const runtime = createMessageListRuntime<string>({
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       observers,
     })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -34,7 +34,7 @@ describe('MessageList bottom lock observation', () => {
   it('unlocks bottom follow when ordinary scroll moves away from native bottom', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       scheduler,
       observers: createFakeObservers(),
     })
@@ -68,7 +68,7 @@ describe('MessageList bottom lock observation', () => {
   it('unlocks immediately when user scrolls upward inside the bottom threshold', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       scheduler,
       observers: createFakeObservers(),
     })
@@ -115,7 +115,7 @@ function item(key: string): MessageDataItem<string> {
     key,
     rowKind: 'message',
     identity: {
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       stableId: key,
       serverId: key,
       version: 1,
@@ -127,7 +127,7 @@ function item(key: string): MessageDataItem<string> {
 
 function segment(items: MessageDataItem<string>[]): LoadedSegment<string> {
   return {
-    sessionId: 'feed-a',
+    sessionId: 'source-a',
     generation: 1,
     segmentRevision: 1,
     items,

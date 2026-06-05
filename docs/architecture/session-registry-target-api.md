@@ -11,7 +11,7 @@ viewport runtime、loaded segment store、loaded segment、edge state、overlay�
 创建、缓存、复用和销毁 session，并把 host 提供的 adapter、默认配置和 keepAlive
 策略注入 session。
 
-因此，目标架构不剥离这层生命周期容器。`registry` 表达的是 session identity 与
+因此，目标架构不剥离这层生命周期容器。`registry` 表达的是 `sessionId` identity 与
 lifecycle registry/cache/factory，不是业务层的消息管理器，也不是 React adapter
 的 owner。
 
@@ -27,10 +27,10 @@ lifecycle registry/cache/factory，不是业务层的消息管理器，也不是
 
 ```text
 MessageListSessionRegistry
-  owns session identity, lazy creation, reuse, keepAlive and destruction
+  owns sessionId identity, lazy creation, reuse, keepAlive and destruction
 
 MessageListSession
-  owns one feed-backed message-list instance
+  owns one session-backed message-list instance
 
 React Adapter
   projects an existing session into <MessageList />
@@ -40,7 +40,7 @@ Viewport Runtime + Loaded Segment Store
 ```
 
 `MessageListSession` 是最小可渲染消息列表实例。chat、thread、AI sidebar、收藏夹
-都应该表达为一个 session。差异来自 host 如何为该 session id 选择 adapter、
+都应该表达为一个 session。差异来自 host 如何为该 `sessionId` 选择 adapter、
 request route、anchor memory 和 read receipt 行为，而不是来自 React 或 runtime
 额外分支。
 
@@ -54,9 +54,9 @@ request route、anchor memory 和 read receipt 行为，而不是来自 React �
 const session = registry.getSession(sessionId)
 ```
 
-runtime、segment、anchor、viewport events、request context 和 session state
-都使用 `sessionId` 表达列表身份。`id` 与 `sessionId` 是同一个 registry key；
-host 的 feed identifier 只存在于 host adapter / `getFeed(sessionId)` 返回值中，
+runtime、segment、anchor、viewport events、request context、request result、
+remote append context 和 session state 都使用 `sessionId` 表达列表身份，不提供 `id` alias；
+host 的 feed identifier 只存在于 host adapter / `getSessionSource(sessionId)` 返回值中，
 不进入 XMessageList identity anchor。
 
 这个约定覆盖以下场景：
@@ -64,7 +64,7 @@ host 的 feed identifier 只存在于 host adapter / `getFeed(sessionId)` 返回
 - 分屏同时展示两个 chat 消息列表：两个不同 `feed_id`，两个独立 session。
 - 同时展示 chat 与 thread：thread 本质仍是另一条 feed，用自己的 `feed_id`。
 - 同时展示 chat 与侧边栏 AI 消息列表：AI 列表也有自己的 `feed_id`。
-- 收藏夹或其他固定列表：使用固定且全局唯一的 `feed_id` 或固定 session id。
+- 收藏夹或其他固定列表：使用固定且全局唯一的 `feed_id` 或固定 `sessionId`。
 
 如果未来出现同一个 host feed 需要同时承载两个独立滚动状态或不同 loaded segment
 语义的场景，必须扩展 `sessionId`，例如加入 view scope 或 list kind。只要
@@ -84,7 +84,7 @@ React，应在 app bootstrap、root store、dependency container 或稳定 memo 
 - React adapter 在 `<MessageList />` mount 时自动 retain 对应 session，unmount 时
   release；mounted session 不参与 LRU 淘汰。
 - host 可以通过 `registry.retainSession(sessionId, reason)` 保留一个未挂载但仍处于
-  业务活跃状态的 session，例如分屏预加载、悬浮窗口或即将切回的 feed。
+  业务活跃状态的 session，例如分屏预加载、悬浮窗口或即将切回的 session。
 - `registry.sweep()` 执行 TTL 清理；`getSession()` 和配置更新后可以自动触发一次
   sweep。
 - `destroySession(sessionId)` 是显式销毁：取消 timers、释放 runtime 和 Loaded Segment Store、
@@ -102,7 +102,7 @@ type MessageListSessionRetainReason =
   | 'split-view'
   | 'prefetch'
 
-type MessageListSessionRegistry<Row, Feed = MessageListSessionId> = {
+type MessageListSessionRegistry<Row, Source = MessageListSessionSource> = {
   getSession(sessionId: MessageListSessionId): MessageListSession<Row>
   hasSession(sessionId: MessageListSessionId): boolean
   destroySession(sessionId: MessageListSessionId): boolean
@@ -110,7 +110,7 @@ type MessageListSessionRegistry<Row, Feed = MessageListSessionId> = {
   getSessionIds(): MessageListSessionId[]
   getSessionMeta(sessionId: MessageListSessionId): MessageListSessionRegistryEntry | null
   retainSession(sessionId: MessageListSessionId, reason: MessageListSessionRetainReason): () => void
-  updateOptions(options: MessageListSessionRegistryOptionsPatch<Row, Feed>): void
+  updateOptions(options: MessageListSessionRegistryOptionsPatch<Row, Source>): void
   sweep(): void
 }
 ```
@@ -118,7 +118,7 @@ type MessageListSessionRegistry<Row, Feed = MessageListSessionId> = {
 `MessageListSessionRegistryEntry` 至少应表达 `sessionId`、`createdAt`、
 `lastUsedAt`、`mountedRetainCount`、`hostRetainCount` 和 `status`。
 `status` 推荐为 `mounted | active | cached`：mounted 表示存在 React view，active
-表示 host 仍认为该 feed 业务活跃，cached 表示仅为快速恢复保留。
+表示 host 仍认为该 session 业务活跃，cached 表示仅为快速恢复保留。
 
 ## Configuration Updates
 
@@ -139,13 +139,13 @@ registry 需要支持配置更新，但不是所有配置都应该原地影响�
 - `retention`：这是 Message List Retention tier，会影响 session 内部
   Loaded Segment Store 的 trim strategy。改动后应销毁并重建 session，或由未来
   明确的 retention resize API 处理。
-- `getFeed` / `getAdapter` 对已有 session 的结果：feed context、row adapter、
-  request route、anchor memory 和 read receipts 是 session identity 的一部分。
+- `getSessionSource` / `getAdapter` 对已有 session 的结果：session source、row adapter、
+  request route、anchor memory 和 read receipts 是 `sessionId` identity 的一部分。
   如果这些语义变化，应 `destroySession(sessionId)` 后重新 `getSession(sessionId)`。
 
-`updateOptions` 只接受动态配置 patch，不接受 `retention`、`getFeed` 或 `getAdapter`。
+`updateOptions` 只接受动态配置 patch，不接受 `retention`、`getSessionSource` 或 `getAdapter`。
 需要改变静态语义时，host 必须显式销毁相关 session，避免一个 session 在生命周期中
-悄悄换 feed、adapter、anchor memory 或 read receipts。
+悄悄换 source、adapter、anchor memory 或 read receipts。
 
 ## Public API 目标形态
 
@@ -165,6 +165,7 @@ export type {
   MessageListAnchor,
   MessageListAnchorMemoryValue,
   MessageListSessionId,
+  MessageListSessionSource,
   MessageListSegmentRetention,
   MessageListIdentityRemap,
   MessageListLocalTailStageInput,
@@ -207,7 +208,7 @@ export type {
 ```
 
 对业务接入者可见的 id 不暗示它一定是 conversation。Public API 只保留
-`MessageListSessionId`、`MessageListSessionRegistry`、
+`MessageListSessionId`、`MessageListSessionSource`、`MessageListSessionRegistry`、
 `MessageListSessionRegistryProvider` 和 `tail.local` / `tail.remote` 口径。
 
 ## Registry API
@@ -215,7 +216,7 @@ export type {
 目标 registry 创建方式：
 
 ```ts
-const registry = createMessageListSessionRegistry<Message, Feed>({
+const registry = createMessageListSessionRegistry<Message, Source>({
   defaults: {
     pageSize: 32,
     retention: 'balanced',
@@ -227,8 +228,8 @@ const registry = createMessageListSessionRegistry<Message, Feed>({
   scrollMotion: {
     enabled: () => deviceConfig.messageListMotionEnabled,
   },
-  getFeed: (sessionId) => getFeedById(sessionId),
-  getAdapter: (feed) => getAdapterForFeed(feed),
+  getSessionSource: (sessionId) => getSessionSourceById(sessionId),
+  getAdapter: (source) => getAdapterForSource(source),
   tailEvents: {
     getPageFocus: () => document.hasFocus(),
     shouldFollowRemoteAppend: ({ pageFocused, bottomLockState, distanceToBottom }) =>
@@ -238,7 +239,7 @@ const registry = createMessageListSessionRegistry<Message, Feed>({
 })
 ```
 
-`getFeed` / `getAdapter` 是 session 创建时的 host dependency injection。
+`getSessionSource` / `getAdapter` 是 session 创建时的 host dependency injection。
 `SessionRegistry` 不拥有 host 的全量分页缓存、dirty timestamp、业务未读状态、
 权限、免打扰或持久化；这些仍由 Electron app 的业务 store 负责。
 
@@ -248,7 +249,7 @@ const registry = createMessageListSessionRegistry<Message, Feed>({
 
 ```ts
 type MessageListSession<Row> = {
-  id: MessageListSessionId
+  sessionId: MessageListSessionId
   getState(): MessageListSessionState<Row>
   subscribe(listener: () => void): () => void
 
@@ -363,7 +364,7 @@ Electron 应用可以同时展示多个 message list。只要每个列表使用�
 
 需要避免的是让同一个 `sessionId` 同时表达两个语义不同的列表。如果两个列表必须有
 独立滚动状态、独立 loaded segment 或不同 request/adapter 语义，它们必须使用不同
-session id。
+`sessionId`。
 
 ## 命名状态
 

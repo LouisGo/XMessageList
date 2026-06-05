@@ -30,6 +30,7 @@ export type {
   MessageListSession,
   MessageListSessionContext,
   MessageListSessionId,
+  MessageListSessionSource,
   MessageListSessionRegistry,
   MessageListSessionRegistryEntry,
   MessageListSessionRegistryOptions,

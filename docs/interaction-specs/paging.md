@@ -108,7 +108,7 @@ User-visible result：
 
 Forbidden：
 
-- 不允许把 after edge 当作 feed latest bottom。
+- 不允许把 after edge 当作 session latest bottom。
 - 不允许 pending follow bottom 期间发普通 after paging。
 
 ## P3 Edge Loading 去重

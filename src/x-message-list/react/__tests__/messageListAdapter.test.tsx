@@ -346,7 +346,7 @@ describe('MessageList React adapter', () => {
     expect(events).toContainEqual(expect.objectContaining({
       type: 'needMessagesAround',
       target: expect.objectContaining({
-        sessionId: 'feed-a',
+        sessionId: 'source-a',
         stableId: 'row-9',
         serverId: 'row-9',
       }),
@@ -588,11 +588,11 @@ describe('MessageList React adapter', () => {
 
   it('detaches previous session runtime before attaching a switched session', async () => {
     const fixtureA = createSessionFixture({
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       rows: ['row-a'],
     })
     const fixtureB = createSessionFixture({
-      sessionId: 'feed-b',
+      sessionId: 'source-b',
       rows: ['row-b'],
     })
     const anchorEvents: ViewportAnchorChangedEvent[] = []
@@ -907,7 +907,7 @@ function createSessionFixture(input: {
   runtime: MessageListRuntime<string>
   destroy: () => void
 } {
-  const sessionId = input.sessionId ?? 'feed-a'
+  const sessionId = input.sessionId ?? 'source-a'
   const registry = createMessageListSessionRegistry<string>({
     getAdapter: () => createStringAdapter(input.rows, {
       hasMoreBefore: input.hasMoreBefore,
@@ -947,7 +947,7 @@ function createFlowSnapshot(input: {
 }): MessageListSnapshot<string> {
   const projectionRevision = input.hasMoreBefore ? 1 : 2
   const commitToken = {
-    sessionId: 'feed-a',
+    sessionId: 'source-a',
     generation: 1,
     segmentRevision: 1,
     projectionRevision,
@@ -979,7 +979,7 @@ function createFlowItem(row: string): MessageDataItem<string> {
     key: row,
     rowKind: 'message',
     identity: {
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       stableId: row,
       version: 1,
     },

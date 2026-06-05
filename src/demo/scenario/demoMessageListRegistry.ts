@@ -76,8 +76,8 @@ export function createDemoRegistry(
     scrollMotion: {
       enabled: true,
     },
-    getFeed: (id) => ({ id }),
-    getAdapter: (feed) => createDemoAdapter(feed, input),
+    getSessionSource: (id) => ({ id }),
+    getAdapter: (source) => createDemoAdapter(source, input),
     tailEvents: {
       getPageFocus: () => globalThis.location?.pathname === '/e2e' ||
         (globalThis.document?.hasFocus?.() ?? true),
@@ -222,20 +222,20 @@ function createDemoAdapter(
     },
     anchorMemory: {
       load: async (context) => {
-        const cached = input.loadAnchor(context.id)
+        const cached = input.loadAnchor(context.sessionId)
         if (cached) {
           return cached
         }
 
-        const persisted = await loadDemoViewportAnchor(context.id)
+        const persisted = await loadDemoViewportAnchor(context.sessionId)
         if (!persisted) {
           return null
         }
 
-        const restored = toSavedRuntimeAnchor(context.id, {
+        const restored = toSavedRuntimeAnchor(context.sessionId, {
           anchor: {
             id: persisted.messageId,
-            sessionId: context.id,
+            sessionId: context.sessionId,
             stableId: persisted.messageId,
             serverId: persisted.messageId,
           },
@@ -243,21 +243,21 @@ function createDemoAdapter(
         })
 
         if (restored) {
-          input.saveAnchor(context.id, restored)
+          input.saveAnchor(context.sessionId, restored)
         }
 
         return restored
       },
       save: async (context, value) => {
-        const saved = toSavedRuntimeAnchor(context.id, value)
+        const saved = toSavedRuntimeAnchor(context.sessionId, value)
         if (!saved) {
           return
         }
 
-        input.saveAnchor(context.id, saved)
-        const feedMessages = await loadDemoFeedMessages(context.id)
+        input.saveAnchor(context.sessionId, saved)
+        const feedMessages = await loadDemoFeedMessages(context.sessionId)
         saveDemoViewportAnchor(
-          context.id,
+          context.sessionId,
           toPersistedViewportAnchor(
             saved.anchor,
             feedMessages,
@@ -284,13 +284,13 @@ async function loadDemoEdgePage(
     throw new Error(`missing ${edge} boundary message`)
   }
 
-  const deferredDelayMs = input.getSelectedFeedId() === context.id
+  const deferredDelayMs = input.getSelectedFeedId() === context.sessionId
     ? input.consumeDeferredEdgeResponseDelay()
     : 0
 
   await wait(deferredDelayMs > 0 ? deferredDelayMs : EDGE_LOAD_DELAY_BASE_MS)
   const resp = await getMessagesAround({
-    feedId: context.id,
+    feedId: context.sessionId,
     anchor: {
       messageId: boundaryMessage.id,
       position: boundaryMessage.sequence,
@@ -318,8 +318,8 @@ function handleDemoRequestResult(
   input: DemoRegistryOptions,
 ): void {
   if (result.status !== 'applied') {
-    if (result.id === input.getActiveFeedId() && result.status === 'failed') {
-      if (input.canCompleteRequestActivation(result.id)) {
+    if (result.sessionId === input.getActiveFeedId() && result.status === 'failed') {
+      if (input.canCompleteRequestActivation(result.sessionId)) {
         input.setFeedLoading(false)
         input.setPendingFeedId(null)
       }
@@ -328,11 +328,11 @@ function handleDemoRequestResult(
     return
   }
 
-  if (result.id !== input.getActiveFeedId()) {
+  if (result.sessionId !== input.getActiveFeedId()) {
     return
   }
 
-  if (!input.canCompleteRequestActivation(result.id)) {
+  if (!input.canCompleteRequestActivation(result.sessionId)) {
     return
   }
 

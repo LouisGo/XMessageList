@@ -20,7 +20,7 @@ npm run e2e:perf
 
 ## 源码结构
 
-- `src/x-message-list/core/session-registry`：应用编排层。按 session id 懒创建 `MessageListSession`，路由适配器，掌管请求桥接、Loaded Segment Store、keepAlive 保留、`anchorMemory` 和 `readReceipts`。
+- `src/x-message-list/core/session-registry`：应用编排层。按 `sessionId` 懒创建 `MessageListSession`，路由适配器，掌管请求桥接、Loaded Segment Store、keepAlive 保留、`anchorMemory` 和 `readReceipts`。
 - `src/x-message-list/core/runtime`：框架无关的视口 runtime。消费已发布的 loaded segment，序列化投射事务，掌管 DOM ref/测量，写入 `scrollTop`，保持视觉锚点，发出 need 事件并报告诊断/evidence。
 - `src/x-message-list/react`：React 18 投射适配器。从 provider context 解析 session，渲染行/插槽/可选浮层，注册 ref，挂载原生滚动容器并在 layout effect 中确认投射提交。
 - `src/demo`：本地 mock 宿主与场景接线，涵盖 feed、边缘请求、动态高度、乐观重映射、事件风暴和 bot 推送。
@@ -38,7 +38,11 @@ import {
   type MessageListAdapter,
 } from 'x-message-list'
 
-const messageAdapter: MessageListAdapter<MyMessage, Conversation> = {
+type SessionSource = {
+  id: string
+}
+
+const messageAdapter: MessageListAdapter<MyMessage, SessionSource> = {
   row: {
     getKey: (message) => message.id,
     getAnchor: (message) => ({ id: message.id }),
@@ -52,9 +56,9 @@ const messageAdapter: MessageListAdapter<MyMessage, Conversation> = {
     loadAround,
   },
   anchorMemory: {
-    load: ({ id }) => loadSavedAnchor(id),
-    save: ({ id }, value) =>
-      saveAnchor(id, value.anchor, value.offsetWithinMessage),
+    load: ({ sessionId }) => loadSavedAnchor(sessionId),
+    save: ({ sessionId }, value) =>
+      saveAnchor(sessionId, value.anchor, value.offsetWithinMessage),
   },
   readReceipts: {
     batchDelayMs: 120,
@@ -63,7 +67,7 @@ const messageAdapter: MessageListAdapter<MyMessage, Conversation> = {
   },
 }
 
-const registry = createMessageListSessionRegistry<MyMessage, Feed>({
+const registry = createMessageListSessionRegistry<MyMessage, SessionSource>({
   defaults: {
     pageSize: 30,
     retention: 'balanced',
@@ -75,7 +79,7 @@ const registry = createMessageListSessionRegistry<MyMessage, Feed>({
   scrollMotion: {
     enabled: () => deviceConfig.messageListMotionEnabled,
   },
-  getFeed: (sessionId) => getFeedById(sessionId),
+  getSessionSource: (sessionId) => getSessionSourceById(sessionId),
   getAdapter: () => messageAdapter,
 })
 

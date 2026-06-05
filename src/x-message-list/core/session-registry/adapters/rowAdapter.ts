@@ -10,10 +10,10 @@ import type {
   MessageListSessionId,
 } from '../contracts'
 
-export function toMessageDataItems<Row, Feed>(
-  id: MessageListSessionId,
+export function toMessageDataItems<Row, Source>(
+  sessionId: MessageListSessionId,
   rows: Row[],
-  adapter: MessageListAdapter<Row, Feed>,
+  adapter: MessageListAdapter<Row, Source>,
 ): MessageDataItem<Row>[] {
   return rows.map((row) => {
     const anchor = adapter.row.getAnchor(row)
@@ -25,7 +25,11 @@ export function toMessageDataItems<Row, Feed>(
       key,
       rowKind: toRuntimeRowKind(rowKind),
       identity: anchor
-        ? toMessageIdentity(id, normalizeMessageListAnchor(id, anchor), version)
+        ? toMessageIdentity(
+            sessionId,
+            normalizeMessageListAnchor(sessionId, anchor),
+            version,
+          )
         : undefined,
       renderVersion: toRenderVersion(version),
       message: row,
@@ -52,7 +56,7 @@ export function resolveRowsByKeys<Row>(
 }
 
 export function normalizeMessageListAnchor(
-  id: MessageListSessionId,
+  sessionId: MessageListSessionId,
   anchor: MessageListAnchor,
 ): MessageIdentityAnchor {
   const stableId = anchor.stableId ??
@@ -62,7 +66,7 @@ export function normalizeMessageListAnchor(
     ''
 
   return {
-    sessionId: anchor.sessionId ?? id,
+    sessionId: anchor.sessionId ?? sessionId,
     stableId,
     serverId: anchor.serverId ?? anchor.id,
     localId: anchor.localId,
@@ -72,12 +76,12 @@ export function normalizeMessageListAnchor(
 }
 
 function toMessageIdentity(
-  id: MessageListSessionId,
+  sessionId: MessageListSessionId,
   anchor: MessageIdentityAnchor,
   version: unknown,
 ): MessageIdentity {
   return {
-    sessionId: anchor.sessionId ?? id,
+    sessionId: anchor.sessionId ?? sessionId,
     stableId: anchor.stableId,
     serverId: anchor.serverId,
     localId: anchor.localId,

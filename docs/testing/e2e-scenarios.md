@@ -44,7 +44,7 @@ correctness 场景和 1 个 perf 场景。它是 runner catalog，不代表当�
 
 | Scenario | 验收重点 |
 | --- | --- |
-| `feed-switch.detach-anchor-checkpoint` | feed detach 前保存 identity anchor checkpoint；切回后通过 around restore，不复用 raw scrollTop。 |
+| `feed-switch.detach-anchor-checkpoint` | session detach 前保存 identity anchor checkpoint；切回后通过 around restore，不复用 raw scrollTop。 |
 | `strictmode.attach-detach-attach` | 连续 remount 后 runtime idle、diagnostics 有界、refs/observers 不重复积累。 |
 
 ### P4 Scrollbar And Loading Overlay

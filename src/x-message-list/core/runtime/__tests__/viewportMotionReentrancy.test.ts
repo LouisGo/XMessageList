@@ -13,7 +13,7 @@ import { FakeScheduler, createContainer, setElementMetrics } from '../../../../t
 describe('MessageList viewport motion reentrancy', () => {
   it('drains queued passive mutations before destination motion', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const initialRows = createRows(1, 50)
@@ -69,7 +69,7 @@ describe('MessageList viewport motion reentrancy', () => {
   it('queues passive mutations while destination motion is active', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       scheduler,
       commitTimeoutMs: 10_000,
     })
@@ -106,7 +106,7 @@ describe('MessageList viewport motion reentrancy', () => {
 
   it('settles underflow fill without bottom motion after a restored latest lock', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const initialRows = createRows(1, 50)
@@ -166,7 +166,7 @@ describe('MessageList viewport motion reentrancy', () => {
 
   it('drops pending destination motion when a settle listener publishes a newer generation', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const initialRows = createRows(1, 50)
@@ -280,7 +280,7 @@ function item(key: string): MessageDataItem<string> {
     renderVersion: 1,
     message: key,
     identity: {
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       stableId: key,
       serverId: key,
       version: 1,
@@ -290,7 +290,7 @@ function item(key: string): MessageDataItem<string> {
 
 function anchor(key: string): MessageIdentityAnchor {
   return {
-    sessionId: 'feed-a',
+    sessionId: 'source-a',
     stableId: key,
     serverId: key,
   }
@@ -303,7 +303,7 @@ function segment(
   overrides: Partial<LoadedSegment<string>> = {},
 ): LoadedSegment<string> {
   return {
-    sessionId: 'feed-a',
+    sessionId: 'source-a',
     generation,
     segmentRevision,
     items,

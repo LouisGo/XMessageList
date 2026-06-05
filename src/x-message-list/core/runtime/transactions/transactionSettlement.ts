@@ -180,10 +180,10 @@ function settleResetAround<TMessage, TOptimistic>(input: {
     anchor: target,
     bottomLockState: 'UNLOCKED',
     destination,
-    allowPreposition: !destination.motion?.crossFeed,
-    directionHint: destination.motion?.crossFeed ? undefined : destination.motion?.direction,
+    allowPreposition: !destination.motion?.crossSession,
+    directionHint: destination.motion?.crossSession ? undefined : destination.motion?.direction,
     enforceDirectionHint: Boolean(
-      !destination.motion?.crossFeed &&
+      !destination.motion?.crossSession &&
       destination.motion?.direction &&
       destination.motion.direction !== 'none',
     ),

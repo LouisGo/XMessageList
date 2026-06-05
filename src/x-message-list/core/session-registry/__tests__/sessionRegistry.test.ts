@@ -39,15 +39,15 @@ describe('createMessageListSessionRegistry', () => {
           ttlMs: 10 * 60_000,
         },
       },
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
     })
 
-    const release = registry.retainSession('feed-a', 'active-session')
-    const activeMeta = registry.getSessionMeta('feed-a')
+    const release = registry.retainSession('source-a', 'active-session')
+    const activeMeta = registry.getSessionMeta('source-a')
 
     expect(activeMeta).toMatchObject({
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       mountedRetainCount: 0,
       hostRetainCount: 1,
       status: 'active',
@@ -55,7 +55,7 @@ describe('createMessageListSessionRegistry', () => {
 
     release()
 
-    expect(registry.getSessionMeta('feed-a')).toMatchObject({
+    expect(registry.getSessionMeta('source-a')).toMatchObject({
       hostRetainCount: 0,
       status: 'cached',
     })
@@ -71,23 +71,23 @@ describe('createMessageListSessionRegistry', () => {
           ttlMs: 10 * 60_000,
         },
       },
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
     })
 
-    const release = registry.retainSession('feed-a', 'active-session')
-    registry.getSession('feed-b')
-    registry.getSession('feed-c')
+    const release = registry.retainSession('source-a', 'active-session')
+    registry.getSession('source-b')
+    registry.getSession('source-c')
 
-    expect(registry.hasSession('feed-a')).toBe(true)
-    expect(registry.hasSession('feed-b')).toBe(false)
-    expect(registry.hasSession('feed-c')).toBe(true)
+    expect(registry.hasSession('source-a')).toBe(true)
+    expect(registry.hasSession('source-b')).toBe(false)
+    expect(registry.hasSession('source-c')).toBe(true)
 
     release()
-    registry.getSession('feed-d')
+    registry.getSession('source-d')
 
-    expect(registry.hasSession('feed-a')).toBe(false)
-    expect(registry.hasSession('feed-d')).toBe(true)
+    expect(registry.hasSession('source-a')).toBe(false)
+    expect(registry.hasSession('source-d')).toBe(true)
     registry.destroyAll()
   })
 
@@ -98,7 +98,7 @@ describe('createMessageListSessionRegistry', () => {
       conversation.type === 'favorite' ? favoriteAdapter : normalAdapter
     )
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({
+      getSessionSource: (id) => ({
         id,
         type: id.startsWith('favorite') ? 'favorite' : 'normal',
       }),
@@ -123,21 +123,20 @@ describe('createMessageListSessionRegistry', () => {
       .toBe('favorite-latest')
   })
 
-  it('passes sessionId, sessionId, and feed through request context', async () => {
-    const loadLatest = vi.fn((context) => Promise.resolve(page([context.feed.id])))
+  it('passes sessionId and source through request context', async () => {
+    const loadLatest = vi.fn((context) => Promise.resolve(page([context.source.id])))
     const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'favorite' }),
+      getSessionSource: (id) => ({ id, type: 'favorite' }),
       getAdapter: () => createAdapter('normal', { loadLatest }),
     })
-    const session = registry.getSession('feed-a')
+    const session = registry.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
 
     expect(loadLatest).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'feed-a',
-      sessionId: 'feed-a',
-      feed: { id: 'feed-a', type: 'favorite' },
+      sessionId: 'source-a',
+      source: { id: 'source-a', type: 'favorite' },
       pageSize: 32,
     }))
   })
@@ -150,39 +149,39 @@ describe('createMessageListSessionRegistry', () => {
           ttlMs: 10 * 60_000,
         },
       },
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
     })
 
-    manager.getSession('feed-a')
-    manager.getSession('feed-b')
+    manager.getSession('source-a')
+    manager.getSession('source-b')
 
-    expect(manager.hasSession('feed-a')).toBe(false)
-    expect(manager.hasSession('feed-b')).toBe(true)
-    expect(manager.getSessionIds()).toEqual(['feed-b'])
+    expect(manager.hasSession('source-a')).toBe(false)
+    expect(manager.hasSession('source-b')).toBe(true)
+    expect(manager.getSessionIds()).toEqual(['source-b'])
   })
 
   it('destroys sessions only through manager policy or explicit calls', async () => {
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
 
-    expect(manager.destroySession('feed-a')).toBe(true)
-    expect(manager.destroySession('feed-a')).toBe(false)
-    expect(manager.hasSession('feed-a')).toBe(false)
+    expect(manager.destroySession('source-a')).toBe(true)
+    expect(manager.destroySession('source-a')).toBe(false)
+    expect(manager.hasSession('source-a')).toBe(false)
   })
 
   it('does not expose runtime internals as enumerable session fields', () => {
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
 
     expect(Object.keys(session)).not.toContain('runtime')
     expect(Object.keys(session)).not.toContain('loadedSegmentStore')
@@ -194,7 +193,7 @@ describe('createMessageListSessionRegistry', () => {
       page([context.target?.stableId ?? 'missing']),
     ))
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => ({
         ...createAdapter('normal', {
           loadLatest,
@@ -209,16 +208,16 @@ describe('createMessageListSessionRegistry', () => {
         },
       }),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
 
     expect(loadLatest).not.toHaveBeenCalled()
     expect(loadAround).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'feed-a',
+      sessionId: 'source-a',
       target: expect.objectContaining({
-        sessionId: 'feed-a',
+        sessionId: 'source-a',
         stableId: 'restored',
       }),
     }))
@@ -235,7 +234,7 @@ describe('createMessageListSessionRegistry', () => {
   it('publishes event-driven around requests instead of self-staling them', async () => {
     const requestResults: string[] = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadAround: (context) => Promise.resolve(page([
           context.target?.stableId ?? 'missing-target',
@@ -248,7 +247,7 @@ describe('createMessageListSessionRegistry', () => {
         requestResults.push(`${result.kind}:${result.status}`)
       },
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
@@ -266,7 +265,7 @@ describe('createMessageListSessionRegistry', () => {
     const pendingAround: Array<(page: MessageListPage<TestRow>) => void> = []
     const requestResults: string[] = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadAround: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pendingAround.push(resolve)
@@ -276,7 +275,7 @@ describe('createMessageListSessionRegistry', () => {
         requestResults.push(`${result.kind}:${result.status}`)
       },
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
@@ -299,7 +298,7 @@ describe('createMessageListSessionRegistry', () => {
   it('publishes event-driven latest requests instead of self-staling them', async () => {
     const requestResults: string[] = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['tail'])),
       }),
@@ -307,7 +306,7 @@ describe('createMessageListSessionRegistry', () => {
         requestResults.push(`${result.kind}:${result.status}`)
       },
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
@@ -332,7 +331,7 @@ describe('createMessageListSessionRegistry', () => {
   it('threads registry scrollMotion into runtime and disables follow-bottom and jump motion without rebuilding the session', async () => {
     const resolveMotionEnabled = vi.fn(() => false)
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       scrollMotion: {
         enabled: resolveMotionEnabled,
       },
@@ -347,7 +346,7 @@ describe('createMessageListSessionRegistry', () => {
         ])),
       }),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 6)
@@ -383,12 +382,12 @@ describe('createMessageListSessionRegistry', () => {
       pendingIntent: null,
     })
     expect(container.scrollTop).toBe(0)
-    expect(manager.getSession('feed-a')).toBe(session)
+    expect(manager.getSession('source-a')).toBe(session)
   })
 
   it('exposes stable session state and publishes selector subscriptions', async () => {
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['row-1', 'row-2'], {
           hasMoreBefore: true,
@@ -396,7 +395,7 @@ describe('createMessageListSessionRegistry', () => {
         })),
       }),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const events: string[] = []
     const unsubscribe = session.subscribe(() => {
       events.push(session.getState().loaded.keys.join(','))
@@ -407,7 +406,7 @@ describe('createMessageListSessionRegistry', () => {
 
     expect(state).toBe(session.getState())
     expect(state).toMatchObject({
-      id: 'feed-a',
+      sessionId: 'source-a',
       loaded: {
         keys: ['row-1', 'row-2'],
         hasMoreBefore: true,
@@ -431,12 +430,12 @@ describe('createMessageListSessionRegistry', () => {
 
   it('mutates only loaded rows and invalidates render versions without row data changes', async () => {
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['row-10', 'row-11', 'row-12'])),
       }),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 3)
@@ -469,7 +468,7 @@ describe('createMessageListSessionRegistry', () => {
   it('routes command edge loads through runtime edge state', async () => {
     const pendingBefore: Array<(page: MessageListPage<TestRow>) => void> = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['row-2'], {
           hasMoreBefore: true,
@@ -480,7 +479,7 @@ describe('createMessageListSessionRegistry', () => {
         }),
       }),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
 
     await waitFor(() => session.getState().loaded.keys.length === 1)
     ackSessionCommit(session)
@@ -501,7 +500,7 @@ describe('createMessageListSessionRegistry', () => {
     const pending: Array<(page: MessageListPage<TestRow>) => void> = []
     const requestResults: string[] = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pending.push(resolve)
@@ -511,7 +510,7 @@ describe('createMessageListSessionRegistry', () => {
         requestResults.push(`${result.kind}:${result.status}`)
       },
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => pending.length === 1)
@@ -532,7 +531,7 @@ describe('createMessageListSessionRegistry', () => {
     let resolveMemory: ((value: null) => void) | null = null
     const loadLatest = vi.fn(() => Promise.resolve(page(['bootstrap'])))
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => ({
         ...createAdapter('normal', {
           loadLatest,
@@ -545,7 +544,7 @@ describe('createMessageListSessionRegistry', () => {
         },
       }),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => Boolean(resolveMemory))
@@ -563,7 +562,7 @@ describe('createMessageListSessionRegistry', () => {
     const pendingBefore: Array<(page: MessageListPage<TestRow>) => void> = []
     const pendingAfter: Array<(page: MessageListPage<TestRow>) => void> = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadBefore: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pendingBefore.push(resolve)
@@ -573,7 +572,7 @@ describe('createMessageListSessionRegistry', () => {
         }),
       }),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
     const bridge = session as unknown as {
       loadEdge(event: NeedMoreEvent): Promise<void>
@@ -593,19 +592,19 @@ describe('createMessageListSessionRegistry', () => {
     const beforeRequest = bridge.loadEdge({
       type: 'needMoreBefore',
       edge: 'before',
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       generation: segment.generation,
       segmentRevision: segment.segmentRevision,
-      requestToken: 'feed-a:before:test',
+      requestToken: 'source-a:before:test',
       reason: 'test',
     })
     const afterRequest = bridge.loadEdge({
       type: 'needMoreAfter',
       edge: 'after',
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       generation: segment.generation,
       segmentRevision: segment.segmentRevision,
-      requestToken: 'feed-a:after:test',
+      requestToken: 'source-a:after:test',
       reason: 'test',
     })
 
@@ -638,7 +637,7 @@ describe('createMessageListSessionRegistry', () => {
     const pendingBefore: Array<(page: MessageListPage<TestRow>) => void> = []
     const requestResults: string[] = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadBefore: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pendingBefore.push(resolve)
@@ -648,7 +647,7 @@ describe('createMessageListSessionRegistry', () => {
         requestResults.push(`${result.kind}:${result.status}`)
       },
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
     const bridge = session as unknown as {
       loadEdge(event: NeedMoreEvent): Promise<void>
@@ -667,10 +666,10 @@ describe('createMessageListSessionRegistry', () => {
     const request = bridge.loadEdge({
       type: 'needMoreBefore',
       edge: 'before',
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       generation: segment.generation,
       segmentRevision: segment.segmentRevision,
-      requestToken: 'feed-a:before:test-stale-revision',
+      requestToken: 'source-a:before:test-stale-revision',
       reason: 'test',
     })
 
@@ -693,12 +692,12 @@ describe('createMessageListSessionRegistry', () => {
 
   it('stages local tail rows into the current latest segment and keeps them patchable', async () => {
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['tail'])),
       }),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'tail')
@@ -722,14 +721,14 @@ describe('createMessageListSessionRegistry', () => {
   it('queues local tail rows from a non-latest segment and merges them into latest', async () => {
     const pendingLatest: Array<(page: MessageListPage<TestRow>) => void> = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pendingLatest.push(resolve)
         }),
       }),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => pendingLatest.length === 1)
@@ -766,12 +765,12 @@ describe('createMessageListSessionRegistry', () => {
   it('uses local tail latest input to rebuild latest without requesting latest again', async () => {
     const loadLatest = vi.fn(() => Promise.resolve(page(['normal-latest'])))
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest,
       }),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
     const runtimeEvents: MessageListRuntimeEvent[] = []
 
@@ -809,14 +808,14 @@ describe('createMessageListSessionRegistry', () => {
   it('clears pending local tail rows when the host locally resets the segment', async () => {
     const pendingLatest: Array<(page: MessageListPage<TestRow>) => void> = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pendingLatest.push(resolve)
         }),
       }),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => pendingLatest.length === 1)
@@ -854,10 +853,10 @@ describe('createMessageListSessionRegistry', () => {
 
   it('applies retireKeys while rebuilding latest from local tail latest input', async () => {
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
@@ -886,10 +885,10 @@ describe('createMessageListSessionRegistry', () => {
 
   it('applies local tail identity remaps to visible local tail rows', async () => {
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
@@ -916,12 +915,12 @@ describe('createMessageListSessionRegistry', () => {
 
   it('stages retry success with an atomic retire and send-style follow decision', async () => {
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['tail', 'failed-local'])),
       }),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() =>
@@ -947,7 +946,7 @@ describe('createMessageListSessionRegistry', () => {
   it('routes remote tail append through the configured follow policy', async () => {
     const shouldFollowRemoteAppend = vi.fn(() => 'preserve' as const)
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['tail'])),
       }),
@@ -956,7 +955,7 @@ describe('createMessageListSessionRegistry', () => {
         shouldFollowRemoteAppend,
       },
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'tail')
@@ -967,7 +966,7 @@ describe('createMessageListSessionRegistry', () => {
     })
 
     expect(shouldFollowRemoteAppend).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'feed-a',
+      sessionId: 'source-a',
       rows: [{ id: 'remote' }],
       reason: 'push',
       pageFocused: false,
@@ -987,7 +986,7 @@ describe('createMessageListSessionRegistry', () => {
     const shouldFollowRemoteAppend = vi.fn(() => 'preserve' as const)
     const getPageFocus = vi.fn(() => false)
     const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['tail'])),
       }),
@@ -996,7 +995,7 @@ describe('createMessageListSessionRegistry', () => {
         shouldFollowRemoteAppend: () => 'follow',
       },
     })
-    const session = registry.getSession('feed-a')
+    const session = registry.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'tail')
@@ -1013,8 +1012,7 @@ describe('createMessageListSessionRegistry', () => {
     })
 
     expect(shouldFollowRemoteAppend).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'feed-a',
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       rows: [{ id: 'remote' }],
       reason: 'push',
       pageFocused: false,
@@ -1029,12 +1027,12 @@ describe('createMessageListSessionRegistry', () => {
 
   it('keeps local tail rows patchable through canonical tail API', async () => {
     const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => Promise.resolve(page(['tail'])),
       }),
     })
-    const session = registry.getSession('feed-a')
+    const session = registry.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'tail')
@@ -1051,10 +1049,10 @@ describe('createMessageListSessionRegistry', () => {
 
   it('does not insert remote tail append into a non-latest segment', async () => {
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
@@ -1082,13 +1080,13 @@ describe('createMessageListSessionRegistry', () => {
     })
     const requestResults: string[] = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => adapter,
       onRequestResult: (result) => {
         requestResults.push(`${result.kind}:${result.status}`)
       },
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() => pending.length === 1)
@@ -1109,14 +1107,14 @@ describe('createMessageListSessionRegistry', () => {
     vi.useFakeTimers()
     const pending: Array<(page: MessageListPage<TestRow>) => void> = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pending.push(resolve)
         }),
       }),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await flushMicrotasks()
@@ -1135,14 +1133,14 @@ describe('createMessageListSessionRegistry', () => {
     vi.useFakeTimers()
     const pending: Array<(page: MessageListPage<TestRow>) => void> = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
-      getFeed: (id) => ({ id, type: 'normal' }),
+      getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
         loadLatest: () => new Promise<MessageListPage<TestRow>>((resolve) => {
           pending.push(resolve)
         }),
       }),
     })
-    const session = manager.getSession('feed-a')
+    const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
 
     await flushMicrotasks()
@@ -1321,7 +1319,7 @@ function attachSessionRows(
 function observation(keys: string[]): ViewportObservationChangedEvent {
   return {
     type: 'viewportObservationChanged',
-    sessionId: 'feed-a',
+    sessionId: 'source-a',
     generation: 1,
     segmentRevision: 1,
     reason: 'scroll-idle',

@@ -15,7 +15,7 @@ import {
 describe('MessageList viewport interactions', () => {
   it('latches edge paging, reports errors, and retries through runtime state', () => {
     const observers = createFakeObservers()
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', observers })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', observers })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const before = createMarker(0, 1)
@@ -50,7 +50,7 @@ describe('MessageList viewport interactions', () => {
   })
   it('treats direct scrollbar writes as edge-capable user input', () => {
     const observers = createFakeObservers()
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', observers })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', observers })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const row = createRow('row-1', 0, 180)
@@ -94,7 +94,7 @@ describe('MessageList viewport interactions', () => {
     const scheduler = new FakeScheduler()
     const observers = createFakeObservers()
     const runtime = createMessageListRuntime<string>({
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       scheduler,
       observers,
     })
@@ -125,7 +125,7 @@ describe('MessageList viewport interactions', () => {
   it('updates evidence, observation, and scroll-idle anchor on ordinary scroll', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       scheduler,
       observers: createFakeObservers(),
     })
@@ -161,7 +161,7 @@ describe('MessageList viewport interactions', () => {
   it('bounds ordinary scroll row rect reads to cached visible samples', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       scheduler,
       observers: createFakeObservers(),
     })
@@ -193,7 +193,7 @@ describe('MessageList viewport interactions', () => {
   it('refreshes evidence after local programmatic scroll writes', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       scheduler,
       observers: createFakeObservers(),
     })
@@ -224,7 +224,7 @@ describe('MessageList viewport interactions', () => {
     expect(runtime.getEvidence().scrollTop).toBe(50)
   })
   it('arbitrates short segment underflow to a single edge request', () => {
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const row = createRow('row-1', 0, 20)
@@ -251,7 +251,7 @@ describe('MessageList viewport interactions', () => {
     })
   })
   it('continues underflow fill until the native range clears the edge margin', () => {
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 20)
@@ -286,7 +286,7 @@ describe('MessageList viewport interactions', () => {
     })
   })
   it('does not start underflow from edge margin alone', () => {
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 60)
@@ -308,13 +308,13 @@ describe('MessageList viewport interactions', () => {
     )).toBe(false)
   })
   it('uses reset-around anchor protection to choose the thin underflow side', () => {
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 20)
     const rowB = createRow('row-2', 20, 20)
     const rowC = createRow('row-3', 40, 20)
-    const target = { sessionId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
+    const target = { sessionId: 'source-a', stableId: 'row-3', serverId: 'row-3' }
     const events: MessageListRuntimeEvent[] = []
     container.append(rowA, rowB, rowC)
     runtime.attachScrollContainer(container)
@@ -336,7 +336,7 @@ describe('MessageList viewport interactions', () => {
     expect(events.some((event) => event.type === 'needMoreBefore')).toBe(false)
   })
   it('alternates middle underflow fills across anchor sides', () => {
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 20)
@@ -372,9 +372,9 @@ describe('MessageList viewport interactions', () => {
       reason: 'underflow-fill',
     }))
   })
-  it('follows latest via reset and locks bottom only at feed latest', () => {
+  it('follows latest via reset and locks bottom only at source latest', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 50)
@@ -419,7 +419,7 @@ describe('MessageList viewport interactions', () => {
     const scheduler = new FakeScheduler()
     const observers = createFakeObservers()
     const runtime = createMessageListRuntime<string>({
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       scheduler,
       observers,
     })
@@ -447,7 +447,7 @@ describe('MessageList viewport interactions', () => {
     const scheduler = new FakeScheduler()
     const observers = createFakeObservers()
     const runtime = createMessageListRuntime<string>({
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       scheduler,
       observers,
     })
@@ -476,13 +476,13 @@ describe('MessageList viewport interactions', () => {
   })
   it('requests around messages for outside destination and aligns reset target', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 50)
     const rowB = createRow('row-2', 50, 50)
     const targetRow = createRow('row-3', 100, 50)
-    const target = { sessionId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
+    const target = { sessionId: 'source-a', stableId: 'row-3', serverId: 'row-3' }
     const events: MessageListRuntimeEvent[] = []
     container.append(rowA)
     runtime.attachScrollContainer(container)
@@ -516,13 +516,13 @@ describe('MessageList viewport interactions', () => {
     }))
   })
   it('restores visible targets with local align before requesting around', () => {
-    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 50)
     const rowB = createRow('row-2', 50, 50)
     const rowC = createRow('row-3', 100, 50)
-    const target = { sessionId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
+    const target = { sessionId: 'source-a', stableId: 'row-3', serverId: 'row-3' }
     const events: MessageListRuntimeEvent[] = []
     container.append(rowA, rowB, rowC)
     runtime.attachScrollContainer(container)
@@ -549,7 +549,7 @@ function item(key: string): MessageDataItem<string> {
     renderVersion: 1,
     message: key,
     identity: {
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       stableId: key,
       serverId: key,
       version: 1,
@@ -563,7 +563,7 @@ function segment(
   overrides: Partial<LoadedSegment<string>> = {},
 ): LoadedSegment<string> {
   return {
-    sessionId: 'feed-a',
+    sessionId: 'source-a',
     generation,
     segmentRevision,
     items,

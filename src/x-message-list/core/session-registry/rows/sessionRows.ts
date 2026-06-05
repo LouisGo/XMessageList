@@ -15,9 +15,9 @@ import type {
   MessageListSession,
 } from '../contracts'
 
-export function createSessionRows<Row, Feed>(input: {
-  id: MessageListSessionId
-  adapter: MessageListAdapter<Row, Feed>
+export function createSessionRows<Row, Source>(input: {
+  sessionId: MessageListSessionId
+  adapter: MessageListAdapter<Row, Source>
   loadedSegmentStore: LoadedSegmentStore<Row>
   publishSegment: (segment: LoadedSegment<Row>) => void
   publishLocalResetSegment: (segment: LoadedSegment<Row>) => void
@@ -27,7 +27,7 @@ export function createSessionRows<Row, Feed>(input: {
     patch: (rows) => {
       input.publishSegment(
         input.loadedSegmentStore.patchItems(
-          toMessageDataItems(input.id, rows, input.adapter),
+          toMessageDataItems(input.sessionId, rows, input.adapter),
         ),
       )
     },
@@ -35,7 +35,7 @@ export function createSessionRows<Row, Feed>(input: {
       const previousSegment = input.loadedSegmentStore.getSegment()
       const segment = input.loadedSegmentStore.mutateItems({
         patches: mutation.patches
-          ? toMessageDataItems(input.id, mutation.patches, input.adapter)
+          ? toMessageDataItems(input.sessionId, mutation.patches, input.adapter)
           : undefined,
         removeKeys: mutation.removeKeys,
         invalidateKeys: mutation.invalidateKeys,
@@ -49,14 +49,14 @@ export function createSessionRows<Row, Feed>(input: {
     },
     replace: (replaceInput) => {
       input.publishSegment(input.loadedSegmentStore.replaceItems(
-        toSessionReplaceInput(input.id, replaceInput, input.adapter),
+        toSessionReplaceInput(input.sessionId, replaceInput, input.adapter),
       ))
     },
     resetLatest: (page) => {
       input.clearPendingLocal()
       input.publishLocalResetSegment(
         input.loadedSegmentStore.resetLatest(
-          toSessionResetInput(input.id, page, input.adapter),
+          toSessionResetInput(input.sessionId, page, input.adapter),
         ),
       )
     },
@@ -64,8 +64,8 @@ export function createSessionRows<Row, Feed>(input: {
       input.clearPendingLocal()
       input.publishLocalResetSegment(
         input.loadedSegmentStore.resetAround({
-          ...toSessionResetInput(input.id, resetInput, input.adapter),
-          target: normalizeMessageListAnchor(input.id, resetInput.target),
+          ...toSessionResetInput(input.sessionId, resetInput, input.adapter),
+          target: normalizeMessageListAnchor(input.sessionId, resetInput.target),
           align: resetInput.align,
           offsetWithinMessage: resetInput.offsetWithinMessage,
         }),
@@ -73,7 +73,7 @@ export function createSessionRows<Row, Feed>(input: {
     },
     applyIdentityRemap: (remaps) => {
       input.publishSegment(input.loadedSegmentStore.applyIdentityRemap(
-        toSessionIdentityRemaps(input.id, remaps),
+        toSessionIdentityRemaps(input.sessionId, remaps),
       ))
     },
     clear: () => {

@@ -41,32 +41,32 @@ import type {
 } from '../contracts'
 
 type OverlayRequestOptions = { overlayRequestId?: number; requestEpoch?: number }
-type RequestResultInput<Row, Feed> = Omit<MessageListRequestResult<Row, Feed>, 'id' | 'sessionId' | 'feed'>
+type RequestResultInput<Row, Source> = Omit<MessageListRequestResult<Row, Source>, 'sessionId' | 'source'>
 
-export class MessageListSession<Row, Feed>
+export class MessageListSession<Row, Source>
   implements PublicMessageListSession<Row> {
   readonly #runtime: MessageListRuntime<Row>
   readonly #loadedSegmentStore: LoadedSegmentStore<Row>
-  readonly id: MessageListSessionId
+  readonly sessionId: MessageListSessionId
   readonly commands: PublicMessageListSession<Row>['commands']
   readonly rows: PublicMessageListSession<Row>['rows']
   readonly tail: PublicMessageListSession<Row>['tail']
   private readonly stateStore: ReturnType<typeof createMessageListSessionState<Row>>
-  private readonly context: MessageListSessionContext<Feed>
-  private readonly readReceipts: MessageListReadReceiptsWorker<Row, Feed>
+  private readonly context: MessageListSessionContext<Source>
+  private readonly readReceipts: MessageListReadReceiptsWorker<Row, Source>
   private readonly overlay: MessageListSessionOverlay
   private readonly viewListeners = new Set<() => void>()
   private readonly runtimeUnsubscribe: () => void
   private readonly rowsByKey = new Map<string, Row>()
-  private readonly liveSemantics: MessageListSessionLiveSemantics<Row, Feed>
+  private readonly liveSemantics: MessageListSessionLiveSemantics<Row, Source>
   private viewRetainCount = 0
   private rowsPerViewportEstimate: number
   lastUsedAt = Date.now()
 
-  constructor(private readonly options: SessionOptions<Row, Feed>) {
-    this.id = options.id
+  constructor(private readonly options: SessionOptions<Row, Source>) {
+    this.sessionId = options.sessionId
     this.rowsPerViewportEstimate = options.defaults.pageSize
-    this.context = { id: options.id, sessionId: options.id, feed: options.feed }
+    this.context = { sessionId: options.sessionId, source: options.source }
     this.overlay = new MessageListSessionOverlay(
       () => this.notifyViewListeners(),
       () => {
@@ -75,16 +75,16 @@ export class MessageListSession<Row, Feed>
       },
     )
     this.#runtime = createMessageListRuntime<Row>({
-      sessionId: options.id,
+      sessionId: options.sessionId,
       scrollMotion: options.scrollMotion,
     })
-    this.#loadedSegmentStore = createLoadedSegmentStore<Row>({ sessionId: options.id })
+    this.#loadedSegmentStore = createLoadedSegmentStore<Row>({ sessionId: options.sessionId })
     this.commands = {
       scrollToLatest: () => this.#runtime.scrollToLatest(),
       scrollToMessage: (target, scrollOptions) =>
         this.#runtime.scrollToMessage(
-          normalizeMessageListAnchor(this.id, target),
-          toRuntimeScrollOptions(this.id, scrollOptions),
+          normalizeMessageListAnchor(this.sessionId, target),
+          toRuntimeScrollOptions(this.sessionId, scrollOptions),
         ),
       reloadLatest: () => {
         this.overlay.bumpRequestEpoch()
@@ -100,8 +100,8 @@ export class MessageListSession<Row, Feed>
       },
     }
     this.liveSemantics = new MessageListSessionLiveSemantics({
-      id: this.id,
-      feed: this.options.feed,
+      sessionId: this.sessionId,
+      source: this.options.source,
       adapter: this.options.adapter,
       tailEvents: this.options.tailEvents,
       runtime: getMessageListSessionRegistryRuntime(this.#runtime),
@@ -110,7 +110,7 @@ export class MessageListSession<Row, Feed>
       publishLocalResetSegment: (segment) => this.publishLocalResetSegment(segment),
     })
     this.rows = createSessionRows({
-      id: this.id,
+      sessionId: this.sessionId,
       adapter: this.options.adapter,
       loadedSegmentStore: this.#loadedSegmentStore,
       publishSegment: (segment) => this.publishSegment(segment),
@@ -119,7 +119,7 @@ export class MessageListSession<Row, Feed>
     })
     this.tail = this.liveSemantics.tail
     this.stateStore = createMessageListSessionState({
-      id: this.id,
+      sessionId: this.sessionId,
       runtime: this.#runtime,
       getViewState: () => this.getViewState(),
     })
@@ -220,7 +220,7 @@ export class MessageListSession<Row, Feed>
       }
 
       const runtimeAnchor = memoryValue
-        ? normalizeMessageListAnchor(this.id, memoryValue.anchor)
+        ? normalizeMessageListAnchor(this.sessionId, memoryValue.anchor)
         : null
 
       if (runtimeAnchor) {
@@ -377,7 +377,7 @@ export class MessageListSession<Row, Feed>
       }
       const applied = event
         ? this.#loadedSegmentStore.resetAroundFromRequest({
-            ...toSessionResetInput(this.id, page, this.options.adapter),
+            ...toSessionResetInput(this.sessionId, page, this.options.adapter),
             target,
             requestToken: event.requestToken,
             align: options.align,
@@ -386,7 +386,7 @@ export class MessageListSession<Row, Feed>
         : {
             applied: true,
             segment: this.#loadedSegmentStore.resetAround({
-              ...toSessionResetInput(this.id, page, this.options.adapter),
+              ...toSessionResetInput(this.sessionId, page, this.options.adapter),
               target,
               align: options.align,
               offsetWithinMessage: options.offsetWithinMessage,
@@ -437,7 +437,7 @@ export class MessageListSession<Row, Feed>
       }
       const currentSegment = this.#loadedSegmentStore.getSegment()
       const input = {
-        ...toSessionResetInput(this.id, page, this.options.adapter),
+        ...toSessionResetInput(this.sessionId, page, this.options.adapter),
         hasMoreBefore: edge === 'before'
           ? page.hasMoreBefore
           : currentSegment.hasMoreBefore,
@@ -463,7 +463,7 @@ export class MessageListSession<Row, Feed>
       segment: LoadedSegment<Row>
       applied: boolean
     }>,
-  ): Promise<MessageListRequestResult<Row, Feed>> {
+  ): Promise<MessageListRequestResult<Row, Source>> {
     try {
       const result = await request()
 
@@ -567,12 +567,11 @@ export class MessageListSession<Row, Feed>
   }
 
   private emitRequestResult(
-    result: RequestResultInput<Row, Feed>,
-  ): MessageListRequestResult<Row, Feed> {
+    result: RequestResultInput<Row, Source>,
+  ): MessageListRequestResult<Row, Source> {
     const next = {
-      id: this.id,
-      sessionId: this.id,
-      feed: this.options.feed,
+      sessionId: this.sessionId,
+      source: this.options.source,
       ...result,
     }
     this.options.onRequestResult?.(next)
@@ -580,7 +579,7 @@ export class MessageListSession<Row, Feed>
   }
 
   private finishOverlayRequest(
-    result: MessageListRequestResult<Row, Feed>,
+    result: MessageListRequestResult<Row, Source>,
     overlayRequestId: number,
   ): void {
     this.overlay.finishRequest(

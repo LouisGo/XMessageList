@@ -24,6 +24,7 @@ import type {
   MessageListScrollToMessageOptions,
   MessageListSegmentRetention,
   MessageListSessionId,
+  MessageListSessionSource,
   MessageListSessionRegistryOptions,
 } from '../contracts'
 
@@ -46,14 +47,14 @@ export type SessionDefaults = {
   }
 }
 
-export type SessionOptions<Row, Feed = MessageListSessionId> = {
-  id: MessageListSessionId
-  feed: Feed
-  adapter: MessageListAdapter<Row, Feed>
+export type SessionOptions<Row, Source = MessageListSessionSource> = {
+  sessionId: MessageListSessionId
+  source: Source
+  adapter: MessageListAdapter<Row, Source>
   defaults: SessionDefaults
-  tailEvents?: MessageListSessionRegistryOptions<Row, Feed>['tailEvents']
-  scrollMotion?: MessageListSessionRegistryOptions<Row, Feed>['scrollMotion']
-  onRequestResult?: MessageListSessionRegistryOptions<Row, Feed>['onRequestResult']
+  tailEvents?: MessageListSessionRegistryOptions<Row, Source>['tailEvents']
+  scrollMotion?: MessageListSessionRegistryOptions<Row, Source>['scrollMotion']
+  onRequestResult?: MessageListSessionRegistryOptions<Row, Source>['onRequestResult']
 }
 
 const RETENTION_VIEWPORT_MULTIPLIER: Record<MessageListSegmentRetention, number> = {
@@ -78,53 +79,53 @@ export function resolveAdaptiveTrimBudget(
   return Math.max(input.pageSize * 2, viewportBudget)
 }
 
-export function toSessionResetInput<Row, Feed>(
-  id: MessageListSessionId,
+export function toSessionResetInput<Row, Source>(
+  sessionId: MessageListSessionId,
   page: MessageListPage<Row>,
-  adapter: MessageListAdapter<Row, Feed>,
+  adapter: MessageListAdapter<Row, Source>,
 ): ResetSegmentInput<Row, unknown> {
   return {
-    items: toMessageDataItems(id, page.rows, adapter),
+    items: toMessageDataItems(sessionId, page.rows, adapter),
     hasMoreBefore: page.hasMoreBefore,
     hasMoreAfter: page.hasMoreAfter,
     anchor: page.anchor
-      ? normalizeMessageListAnchor(id, page.anchor)
+      ? normalizeMessageListAnchor(sessionId, page.anchor)
       : undefined,
     anchorStatus: page.anchorStatus,
   }
 }
 
-export function toSessionReplaceInput<Row, Feed>(
-  id: MessageListSessionId,
+export function toSessionReplaceInput<Row, Source>(
+  sessionId: MessageListSessionId,
   input: MessageListRowsReplaceInput<Row>,
-  adapter: MessageListAdapter<Row, Feed>,
+  adapter: MessageListAdapter<Row, Source>,
 ): ReplaceSegmentInput<Row, unknown> {
   return {
-    items: toMessageDataItems(id, input.rows, adapter),
+    items: toMessageDataItems(sessionId, input.rows, adapter),
     changedKeys: input.changedKeys ??
       input.rows.map((row) => adapter.row.getKey(row)),
     hasMoreBefore: input.hasMoreBefore,
     hasMoreAfter: input.hasMoreAfter,
     anchor: input.anchor
-      ? normalizeMessageListAnchor(id, input.anchor)
+      ? normalizeMessageListAnchor(sessionId, input.anchor)
       : undefined,
     anchorStatus: input.anchorStatus,
   }
 }
 
 export function toSessionIdentityRemaps(
-  id: MessageListSessionId,
+  sessionId: MessageListSessionId,
   remaps: MessageListIdentityRemap[],
 ): IdentityRemapInput {
   return remaps.map((remap) => ({
     ...remap,
-    from: normalizeMessageListAnchor(id, remap.from),
-    to: normalizeMessageListAnchor(id, remap.to),
+    from: normalizeMessageListAnchor(sessionId, remap.from),
+    to: normalizeMessageListAnchor(sessionId, remap.to),
   }))
 }
 
 export function toRuntimeScrollOptions(
-  id: MessageListSessionId,
+  sessionId: MessageListSessionId,
   options: MessageListScrollToMessageOptions | undefined,
 ): RuntimeScrollToMessageOptions | undefined {
   if (!options) {
@@ -137,7 +138,7 @@ export function toRuntimeScrollOptions(
       ? {
           ...options.motion,
           origin: options.motion.origin
-            ? normalizeMessageListAnchor(id, options.motion.origin)
+            ? normalizeMessageListAnchor(sessionId, options.motion.origin)
             : undefined,
         }
       : undefined,

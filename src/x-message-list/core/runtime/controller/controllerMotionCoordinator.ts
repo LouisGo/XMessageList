@@ -148,7 +148,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
         anchor: target,
         bottomLockState: 'UNLOCKED',
         destination,
-        allowPreposition: !motion?.crossFeed,
+        allowPreposition: !motion?.crossSession,
         directionHint: resolveMotionDirectionHint(motion),
       }, 'jump')
     ) {
@@ -366,5 +366,5 @@ export type {
 function resolveMotionDirectionHint(
   motion: MessageListScrollMotionHint | undefined,
 ): MessageListScrollMotionHint['direction'] {
-  return motion?.crossFeed ? undefined : motion?.direction
+  return motion?.crossSession ? undefined : motion?.direction
 }

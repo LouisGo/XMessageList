@@ -1,6 +1,6 @@
 # Runtime
 
-`src/x-message-list/core/runtime` 掌管 loaded segment 原生滚动的视口正确性。它不掌管数据获取、React 渲染、feed 选择或 demo 行为。
+`src/x-message-list/core/runtime` 掌管 loaded segment 原生滚动的视口正确性。它不掌管数据获取、React 渲染、source 选择或 demo 行为。
 
 ## 目录规则
 

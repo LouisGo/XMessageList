@@ -33,15 +33,15 @@ export type MessageListScrollOptions = {
 export type MessageListMotionDirection = 'before' | 'after' | 'none'
 
 /**
- * 由调用方提供的滚动来源提示，只影响 motion 方向和跨 feed 预定位策略，不改变数据请求语义。
+ * 由调用方提供的滚动来源提示，只影响 motion 方向和跨 session 预定位策略，不改变数据请求语义。
  */
 export type MessageListScrollMotionHint = {
   /** 触发跳转的来源锚点，用于后续扩展更精细的 motion 决策。 */
   origin?: import('./identity').MessageIdentityAnchor
   /** 调用方已知的目标方向；reset 后的 motion 可用它约束启动侧。 */
   direction?: MessageListMotionDirection
-  /** 跨 feed 跳转不做 bounded preposition，避免先闪到当前 feed 的错误相对位置。 */
-  crossFeed?: boolean
+  /** 跨 session 跳转不做 bounded preposition，避免先闪到当前 session 的错误相对位置。 */
+  crossSession?: boolean
 }
 
 export type MessageListScrollToMessageOptions = MessageListScrollOptions & {

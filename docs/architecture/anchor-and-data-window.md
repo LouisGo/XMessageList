@@ -56,7 +56,7 @@ type MessageDataItem = {
 type PersistedMessageAnchor = MessageIdentityAnchor;
 ```
 
-它用于 restore、jump、around query、feed persistence。它不携带 DOM offset，也不承诺当前 segment 已包含目标消息。
+它用于 restore、jump、around query 和 anchor persistence。它不携带 DOM offset，也不承诺当前 segment 已包含目标消息。
 
 ### Visual Anchor
 
@@ -75,11 +75,11 @@ type VisualAnchor = {
 
 ### Bottom Anchor
 
-不是某条消息，而是 `hasMoreAfter=false` 且 bottom marker / latest row 位于底部阈值内的状态。Bottom follow 不能把 partial segment 的 after edge 当作 feed latest。
+不是某条消息，而是 `hasMoreAfter=false` 且 bottom marker / latest row 位于底部阈值内的状态。Bottom follow 不能把 partial segment 的 after edge 当作 session latest。
 
 ## Loaded Segment
 
-Loaded segment 是当前 feed 已加载、按消息顺序连续的一段数据：
+Loaded segment 是当前 session 已加载、按消息顺序连续的一段数据：
 
 ```ts
 type SegmentModifier =
@@ -164,7 +164,7 @@ type LoadedSegment = {
 
 要求：
 
-- 必须返回包含 feed latest 的 segment。
+- 必须返回包含 session latest 的 segment。
 - `hasMoreAfter=false` 后才能锁底。
 - 若旧 segment 与 latest 中间缺口很大，不做逐页补齐动画。
 
@@ -205,6 +205,6 @@ Host 持久化时优先保存 committed identity anchor：
 
 - `viewportAnchorChanged(reason: 'scroll-idle')` 用于普通滚动保存。
 - `viewportAnchorChanged(reason: 'transaction-settle')` 用于分页、trim、jump 后保存。
-- `viewportAnchorChanged(reason: 'detach')` 用于 feed 切换和 unmount checkpoint。
+- `viewportAnchorChanged(reason: 'detach')` 用于 session 切换和 unmount checkpoint。
 
 不持久化 raw `scrollTop` 作为跨 session 恢复依据。`scrollTop` 只对当前 loaded segment 有意义。

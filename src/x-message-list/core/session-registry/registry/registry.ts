@@ -2,6 +2,7 @@ import { MessageListSession } from '../session/session'
 import type {
   MessageListSegmentRetention,
   MessageListSessionId,
+  MessageListSessionSource,
   MessageListSessionRegistry,
   MessageListSessionRegistryEntry,
   MessageListSessionRegistryOptions,
@@ -24,41 +25,41 @@ type NormalizedDefaults = {
   }
 }
 
-type SessionRecord<Row, Feed> = {
-  session: MessageListSession<Row, Feed>
+type SessionRecord<Row, Source> = {
+  session: MessageListSession<Row, Source>
   createdAt: number
   hostRetains: Map<MessageListSessionRetainReason, number>
 }
 
-export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListSessionId>
-  implements MessageListSessionRegistry<Row, Feed> {
+export class ApplicationMessageListSessionRegistry<Row, Source = MessageListSessionSource>
+  implements MessageListSessionRegistry<Row, Source> {
   private readonly sessions = new Map<
     MessageListSessionId,
-    SessionRecord<Row, Feed>
+    SessionRecord<Row, Source>
   >()
   private defaults: NormalizedDefaults
   private lastSweepAt = 0
 
   constructor(
-    private options: MessageListSessionRegistryOptions<Row, Feed>,
+    private options: MessageListSessionRegistryOptions<Row, Source>,
   ) {
     this.defaults = normalizeDefaults(options.defaults)
   }
 
-  getSession(id: MessageListSessionId): PublicMessageListSession<Row> {
+  getSession(sessionId: MessageListSessionId): PublicMessageListSession<Row> {
     this.sweep()
-    const existing = this.sessions.get(id)?.session
+    const existing = this.sessions.get(sessionId)?.session
 
     if (existing) {
       existing.lastUsedAt = Date.now()
       return existing
     }
 
-    const feed = this.getFeed(id)
-    const adapter = this.options.getAdapter(feed)
+    const source = this.getSessionSource(sessionId)
+    const adapter = this.options.getAdapter(source)
     const session = new MessageListSession({
-      id,
-      feed,
+      sessionId,
+      source,
       adapter,
       defaults: this.defaults,
       tailEvents: {
@@ -77,7 +78,7 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListSessio
       onRequestResult: (result) => this.options.onRequestResult?.(result),
     })
 
-    this.sessions.set(id, {
+    this.sessions.set(sessionId, {
       session,
       createdAt: Date.now(),
       hostRetains: new Map(),
@@ -86,19 +87,19 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListSessio
     return session
   }
 
-  hasSession(id: MessageListSessionId): boolean {
-    return this.sessions.has(id)
+  hasSession(sessionId: MessageListSessionId): boolean {
+    return this.sessions.has(sessionId)
   }
 
-  destroySession(id: MessageListSessionId): boolean {
-    const session = this.sessions.get(id)?.session
+  destroySession(sessionId: MessageListSessionId): boolean {
+    const session = this.sessions.get(sessionId)?.session
 
     if (!session) {
       return false
     }
 
     session.destroy()
-    return this.sessions.delete(id)
+    return this.sessions.delete(sessionId)
   }
 
   destroyAll(): void {
@@ -112,8 +113,8 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListSessio
     return Array.from(this.sessions.keys())
   }
 
-  getSessionMeta(id: MessageListSessionId): MessageListSessionRegistryEntry | null {
-    const record = this.sessions.get(id)
+  getSessionMeta(sessionId: MessageListSessionId): MessageListSessionRegistryEntry | null {
+    const record = this.sessions.get(sessionId)
 
     if (!record) {
       return null
@@ -123,7 +124,7 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListSessio
     const hostRetainCount = getHostRetainCount(record)
 
     return {
-      sessionId: id,
+      sessionId,
       createdAt: record.createdAt,
       lastUsedAt: record.session.lastUsedAt,
       mountedRetainCount,
@@ -137,11 +138,11 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListSessio
   }
 
   retainSession(
-    id: MessageListSessionId,
+    sessionId: MessageListSessionId,
     reason: MessageListSessionRetainReason,
   ): () => void {
-    this.getSession(id)
-    const record = this.sessions.get(id)
+    this.getSession(sessionId)
+    const record = this.sessions.get(sessionId)
 
     if (!record) {
       return () => undefined
@@ -167,7 +168,7 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListSessio
     }
   }
 
-  updateOptions(options: MessageListSessionRegistryOptionsPatch<Row, Feed>): void {
+  updateOptions(options: MessageListSessionRegistryOptionsPatch<Row, Source>): void {
     this.options = {
       ...this.options,
       defaults: {
@@ -203,23 +204,23 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListSessio
       return
     }
 
-    for (const [id, record] of this.sessions) {
+    for (const [sessionId, record] of this.sessions) {
       if (this.isActiveRecord(record)) {
         continue
       }
 
       if (now - record.session.lastUsedAt > ttl) {
-        this.destroySession(id)
+        this.destroySession(sessionId)
       }
     }
   }
 
-  private getFeed(id: MessageListSessionId): Feed {
-    if (this.options.getFeed) {
-      return this.options.getFeed(id)
+  private getSessionSource(sessionId: MessageListSessionId): Source {
+    if (this.options.getSessionSource) {
+      return this.options.getSessionSource(sessionId)
     }
 
-    return id as Feed
+    return sessionId as Source
   }
 
   private evictOverflow(): void {
@@ -228,9 +229,9 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListSessio
 
     // Single pass: collect cached (non-active) records with their lastUsedAt
     const cached: Array<[MessageListSessionId, number]> = []
-    for (const [id, record] of this.sessions) {
+    for (const [sessionId, record] of this.sessions) {
       if (!this.isActiveRecord(record)) {
-        cached.push([id, record.session.lastUsedAt])
+        cached.push([sessionId, record.session.lastUsedAt])
       }
     }
 
@@ -244,7 +245,7 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListSessio
     }
   }
 
-  private isActiveRecord(record: SessionRecord<Row, Feed>): boolean {
+  private isActiveRecord(record: SessionRecord<Row, Source>): boolean {
     return record.session.hasRetainedView() || getHostRetainCount(record) > 0
   }
 
@@ -252,11 +253,11 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListSessio
 
 export function createMessageListSessionRegistry<
   Row,
-  Feed = MessageListSessionId,
+  Source = MessageListSessionSource,
 >(
-  options: MessageListSessionRegistryOptions<Row, Feed>,
-): MessageListSessionRegistry<Row, Feed> {
-  return new ApplicationMessageListSessionRegistry<Row, Feed>(options)
+  options: MessageListSessionRegistryOptions<Row, Source>,
+): MessageListSessionRegistry<Row, Source> {
+  return new ApplicationMessageListSessionRegistry<Row, Source>(options)
 }
 
 function normalizeDefaults(
@@ -272,7 +273,7 @@ function normalizeDefaults(
   }
 }
 
-function getHostRetainCount<Row, Feed>(record: SessionRecord<Row, Feed>): number {
+function getHostRetainCount<Row, Source>(record: SessionRecord<Row, Source>): number {
   let count = 0
 
   for (const value of record.hostRetains.values()) {

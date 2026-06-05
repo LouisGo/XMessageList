@@ -7,7 +7,7 @@ Main / Bridge
   resolves message identity and server query contracts
 
 MessageList Session Registry
-  owns per-feed session lifecycle, adapter routing, request bridge,
+  owns per-session lifecycle, adapter routing, request bridge,
   `anchorMemory`, `readReceipts` workers and keepAlive retention
 
 Loaded Segment Store
@@ -21,7 +21,7 @@ React Adapter
   renders slots, sends commit ack
 
 App / Demo Host
-  owns active feed selection, registry construction, adapters and logging UI
+  owns active session/source selection, registry construction, adapters and logging UI
 ```
 
 对外命名以 `MessageList` 为准：公开组件是 `MessageList`，公开会话对象是
@@ -48,7 +48,7 @@ Main / Bridge 不负责：
 
 MessageList Session Registry 负责：
 
-- 按 session id / feed id 懒创建和复用 `MessageListSession`。
+- 按 `sessionId` 懒创建和复用 `MessageListSession`。
 - 通过 app-level adapter 路由 normal / encrypted / favorite 等业务差异。
 - 接收 viewport runtime semantic need events，并调用 adapter request。
 - 处理 request token、stale response、failure ack、segment publish 和 trim。
@@ -97,7 +97,7 @@ Viewport runtime 负责：
 Viewport runtime 不负责：
 
 - 调 SDK。
-- 选择 feed。
+- 选择 session source。
 - 解析业务权限。
 - 渲染消息 JSX。
 - 长期持有完整业务消息缓存。
@@ -126,7 +126,7 @@ React adapter 禁止：
 Host 负责：
 
 - 在应用层创建并持有 `MessageListSessionRegistry`。
-- 通过 `getFeed` / `getAdapter` 注入会话查询、请求、`anchorMemory`
+- 通过 `getSessionSource` / `getAdapter` 注入会话查询、请求、`anchorMemory`
   和 `readReceipts` 等业务依赖。
 - 通过 registry `tailEvents.shouldFollowRemoteAppend` 或单次
   `tail.remote.append({ follow })`

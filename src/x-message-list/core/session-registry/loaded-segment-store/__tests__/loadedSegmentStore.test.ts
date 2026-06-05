@@ -4,7 +4,7 @@ import { createLoadedSegmentStore } from '../index'
 
 describe('LoadedSegmentStore', () => {
   it('remaps optimistic local identity to server identity', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('local-1', { localId: 'client-1', stableId: 'stable-1' })],
       hasMoreBefore: false,
@@ -12,8 +12,8 @@ describe('LoadedSegmentStore', () => {
     })
 
     const segment = store.applyIdentityRemap([{
-      from: { sessionId: 'feed-a', stableId: 'stable-1', localId: 'client-1' },
-      to: { sessionId: 'feed-a', stableId: 'stable-1', serverId: 'server-1' },
+      from: { sessionId: 'source-a', stableId: 'stable-1', localId: 'client-1' },
+      to: { sessionId: 'source-a', stableId: 'stable-1', serverId: 'server-1' },
       previousKey: 'local-1',
       nextKey: 'server-1',
     }])
@@ -25,10 +25,10 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('keeps fallback anchor metadata on around reset', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     const segment = store.resetAround({
-      target: { sessionId: 'feed-a', stableId: 'deleted-1' },
-      anchor: { sessionId: 'feed-a', stableId: 'fallback-1' },
+      target: { sessionId: 'source-a', stableId: 'deleted-1' },
+      anchor: { sessionId: 'source-a', stableId: 'fallback-1' },
       anchorStatus: 'deleted',
       items: [item('fallback-1')],
       hasMoreBefore: true,
@@ -40,7 +40,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('dedupes duplicate server messages during after merge', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1', { serverId: 'server-1', stableId: 'stable-1' })],
       hasMoreBefore: false,
@@ -65,7 +65,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('adopts viewport request tokens for semantic edge events', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: true,
@@ -73,14 +73,14 @@ describe('LoadedSegmentStore', () => {
     })
 
     store.adoptRequestToken({
-      requestToken: 'feed-a:before:runtime-1',
+      requestToken: 'source-a:before:runtime-1',
       generation: 1,
       segmentRevision: 1,
       kind: 'before',
     })
 
     const result = store.extendBefore({
-      requestToken: 'feed-a:before:runtime-1',
+      requestToken: 'source-a:before:runtime-1',
       items: [item('row-0')],
       hasMoreBefore: false,
       hasMoreAfter: false,
@@ -94,7 +94,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('rejects request tokens used for the wrong semantic request kind', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: true,
@@ -127,7 +127,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('drops stale latest and around request responses', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: false,
@@ -153,7 +153,7 @@ describe('LoadedSegmentStore', () => {
     })
     expect(store.resetAroundFromRequest({
       requestToken: around.requestToken,
-      target: { sessionId: 'feed-a', stableId: 'stale-around' },
+      target: { sessionId: 'source-a', stableId: 'stale-around' },
       items: [item('stale-around')],
       hasMoreBefore: false,
       hasMoreAfter: false,
@@ -167,7 +167,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('lets the newest same-generation destination request win', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: false,
@@ -178,7 +178,7 @@ describe('LoadedSegmentStore', () => {
 
     expect(store.resetAroundFromRequest({
       requestToken: first.requestToken,
-      target: { sessionId: 'feed-a', stableId: 'row-2' },
+      target: { sessionId: 'source-a', stableId: 'row-2' },
       items: [item('row-2')],
       hasMoreBefore: true,
       hasMoreAfter: true,
@@ -189,7 +189,7 @@ describe('LoadedSegmentStore', () => {
 
     const applied = store.resetAroundFromRequest({
       requestToken: second.requestToken,
-      target: { sessionId: 'feed-a', stableId: 'row-3' },
+      target: { sessionId: 'source-a', stableId: 'row-3' },
       items: [item('row-3')],
       hasMoreBefore: true,
       hasMoreAfter: true,
@@ -202,7 +202,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('keeps reset requests current across same-generation passive revisions', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: false,
@@ -213,7 +213,7 @@ describe('LoadedSegmentStore', () => {
 
     expect(store.resetAroundFromRequest({
       requestToken: around.requestToken,
-      target: { sessionId: 'feed-a', stableId: 'row-2' },
+      target: { sessionId: 'source-a', stableId: 'row-2' },
       items: [item('row-2')],
       hasMoreBefore: true,
       hasMoreAfter: true,
@@ -231,7 +231,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('keeps a newer current token after an older same-kind token is rejected', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: true,
@@ -262,7 +262,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('rejects same-generation edge responses after the segment revision changes', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: true,
@@ -287,7 +287,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('lets destination reset tokens supersede pending edge tokens', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: true,
@@ -296,7 +296,7 @@ describe('LoadedSegmentStore', () => {
     const before = store.createRequestToken('before')
 
     store.adoptRequestToken({
-      requestToken: 'feed-a:around:runtime-1',
+      requestToken: 'source-a:around:runtime-1',
       generation: 1,
       segmentRevision: 1,
       kind: 'around',
@@ -312,8 +312,8 @@ describe('LoadedSegmentStore', () => {
       reason: 'stale-request',
     })
     expect(store.resetAroundFromRequest({
-      requestToken: 'feed-a:around:runtime-1',
-      target: { sessionId: 'feed-a', stableId: 'row-9' },
+      requestToken: 'source-a:around:runtime-1',
+      target: { sessionId: 'source-a', stableId: 'row-9' },
       items: [item('row-9')],
       hasMoreBefore: true,
       hasMoreAfter: true,
@@ -321,7 +321,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('clears request registry state on reset and accepts new generation tokens', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: false,
@@ -330,7 +330,7 @@ describe('LoadedSegmentStore', () => {
     const stale = store.createRequestToken('latest')
 
     store.resetAround({
-      target: { sessionId: 'feed-a', stableId: 'row-9' },
+      target: { sessionId: 'source-a', stableId: 'row-9' },
       items: [item('row-9')],
       hasMoreBefore: true,
       hasMoreAfter: true,
@@ -361,7 +361,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('replaces the loaded item window for host-owned mock mutations', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1'), item('row-2'), item('row-3')],
       hasMoreBefore: true,
@@ -385,7 +385,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('mutates loaded rows with patch, remove, and invalidate in one patch segment', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [
         item('row-10'),
@@ -429,7 +429,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('ignores mutate inputs that do not touch the loaded segment', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: false,
@@ -447,7 +447,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('publishes semantic append modifiers for live tail rows', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1'), item('row-2')],
       hasMoreBefore: true,
@@ -469,7 +469,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('can retire a visible placeholder in the same semantic append', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1'), item('failed-local')],
       hasMoreBefore: true,
@@ -494,7 +494,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('drops stale responses after generation reset and trims around anchor', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1'), item('row-2')],
       hasMoreBefore: true,
@@ -528,7 +528,7 @@ describe('LoadedSegmentStore', () => {
   })
 
   it('trims a single side per modifier when the protected anchor is central', () => {
-    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: Array.from({ length: 10 }, (_, index) => item(`row-${index + 1}`)),
       hasMoreBefore: false,
@@ -571,7 +571,7 @@ function item(
     renderVersion: 1,
     message: key,
     identity: {
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       stableId: key,
       version: 1,
       ...identity,
@@ -587,7 +587,7 @@ function itemWithVersion(
     ...item(key),
     renderVersion,
     identity: {
-      sessionId: 'feed-a',
+      sessionId: 'source-a',
       stableId: key,
       version: renderVersion,
     },

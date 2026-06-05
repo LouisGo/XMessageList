@@ -19,7 +19,7 @@ describe('MessageList session adapter', () => {
     const root = createRoot(host)
 
     function ConversationView() {
-      const session = useMessageListSession<string>('feed-a')
+      const session = useMessageListSession<string>('source-a')
 
       return (
         <MessageList
@@ -62,7 +62,7 @@ describe('MessageList session adapter', () => {
       root.unmount()
     })
 
-    expect(registry.hasSession('feed-a')).toBe(true)
+    expect(registry.hasSession('source-a')).toBe(true)
     registry.destroyAll()
   })
 
@@ -77,7 +77,7 @@ describe('MessageList session adapter', () => {
     const root = createRoot(host)
 
     function ConversationView() {
-      const session = useMessageListSession<string>('feed-a')
+      const session = useMessageListSession<string>('source-a')
 
       return (
         <MessageList
@@ -126,7 +126,7 @@ describe('MessageList session adapter', () => {
     const root = createRoot(host)
 
     function ConversationView() {
-      const session = useMessageListSession<string>('feed-a')
+      const session = useMessageListSession<string>('source-a')
 
       return (
         <MessageList
@@ -143,20 +143,20 @@ describe('MessageList session adapter', () => {
         </MessageListSessionRegistryProvider>,
       )
     })
-    await waitFor(() => registry.hasSession('feed-a'))
+    await waitFor(() => registry.hasSession('source-a'))
 
-    registry.getSession('feed-b')
+    registry.getSession('source-b')
 
-    expect(registry.hasSession('feed-a')).toBe(true)
+    expect(registry.hasSession('source-a')).toBe(true)
 
     await act(async () => {
       root.unmount()
     })
 
-    registry.getSession('feed-c')
+    registry.getSession('source-c')
 
-    expect(registry.hasSession('feed-a')).toBe(false)
-    expect(registry.hasSession('feed-c')).toBe(true)
+    expect(registry.hasSession('source-a')).toBe(false)
+    expect(registry.hasSession('source-c')).toBe(true)
     registry.destroyAll()
   })
 })

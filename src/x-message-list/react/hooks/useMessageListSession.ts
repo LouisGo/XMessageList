@@ -6,7 +6,7 @@ import type {
 import { MessageListSessionRegistryContext } from '../components/MessageListSessionRegistryContext'
 
 export function useMessageListSession<Row = unknown>(
-  id: MessageListSessionId,
+  sessionId: MessageListSessionId,
 ): MessageListSession<Row> {
   const registry = useContext(MessageListSessionRegistryContext)
 
@@ -17,7 +17,7 @@ export function useMessageListSession<Row = unknown>(
   }
 
   return useMemo(
-    () => registry.getSession(id) as MessageListSession<Row>,
-    [id, registry],
+    () => registry.getSession(sessionId) as MessageListSession<Row>,
+    [sessionId, registry],
   )
 }

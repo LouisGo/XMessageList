@@ -26,23 +26,23 @@ import type {
   MessageListTailAppendFollowDecision,
 } from '../contracts'
 
-type SessionLiveSemanticsOptions<Row, Feed> = {
-  id: MessageListSessionId
-  feed: Feed
-  adapter: MessageListAdapter<Row, Feed>
-  tailEvents?: MessageListRemoteTailAppendConfig<Row, Feed>
+type SessionLiveSemanticsOptions<Row, Source> = {
+  sessionId: MessageListSessionId
+  source: Source
+  adapter: MessageListAdapter<Row, Source>
+  tailEvents?: MessageListRemoteTailAppendConfig<Row, Source>
   runtime: MessageListSessionRegistryRuntime<Row>
   loadedSegmentStore: LoadedSegmentStore<Row>
   publishSegment: (segment: LoadedSegment<Row>) => void
   publishLocalResetSegment: (segment: LoadedSegment<Row>) => void
 }
 
-export class MessageListSessionLiveSemantics<Row, Feed> {
+export class MessageListSessionLiveSemantics<Row, Source> {
   readonly tail: PublicMessageListSession<Row>['tail']
   private readonly pendingLocalItemsByKey = new Map<string, MessageDataItem<Row>>()
   private readonly pendingLocalRetireKeys = new Set<string>()
 
-  constructor(private readonly options: SessionLiveSemanticsOptions<Row, Feed>) {
+  constructor(private readonly options: SessionLiveSemanticsOptions<Row, Source>) {
     this.tail = {
       local: {
         stage: (input) => this.stageLocal(input),
@@ -60,7 +60,7 @@ export class MessageListSessionLiveSemantics<Row, Feed> {
     resetInput: ResetSegmentInput<Row, unknown>
   } {
     const resetInput = toSessionResetInput(
-      this.options.id,
+      this.options.sessionId,
       page,
       this.options.adapter,
     )
@@ -199,7 +199,7 @@ export class MessageListSessionLiveSemantics<Row, Feed> {
       return
     }
 
-    const runtimeRemaps = toSessionIdentityRemaps(this.options.id, remaps)
+    const runtimeRemaps = toSessionIdentityRemaps(this.options.sessionId, remaps)
     this.remapPendingLocal(runtimeRemaps)
 
     const segment = this.options.loadedSegmentStore.getSegment()
@@ -249,7 +249,7 @@ export class MessageListSessionLiveSemantics<Row, Feed> {
 
   private createRemoteAppendContext(
     input: MessageListRemoteTailAppendInput<Row>,
-  ): MessageListRemoteTailAppendContext<Row, Feed> {
+  ): MessageListRemoteTailAppendContext<Row, Source> {
     const snapshot = this.options.runtime.getSnapshot()
     const evidence = this.options.runtime.getEvidence()
     const distanceToBottom = Math.max(
@@ -258,9 +258,8 @@ export class MessageListSessionLiveSemantics<Row, Feed> {
     )
 
     return {
-      id: this.options.id,
-      sessionId: this.options.id,
-      feed: this.options.feed,
+      sessionId: this.options.sessionId,
+      source: this.options.source,
       rows: input.rows,
       reason: input.reason,
       hasMoreAfter: snapshot.segmentMeta.hasMoreAfter,
@@ -273,7 +272,7 @@ export class MessageListSessionLiveSemantics<Row, Feed> {
   }
 
   private toDataItems(rows: Row[]): MessageDataItem<Row>[] {
-    return toMessageDataItems(this.options.id, rows, this.options.adapter)
+    return toMessageDataItems(this.options.sessionId, rows, this.options.adapter)
   }
 
   private rememberPendingLocal(items: MessageDataItem<Row>[]): void {

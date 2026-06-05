@@ -8,7 +8,7 @@ import type {
 } from '../contracts'
 
 export function createMessageListSessionState<Row>(input: {
-  id: string
+  sessionId: string
   runtime: MessageListRuntime<Row>
   getViewState: () => MessageListViewState
 }): {
@@ -44,7 +44,7 @@ export function createMessageListSessionState<Row>(input: {
 
       cachedSnapshot = snapshot
       cachedViewState = viewState
-      cachedState = createState(input.id, snapshot, viewState, input.runtime)
+      cachedState = createState(input.sessionId, snapshot, viewState, input.runtime)
       return cachedState
     },
     subscribe: (listener) => {
@@ -63,7 +63,7 @@ export function createMessageListSessionState<Row>(input: {
 }
 
 function createState<Row>(
-  id: string,
+  sessionId: string,
   snapshot: MessageListSnapshot<Row>,
   viewState: MessageListViewState,
   runtime: MessageListRuntime<Row>,
@@ -76,8 +76,7 @@ function createState<Row>(
   const rows = snapshot.items.map((item) => item.message as Row)
 
   return {
-    id,
-    sessionId: id,
+    sessionId,
     loaded: {
       rows,
       keys: snapshot.items.map((item) => item.key),

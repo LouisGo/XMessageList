@@ -1,4 +1,5 @@
 export type MessageListSessionId = string
+export type MessageListSessionSource = MessageListSessionId
 export type MessageListSegmentRetention = 'low' | 'balanced' | 'high'
 
 export type MessageListAnchor = {
@@ -41,14 +42,13 @@ export type MessageListScrollToMessageOptions = {
   motion?: {
     origin?: MessageListAnchor
     direction?: 'before' | 'after' | 'none'
-    crossFeed?: boolean
+    crossSession?: boolean
   }
 }
 
-export type MessageListRequestContext<Row, Feed = MessageListSessionId> = {
-  id: MessageListSessionId
+export type MessageListRequestContext<Row, Source = MessageListSessionSource> = {
   sessionId: MessageListSessionId
-  feed: Feed
+  source: Source
   pageSize: number
   requestToken?: string
   reason?: string
@@ -56,7 +56,7 @@ export type MessageListRequestContext<Row, Feed = MessageListSessionId> = {
   boundaryRow?: Row
 }
 
-export type MessageListAdapter<Row, Feed = MessageListSessionId> = {
+export type MessageListAdapter<Row, Source = MessageListSessionSource> = {
   row: {
     getKey(row: Row): string
     getAnchor(row: Row): MessageListAnchor | null
@@ -65,25 +65,25 @@ export type MessageListAdapter<Row, Feed = MessageListSessionId> = {
   }
   request: {
     loadLatest(
-      context: MessageListRequestContext<Row, Feed>,
+      context: MessageListRequestContext<Row, Source>,
     ): Promise<MessageListPage<Row>>
     loadBefore(
-      context: MessageListRequestContext<Row, Feed>,
+      context: MessageListRequestContext<Row, Source>,
     ): Promise<MessageListPage<Row>>
     loadAfter(
-      context: MessageListRequestContext<Row, Feed>,
+      context: MessageListRequestContext<Row, Source>,
     ): Promise<MessageListPage<Row>>
     loadAround(
-      context: MessageListRequestContext<Row, Feed>,
+      context: MessageListRequestContext<Row, Source>,
     ): Promise<MessageListPage<Row>>
   }
   anchorMemory?: {
     load(
-      context: MessageListSessionContext<Feed>,
+      context: MessageListSessionContext<Source>,
     ): MessageListAnchorMemoryValue | null |
       Promise<MessageListAnchorMemoryValue | null>
     save(
-      context: MessageListSessionContext<Feed>,
+      context: MessageListSessionContext<Source>,
       value: MessageListAnchorMemoryValue,
     ): void | Promise<void>
   }
@@ -95,24 +95,23 @@ export type MessageListAdapter<Row, Feed = MessageListSessionId> = {
   }
 }
 
-export type MessageListSessionContext<Feed = MessageListSessionId> = {
-  id: MessageListSessionId
+export type MessageListSessionContext<Source = MessageListSessionSource> = {
   sessionId: MessageListSessionId
-  feed: Feed
+  source: Source
 }
 
 export type MessageListScrollMotionConfig = {
   enabled?: boolean | (() => boolean)
 }
 
-export type MessageListRemoteTailAppendConfig<Row, Feed = unknown> = {
+export type MessageListRemoteTailAppendConfig<Row, Source = unknown> = {
   getPageFocus?: () => boolean
-  shouldFollowRemoteAppend?: MessageListRemoteTailAppendPolicy<Row, Feed>
+  shouldFollowRemoteAppend?: MessageListRemoteTailAppendPolicy<Row, Source>
 }
 
 export type MessageListSessionRegistryOptions<
   Row,
-  Feed = MessageListSessionId,
+  Source = MessageListSessionSource,
 > = {
   defaults?: {
     pageSize?: number
@@ -122,20 +121,20 @@ export type MessageListSessionRegistryOptions<
       ttlMs?: number
     }
   }
-  tailEvents?: MessageListRemoteTailAppendConfig<Row, Feed>
+  tailEvents?: MessageListRemoteTailAppendConfig<Row, Source>
   scrollMotion?: MessageListScrollMotionConfig
-  getFeed?: (id: MessageListSessionId) => Feed
+  getSessionSource?: (sessionId: MessageListSessionId) => Source
   getAdapter: (
-    feed: Feed,
-  ) => MessageListAdapter<Row, Feed>
+    source: Source,
+  ) => MessageListAdapter<Row, Source>
   onRequestResult?: (
-    result: MessageListRequestResult<Row, Feed>,
+    result: MessageListRequestResult<Row, Source>,
   ) => void
 }
 
 export type MessageListSessionRegistryOptionsPatch<
   Row,
-  Feed = MessageListSessionId,
+  Source = MessageListSessionSource,
 > = {
   defaults?: {
     pageSize?: number
@@ -144,17 +143,16 @@ export type MessageListSessionRegistryOptionsPatch<
       ttlMs?: number
     }
   }
-  tailEvents?: MessageListRemoteTailAppendConfig<Row, Feed>
+  tailEvents?: MessageListRemoteTailAppendConfig<Row, Source>
   scrollMotion?: MessageListScrollMotionConfig
   onRequestResult?: (
-    result: MessageListRequestResult<Row, Feed>,
+    result: MessageListRequestResult<Row, Source>,
   ) => void
 }
 
-export type MessageListRequestResult<Row, Feed> = {
-  id: MessageListSessionId
+export type MessageListRequestResult<Row, Source> = {
   sessionId: MessageListSessionId
-  feed: Feed
+  source: Source
   kind: 'latest' | 'before' | 'after' | 'around'
   status: 'applied' | 'failed' | 'stale'
   page?: MessageListPage<Row>
@@ -172,7 +170,6 @@ export type MessageListViewState = {
 }
 
 export type MessageListSessionState<Row = unknown> = {
-  id: MessageListSessionId
   sessionId: MessageListSessionId
   loaded: {
     rows: Row[]
@@ -248,11 +245,10 @@ export type MessageListTailAppendFollowDecision = 'follow' | 'preserve'
 
 export type MessageListRemoteTailAppendContext<
   Row,
-  Feed = unknown,
+  Source = unknown,
 > = {
-  id: MessageListSessionId
   sessionId: MessageListSessionId
-  feed: Feed
+  source: Source
   rows: Row[]
   reason?: string
   hasMoreAfter: boolean
@@ -276,9 +272,9 @@ export type MessageListRemoteTailAppendContext<
 
 export type MessageListRemoteTailAppendPolicy<
   Row,
-  Feed = unknown,
+  Source = unknown,
 > = (
-  context: MessageListRemoteTailAppendContext<Row, Feed>,
+  context: MessageListRemoteTailAppendContext<Row, Source>,
 ) => MessageListTailAppendFollowDecision | boolean
 
 export type MessageListTailAppendFollowInput<Row> =
@@ -294,7 +290,7 @@ export type MessageListRemoteTailAppendInput<Row> = {
 }
 
 export type MessageListSession<Row = unknown> = {
-  id: MessageListSessionId
+  sessionId: MessageListSessionId
   getState(): MessageListSessionState<Row>
   subscribe(listener: () => void): () => void
   commands: {
@@ -349,18 +345,18 @@ export type MessageListSessionRegistryEntry = {
 
 export type MessageListSessionRegistry<
   Row = unknown,
-  Feed = MessageListSessionId,
+  Source = MessageListSessionSource,
 > = {
-  getSession(id: MessageListSessionId): MessageListSession<Row>
-  hasSession(id: MessageListSessionId): boolean
-  destroySession(id: MessageListSessionId): boolean
+  getSession(sessionId: MessageListSessionId): MessageListSession<Row>
+  hasSession(sessionId: MessageListSessionId): boolean
+  destroySession(sessionId: MessageListSessionId): boolean
   destroyAll(): void
   getSessionIds(): MessageListSessionId[]
-  getSessionMeta(id: MessageListSessionId): MessageListSessionRegistryEntry | null
+  getSessionMeta(sessionId: MessageListSessionId): MessageListSessionRegistryEntry | null
   retainSession(
-    id: MessageListSessionId,
+    sessionId: MessageListSessionId,
     reason: MessageListSessionRetainReason,
   ): () => void
-  updateOptions(options: MessageListSessionRegistryOptionsPatch<Row, Feed>): void
+  updateOptions(options: MessageListSessionRegistryOptionsPatch<Row, Source>): void
   sweep(): void
 }

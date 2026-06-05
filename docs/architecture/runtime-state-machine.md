@@ -47,7 +47,7 @@ type ProjectionCommitToken = {
 };
 ```
 
-token 不匹配时，commit ack、observer entry、edge need 和 diagnostics 都必须被丢弃或标记 stale，不能被当前 feed 消费。
+token 不匹配时，commit ack、observer entry、edge need 和 diagnostics 都必须被丢弃或标记 stale，不能被当前 session 消费。
 
 ## Viewport Phase
 
@@ -73,7 +73,7 @@ before / after trigger 进入 viewport 后，runtime 发出 edge need 并 latch 
 
 - 用户明确离开该 edge。
 - 对应请求完成并进入 matching segment transaction。
-- feed generation 变化。
+- session generation 变化。
 - reset / jump / restore 取消当前边缘语义。
 
 ### Pending Underflow Fill
@@ -119,4 +119,4 @@ Runtime 至少区分：
 | `jump` | no | jump motion |
 | `underflowFill` | no | 短 segment 自动补齐请求，不来自滚动输入 |
 
-分类必须有时效。旧 feed 的输入、attach 产生的 scroll event、recovery 写入都不能被解释成新的用户分页意图。
+分类必须有时效。旧 session 的输入、attach 产生的 scroll event、recovery 写入都不能被解释成新的用户分页意图。
