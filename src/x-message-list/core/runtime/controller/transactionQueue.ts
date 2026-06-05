@@ -207,7 +207,7 @@ function isSameProjectionToken(
   left: ProjectionCommitToken,
   right: ProjectionCommitToken,
 ): boolean {
-  return left.feedId === right.feedId &&
+  return left.sessionId === right.sessionId &&
     left.generation === right.generation &&
     left.segmentRevision === right.segmentRevision &&
     left.projectionRevision === right.projectionRevision
@@ -230,7 +230,7 @@ function shouldDropQueuedSegment<TMessage, TOptimistic>(
   policy: ProjectionTransactionPolicy,
 ): boolean {
   if (
-    queued.segment.feedId !== incoming.feedId ||
+    queued.segment.sessionId !== incoming.sessionId ||
     queued.segment.generation !== incoming.generation ||
     queued.segment.segmentRevision >= incoming.segmentRevision
   ) {

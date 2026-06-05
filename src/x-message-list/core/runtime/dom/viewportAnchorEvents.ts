@@ -108,7 +108,7 @@ function isSameAnchorIdentity(
   left: MessageIdentityAnchor,
   right: MessageIdentityAnchor,
 ): boolean {
-  return left.feedId === right.feedId &&
+  return left.sessionId === right.sessionId &&
     (
       Boolean(left.serverId && left.serverId === right.serverId) ||
       left.stableId === right.stableId ||

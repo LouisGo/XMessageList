@@ -83,7 +83,7 @@ DOM projection snapshot 应该接近：
 
 ```ts
 type ProjectionCommitToken = {
-  feedId: string;
+  sessionId: string;
   generation: number;
   segmentRevision: number;
   projectionRevision: number;
@@ -96,7 +96,7 @@ type EdgeSnapshotState = {
 };
 
 type MessageListSnapshot = {
-  feedId: string;
+  sessionId: string;
   generation: number;
   segmentRevision: number;
   projectionRevision: number;

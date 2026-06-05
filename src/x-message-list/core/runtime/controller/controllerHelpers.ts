@@ -21,10 +21,10 @@ export function createBrowserObserverFactory(): RuntimeObserverFactory | null {
 }
 
 export function createInitialSnapshot<TMessage, TOptimistic>(
-  feedId: string,
+  sessionId: string,
 ): MessageListSnapshot<TMessage, TOptimistic> {
   const commitToken = {
-    feedId,
+    sessionId,
     generation: 0,
     segmentRevision: 0,
     projectionRevision: 0,
@@ -59,7 +59,7 @@ export function createSnapshotFromSegment<TMessage, TOptimistic>(
   },
 ): MessageListSnapshot<TMessage, TOptimistic> {
   const commitToken = {
-    feedId: segment.feedId,
+    sessionId: segment.sessionId,
     generation: segment.generation,
     segmentRevision: segment.segmentRevision,
     projectionRevision: options.projectionRevision,
@@ -86,7 +86,7 @@ export function isSameToken(
   left: ProjectionCommitToken,
   right: ProjectionCommitToken,
 ): boolean {
-  return left.feedId === right.feedId &&
+  return left.sessionId === right.sessionId &&
     left.generation === right.generation &&
     left.segmentRevision === right.segmentRevision &&
     left.projectionRevision === right.projectionRevision
@@ -96,7 +96,7 @@ export function isSameSegmentToken(
   left: ProjectionCommitToken,
   right: ProjectionCommitToken,
 ): boolean {
-  return left.feedId === right.feedId &&
+  return left.sessionId === right.sessionId &&
     left.generation === right.generation &&
     left.segmentRevision === right.segmentRevision
 }

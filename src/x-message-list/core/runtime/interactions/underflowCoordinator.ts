@@ -71,7 +71,7 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
       return this.settle(snapshot)
     }
 
-    const requestKey = `${snapshot.feedId}:${snapshot.generation}:${snapshot.segmentRevision}:${edge}`
+    const requestKey = `${snapshot.sessionId}:${snapshot.generation}:${snapshot.segmentRevision}:${edge}`
 
     if (this.requests.has(requestKey)) {
       return null
@@ -247,7 +247,7 @@ function findAnchorIndex<TMessage, TOptimistic>(
     const identity = item.identity
 
     return identity &&
-      identity.feedId === anchor.feedId &&
+      identity.sessionId === anchor.sessionId &&
       (
         identity.stableId === anchor.stableId ||
         Boolean(identity.serverId && identity.serverId === anchor.serverId) ||

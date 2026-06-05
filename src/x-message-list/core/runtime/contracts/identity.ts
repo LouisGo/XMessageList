@@ -1,5 +1,5 @@
 export type MessageIdentity = {
-  feedId: string
+  sessionId: string
   stableId: string
   serverId?: string
   localId?: string
@@ -7,7 +7,7 @@ export type MessageIdentity = {
 }
 
 export type MessageIdentityAnchor = {
-  feedId: string
+  sessionId: string
   stableId: string
   serverId?: string
   localId?: string

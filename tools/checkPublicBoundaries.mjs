@@ -30,6 +30,12 @@ const SESSION_REGISTRY_INTERNAL = path.join(
   'session-registry',
   'internal.ts',
 )
+const LOADED_SEGMENT_STORE_ROOT = path.join(
+  X_MESSAGE_LIST_ROOT,
+  'core',
+  'session-registry',
+  'loaded-segment-store',
+)
 const REACT_ROOT = path.join(X_MESSAGE_LIST_ROOT, 'react')
 const PUBLIC_TYPE_FILES = [
   path.join(X_MESSAGE_LIST_ROOT, 'core', 'session-registry', 'contracts', 'index.ts'),
@@ -50,7 +56,7 @@ const FORBIDDEN_ROOT_EXPORTS = [
   'MessageListRuntime',
   'LoadedSegment',
   'MessageDataItem',
-  'MessageListDataRuntime',
+  'LoadedSegmentStore',
   'MessageListAdapterRuntime',
   'MessageListViewState',
   'RuntimeDomRegistry',
@@ -97,9 +103,12 @@ async function checkPublicTypeFiles() {
     for (const specifier of specifiers) {
       const target = await resolveLocalImport(file, specifier)
 
-      if (target && isUnder(target, RUNTIME_ROOT)) {
+      if (
+        target &&
+        (isUnder(target, RUNTIME_ROOT) || isUnder(target, LOADED_SEGMENT_STORE_ROOT))
+      ) {
         violations.push(
-          `${relative(file)} must not expose runtime types through public contracts`,
+          `${relative(file)} must not expose runtime or loaded-segment-store types through public contracts`,
         )
       }
     }
@@ -226,6 +235,7 @@ function guardDemoOrE2EImport(file, target) {
   }
 
   const reachesInternalSurface = isUnder(target, RUNTIME_ROOT) ||
+    isUnder(target, LOADED_SEGMENT_STORE_ROOT) ||
     target === SESSION_REGISTRY_INTERNAL
 
   if (!reachesInternalSurface) {
@@ -237,7 +247,7 @@ function guardDemoOrE2EImport(file, target) {
   }
 
   violations.push(
-    `${relative(file)} must not import message-list runtime/data/internal module ${relative(target)}`,
+    `${relative(file)} must not import message-list runtime/session internal module ${relative(target)}`,
   )
 }
 

@@ -1,35 +1,35 @@
-export type DataRuntimeRequestKind =
+export type LoadedSegmentRequestKind =
   | 'before'
   | 'after'
   | 'latest'
   | 'around'
 
-export type DataRuntimeRequestToken = {
+export type LoadedSegmentRequestToken = {
   requestToken: string
   generation: number
   segmentRevision: number
-  kind: DataRuntimeRequestKind
+  kind: LoadedSegmentRequestKind
 }
 
 /**
  * 维护每种请求的 current pointer；旧 token 可以被安全拒绝，但不能误清掉更新的 current token。
  */
-export class DataRuntimeRequestTokenRegistry {
+export class LoadedSegmentRequestTokenRegistry {
   private requestSequence = 0
 
-  private readonly pendingRequests = new Map<string, DataRuntimeRequestToken>()
+  private readonly pendingRequests = new Map<string, LoadedSegmentRequestToken>()
 
-  private readonly currentRequestByKind = new Map<DataRuntimeRequestKind, string>()
+  private readonly currentRequestByKind = new Map<LoadedSegmentRequestKind, string>()
 
-  constructor(private readonly feedId: string) {}
+  constructor(private readonly sessionId: string) {}
 
   create(
-    kind: DataRuntimeRequestKind,
+    kind: LoadedSegmentRequestKind,
     generation: number,
     segmentRevision: number,
-  ): DataRuntimeRequestToken {
+  ): LoadedSegmentRequestToken {
     const request = {
-      requestToken: `${this.feedId}:${kind}:${this.requestSequence + 1}`,
+      requestToken: `${this.sessionId}:${kind}:${this.requestSequence + 1}`,
       generation,
       segmentRevision,
       kind,
@@ -42,7 +42,7 @@ export class DataRuntimeRequestTokenRegistry {
   }
 
   adopt(
-    request: DataRuntimeRequestToken,
+    request: LoadedSegmentRequestToken,
     generation: number,
     segmentRevision: number,
   ): void {
@@ -63,10 +63,10 @@ export class DataRuntimeRequestTokenRegistry {
 
   consume(
     requestToken: string,
-    expectedKind: DataRuntimeRequestKind,
+    expectedKind: LoadedSegmentRequestKind,
     generation: number,
     segmentRevision: number,
-  ): DataRuntimeRequestToken | null {
+  ): LoadedSegmentRequestToken | null {
     const request = this.pendingRequests.get(requestToken)
     // 只删除被消费的 token；如果它已被更新 token 替代，current pointer 必须保留。
     this.pendingRequests.delete(requestToken)
@@ -102,7 +102,7 @@ export class DataRuntimeRequestTokenRegistry {
     this.currentRequestByKind.clear()
   }
 
-  private supersedeConflictingKinds(kind: DataRuntimeRequestKind): void {
+  private supersedeConflictingKinds(kind: LoadedSegmentRequestKind): void {
     if (kind !== 'latest' && kind !== 'around') {
       return
     }
@@ -113,6 +113,6 @@ export class DataRuntimeRequestTokenRegistry {
   }
 }
 
-function isResetRequestKind(kind: DataRuntimeRequestKind): boolean {
+function isResetRequestKind(kind: LoadedSegmentRequestKind): boolean {
   return kind === 'latest' || kind === 'around'
 }

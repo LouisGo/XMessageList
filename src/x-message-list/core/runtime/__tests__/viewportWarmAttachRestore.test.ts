@@ -13,7 +13,7 @@ import {
 
 describe('MessageList warm attach restore', () => {
   it('restores the same runtime scrollTop when reattached to a reused container', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = Array.from({ length: 4 }, (_, index) =>
@@ -40,7 +40,7 @@ describe('MessageList warm attach restore', () => {
 
   it('replays warm restore after the reattached container regains scroll range', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = Array.from({ length: 4 }, (_, index) =>
@@ -86,7 +86,7 @@ function item(key: string): MessageDataItem<string> {
     renderVersion: 1,
     message: key,
     identity: {
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       stableId: key,
       serverId: key,
       version: 1,
@@ -98,7 +98,7 @@ function segment(
   items: MessageDataItem<string>[],
 ): LoadedSegment<string> {
   return {
-    feedId: 'feed-a',
+    sessionId: 'feed-a',
     generation: 1,
     segmentRevision: 1,
     items,

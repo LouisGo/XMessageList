@@ -142,7 +142,7 @@ function createNeedMoreBefore<TMessage, TOptimistic>(
   return {
     type: 'needMoreBefore',
     edge: 'before',
-    feedId: snapshot.feedId,
+    sessionId: snapshot.sessionId,
     generation: snapshot.generation,
     segmentRevision: snapshot.segmentRevision,
     requestToken,
@@ -158,7 +158,7 @@ function createNeedMoreAfter<TMessage, TOptimistic>(
   return {
     type: 'needMoreAfter',
     edge: 'after',
-    feedId: snapshot.feedId,
+    sessionId: snapshot.sessionId,
     generation: snapshot.generation,
     segmentRevision: snapshot.segmentRevision,
     requestToken,
@@ -248,5 +248,5 @@ function createLatchToken<TMessage, TOptimistic>(
   snapshot: MessageListSnapshot<TMessage, TOptimistic>,
   edge: RuntimeEdge,
 ): string {
-  return `${snapshot.feedId}:${snapshot.generation}:${snapshot.segmentRevision}:${edge}`
+  return `${snapshot.sessionId}:${snapshot.generation}:${snapshot.segmentRevision}:${edge}`
 }

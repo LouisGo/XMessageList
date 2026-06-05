@@ -72,7 +72,7 @@ export type E2EIdentityEvidence = {
 
 export type E2ERuntimeEventRecord = {
   type: MessageListRuntimeEvent['type']
-  feedId?: string
+  sessionId?: string
   timestamp: number
   generation?: number
   segmentRevision?: number

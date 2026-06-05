@@ -36,7 +36,7 @@ render
 -> runtime.ackProjectionCommit(commitToken)
 ```
 
-StrictMode 下可能出现 attach/detach/attach，ack 必须带 feedId/generation/segmentRevision/projectionRevision，runtime 只接受当前 token。
+StrictMode 下可能出现 attach/detach/attach，ack 必须带 sessionId/generation/segmentRevision/projectionRevision，runtime 只接受当前 token。
 
 ## Row Wrapper
 

@@ -137,7 +137,7 @@ function createNeedLatestMessages<TMessage, TOptimistic>(
 ): NeedLatestMessagesEvent {
   return {
     type: 'needLatestMessages',
-    feedId: snapshot.feedId,
+    sessionId: snapshot.sessionId,
     generation: snapshot.generation,
     segmentRevision: snapshot.segmentRevision,
     requestToken,

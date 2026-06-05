@@ -15,7 +15,7 @@ import {
 describe('MessageList direct scrollbar continuation', () => {
   it('keeps a held direct drag to one before-edge request until rebase', () => {
     const observers = createFakeObservers()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', observers })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', observers })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const before = createMarker(0, 1)
@@ -69,7 +69,7 @@ describe('MessageList direct scrollbar continuation', () => {
 
   it('allows a second same-edge request after rebase and a new direct write', () => {
     const observers = createFakeObservers()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', observers })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', observers })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const before = createMarker(0, 1)
@@ -119,7 +119,7 @@ describe('MessageList direct scrollbar continuation', () => {
 
   it('lets reverse writes move native scroll while an edge request is pending', () => {
     const observers = createFakeObservers()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', observers })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', observers })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const before = createMarker(0, 1)
@@ -160,7 +160,7 @@ function item(key: string): MessageDataItem<string> {
     renderVersion: 1,
     message: key,
     identity: {
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       stableId: key,
       serverId: key,
       version: 1,
@@ -175,7 +175,7 @@ function segment(
   overrides: Partial<LoadedSegment<string>> = {},
 ): LoadedSegment<string> {
   return {
-    feedId: 'feed-a',
+    sessionId: 'feed-a',
     generation,
     segmentRevision,
     items,

@@ -62,7 +62,7 @@ export function normalizeMessageListAnchor(
     ''
 
   return {
-    feedId: anchor.feedId ?? id,
+    sessionId: anchor.sessionId ?? id,
     stableId,
     serverId: anchor.serverId ?? anchor.id,
     localId: anchor.localId,
@@ -77,7 +77,7 @@ function toMessageIdentity(
   version: unknown,
 ): MessageIdentity {
   return {
-    feedId: anchor.feedId ?? id,
+    sessionId: anchor.sessionId ?? id,
     stableId: anchor.stableId,
     serverId: anchor.serverId,
     localId: anchor.localId,

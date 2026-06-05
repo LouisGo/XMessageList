@@ -37,7 +37,7 @@ Scroll rAF 中避免：
 ## Measurement 策略
 
 - row height cache 只用于预算和 resize 判断，不用于生成 DOM spacer。
-- cache key 至少要区分 feedId、generation、width bucket 和 renderVersion，避免跨 feed、跨布局或内容版本污染。
+- cache key 至少要区分 sessionId、generation、width bucket 和 renderVersion，避免跨 session、跨布局或内容版本污染。
 - measurement snapshot restore 只能作为近似恢复和 diagnostics 输入；commit 后仍以真实 DOM rect + anchor correction 为准。
 - ResizeObserver 只作为 dirty signal。
 - IntersectionObserver 只作为 edge / visibility signal。
@@ -83,7 +83,7 @@ Scroll rAF 中避免：
 
 Diagnostics 要带：
 
-- feedId
+- sessionId
 - generation
 - segment revision
 - projection revision

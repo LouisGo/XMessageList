@@ -22,7 +22,7 @@ import {
 } from '../data/demoMessageApi'
 import type { MessageIdentityAnchor as DemoApiAnchor } from '../data/demoMessageApiTypes'
 import {
-  DEMO_MAX_ITEMS,
+  DEMO_RETENTION,
   EDGE_LOAD_DELAY_BASE_MS,
   INCOMING_FOLLOW_DISTANCE_PX,
   PAGE_SIZE,
@@ -67,7 +67,7 @@ export function createDemoRegistry(
   return createMessageListSessionRegistry<DemoMessage, DemoFeedRecord>({
     defaults: {
       pageSize: PAGE_SIZE,
-      maxItems: DEMO_MAX_ITEMS,
+      retention: DEMO_RETENTION,
       keepAlive: {
         maxSessions: 3,
         ttlMs: 10 * 60_000,
@@ -128,7 +128,7 @@ export async function prepareDemoE2EScenario(input: {
     anchor: latestMessage
       ? {
         id: latestMessage.id,
-        feedId: input.feedId,
+        sessionId: input.feedId,
         stableId: latestMessage.id,
         serverId: latestMessage.id,
       }
@@ -152,7 +152,7 @@ function createDemoAdapter(
       getKey: (row) => row.id,
       getAnchor: (row) => ({
         id: row.id,
-        feedId: row.feedId,
+        sessionId: feed.id,
         stableId: row.id,
         serverId: row.id,
       }),
@@ -235,7 +235,7 @@ function createDemoAdapter(
         const restored = toSavedRuntimeAnchor(context.id, {
           anchor: {
             id: persisted.messageId,
-            feedId: context.id,
+            sessionId: context.id,
             stableId: persisted.messageId,
             serverId: persisted.messageId,
           },
@@ -378,7 +378,7 @@ function toDemoPage(
     anchor: input.anchorMessageId
       ? {
         id: input.anchorMessageId,
-        feedId: input.feedId,
+        sessionId: input.feedId,
         stableId: input.anchorMessageId,
         serverId: input.anchorMessageId,
       }
@@ -403,7 +403,7 @@ function resetAroundE2EScenario(
   input.session.rows.resetAround({
     target: {
       id: target.id,
-      feedId: input.feedId,
+      sessionId: input.feedId,
       stableId: target.id,
       serverId: target.id,
     },
@@ -412,7 +412,7 @@ function resetAroundE2EScenario(
     hasMoreAfter: end < feedMessages.length,
     anchor: {
       id: target.id,
-      feedId: input.feedId,
+      sessionId: input.feedId,
       stableId: target.id,
       serverId: target.id,
     },
@@ -448,7 +448,7 @@ function toSavedRuntimeAnchor(
   return {
     anchor: {
       id: messageId,
-      feedId,
+      sessionId: feedId,
       stableId: messageId,
       serverId: messageId,
       fallbackStableId: value.anchor.fallbackStableId,

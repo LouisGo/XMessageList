@@ -50,7 +50,7 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
     const requestToken = this.nextRequestToken('around')
     const event: NeedMessagesAroundEvent = {
       type: 'needMessagesAround',
-      feedId: snapshot.feedId,
+      sessionId: snapshot.sessionId,
       generation: snapshot.generation,
       segmentRevision: snapshot.segmentRevision,
       requestToken,
@@ -117,7 +117,7 @@ export function isSameAnchorIdentity(
   left: MessageIdentityAnchor,
   right: MessageIdentityAnchor,
 ): boolean {
-  return left.feedId === right.feedId &&
+  return left.sessionId === right.sessionId &&
     (
       Boolean(left.serverId && left.serverId === right.serverId) ||
       left.stableId === right.stableId ||

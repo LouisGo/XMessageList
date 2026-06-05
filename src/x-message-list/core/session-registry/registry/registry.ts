@@ -1,6 +1,6 @@
 import { MessageListSession } from '../session/session'
 import type {
-  MessageListFeedId,
+  MessageListSegmentRetention,
   MessageListSessionId,
   MessageListSessionRegistry,
   MessageListSessionRegistryEntry,
@@ -11,13 +11,13 @@ import type {
 } from '../contracts'
 
 const DEFAULT_PAGE_SIZE = 32
-const DEFAULT_MAX_ITEMS = 300
+const DEFAULT_RETENTION: MessageListSegmentRetention = 'balanced'
 const DEFAULT_MAX_SESSIONS = 20
 const DEFAULT_TTL_MS = 10 * 60_000
 
 type NormalizedDefaults = {
   pageSize: number
-  maxItems: number
+  retention: MessageListSegmentRetention
   keepAlive: {
     maxSessions: number
     ttlMs: number
@@ -30,7 +30,7 @@ type SessionRecord<Row, Feed> = {
   hostRetains: Map<MessageListSessionRetainReason, number>
 }
 
-export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListFeedId>
+export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListSessionId>
   implements MessageListSessionRegistry<Row, Feed> {
   private readonly sessions = new Map<
     MessageListSessionId,
@@ -124,7 +124,6 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListFeedId
 
     return {
       sessionId: id,
-      feedId: id,
       createdAt: record.createdAt,
       lastUsedAt: record.session.lastUsedAt,
       mountedRetainCount,
@@ -253,7 +252,7 @@ export class ApplicationMessageListSessionRegistry<Row, Feed = MessageListFeedId
 
 export function createMessageListSessionRegistry<
   Row,
-  Feed = MessageListFeedId,
+  Feed = MessageListSessionId,
 >(
   options: MessageListSessionRegistryOptions<Row, Feed>,
 ): MessageListSessionRegistry<Row, Feed> {
@@ -265,7 +264,7 @@ function normalizeDefaults(
 ): NormalizedDefaults {
   return {
     pageSize: defaults?.pageSize ?? DEFAULT_PAGE_SIZE,
-    maxItems: defaults?.maxItems ?? DEFAULT_MAX_ITEMS,
+    retention: defaults?.retention ?? DEFAULT_RETENTION,
     keepAlive: {
       maxSessions: defaults?.keepAlive?.maxSessions ?? DEFAULT_MAX_SESSIONS,
       ttlMs: defaults?.keepAlive?.ttlMs ?? DEFAULT_TTL_MS,

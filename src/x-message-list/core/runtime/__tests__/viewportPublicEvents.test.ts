@@ -17,7 +17,7 @@ describe('MessageList public runtime events', () => {
   it('reports visible ratio, range, source, direction, and activity', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
       observers: createFakeObservers(),
     })
@@ -49,7 +49,7 @@ describe('MessageList public runtime events', () => {
       event.reason === 'scroll-idle'
     )
     expect(scrollObservation).toMatchObject({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       generation: 1,
       segmentRevision: 1,
       scrollSource: 'user',
@@ -66,7 +66,7 @@ describe('MessageList public runtime events', () => {
   })
 
   it('emits viewportReady once for each settled generation', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const events: MessageListRuntimeEvent[] = []
 
@@ -86,12 +86,12 @@ describe('MessageList public runtime events', () => {
       .toEqual([
         expect.objectContaining({
           type: 'viewportReady',
-          feedId: 'feed-a',
+          sessionId: 'feed-a',
           commitToken: expect.objectContaining({ generation: 1 }),
         }),
         expect.objectContaining({
           type: 'viewportReady',
-          feedId: 'feed-a',
+          sessionId: 'feed-a',
           commitToken: expect.objectContaining({ generation: 2 }),
         }),
       ])
@@ -99,13 +99,13 @@ describe('MessageList public runtime events', () => {
 
   it('emits destinationSettled when an around jump resolves target', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 50)
     const rowB = createRow('row-2', 50, 50)
     const targetRow = createRow('row-3', 100, 50)
-    const target = { feedId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
+    const target = { sessionId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
     const events: MessageListRuntimeEvent[] = []
 
     container.append(rowA)
@@ -142,7 +142,7 @@ describe('MessageList public runtime events', () => {
   })
 
   it('reports underflow fill as the transaction settle source', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 20)
@@ -180,13 +180,13 @@ describe('MessageList public runtime events', () => {
 
   it('reports restore alignment as programmatic instead of jump source', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 50)
     const rowB = createRow('row-2', 50, 50)
     const targetRow = createRow('row-3', 100, 50)
-    const target = { feedId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
+    const target = { sessionId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
     const events: MessageListRuntimeEvent[] = []
 
     container.append(rowA)
@@ -227,7 +227,7 @@ function item(key: string): MessageDataItem<string> {
     renderVersion: 1,
     message: key,
     identity: {
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       stableId: key,
       serverId: key,
       version: 1,
@@ -242,7 +242,7 @@ function segment(
   overrides: Partial<LoadedSegment<string>> = {},
 ): LoadedSegment<string> {
   return {
-    feedId: 'feed-a',
+    sessionId: 'feed-a',
     generation,
     segmentRevision,
     items,

@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import type { MessageDataItem } from '../../contracts/identity'
-import { createMessageListDataRuntime } from '../index'
+import type { MessageDataItem } from '../../../runtime/contracts/identity'
+import { createLoadedSegmentStore } from '../index'
 
-describe('MessageListDataRuntime', () => {
+describe('LoadedSegmentStore', () => {
   it('remaps optimistic local identity to server identity', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('local-1', { localId: 'client-1', stableId: 'stable-1' })],
       hasMoreBefore: false,
       hasMoreAfter: false,
     })
 
-    const segment = runtime.applyIdentityRemap([{
-      from: { feedId: 'feed-a', stableId: 'stable-1', localId: 'client-1' },
-      to: { feedId: 'feed-a', stableId: 'stable-1', serverId: 'server-1' },
+    const segment = store.applyIdentityRemap([{
+      from: { sessionId: 'feed-a', stableId: 'stable-1', localId: 'client-1' },
+      to: { sessionId: 'feed-a', stableId: 'stable-1', serverId: 'server-1' },
       previousKey: 'local-1',
       nextKey: 'server-1',
     }])
@@ -25,10 +25,10 @@ describe('MessageListDataRuntime', () => {
   })
 
   it('keeps fallback anchor metadata on around reset', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    const segment = runtime.resetAround({
-      target: { feedId: 'feed-a', stableId: 'deleted-1' },
-      anchor: { feedId: 'feed-a', stableId: 'fallback-1' },
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    const segment = store.resetAround({
+      target: { sessionId: 'feed-a', stableId: 'deleted-1' },
+      anchor: { sessionId: 'feed-a', stableId: 'fallback-1' },
       anchorStatus: 'deleted',
       items: [item('fallback-1')],
       hasMoreBefore: true,
@@ -40,14 +40,14 @@ describe('MessageListDataRuntime', () => {
   })
 
   it('dedupes duplicate server messages during after merge', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1', { serverId: 'server-1', stableId: 'stable-1' })],
       hasMoreBefore: false,
       hasMoreAfter: true,
     })
-    const request = runtime.createRequestToken('after')
-    const result = runtime.extendAfter({
+    const request = store.createRequestToken('after')
+    const result = store.extendAfter({
       requestToken: request.requestToken,
       items: [
         item('duplicate-key', { serverId: 'server-1', stableId: 'stable-copy' }),
@@ -65,21 +65,21 @@ describe('MessageListDataRuntime', () => {
   })
 
   it('adopts viewport request tokens for semantic edge events', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: true,
       hasMoreAfter: false,
     })
 
-    runtime.adoptRequestToken({
+    store.adoptRequestToken({
       requestToken: 'feed-a:before:runtime-1',
       generation: 1,
       segmentRevision: 1,
       kind: 'before',
     })
 
-    const result = runtime.extendBefore({
+    const result = store.extendBefore({
       requestToken: 'feed-a:before:runtime-1',
       items: [item('row-0')],
       hasMoreBefore: false,
@@ -94,16 +94,16 @@ describe('MessageListDataRuntime', () => {
   })
 
   it('rejects request tokens used for the wrong semantic request kind', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: true,
       hasMoreAfter: true,
     })
-    const latest = runtime.createRequestToken('latest')
-    const before = runtime.createRequestToken('before')
+    const latest = store.createRequestToken('latest')
+    const before = store.createRequestToken('before')
 
-    expect(runtime.extendBefore({
+    expect(store.extendBefore({
       requestToken: latest.requestToken,
       items: [item('wrong-kind-before')],
       hasMoreBefore: false,
@@ -112,7 +112,7 @@ describe('MessageListDataRuntime', () => {
       applied: false,
       reason: 'stale-request',
     })
-    expect(runtime.resetLatestFromRequest({
+    expect(store.resetLatestFromRequest({
       requestToken: before.requestToken,
       items: [item('wrong-kind-latest')],
       hasMoreBefore: false,
@@ -121,28 +121,28 @@ describe('MessageListDataRuntime', () => {
       applied: false,
       reason: 'stale-request',
     })
-    expect(runtime.getSegment().items.map((nextItem) => nextItem.key)).toEqual([
+    expect(store.getSegment().items.map((nextItem) => nextItem.key)).toEqual([
       'row-1',
     ])
   })
 
   it('drops stale latest and around request responses', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: false,
       hasMoreAfter: true,
     })
-    const latest = runtime.createRequestToken('latest')
-    const around = runtime.createRequestToken('around')
+    const latest = store.createRequestToken('latest')
+    const around = store.createRequestToken('around')
 
-    runtime.resetLatest({
+    store.resetLatest({
       items: [item('row-2')],
       hasMoreBefore: true,
       hasMoreAfter: false,
     })
 
-    expect(runtime.resetLatestFromRequest({
+    expect(store.resetLatestFromRequest({
       requestToken: latest.requestToken,
       items: [item('stale-latest')],
       hasMoreBefore: false,
@@ -151,9 +151,9 @@ describe('MessageListDataRuntime', () => {
       applied: false,
       reason: 'stale-request',
     })
-    expect(runtime.resetAroundFromRequest({
+    expect(store.resetAroundFromRequest({
       requestToken: around.requestToken,
-      target: { feedId: 'feed-a', stableId: 'stale-around' },
+      target: { sessionId: 'feed-a', stableId: 'stale-around' },
       items: [item('stale-around')],
       hasMoreBefore: false,
       hasMoreAfter: false,
@@ -161,24 +161,24 @@ describe('MessageListDataRuntime', () => {
       applied: false,
       reason: 'stale-request',
     })
-    expect(runtime.getSegment().items.map((nextItem) => nextItem.key)).toEqual([
+    expect(store.getSegment().items.map((nextItem) => nextItem.key)).toEqual([
       'row-2',
     ])
   })
 
   it('lets the newest same-generation destination request win', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: false,
       hasMoreAfter: true,
     })
-    const first = runtime.createRequestToken('around')
-    const second = runtime.createRequestToken('around')
+    const first = store.createRequestToken('around')
+    const second = store.createRequestToken('around')
 
-    expect(runtime.resetAroundFromRequest({
+    expect(store.resetAroundFromRequest({
       requestToken: first.requestToken,
-      target: { feedId: 'feed-a', stableId: 'row-2' },
+      target: { sessionId: 'feed-a', stableId: 'row-2' },
       items: [item('row-2')],
       hasMoreBefore: true,
       hasMoreAfter: true,
@@ -187,9 +187,9 @@ describe('MessageListDataRuntime', () => {
       reason: 'stale-request',
     })
 
-    const applied = runtime.resetAroundFromRequest({
+    const applied = store.resetAroundFromRequest({
       requestToken: second.requestToken,
-      target: { feedId: 'feed-a', stableId: 'row-3' },
+      target: { sessionId: 'feed-a', stableId: 'row-3' },
       items: [item('row-3')],
       hasMoreBefore: true,
       hasMoreAfter: true,
@@ -202,27 +202,27 @@ describe('MessageListDataRuntime', () => {
   })
 
   it('keeps reset requests current across same-generation passive revisions', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: false,
       hasMoreAfter: true,
     })
-    const around = runtime.createRequestToken('around')
-    runtime.patchItems([item('row-1')])
+    const around = store.createRequestToken('around')
+    store.patchItems([item('row-1')])
 
-    expect(runtime.resetAroundFromRequest({
+    expect(store.resetAroundFromRequest({
       requestToken: around.requestToken,
-      target: { feedId: 'feed-a', stableId: 'row-2' },
+      target: { sessionId: 'feed-a', stableId: 'row-2' },
       items: [item('row-2')],
       hasMoreBefore: true,
       hasMoreAfter: true,
     })).toMatchObject({ applied: true })
 
-    const latest = runtime.createRequestToken('latest')
-    runtime.patchItems([item('row-2')])
+    const latest = store.createRequestToken('latest')
+    store.patchItems([item('row-2')])
 
-    expect(runtime.resetLatestFromRequest({
+    expect(store.resetLatestFromRequest({
       requestToken: latest.requestToken,
       items: [item('tail')],
       hasMoreBefore: true,
@@ -231,16 +231,16 @@ describe('MessageListDataRuntime', () => {
   })
 
   it('keeps a newer current token after an older same-kind token is rejected', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: true,
       hasMoreAfter: false,
     })
-    const first = runtime.createRequestToken('before')
-    const second = runtime.createRequestToken('before')
+    const first = store.createRequestToken('before')
+    const second = store.createRequestToken('before')
 
-    expect(runtime.extendBefore({
+    expect(store.extendBefore({
       requestToken: first.requestToken,
       items: [item('stale-before')],
       hasMoreBefore: true,
@@ -249,30 +249,30 @@ describe('MessageListDataRuntime', () => {
       applied: false,
       reason: 'stale-request',
     })
-    expect(runtime.extendBefore({
+    expect(store.extendBefore({
       requestToken: second.requestToken,
       items: [item('row-0')],
       hasMoreBefore: false,
       hasMoreAfter: false,
     })).toMatchObject({ applied: true })
-    expect(runtime.getSegment().items.map((nextItem) => nextItem.key)).toEqual([
+    expect(store.getSegment().items.map((nextItem) => nextItem.key)).toEqual([
       'row-0',
       'row-1',
     ])
   })
 
   it('rejects same-generation edge responses after the segment revision changes', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: true,
       hasMoreAfter: false,
     })
-    const request = runtime.createRequestToken('before')
+    const request = store.createRequestToken('before')
 
-    runtime.patchItems([item('row-1')])
+    store.patchItems([item('row-1')])
 
-    expect(runtime.extendBefore({
+    expect(store.extendBefore({
       requestToken: request.requestToken,
       items: [item('stale-before')],
       hasMoreBefore: false,
@@ -281,28 +281,28 @@ describe('MessageListDataRuntime', () => {
       applied: false,
       reason: 'stale-request',
     })
-    expect(runtime.getSegment().items.map((nextItem) => nextItem.key)).toEqual([
+    expect(store.getSegment().items.map((nextItem) => nextItem.key)).toEqual([
       'row-1',
     ])
   })
 
   it('lets destination reset tokens supersede pending edge tokens', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: true,
       hasMoreAfter: false,
     })
-    const before = runtime.createRequestToken('before')
+    const before = store.createRequestToken('before')
 
-    runtime.adoptRequestToken({
+    store.adoptRequestToken({
       requestToken: 'feed-a:around:runtime-1',
       generation: 1,
       segmentRevision: 1,
       kind: 'around',
     })
 
-    expect(runtime.extendBefore({
+    expect(store.extendBefore({
       requestToken: before.requestToken,
       items: [item('stale-before')],
       hasMoreBefore: false,
@@ -311,9 +311,9 @@ describe('MessageListDataRuntime', () => {
       applied: false,
       reason: 'stale-request',
     })
-    expect(runtime.resetAroundFromRequest({
+    expect(store.resetAroundFromRequest({
       requestToken: 'feed-a:around:runtime-1',
-      target: { feedId: 'feed-a', stableId: 'row-9' },
+      target: { sessionId: 'feed-a', stableId: 'row-9' },
       items: [item('row-9')],
       hasMoreBefore: true,
       hasMoreAfter: true,
@@ -321,22 +321,22 @@ describe('MessageListDataRuntime', () => {
   })
 
   it('clears request registry state on reset and accepts new generation tokens', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: false,
       hasMoreAfter: true,
     })
-    const stale = runtime.createRequestToken('latest')
+    const stale = store.createRequestToken('latest')
 
-    runtime.resetAround({
-      target: { feedId: 'feed-a', stableId: 'row-9' },
+    store.resetAround({
+      target: { sessionId: 'feed-a', stableId: 'row-9' },
       items: [item('row-9')],
       hasMoreBefore: true,
       hasMoreAfter: true,
     })
 
-    expect(runtime.resetLatestFromRequest({
+    expect(store.resetLatestFromRequest({
       requestToken: stale.requestToken,
       items: [item('stale-latest')],
       hasMoreBefore: false,
@@ -346,8 +346,8 @@ describe('MessageListDataRuntime', () => {
       reason: 'stale-request',
     })
 
-    const current = runtime.createRequestToken('latest')
-    const applied = runtime.resetLatestFromRequest({
+    const current = store.createRequestToken('latest')
+    const applied = store.resetLatestFromRequest({
       requestToken: current.requestToken,
       items: [item('row-10')],
       hasMoreBefore: true,
@@ -361,14 +361,14 @@ describe('MessageListDataRuntime', () => {
   })
 
   it('replaces the loaded item window for host-owned mock mutations', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1'), item('row-2'), item('row-3')],
       hasMoreBefore: true,
       hasMoreAfter: false,
     })
 
-    const segment = runtime.replaceItems({
+    const segment = store.replaceItems({
       items: [item('row-1'), item('row-3')],
       changedKeys: ['row-2'],
     })
@@ -385,8 +385,8 @@ describe('MessageListDataRuntime', () => {
   })
 
   it('mutates loaded rows with patch, remove, and invalidate in one patch segment', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [
         item('row-10'),
         item('row-11'),
@@ -398,9 +398,9 @@ describe('MessageListDataRuntime', () => {
       hasMoreAfter: false,
     })
 
-    const previous = runtime.getSegment()
+    const previous = store.getSegment()
     const row14 = previous.items.find((nextItem) => nextItem.key === 'row-14')
-    const segment = runtime.mutateItems({
+    const segment = store.mutateItems({
       patches: [itemWithVersion('row-12', 7)],
       removeKeys: ['row-13'],
       invalidateKeys: ['row-14'],
@@ -429,15 +429,15 @@ describe('MessageListDataRuntime', () => {
   })
 
   it('ignores mutate inputs that do not touch the loaded segment', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1')],
       hasMoreBefore: false,
       hasMoreAfter: false,
     })
-    const previous = runtime.getSegment()
+    const previous = store.getSegment()
 
-    const segment = runtime.mutateItems({
+    const segment = store.mutateItems({
       patches: [item('missing')],
       removeKeys: ['gone'],
       invalidateKeys: ['outside'],
@@ -447,14 +447,14 @@ describe('MessageListDataRuntime', () => {
   })
 
   it('publishes semantic append modifiers for live tail rows', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1'), item('row-2')],
       hasMoreBefore: true,
       hasMoreAfter: false,
     })
 
-    const segment = runtime.appendItems([item('row-3')], { follow: 'follow' })
+    const segment = store.appendItems([item('row-3')], { follow: 'follow' })
 
     expect(segment.items.map((nextItem) => nextItem.key)).toEqual([
       'row-1',
@@ -469,14 +469,14 @@ describe('MessageListDataRuntime', () => {
   })
 
   it('can retire a visible placeholder in the same semantic append', () => {
-    const runtime = createMessageListDataRuntime<string>({ feedId: 'feed-a' })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1'), item('failed-local')],
       hasMoreBefore: true,
       hasMoreAfter: false,
     })
 
-    const segment = runtime.appendItems([item('retry-server')], {
+    const segment = store.appendItems([item('retry-server')], {
       follow: 'preserve',
       retireKeys: ['failed-local'],
     })
@@ -494,29 +494,26 @@ describe('MessageListDataRuntime', () => {
   })
 
   it('drops stale responses after generation reset and trims around anchor', () => {
-    const runtime = createMessageListDataRuntime<string>({
-      feedId: 'feed-a',
-      itemBudget: 3,
-    })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: [item('row-1'), item('row-2')],
       hasMoreBefore: true,
       hasMoreAfter: false,
     })
-    const staleRequest = runtime.createRequestToken('before')
-    runtime.resetLatest({
+    const staleRequest = store.createRequestToken('before')
+    store.resetLatest({
       items: [item('row-3'), item('row-4'), item('row-5'), item('row-6')],
       hasMoreBefore: true,
       hasMoreAfter: false,
     })
 
-    const staleResult = runtime.extendBefore({
+    const staleResult = store.extendBefore({
       requestToken: staleRequest.requestToken,
       items: [item('stale')],
       hasMoreBefore: false,
       hasMoreAfter: false,
     })
-    const trimmed = runtime.trimToBudget('row-5')
+    const trimmed = store.trimToBudget(3, 'row-5')
 
     expect(staleResult).toMatchObject({
       applied: false,
@@ -531,17 +528,14 @@ describe('MessageListDataRuntime', () => {
   })
 
   it('trims a single side per modifier when the protected anchor is central', () => {
-    const runtime = createMessageListDataRuntime<string>({
-      feedId: 'feed-a',
-      itemBudget: 3,
-    })
-    runtime.resetLatest({
+    const store = createLoadedSegmentStore<string>({ sessionId: 'feed-a' })
+    store.resetLatest({
       items: Array.from({ length: 10 }, (_, index) => item(`row-${index + 1}`)),
       hasMoreBefore: false,
       hasMoreAfter: false,
     })
 
-    const firstTrim = runtime.trimToBudget('row-6')
+    const firstTrim = store.trimToBudget(3, 'row-6')
 
     expect(firstTrim.modifier.type).toBe('trim-before')
     expect(firstTrim.items.map((nextItem) => nextItem.key)).toEqual([
@@ -554,7 +548,7 @@ describe('MessageListDataRuntime', () => {
     expect(firstTrim.hasMoreBefore).toBe(true)
     expect(firstTrim.hasMoreAfter).toBe(false)
 
-    const secondTrim = runtime.trimToBudget('row-6')
+    const secondTrim = store.trimToBudget(3, 'row-6')
 
     expect(secondTrim.modifier.type).toBe('trim-after')
     expect(secondTrim.items.map((nextItem) => nextItem.key)).toEqual([
@@ -577,7 +571,7 @@ function item(
     renderVersion: 1,
     message: key,
     identity: {
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       stableId: key,
       version: 1,
       ...identity,
@@ -593,7 +587,7 @@ function itemWithVersion(
     ...item(key),
     renderVersion,
     identity: {
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       stableId: key,
       version: renderVersion,
     },

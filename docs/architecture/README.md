@@ -9,7 +9,7 @@
 | [principles.md](./principles.md) | 为什么选择 loaded segment native scroll | 具体 API 命名 |
 | [naming-and-api.md](./naming-and-api.md) | 统一术语、组件名、package root export 和 public API | 单个事务内部实现 |
 | [session-registry-target-api.md](./session-registry-target-api.md) | `MessageListSessionRegistry` 的目标架构和 API 调整方案 | 当前实现完成度 |
-| [layering-and-ownership.md](./layering-and-ownership.md) | main、data runtime、viewport runtime、React、host 的边界 | 单个事务时序 |
+| [layering-and-ownership.md](./layering-and-ownership.md) | main、loaded segment store、viewport runtime、React、host 的边界 | 单个事务时序 |
 | [anchor-and-data-window.md](./anchor-and-data-window.md) | identity anchor、visual anchor、loaded segment、数据窗口关系 | DOM class 细节 |
 | [runtime-state-machine.md](./runtime-state-machine.md) | runtime 的生命周期、transaction、pending intent、edge latch 状态轴 | E2E 场景列表 |
 | [module-map.md](./module-map.md) | 当前源码目录地图和新增文件归属 | 行为合同或交互验收 |
@@ -17,7 +17,7 @@
 ## 新基座一句话
 
 ```text
-Data runtime gives a short contiguous loaded segment
+Loaded Segment Store gives a short contiguous loaded segment
   -> React renders real flow rows plus two edge triggers
   -> viewport runtime measures committed DOM and preserves visual anchors
   -> native scroll range equals the currently loaded segment height
@@ -32,4 +32,4 @@ Data runtime gives a short contiguous loaded segment
 - host/data 层只响应 semantic events，不读取 projection DOM 来推断分页。
 - loaded segment 边界、modifier、identity remap、generation/revision/token 必须作为合同字段跨层传递。
 - 自定义滚动条 overlay 只镜像 native metrics，不拥有滚动模型。
-- package / React public API 必须使用 [naming-and-api.md](./naming-and-api.md) 固定的 `MessageList` 口径；runtime/data runtime implementation 不进入业务 public surface。
+- package / React public API 必须使用 [naming-and-api.md](./naming-and-api.md) 固定的 `MessageList` 口径；runtime 和 Loaded Segment Store implementation 不进入业务 public surface。

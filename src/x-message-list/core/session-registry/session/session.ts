@@ -8,10 +8,10 @@ import {
   type MessageListSnapshot,
 } from '../../runtime/index'
 import {
-  createMessageListDataRuntime,
-  type DataRuntimeRequestKind,
-  type MessageListDataRuntime,
-} from '../../runtime/data/index'
+  createLoadedSegmentStore,
+  type LoadedSegmentRequestKind,
+  type LoadedSegmentStore,
+} from '../loaded-segment-store/index'
 import { getMessageListSessionRegistryRuntime } from '../../runtime/internal'
 import { MessageListReadReceiptsWorker } from '../read-receipts/readReceipts'
 import { MessageListSessionOverlay } from './overlay'
@@ -22,6 +22,7 @@ import { normalizeMessageListAnchor } from '../adapters/rowAdapter'
 import { MessageListSessionLiveSemantics } from '../tail/tailSemantics'
 import {
   reindexRows,
+  resolveAdaptiveTrimBudget,
   resolveTrimProtectKey,
   toRuntimeScrollOptions,
   toSessionResetInput,
@@ -40,15 +41,12 @@ import type {
 } from '../contracts'
 
 type OverlayRequestOptions = { overlayRequestId?: number; requestEpoch?: number }
-type RequestResultInput<Row, Feed> = Omit<
-  MessageListRequestResult<Row, Feed>,
-  'id' | 'sessionId' | 'feedId' | 'feed'
->
+type RequestResultInput<Row, Feed> = Omit<MessageListRequestResult<Row, Feed>, 'id' | 'sessionId' | 'feed'>
 
 export class MessageListSession<Row, Feed>
   implements PublicMessageListSession<Row> {
   readonly #runtime: MessageListRuntime<Row>
-  readonly #dataRuntime: MessageListDataRuntime<Row>
+  readonly #loadedSegmentStore: LoadedSegmentStore<Row>
   readonly id: MessageListSessionId
   readonly commands: PublicMessageListSession<Row>['commands']
   readonly rows: PublicMessageListSession<Row>['rows']
@@ -62,16 +60,13 @@ export class MessageListSession<Row, Feed>
   private readonly rowsByKey = new Map<string, Row>()
   private readonly liveSemantics: MessageListSessionLiveSemantics<Row, Feed>
   private viewRetainCount = 0
+  private rowsPerViewportEstimate: number
   lastUsedAt = Date.now()
 
   constructor(private readonly options: SessionOptions<Row, Feed>) {
     this.id = options.id
-    this.context = {
-      id: options.id,
-      sessionId: options.id,
-      feedId: options.id,
-      feed: options.feed,
-    }
+    this.rowsPerViewportEstimate = options.defaults.pageSize
+    this.context = { id: options.id, sessionId: options.id, feed: options.feed }
     this.overlay = new MessageListSessionOverlay(
       () => this.notifyViewListeners(),
       () => {
@@ -80,13 +75,10 @@ export class MessageListSession<Row, Feed>
       },
     )
     this.#runtime = createMessageListRuntime<Row>({
-      feedId: options.id,
+      sessionId: options.id,
       scrollMotion: options.scrollMotion,
     })
-    this.#dataRuntime = createMessageListDataRuntime<Row>({
-      feedId: options.id,
-      itemBudget: options.defaults.maxItems,
-    })
+    this.#loadedSegmentStore = createLoadedSegmentStore<Row>({ sessionId: options.id })
     this.commands = {
       scrollToLatest: () => this.#runtime.scrollToLatest(),
       scrollToMessage: (target, scrollOptions) =>
@@ -113,14 +105,14 @@ export class MessageListSession<Row, Feed>
       adapter: this.options.adapter,
       tailEvents: this.options.tailEvents,
       runtime: getMessageListSessionRegistryRuntime(this.#runtime),
-      dataRuntime: this.#dataRuntime,
+      loadedSegmentStore: this.#loadedSegmentStore,
       publishSegment: (segment) => this.publishSegment(segment),
       publishLocalResetSegment: (segment) => this.publishLocalResetSegment(segment),
     })
     this.rows = createSessionRows({
       id: this.id,
       adapter: this.options.adapter,
-      dataRuntime: this.#dataRuntime,
+      loadedSegmentStore: this.#loadedSegmentStore,
       publishSegment: (segment) => this.publishSegment(segment),
       publishLocalResetSegment: (segment) => this.publishLocalResetSegment(segment),
       clearPendingLocal: () => this.liveSemantics.clearPendingLocal(),
@@ -137,7 +129,7 @@ export class MessageListSession<Row, Feed>
     )
     defineMessageListSessionInternals<Row>(this, {
       runtime: this.#runtime,
-      dataRuntime: this.#dataRuntime,
+      loadedSegmentStore: this.#loadedSegmentStore,
       getSnapshot: () => this.getSnapshot(),
       getViewState: () => this.getViewState(),
       subscribeView: (listener) => this.subscribeView(listener),
@@ -276,6 +268,7 @@ export class MessageListSession<Row, Feed>
     }
 
     if (event.type === 'viewportObservationChanged') {
+      if (event.visibleItems.length > 0) this.rowsPerViewportEstimate = event.visibleItems.length
       this.readReceipts.handleObservation(event)
       return
     }
@@ -301,7 +294,7 @@ export class MessageListSession<Row, Feed>
   ): Promise<void> {
     const overlayRequestId = options.overlayRequestId ?? this.overlay.startRequest()
     const requestEpoch = options.requestEpoch ?? this.overlay.getRequestEpoch()
-    const requestSegment = this.#dataRuntime.getSegment()
+    const requestSegment = this.#loadedSegmentStore.getSegment()
     const requestGeneration = requestSegment.generation
     const requestSegmentRevision = requestSegment.segmentRevision
     if (event) {
@@ -318,26 +311,26 @@ export class MessageListSession<Row, Feed>
         this.overlay.isStaleEpoch(requestEpoch)) {
         return {
           page,
-          segment: this.#dataRuntime.getSegment(),
+          segment: this.#loadedSegmentStore.getSegment(),
           applied: false,
         }
       }
       if (this.isStaleResetRequest(event, requestGeneration, requestSegmentRevision)) {
         return {
           page,
-          segment: this.#dataRuntime.getSegment(),
+          segment: this.#loadedSegmentStore.getSegment(),
           applied: false,
         }
       }
       const local = this.liveSemantics.withPendingLocal(page)
       const applied = event
-        ? this.#dataRuntime.resetLatestFromRequest({
+        ? this.#loadedSegmentStore.resetLatestFromRequest({
             ...local.resetInput,
             requestToken: event.requestToken,
           })
         : {
             applied: true,
-            segment: this.#dataRuntime.resetLatest(
+            segment: this.#loadedSegmentStore.resetLatest(
               local.resetInput,
             ),
           }
@@ -353,7 +346,7 @@ export class MessageListSession<Row, Feed>
   ): Promise<void> {
     const overlayRequestId = options.overlayRequestId ?? this.overlay.startRequest()
     const requestEpoch = options.requestEpoch ?? this.overlay.getRequestEpoch()
-    const requestSegment = this.#dataRuntime.getSegment()
+    const requestSegment = this.#loadedSegmentStore.getSegment()
     const requestGeneration = requestSegment.generation
     const requestSegmentRevision = requestSegment.segmentRevision
     if (event) {
@@ -371,19 +364,19 @@ export class MessageListSession<Row, Feed>
         this.overlay.isStaleEpoch(requestEpoch)) {
         return {
           page,
-          segment: this.#dataRuntime.getSegment(),
+          segment: this.#loadedSegmentStore.getSegment(),
           applied: false,
         }
       }
       if (this.isStaleResetRequest(event, requestGeneration, requestSegmentRevision)) {
         return {
           page,
-          segment: this.#dataRuntime.getSegment(),
+          segment: this.#loadedSegmentStore.getSegment(),
           applied: false,
         }
       }
       const applied = event
-        ? this.#dataRuntime.resetAroundFromRequest({
+        ? this.#loadedSegmentStore.resetAroundFromRequest({
             ...toSessionResetInput(this.id, page, this.options.adapter),
             target,
             requestToken: event.requestToken,
@@ -392,7 +385,7 @@ export class MessageListSession<Row, Feed>
           })
         : {
             applied: true,
-            segment: this.#dataRuntime.resetAround({
+            segment: this.#loadedSegmentStore.resetAround({
               ...toSessionResetInput(this.id, page, this.options.adapter),
               target,
               align: options.align,
@@ -406,7 +399,7 @@ export class MessageListSession<Row, Feed>
 
   private async loadEdge(event: RuntimeNeedEvent): Promise<void> {
     const edge = event.type === 'needMoreBefore' ? 'before' : 'after'
-    const segment = this.#dataRuntime.getSegment()
+    const segment = this.#loadedSegmentStore.getSegment()
     const boundaryItem = edge === 'before' ? segment.items[0] : segment.items.at(-1)
     const boundaryRow = boundaryItem?.message
 
@@ -438,11 +431,11 @@ export class MessageListSession<Row, Feed>
       if (this.isStaleEvent(event)) {
         return {
           page,
-          segment: this.#dataRuntime.getSegment(),
+          segment: this.#loadedSegmentStore.getSegment(),
           applied: false,
         }
       }
-      const currentSegment = this.#dataRuntime.getSegment()
+      const currentSegment = this.#loadedSegmentStore.getSegment()
       const input = {
         ...toSessionResetInput(this.id, page, this.options.adapter),
         hasMoreBefore: edge === 'before'
@@ -456,8 +449,8 @@ export class MessageListSession<Row, Feed>
         anchorStatus: currentSegment.anchorStatus,
       }
       const applied = edge === 'before'
-        ? this.#dataRuntime.extendBefore(input)
-        : this.#dataRuntime.extendAfter(input)
+        ? this.#loadedSegmentStore.extendBefore(input)
+        : this.#loadedSegmentStore.extendAfter(input)
       return { page, segment: applied.segment, applied: applied.applied }
     })
   }
@@ -500,8 +493,13 @@ export class MessageListSession<Row, Feed>
     this.applySegmentToRuntime(current)
 
     for (let guard = 0; guard < 4; guard += 1) {
-      const trimmed = this.#dataRuntime.trimToBudget(
-        resolveTrimProtectKey(this.#runtime, this.#dataRuntime),
+      const trimmed = this.#loadedSegmentStore.trimToBudget(
+        resolveAdaptiveTrimBudget({
+          pageSize: this.options.defaults.pageSize,
+          retention: this.options.defaults.retention,
+          rowsPerViewportEstimate: this.rowsPerViewportEstimate,
+        }),
+        resolveTrimProtectKey(this.#runtime, this.#loadedSegmentStore),
       )
 
       if (trimmed === current) {
@@ -527,9 +525,9 @@ export class MessageListSession<Row, Feed>
 
   private adoptRequestToken(
     event: RuntimeNeedEvent,
-    kind: DataRuntimeRequestKind,
+    kind: LoadedSegmentRequestKind,
   ): void {
-    this.#dataRuntime.adoptRequestToken({
+    this.#loadedSegmentStore.adoptRequestToken({
       requestToken: event.requestToken,
       generation: event.generation,
       segmentRevision: event.segmentRevision,
@@ -542,7 +540,7 @@ export class MessageListSession<Row, Feed>
       return false
     }
 
-    const segment = this.#dataRuntime.getSegment()
+    const segment = this.#loadedSegmentStore.getSegment()
 
     return segment.generation !== event.generation ||
       segment.segmentRevision !== event.segmentRevision
@@ -554,7 +552,7 @@ export class MessageListSession<Row, Feed>
     requestSegmentRevision: number,
   ): boolean {
     return event
-      ? this.#dataRuntime.getSegment().generation !== event.generation
+      ? this.#loadedSegmentStore.getSegment().generation !== event.generation
       : this.isStaleSegment(requestGeneration, requestSegmentRevision)
   }
 
@@ -562,7 +560,7 @@ export class MessageListSession<Row, Feed>
     generation: number,
     segmentRevision: number,
   ): boolean {
-    const segment = this.#dataRuntime.getSegment()
+    const segment = this.#loadedSegmentStore.getSegment()
 
     return segment.generation !== generation ||
       segment.segmentRevision !== segmentRevision
@@ -574,7 +572,6 @@ export class MessageListSession<Row, Feed>
     const next = {
       id: this.id,
       sessionId: this.id,
-      feedId: this.id,
       feed: this.options.feed,
       ...result,
     }

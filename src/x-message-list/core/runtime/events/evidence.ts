@@ -11,7 +11,7 @@ export function createViewportEvidence<TMessage, TOptimistic>(
   pendingToken: ProjectionCommitToken | null,
 ): ViewportEvidence {
   return {
-    feedId: snapshot.feedId,
+    sessionId: snapshot.sessionId,
     generation: snapshot.generation,
     segmentRevision: snapshot.segmentRevision,
     projectionRevision: snapshot.projectionRevision,

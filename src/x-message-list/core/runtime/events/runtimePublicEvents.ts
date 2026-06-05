@@ -42,7 +42,7 @@ export function createViewportObservationEvent<TMessage, TOptimistic>(input: {
 
   return {
     type: 'viewportObservationChanged',
-    feedId: input.snapshot.feedId,
+    sessionId: input.snapshot.sessionId,
     generation: input.snapshot.generation,
     segmentRevision: input.snapshot.segmentRevision,
     reason: input.reason,
@@ -75,7 +75,7 @@ export function createDestinationSettledEvent<TMessage, TOptimistic>(input: {
 
   return {
     type: 'destinationSettled',
-    feedId: input.snapshot.feedId,
+    sessionId: input.snapshot.sessionId,
     generation: input.snapshot.generation,
     segmentRevision: input.snapshot.segmentRevision,
     intent: input.destination.reason,
@@ -107,7 +107,7 @@ export function createSegmentTrimPressureEvent<TMessage, TOptimistic>(input: {
 
   return {
     type: 'segmentTrimPressure',
-    feedId: input.snapshot.feedId,
+    sessionId: input.snapshot.sessionId,
     generation: input.snapshot.generation,
     segmentRevision: input.snapshot.segmentRevision,
     itemCount: input.segment.items.length,
@@ -218,7 +218,7 @@ function isSameAnchorIdentity(
   left: MessageIdentityAnchor,
   right: MessageIdentityAnchor,
 ): boolean {
-  return left.feedId === right.feedId &&
+  return left.sessionId === right.sessionId &&
     (
       Boolean(left.serverId && left.serverId === right.serverId) ||
       left.stableId === right.stableId ||

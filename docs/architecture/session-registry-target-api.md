@@ -6,7 +6,7 @@
 ## 背景与结论
 
 当前实现中，真正的消息列表实例是 `MessageListSession`。每个 session 独立持有
-viewport runtime、data runtime、loaded segment、edge state、overlay、
+viewport runtime、loaded segment store、loaded segment、edge state、overlay、
 `anchorMemory`、`readReceipts` 和 tail event 语义。Registry 的核心职责是按 id
 创建、缓存、复用和销毁 session，并把 host 提供的 adapter、默认配置和 keepAlive
 策略注入 session。
@@ -35,7 +35,7 @@ MessageListSession
 React Adapter
   projects an existing session into <MessageList />
 
-Viewport Runtime + Data Runtime
+Viewport Runtime + Loaded Segment Store
   remain package-internal engines owned by each session
 ```
 
@@ -46,19 +46,18 @@ request route、anchor memory 和 read receipt 行为，而不是来自 React �
 
 ## Session Identity
 
-目标 public 术语统一使用 `sessionId`。在 TypeX Electron 业务里，`feed_id` 可以
-保证全局唯一，因此 `feed_id` 可以直接作为 `sessionId`：
+目标 public 术语统一使用 `sessionId`。在 TypeX Electron 业务里，host 的
+`feed_id` 可以保证全局唯一，因此 host 可以直接把 `feed_id` 映射为
+`sessionId`：
 
 ```ts
-const session = registry.getSession(feedId)
+const session = registry.getSession(sessionId)
 ```
 
-当前 runtime、segment、anchor 和 viewport events 仍使用 `feedId` 表达消息流身份。
-因此 public request/session context 同时暴露 `id`、`sessionId` 和 `feedId`：
-`id` 与 `sessionId` 是同一个 registry key，`feedId` 是 runtime/message identity
-字段。默认情况下 `sessionId === feedId`。如果未来同一个 feed 需要多个独立 view
-scope，必须把 `sessionId` 扩展为包含 view scope，同时继续把真实 feed 身份保留在
-`feedId`，不能把 scoped session id 写入 message identity anchor。
+runtime、segment、anchor、viewport events、request context 和 session state
+都使用 `sessionId` 表达列表身份。`id` 与 `sessionId` 是同一个 registry key；
+host 的 feed identifier 只存在于 host adapter / `getFeed(sessionId)` 返回值中，
+不进入 XMessageList identity anchor。
 
 这个约定覆盖以下场景：
 
@@ -67,10 +66,10 @@ scope，必须把 `sessionId` 扩展为包含 view scope，同时继续把真实
 - 同时展示 chat 与侧边栏 AI 消息列表：AI 列表也有自己的 `feed_id`。
 - 收藏夹或其他固定列表：使用固定且全局唯一的 `feed_id` 或固定 session id。
 
-如果未来出现同一个 `feed_id` 需要同时承载两个独立滚动状态或不同 loaded segment
-语义的场景，必须扩展 session identity，例如加入 view scope 或 list kind。只要
-`feed_id` 继续保持全局唯一且一条 feed 只对应一个 session 状态，就不需要额外
-namespace。
+如果未来出现同一个 host feed 需要同时承载两个独立滚动状态或不同 loaded segment
+语义的场景，必须扩展 `sessionId`，例如加入 view scope 或 list kind。只要
+host feed identifier 继续保持全局唯一且一条 host feed 只对应一个 session 状态，
+就可以直接把它映射为 `sessionId`。
 
 ## Registry Ownership And Lifecycle
 
@@ -88,7 +87,7 @@ React，应在 app bootstrap、root store、dependency container 或稳定 memo 
   业务活跃状态的 session，例如分屏预加载、悬浮窗口或即将切回的 feed。
 - `registry.sweep()` 执行 TTL 清理；`getSession()` 和配置更新后可以自动触发一次
   sweep。
-- `destroySession(sessionId)` 是显式销毁：取消 timers、释放 runtime/data runtime、
+- `destroySession(sessionId)` 是显式销毁：取消 timers、释放 runtime 和 Loaded Segment Store、
   清空 read receipt worker 和 overlay 状态，并从 registry 删除。
 - `maxSessions` 是缓存容量，不是活跃 session 数。它只约束 unmounted 且未被 host
   retain 的 cached sessions。
@@ -99,11 +98,11 @@ React，应在 app bootstrap、root store、dependency container 或稳定 memo 
 
 ```ts
 type MessageListSessionRetainReason =
-  | 'active-feed'
+  | 'active-session'
   | 'split-view'
   | 'prefetch'
 
-type MessageListSessionRegistry<Row, Feed = MessageListFeedId> = {
+type MessageListSessionRegistry<Row, Feed = MessageListSessionId> = {
   getSession(sessionId: MessageListSessionId): MessageListSession<Row>
   hasSession(sessionId: MessageListSessionId): boolean
   destroySession(sessionId: MessageListSessionId): boolean
@@ -137,13 +136,14 @@ registry 需要支持配置更新，但不是所有配置都应该原地影响�
 
 不建议原地更新已有 session 的配置：
 
-- `maxItems`：这是 data runtime item budget。改动后应销毁并重建 session，或由未来
-  明确的 `resizeItemBudget` API 处理。
+- `retention`：这是 Message List Retention tier，会影响 session 内部
+  Loaded Segment Store 的 trim strategy。改动后应销毁并重建 session，或由未来
+  明确的 retention resize API 处理。
 - `getFeed` / `getAdapter` 对已有 session 的结果：feed context、row adapter、
   request route、anchor memory 和 read receipts 是 session identity 的一部分。
   如果这些语义变化，应 `destroySession(sessionId)` 后重新 `getSession(sessionId)`。
 
-`updateOptions` 只接受动态配置 patch，不接受 `maxItems`、`getFeed` 或 `getAdapter`。
+`updateOptions` 只接受动态配置 patch，不接受 `retention`、`getFeed` 或 `getAdapter`。
 需要改变静态语义时，host 必须显式销毁相关 session，避免一个 session 在生命周期中
 悄悄换 feed、adapter、anchor memory 或 read receipts。
 
@@ -164,8 +164,8 @@ export type {
   MessageListAdapter,
   MessageListAnchor,
   MessageListAnchorMemoryValue,
-  MessageListFeedId,
   MessageListSessionId,
+  MessageListSegmentRetention,
   MessageListIdentityRemap,
   MessageListLocalTailStageInput,
   MessageListRemoteTailAppendContext,
@@ -207,7 +207,7 @@ export type {
 ```
 
 对业务接入者可见的 id 不暗示它一定是 conversation。Public API 只保留
-`MessageListSessionId` / `MessageListFeedId`、`MessageListSessionRegistry`、
+`MessageListSessionId`、`MessageListSessionRegistry`、
 `MessageListSessionRegistryProvider` 和 `tail.local` / `tail.remote` 口径。
 
 ## Registry API
@@ -218,7 +218,7 @@ export type {
 const registry = createMessageListSessionRegistry<Message, Feed>({
   defaults: {
     pageSize: 32,
-    maxItems: 300,
+    retention: 'balanced',
     keepAlive: {
       maxSessions: 20,
       ttlMs: 10 * 60_000,
@@ -298,8 +298,8 @@ correction、edge request、overlay、anchor memory 和 read receipt worker 互�
 React 目标模型保持显式 session 渲染：
 
 ```tsx
-function ConversationPane({ feedId }: { feedId: string }) {
-  const session = useMessageListSession<Message>(feedId)
+function ConversationPane({ sessionId }: { sessionId: string }) {
+  const session = useMessageListSession<Message>(sessionId)
 
   return (
     <MessageList
@@ -314,7 +314,7 @@ Provider 只提供 registry：
 
 ```tsx
 <MessageListSessionRegistryProvider registry={registry}>
-  <ConversationPane feedId={activeFeedId} />
+  <ConversationPane sessionId={activeFeedId} />
 </MessageListSessionRegistryProvider>
 ```
 
@@ -355,7 +355,7 @@ Electron 应用可以同时展示多个 message list。只要每个列表使用�
 或全局唯一 `feed_id`，现有 session 边界天然支持隔离：
 
 - 每个 session 有独立 viewport runtime 和 scroll container ownership。
-- 每个 session 有独立 data runtime、request token、segment revision 和 trim。
+- 每个 session 有独立 loaded segment store、request token、segment revision 和 trim。
 - 每个 session 有独立 overlay loading/error 状态。
 - 每个 session 有独立 `anchorMemory` load/save 上下文。
 - 每个 session 有独立 read receipt batching worker。
@@ -367,8 +367,8 @@ session id。
 
 ## 命名状态
 
-当前 public docs、demo 和测试样板使用 `registry` / `sessionId` / `feedId` 口径。
-Runtime/data runtime 仍然不进入 package root public surface；React adapter 仍通过
+当前 public docs、demo 和测试样板使用 `registry` / `sessionId` 口径。
+Runtime 和 Loaded Segment Store 仍然不进入 package root public surface；React adapter 仍通过
 package-internal session internals 访问 runtime/view store。
 
 ## 非目标
@@ -376,6 +376,6 @@ package-internal session internals 访问 runtime/view store。
 - 不把 XMessageList 改成通用虚拟列表。
 - 不把 `MessageListSessionRegistry` 变成业务 feed store。
 - 不让 React 直接拥有 request、merge、anchor persistence 或 read receipts。
-- 不暴露 runtime snapshot、runtime event、loaded segment 或 data runtime 类型给业务。
+- 不暴露 runtime snapshot、runtime event、loaded segment 或 loaded segment store 类型给业务。
 - 不为了重命名改变 loaded segment native scroll、anchor correction 或 edge latch
   语义。

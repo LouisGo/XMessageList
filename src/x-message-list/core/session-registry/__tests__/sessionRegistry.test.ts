@@ -43,12 +43,11 @@ describe('createMessageListSessionRegistry', () => {
       getAdapter: () => createAdapter('normal'),
     })
 
-    const release = registry.retainSession('feed-a', 'active-feed')
+    const release = registry.retainSession('feed-a', 'active-session')
     const activeMeta = registry.getSessionMeta('feed-a')
 
     expect(activeMeta).toMatchObject({
       sessionId: 'feed-a',
-      feedId: 'feed-a',
       mountedRetainCount: 0,
       hostRetainCount: 1,
       status: 'active',
@@ -76,7 +75,7 @@ describe('createMessageListSessionRegistry', () => {
       getAdapter: () => createAdapter('normal'),
     })
 
-    const release = registry.retainSession('feed-a', 'active-feed')
+    const release = registry.retainSession('feed-a', 'active-session')
     registry.getSession('feed-b')
     registry.getSession('feed-c')
 
@@ -124,7 +123,7 @@ describe('createMessageListSessionRegistry', () => {
       .toBe('favorite-latest')
   })
 
-  it('passes sessionId, feedId, and feed through request context', async () => {
+  it('passes sessionId, sessionId, and feed through request context', async () => {
     const loadLatest = vi.fn((context) => Promise.resolve(page([context.feed.id])))
     const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
       getFeed: (id) => ({ id, type: 'favorite' }),
@@ -138,7 +137,6 @@ describe('createMessageListSessionRegistry', () => {
     expect(loadLatest).toHaveBeenCalledWith(expect.objectContaining({
       id: 'feed-a',
       sessionId: 'feed-a',
-      feedId: 'feed-a',
       feed: { id: 'feed-a', type: 'favorite' },
       pageSize: 32,
     }))
@@ -187,7 +185,7 @@ describe('createMessageListSessionRegistry', () => {
     const session = manager.getSession('feed-a')
 
     expect(Object.keys(session)).not.toContain('runtime')
-    expect(Object.keys(session)).not.toContain('dataRuntime')
+    expect(Object.keys(session)).not.toContain('loadedSegmentStore')
   })
 
   it('restores around an anchorMemory anchor before falling back to latest', async () => {
@@ -220,12 +218,12 @@ describe('createMessageListSessionRegistry', () => {
     expect(loadAround).toHaveBeenCalledWith(expect.objectContaining({
       id: 'feed-a',
       target: expect.objectContaining({
-        feedId: 'feed-a',
+        sessionId: 'feed-a',
         stableId: 'restored',
       }),
     }))
     expect(internals.getSnapshot().items[0].message?.id).toBe('restored')
-    expect(internals.dataRuntime.getSegment().modifier).toEqual(
+    expect(internals.loadedSegmentStore.getSegment().modifier).toEqual(
       expect.objectContaining({
         type: 'reset-around',
         align: 'start',
@@ -591,11 +589,11 @@ describe('createMessageListSessionRegistry', () => {
       anchor: { id: 'middle' },
     })
 
-    const segment = internals.dataRuntime.getSegment()
+    const segment = internals.loadedSegmentStore.getSegment()
     const beforeRequest = bridge.loadEdge({
       type: 'needMoreBefore',
       edge: 'before',
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       generation: segment.generation,
       segmentRevision: segment.segmentRevision,
       requestToken: 'feed-a:before:test',
@@ -604,7 +602,7 @@ describe('createMessageListSessionRegistry', () => {
     const afterRequest = bridge.loadEdge({
       type: 'needMoreAfter',
       edge: 'after',
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       generation: segment.generation,
       segmentRevision: segment.segmentRevision,
       requestToken: 'feed-a:after:test',
@@ -620,7 +618,7 @@ describe('createMessageListSessionRegistry', () => {
     }))
     await beforeRequest
 
-    expect(internals.dataRuntime.getSegment().hasMoreBefore).toBe(false)
+    expect(internals.loadedSegmentStore.getSegment().hasMoreBefore).toBe(false)
 
     pendingAfter[0](page(['after'], {
       hasMoreBefore: true,
@@ -629,10 +627,10 @@ describe('createMessageListSessionRegistry', () => {
     }))
     await afterRequest
 
-    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
       .toEqual(['before', 'middle'])
-    expect(internals.dataRuntime.getSegment().hasMoreBefore).toBe(false)
-    expect(internals.dataRuntime.getSegment().hasMoreAfter).toBe(true)
+    expect(internals.loadedSegmentStore.getSegment().hasMoreBefore).toBe(false)
+    expect(internals.loadedSegmentStore.getSegment().hasMoreAfter).toBe(true)
   })
 
   it('rejects same-generation edge responses after local patches advance segment revision', async () => {
@@ -665,11 +663,11 @@ describe('createMessageListSessionRegistry', () => {
       anchor: { id: 'middle' },
     })
 
-    const segment = internals.dataRuntime.getSegment()
+    const segment = internals.loadedSegmentStore.getSegment()
     const request = bridge.loadEdge({
       type: 'needMoreBefore',
       edge: 'before',
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       generation: segment.generation,
       segmentRevision: segment.segmentRevision,
       requestToken: 'feed-a:before:test-stale-revision',
@@ -686,9 +684,9 @@ describe('createMessageListSessionRegistry', () => {
     }))
     await request
 
-    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
       .toEqual(['middle'])
-    expect(internals.dataRuntime.getSegment().items[0]?.message?.text)
+    expect(internals.loadedSegmentStore.getSegment().items[0]?.message?.text)
       .toBe('after patch')
     expect(requestResults).toContain('before:stale')
   })
@@ -703,7 +701,7 @@ describe('createMessageListSessionRegistry', () => {
     const session = manager.getSession('feed-a')
     const internals = getMessageListSessionInternals(session)
 
-    await waitFor(() => internals.dataRuntime.getSegment().items[0]?.message?.id === 'tail')
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'tail')
 
     const scrollToLatest = vi.spyOn(internals.runtime, 'scrollToLatest')
     session.tail.local.stage({ id: 'local', text: 'sending' })
@@ -714,7 +712,7 @@ describe('createMessageListSessionRegistry', () => {
     })
 
     expect(scrollToLatest).toHaveBeenCalledTimes(2)
-    expect(internals.dataRuntime.getSegment().items.map((item) => item.message))
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message))
       .toEqual([
         { id: 'tail' },
         { id: 'local', text: 'retrying' },
@@ -736,7 +734,7 @@ describe('createMessageListSessionRegistry', () => {
 
     await waitFor(() => pendingLatest.length === 1)
     pendingLatest[0](page(['tail']))
-    await waitFor(() => internals.dataRuntime.getSegment().items[0]?.message?.id === 'tail')
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'tail')
 
     session.rows.resetAround({
       target: { id: 'middle' },
@@ -749,20 +747,20 @@ describe('createMessageListSessionRegistry', () => {
     session.tail.local.stage({ id: 'local', text: 'sending' })
 
     expect(scrollToLatest).toHaveBeenCalledTimes(1)
-    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
       .toEqual(['middle'])
 
     await waitFor(() => pendingLatest.length === 2)
     pendingLatest[1](page(['tail-2']))
     await waitFor(() =>
-      internals.dataRuntime.getSegment().items.some((item) =>
+      internals.loadedSegmentStore.getSegment().items.some((item) =>
         item.message?.id === 'local'
       ),
     )
 
-    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
       .toEqual(['tail-2', 'local'])
-    expect(internals.dataRuntime.getSegment().hasMoreAfter).toBe(false)
+    expect(internals.loadedSegmentStore.getSegment().hasMoreAfter).toBe(false)
   })
 
   it('uses local tail latest input to rebuild latest without requesting latest again', async () => {
@@ -777,7 +775,7 @@ describe('createMessageListSessionRegistry', () => {
     const internals = getMessageListSessionInternals(session)
     const runtimeEvents: MessageListRuntimeEvent[] = []
 
-    await waitFor(() => internals.dataRuntime.getSegment().items.length > 0)
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
     session.rows.resetAround({
       target: { id: 'middle' },
       rows: [{ id: 'middle' }],
@@ -799,9 +797,9 @@ describe('createMessageListSessionRegistry', () => {
     })
     unsubscribe()
 
-    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
       .toEqual(['tail', 'local'])
-    expect(internals.dataRuntime.getSegment().modifier.type).toBe('reset-latest')
+    expect(internals.loadedSegmentStore.getSegment().modifier.type).toBe('reset-latest')
     expect(loadLatest).toHaveBeenCalledTimes(1)
     expect(runtimeEvents.map((event) => event.type))
       .not.toContain('needLatestMessages')
@@ -823,7 +821,7 @@ describe('createMessageListSessionRegistry', () => {
 
     await waitFor(() => pendingLatest.length === 1)
     pendingLatest[0](page(['tail']))
-    await waitFor(() => internals.dataRuntime.getSegment().items[0]?.message?.id === 'tail')
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'tail')
 
     session.rows.resetAround({
       target: { id: 'middle' },
@@ -841,16 +839,16 @@ describe('createMessageListSessionRegistry', () => {
     pendingLatest[2](page(['fresh']))
 
     await waitFor(() =>
-      internals.dataRuntime.getSegment().items[0]?.message?.id === 'fresh'
+      internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'fresh'
     )
 
-    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
       .toEqual(['fresh'])
 
     pendingLatest[1](page(['stale-tail']))
     await wait()
 
-    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
       .toEqual(['fresh'])
   })
 
@@ -862,7 +860,7 @@ describe('createMessageListSessionRegistry', () => {
     const session = manager.getSession('feed-a')
     const internals = getMessageListSessionInternals(session)
 
-    await waitFor(() => internals.dataRuntime.getSegment().items.length > 0)
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
     session.rows.resetAround({
       target: { id: 'failed-local' },
       rows: [{ id: 'failed-local', text: 'failed' }],
@@ -882,7 +880,7 @@ describe('createMessageListSessionRegistry', () => {
       retireKeys: ['failed-local'],
     })
 
-    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
       .toEqual(['tail', 'retry-server'])
   })
 
@@ -894,7 +892,7 @@ describe('createMessageListSessionRegistry', () => {
     const session = manager.getSession('feed-a')
     const internals = getMessageListSessionInternals(session)
 
-    await waitFor(() => internals.dataRuntime.getSegment().items.length > 0)
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
 
     session.tail.local.stage({ id: 'local' })
     session.tail.local.applyIdentityRemap([{
@@ -904,10 +902,10 @@ describe('createMessageListSessionRegistry', () => {
       nextKey: 'server',
     }])
 
-    expect(internals.dataRuntime.getSegment().modifier).toEqual(
+    expect(internals.loadedSegmentStore.getSegment().modifier).toEqual(
       expect.objectContaining({ type: 'identity-remap' }),
     )
-    expect(internals.dataRuntime.getSegment().items.at(-1)).toMatchObject({
+    expect(internals.loadedSegmentStore.getSegment().items.at(-1)).toMatchObject({
       key: 'server',
       identity: expect.objectContaining({
         stableId: 'server',
@@ -927,7 +925,7 @@ describe('createMessageListSessionRegistry', () => {
     const internals = getMessageListSessionInternals(session)
 
     await waitFor(() =>
-      internals.dataRuntime.getSegment().items.at(-1)?.message?.id === 'failed-local'
+      internals.loadedSegmentStore.getSegment().items.at(-1)?.message?.id === 'failed-local'
     )
 
     session.tail.local.stage({
@@ -936,9 +934,9 @@ describe('createMessageListSessionRegistry', () => {
       retireKeys: ['failed-local'],
     })
 
-    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
       .toEqual(['tail', 'retry-server'])
-    expect(internals.dataRuntime.getSegment().modifier).toEqual({
+    expect(internals.loadedSegmentStore.getSegment().modifier).toEqual({
       type: 'append',
       changedKeys: ['failed-local', 'retry-server'],
       follow: 'follow',
@@ -961,7 +959,7 @@ describe('createMessageListSessionRegistry', () => {
     const session = manager.getSession('feed-a')
     const internals = getMessageListSessionInternals(session)
 
-    await waitFor(() => internals.dataRuntime.getSegment().items[0]?.message?.id === 'tail')
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'tail')
 
     session.tail.remote.append({
       rows: [{ id: 'remote' }],
@@ -976,9 +974,9 @@ describe('createMessageListSessionRegistry', () => {
       hasMoreAfter: false,
       distanceToBottom: expect.any(Number),
     }))
-    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
       .toEqual(['tail', 'remote'])
-    expect(internals.dataRuntime.getSegment().modifier).toEqual({
+    expect(internals.loadedSegmentStore.getSegment().modifier).toEqual({
       type: 'append',
       changedKeys: ['remote'],
       follow: 'preserve',
@@ -1001,7 +999,7 @@ describe('createMessageListSessionRegistry', () => {
     const session = registry.getSession('feed-a')
     const internals = getMessageListSessionInternals(session)
 
-    await waitFor(() => internals.dataRuntime.getSegment().items[0]?.message?.id === 'tail')
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'tail')
 
     registry.updateOptions({
       tailEvents: {
@@ -1017,13 +1015,12 @@ describe('createMessageListSessionRegistry', () => {
     expect(shouldFollowRemoteAppend).toHaveBeenCalledWith(expect.objectContaining({
       id: 'feed-a',
       sessionId: 'feed-a',
-      feedId: 'feed-a',
       rows: [{ id: 'remote' }],
       reason: 'push',
       pageFocused: false,
     }))
     expect(getPageFocus).toHaveBeenCalled()
-    expect(internals.dataRuntime.getSegment().modifier).toEqual({
+    expect(internals.loadedSegmentStore.getSegment().modifier).toEqual({
       type: 'append',
       changedKeys: ['remote'],
       follow: 'preserve',
@@ -1040,12 +1037,12 @@ describe('createMessageListSessionRegistry', () => {
     const session = registry.getSession('feed-a')
     const internals = getMessageListSessionInternals(session)
 
-    await waitFor(() => internals.dataRuntime.getSegment().items[0]?.message?.id === 'tail')
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'tail')
 
     session.tail.local.stage({ id: 'local', text: 'sending' })
     session.tail.local.patch([{ id: 'local', text: 'sent' }])
 
-    expect(internals.dataRuntime.getSegment().items.map((item) => item.message))
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message))
       .toEqual([
         { id: 'tail' },
         { id: 'local', text: 'sent' },
@@ -1060,7 +1057,7 @@ describe('createMessageListSessionRegistry', () => {
     const session = manager.getSession('feed-a')
     const internals = getMessageListSessionInternals(session)
 
-    await waitFor(() => internals.dataRuntime.getSegment().items.length > 0)
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
     session.rows.resetAround({
       target: { id: 'middle' },
       rows: [{ id: 'middle' }],
@@ -1071,9 +1068,9 @@ describe('createMessageListSessionRegistry', () => {
 
     session.tail.remote.append({ id: 'remote' })
 
-    expect(internals.dataRuntime.getSegment().items.map((item) => item.message?.id))
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
       .toEqual(['middle'])
-    expect(internals.dataRuntime.getSegment().modifier.type).toBe('reset-around')
+    expect(internals.loadedSegmentStore.getSegment().modifier.type).toBe('reset-around')
   })
 
   it('rejects stale bootstrap/reload responses without overwriting newer rows', async () => {
@@ -1324,7 +1321,7 @@ function attachSessionRows(
 function observation(keys: string[]): ViewportObservationChangedEvent {
   return {
     type: 'viewportObservationChanged',
-    feedId: 'feed-a',
+    sessionId: 'feed-a',
     generation: 1,
     segmentRevision: 1,
     reason: 'scroll-idle',

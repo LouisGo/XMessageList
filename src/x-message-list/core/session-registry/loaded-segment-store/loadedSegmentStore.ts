@@ -2,12 +2,12 @@ import type {
   MessageDataItem,
   MessageIdentityAnchor,
   MessageRuntimeItemKey,
-} from '../contracts/identity'
+} from '../../runtime/contracts/identity'
 import type {
   LoadedSegment,
   ResetAroundAlign,
   SegmentModifier,
-} from '../contracts/segment'
+} from '../../runtime/contracts/segment'
 import {
   applyIdentityRemaps,
   appendSegmentItems,
@@ -19,22 +19,21 @@ import {
   trimAroundKey,
 } from './segmentOperations'
 import {
-  DataRuntimeRequestTokenRegistry,
-  type DataRuntimeRequestKind,
-  type DataRuntimeRequestToken,
+  LoadedSegmentRequestTokenRegistry,
+  type LoadedSegmentRequestKind,
+  type LoadedSegmentRequestToken,
 } from './requestTokenRegistry'
 
 export type {
-  DataRuntimeRequestKind,
-  DataRuntimeRequestToken,
+  LoadedSegmentRequestKind,
+  LoadedSegmentRequestToken,
 } from './requestTokenRegistry'
 
-export type MessageListDataRuntimeOptions = {
-  feedId: string
-  itemBudget?: number
+export type LoadedSegmentStoreOptions = {
+  sessionId: string
 }
 
-export type DataRuntimeApplyResult<TMessage, TOptimistic> = {
+export type LoadedSegmentStoreApplyResult<TMessage, TOptimistic> = {
   applied: boolean
   segment: LoadedSegment<TMessage, TOptimistic>
   reason?: 'stale-request'
@@ -74,21 +73,21 @@ export type IdentityRemapInput = Extract<
 >['remaps']
 
 /**
- * Data runtime 只负责把请求结果和本地变更规整成不可变 LoadedSegment；滚动、测量和 intent 仲裁都留给 viewport runtime。
+ * Loaded Segment Store 只负责把请求结果和本地变更规整成不可变 LoadedSegment；滚动、测量和 intent 仲裁都留给 viewport runtime。
  */
-export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
+export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
   private generation = 0
 
   private segmentRevision = 0
 
-  private readonly requestTokens: DataRuntimeRequestTokenRegistry
+  private readonly requestTokens: LoadedSegmentRequestTokenRegistry
 
   private segment: LoadedSegment<TMessage, TOptimistic>
 
-  constructor(private readonly options: MessageListDataRuntimeOptions) {
-    this.requestTokens = new DataRuntimeRequestTokenRegistry(this.options.feedId)
+  constructor(private readonly options: LoadedSegmentStoreOptions) {
+    this.requestTokens = new LoadedSegmentRequestTokenRegistry(this.options.sessionId)
     this.segment = {
-      feedId: this.options.feedId,
+      sessionId: this.options.sessionId,
       generation: this.generation,
       segmentRevision: this.segmentRevision,
       items: [],
@@ -102,12 +101,12 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
     return this.segment
   }
 
-  createRequestToken(kind: DataRuntimeRequestKind): DataRuntimeRequestToken {
+  createRequestToken(kind: LoadedSegmentRequestKind): LoadedSegmentRequestToken {
     return this.requestTokens.create(kind, this.generation, this.segmentRevision)
   }
 
   adoptRequestToken(
-    request: DataRuntimeRequestToken,
+    request: LoadedSegmentRequestToken,
   ): void {
     this.requestTokens.adopt(request, this.generation, this.segmentRevision)
   }
@@ -120,7 +119,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
 
   resetLatestFromRequest(
     input: ResetSegmentInput<TMessage, TOptimistic> & { requestToken: string },
-  ): DataRuntimeApplyResult<TMessage, TOptimistic> {
+  ): LoadedSegmentStoreApplyResult<TMessage, TOptimistic> {
     if (!this.consumeRequest(input.requestToken, 'latest')) {
       return this.staleResult()
     }
@@ -153,7 +152,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
       align?: ResetAroundAlign
       offsetWithinMessage?: number
     },
-  ): DataRuntimeApplyResult<TMessage, TOptimistic> {
+  ): LoadedSegmentStoreApplyResult<TMessage, TOptimistic> {
     if (!this.consumeRequest(input.requestToken, 'around')) {
       return this.staleResult()
     }
@@ -171,7 +170,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
 
   extendBefore(
     input: ExtendSegmentInput<TMessage, TOptimistic>,
-  ): DataRuntimeApplyResult<TMessage, TOptimistic> {
+  ): LoadedSegmentStoreApplyResult<TMessage, TOptimistic> {
     const request = this.consumeRequest(input.requestToken, 'before')
 
     if (!request) {
@@ -187,7 +186,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
 
   extendAfter(
     input: ExtendSegmentInput<TMessage, TOptimistic>,
-  ): DataRuntimeApplyResult<TMessage, TOptimistic> {
+  ): LoadedSegmentStoreApplyResult<TMessage, TOptimistic> {
     const request = this.consumeRequest(input.requestToken, 'after')
 
     if (!request) {
@@ -304,10 +303,11 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
     return this.segment
   }
 
-  trimToBudget(protectKey?: MessageRuntimeItemKey): LoadedSegment<TMessage, TOptimistic> {
-    const budget = this.options.itemBudget
-
-    if (!budget || this.segment.items.length <= budget) {
+  trimToBudget(
+    budget: number,
+    protectKey?: MessageRuntimeItemKey,
+  ): LoadedSegment<TMessage, TOptimistic> {
+    if (budget <= 0 || this.segment.items.length <= budget) {
       return this.segment
     }
 
@@ -343,7 +343,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
       input: ResetSegmentInput<TMessage, TOptimistic>
       modifier: SegmentModifier
     },
-  ): DataRuntimeApplyResult<TMessage, TOptimistic> {
+  ): LoadedSegmentStoreApplyResult<TMessage, TOptimistic> {
     this.segment = this.createSegment(dedupeItems(items), {
       ...options.input,
       modifier: options.modifier,
@@ -353,8 +353,8 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
 
   private consumeRequest(
     requestToken: string,
-    expectedKind: DataRuntimeRequestKind,
-  ): DataRuntimeRequestToken | null {
+    expectedKind: LoadedSegmentRequestKind,
+  ): LoadedSegmentRequestToken | null {
     return this.requestTokens.consume(
       requestToken,
       expectedKind,
@@ -363,7 +363,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
     )
   }
 
-  private staleResult(): DataRuntimeApplyResult<TMessage, TOptimistic> {
+  private staleResult(): LoadedSegmentStoreApplyResult<TMessage, TOptimistic> {
     return {
       applied: false,
       segment: this.segment,
@@ -383,7 +383,7 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
   ): LoadedSegment<TMessage, TOptimistic> {
     this.segmentRevision += 1
     return {
-      feedId: this.options.feedId,
+      sessionId: this.options.sessionId,
       generation: this.generation,
       segmentRevision: this.segmentRevision,
       items,
@@ -396,11 +396,11 @@ export class MessageListDataRuntime<TMessage = unknown, TOptimistic = unknown> {
   }
 }
 
-export function createMessageListDataRuntime<
+export function createLoadedSegmentStore<
   TMessage = unknown,
   TOptimistic = unknown,
 >(
-  options: MessageListDataRuntimeOptions,
-): MessageListDataRuntime<TMessage, TOptimistic> {
-  return new MessageListDataRuntime<TMessage, TOptimistic>(options)
+  options: LoadedSegmentStoreOptions,
+): LoadedSegmentStore<TMessage, TOptimistic> {
+  return new LoadedSegmentStore<TMessage, TOptimistic>(options)
 }

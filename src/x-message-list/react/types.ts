@@ -42,7 +42,7 @@ export type ScrollToLatestSlotInput = {
 
 export type MessageListViewportAnchorChangeEvent = {
   type: 'viewportAnchorChanged'
-  feedId: string
+  sessionId: string
   generation: number
   segmentRevision: number
   reason: 'scroll-idle' | 'transaction-settle' | 'detach'
@@ -52,7 +52,7 @@ export type MessageListViewportAnchorChangeEvent = {
 
 export type MessageListViewportObservationEvent = {
   type: 'viewportObservationChanged'
-  feedId: string
+  sessionId: string
   generation: number
   segmentRevision: number
   reason: 'transaction-settle' | 'scroll-idle' | 'resize' | 'detach'
@@ -111,7 +111,7 @@ export type MessageListRenderItem<
     | 'deleted-placeholder'
     | 'permission-fallback'
   identity?: {
-    feedId: string
+    sessionId: string
     stableId: string
     serverId?: string
     localId?: string

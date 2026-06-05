@@ -80,12 +80,12 @@ export function useDemoOptimisticRemap(input: {
       serverId,
       remap: {
         from: {
-          feedId: activeFeedId,
+          sessionId: activeFeedId,
           stableId: localId,
           localId,
         },
         to: {
-          feedId: activeFeedId,
+          sessionId: activeFeedId,
           stableId: serverId,
           serverId,
         },
@@ -112,7 +112,7 @@ export function useDemoOptimisticRemap(input: {
     }
 
     session.commands.scrollToMessage({
-      feedId: pending.feedId,
+      sessionId: pending.feedId,
       stableId: pending.localId,
       localId: pending.localId,
     }, { align: 'start' })

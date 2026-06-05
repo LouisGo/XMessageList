@@ -10,7 +10,7 @@ MessageList Session Registry
   owns per-feed session lifecycle, adapter routing, request bridge,
   `anchorMemory`, `readReceipts` workers and keepAlive retention
 
-Renderer Data Runtime
+Loaded Segment Store
   owns loaded segment data, merge/reset/trim policy, request dedupe
 
 Viewport Runtime
@@ -25,7 +25,7 @@ App / Demo Host
 ```
 
 对外命名以 `MessageList` 为准：公开组件是 `MessageList`，公开会话对象是
-`MessageListSession`。runtime/data runtime 是内部实现。本文件继续使用
+`MessageListSession`。Loaded Segment Store 和 runtime 是内部实现。本文件继续使用
 `Viewport Runtime` 描述内部所有权，因为 scroll container、visual anchor、
 measurement 和 correction 都是视口运行时职责。
 
@@ -65,17 +65,17 @@ MessageList Session Registry 不负责：
 - 读取 row DOM 或 scrollTop。
 - 在 React component unmount 时销毁会话状态。
 
-## Renderer Data Runtime
+## Loaded Segment Store
 
-Data runtime 负责：
+Loaded Segment Store 负责：
 
-- 维护当前 feed 的 loaded segment。
+- 维护当前 session 的 loaded segment。
 - 合并 before / after 分页结果。
 - 对 jump / restore / follow bottom 返回 segment reset。
 - 发布 immutable loaded segment：items、hasMoreBefore/After、modifier、identity remap、generation、segmentRevision。
 - 基于 item 数、内存和业务策略决定 segment trim，并产出 trim 后的 next segment。
 
-Data runtime 不负责：
+Loaded Segment Store 不负责：
 
 - 在 DOM commit 前后修正滚动位置。
 - 根据 raw scrollTop 判断分页。
@@ -89,7 +89,7 @@ Viewport runtime 负责：
 - 对外 facade 方法命名为 `attachScrollContainer` / `detachScrollContainer`；内部 owner 仍是 viewport runtime。
 - 注册 row、before trigger、after trigger、bottom marker DOM。
 - 捕获 visual anchor。
-- 串行执行 projection transaction：消费 data runtime 发布的 segment modifier，等待 React commit，测量 DOM，执行 scroll correction。
+- 串行执行 projection transaction：消费 loaded segment store 发布的 segment modifier，等待 React commit，测量 DOM，执行 scroll correction。
 - commit 后同步测量并写入 anchor correction。
 - 分类 scroll source，并维护 edge latch。
 - 发布 viewport events、diagnostics 和 observation。
@@ -132,7 +132,7 @@ Host 负责：
   `tail.remote.append({ follow })`
   决定 receive append 是否跟随；典型策略会同时参考滚动距离、页面焦点、未读
   计数和会话免打扰状态。
-- 选择 active session/feed，并把对应 `MessageListSession` 交给 React adapter。
+- 选择 active session，并把对应 `MessageListSession` 交给 React adapter。
 - 通过 `session.commands` 发起 scroll / reload 意图。
 - 通过 `session.tail.local` 接入本 renderer send/retry optimistic row。
 - 通过 `session.tail.remote.append` 接入远端、SDK、main process 或服务端尾部新消息。
@@ -147,7 +147,7 @@ Host 禁止：
 
 - 监听 raw scroll 触发分页。
 - 通过 query DOM 修正滚动位置。
-- 直接操作 runtime/data runtime 作为业务接入 SOP。
+- 直接操作 runtime 或 Loaded Segment Store 作为业务接入 SOP。
 - 在普通 demo 逻辑里 import E2E/internal helper 来决定分页、send/retry 或 loaded
   window 状态。
 - 把 conversation 切换伪装成 runtime jump。
@@ -157,9 +157,9 @@ Host 禁止：
 | 问题 | Owner |
 | --- | --- |
 | 要不要请求更多历史？ | Viewport runtime 发 semantic need，host/data 执行 |
-| 请求多少条？ | Data runtime / host policy |
-| before / after 返回后 items 如何合并？ | Data runtime |
-| local optimistic id 如何变 server id？ | Data runtime 发布 identity-remap |
+| 请求多少条？ | Loaded Segment Store / host policy |
+| before / after 返回后 items 如何合并？ | Loaded Segment Store |
+| local optimistic id 如何变 server id？ | Loaded Segment Store 发布 identity-remap |
 | 触边后如何保持阅读位置？ | Viewport runtime |
 | scrollTop 谁能写？ | Viewport runtime |
 | message DOM 谁渲染？ | React adapter / app |

@@ -17,7 +17,7 @@ describe('MessageList viewport kernel', () => {
   it('waits for commit ack before measuring and correcting anchor', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
     })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -46,7 +46,7 @@ describe('MessageList viewport kernel', () => {
   })
 
   it('drops stale generation segments', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
 
     runtime.applyLoadedSegment(segment([item('row-2')], 2, 1))
     runtime.applyLoadedSegment(segment([item('row-1')], 1, 2))
@@ -58,7 +58,7 @@ describe('MessageList viewport kernel', () => {
   })
 
   it('serializes projection transactions instead of replacing active work', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
 
     runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
@@ -85,7 +85,7 @@ describe('MessageList viewport kernel', () => {
   })
 
   it('defers post-commit underflow evaluation while a queued transaction starts', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 20)
@@ -124,7 +124,7 @@ describe('MessageList viewport kernel', () => {
   })
 
   it('uses generation changes as the transaction cancellation boundary', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
 
     runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
@@ -164,7 +164,7 @@ describe('MessageList viewport kernel', () => {
   })
 
   it('keeps event-triggered segment publishes behind queued transactions', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     let publishedFromSettle = false
 
@@ -203,7 +203,7 @@ describe('MessageList viewport kernel', () => {
   it('records commit timeout without publishing committed measurement', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
       commitTimeoutMs: 5,
     })
@@ -227,7 +227,7 @@ describe('MessageList viewport kernel', () => {
   })
 
   it('keeps the reserved motion slot no-op for committed projections', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const phases: string[] = []
 
@@ -242,7 +242,7 @@ describe('MessageList viewport kernel', () => {
   it('keeps stale timeout callbacks from clearing the current transaction', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
       commitTimeoutMs: 5,
     })
@@ -273,7 +273,7 @@ describe('MessageList viewport kernel', () => {
   })
 
   it('reports evidence from the current loaded DOM segment', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 30)
@@ -300,7 +300,7 @@ describe('MessageList viewport kernel', () => {
     const scheduler = new FakeScheduler()
     const observers = createFakeObservers()
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
       observers,
     })
@@ -325,7 +325,7 @@ describe('MessageList viewport kernel', () => {
   })
 
   it('resolves identity-remap anchors before correcting and publishing settle', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const previousRow = createRow('local-1', 10, 40)
@@ -347,7 +347,7 @@ describe('MessageList viewport kernel', () => {
         renderVersion: 2,
         message: 'server-1',
         identity: {
-          feedId: 'feed-a',
+          sessionId: 'feed-a',
           stableId: 'stable-1',
           serverId: 'server-1',
           version: 2,
@@ -359,12 +359,12 @@ describe('MessageList viewport kernel', () => {
         remaps: [
           {
             from: {
-              feedId: 'feed-a',
+              sessionId: 'feed-a',
               stableId: 'stable-1',
               localId: 'local-1',
             },
             to: {
-              feedId: 'feed-a',
+              sessionId: 'feed-a',
               stableId: 'stable-1',
               serverId: 'server-1',
             },
@@ -398,7 +398,7 @@ describe('MessageList viewport kernel', () => {
   it('waits one frame for a committed anchor ref before correcting', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
     })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -433,7 +433,7 @@ describe('MessageList viewport kernel', () => {
   })
 
   it('falls back to the nearest measurable row when the captured anchor is absent', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const previousRow = createRow('row-1', 10, 40)
@@ -466,7 +466,7 @@ describe('MessageList viewport kernel', () => {
   })
 
   it('emits viewport anchor checkpoints on settle and detach', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 30)
@@ -507,7 +507,7 @@ describe('MessageList viewport kernel', () => {
     const scheduler = new FakeScheduler()
     const observers = createFakeObservers()
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
       observers,
     })
@@ -553,7 +553,7 @@ function item(key: string): MessageDataItem<string> {
     renderVersion: 1,
     message: key,
     identity: {
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       stableId: key,
       serverId: key,
       version: 1,
@@ -568,7 +568,7 @@ function segment(
   overrides: Partial<LoadedSegment<string>> = {},
 ): LoadedSegment<string> {
   return {
-    feedId: 'feed-a',
+    sessionId: 'feed-a',
     generation,
     segmentRevision,
     items,

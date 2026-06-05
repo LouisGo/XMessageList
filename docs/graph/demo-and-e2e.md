@@ -8,11 +8,11 @@ sequenceDiagram
   participant Registry as MessageList Session Registry
   participant Adapter as Demo Adapter
   participant API as Demo Message API
-  participant Data as Data Runtime
+  participant Store as Loaded Segment Store
   participant UI as Demo UI State
 
   Runtime-->>Registry: needLatestMessages / needMessagesAround / needMoreBefore / needMoreAfter
-  Registry->>Data: adopt runtime requestToken by kind
+  Registry->>Store: adopt runtime requestToken by kind
   Registry->>Adapter: request.loadLatest / loadAround / loadBefore / loadAfter
   Adapter->>API: load latest, around, before, or after messages
 
@@ -27,9 +27,9 @@ sequenceDiagram
     end
     Registry-->>UI: publish edge failure through session state
   else response applies
-    Registry->>Data: resetLatest, resetAround, extendBefore, or extendAfter
+    Registry->>Store: resetLatest, resetAround, extendBefore, or extendAfter
     Registry->>Runtime: applyLoadedSegment(committed segment)
-    Registry->>Data: trimToBudget(protected key)
+    Registry->>Store: trimToBudget(protected key)
     opt trim produced a new segment
       Registry->>Runtime: applyLoadedSegment(trim segment)
     end

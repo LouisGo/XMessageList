@@ -1,4 +1,4 @@
-# Data Runtime
+# Loaded Segment Store
 
 ## Request Token Lifecycle
 
@@ -24,7 +24,7 @@ stateDiagram-v2
   SupersededPending --> NoCurrent: reset increments generation and clears pending requests
 ```
 
-Stale consume 只删除被消费的 token；如果 stale 原因是 older replaced token，新的 current token 仍保留。`around` adoption 会清掉 current `latest`；`latest` adoption 会清掉 current `around`。这让 destination 和 follow-latest 在 data-runtime token 层互斥。
+Stale consume 只删除被消费的 token；如果 stale 原因是 older replaced token，新的 current token 仍保留。`around` adoption 会清掉 current `latest`；`latest` adoption 会清掉 current `around`。这让 destination 和 follow-latest 在 Loaded Segment Store token 层互斥。
 
 ## Segment Modifier Creation
 

@@ -7,7 +7,7 @@
 
 - `src/index.ts` 是 package 根出口，只暴露 session registry entry、React adapter、
   public session/adapter contract types。
-- 不再提供 `x-message-list/data` 子路径；runtime/data runtime 是
+- 不再提供 `x-message-list/data` 子路径；Loaded Segment Store 是
   package-internal implementation。
 - 根出口不暴露 runtime snapshot/event/loaded-segment 类型；React 需要的
   viewport callback 类型在 React adapter surface 中重新表达。
@@ -17,9 +17,9 @@
 
 核心实现集中在 `src/x-message-list/core`：
 
-- `session-registry/`：应用级会话编排层，创建并保留每个 session/feed 的
+- `session-registry/`：应用级会话编排层，创建并保留每个 session 的
   `MessageListSession`。
-- `runtime/`：framework-independent viewport runtime 和 internal data runtime。
+- `runtime/`：framework-independent viewport runtime。
 
 ## Session Registry
 
@@ -27,8 +27,10 @@
 
 - `registry/registry.ts`：`createMessageListSessionRegistry`、`getSession(id)`
   和 keepAlive retention。
-- `session/session.ts`：单会话 viewport runtime、data runtime、request bridge、
+- `session/session.ts`：单会话 viewport runtime、loaded segment store、request bridge、
   `anchorMemory` restore/save、`readReceipts` worker 和 public session facade。
+- `loaded-segment-store/`：session-owned loaded segment store，负责 merge、dedupe、
+  identity remap、trim 和 request token。
 - `internal.ts`：package-internal session internals access，供 React adapter
   访问 runtime/view store；不从 package root 导出。
 - `read-receipts/readReceipts.ts`：基于 viewport observation 的批量已读 worker，不经过
@@ -38,7 +40,8 @@
 - `tail/tailSemantics.ts`：`tail.local` / `tail.remote` 的尾部消息语义。
 - `contracts/index.ts` / `index.ts`：session registry public contract types 和 exports。
 
-Session registry 可以依赖 runtime public barrel 和 package-internal data runtime；runtime 不能反向依赖 session registry。
+Session registry 可以依赖 runtime public barrel 并拥有 Loaded Segment Store；
+runtime 不能反向依赖 session registry。
 
 ## Runtime
 
@@ -50,8 +53,6 @@ Session registry 可以依赖 runtime public barrel 和 package-internal data ru
 - `controller/`：runtime facade、controller、transaction queue、scheduler。
 - `state/`、`interactions/`、`dom/`、`scroll/`、`events/`、
   `transactions/`：viewport 状态机、DOM 测量、滚动与诊断分域。
-- `data/`：internal data runtime，负责 merge、dedupe、identity remap、trim 和
-  request token。
 - `shared/`：跨 runtime 域复用的无状态 helper；不能持有 controller
   orchestration 或 DOM ownership。
 
@@ -85,7 +86,7 @@ append/edit/delete/send/clear 都通过 `session.commands`、`session.rows`、
 `session.tail.local` 或 `session.tail.remote` 完成。demo host 的 canonical persisted
 feed 仍由 demo data API 管理；当前 loaded rows、edge status 和 viewport status
 只能从 `session.getState()` / `useMessageListState` 推导，不维护独立 loaded-window
-镜像，也不读取 runtime/dataRuntime。
+镜像，也不读取 runtime 或 Loaded Segment Store。
 
 `src/e2e-app` 是 browser-side E2E harness；它可以通过 E2E-only helper 读取
 package-internal runtime snapshot/evidence，用于测试证据和 reset 辅助；应用渲染路径
@@ -95,7 +96,7 @@ package-internal runtime snapshot/evidence，用于测试证据和 reset 辅助�
 
 - Moving files must preserve `src/x-message-list/core/session-registry`,
   `src/x-message-list/core/runtime`, `src/x-message-list/react` boundaries.
-- Package root must not export runtime/data runtime implementation types.
+- Package root must not export runtime or Loaded Segment Store implementation types.
 - React adapter must use runtime public or adapter-private barrels; demo and app
   code must go through registry/session APIs. E2E harness files are the only
   approved diagnostics exception.

@@ -15,7 +15,7 @@ export type RuntimeObserverFactory = {
 }
 
 export type MessageListRuntimeOptions = {
-  feedId?: string
+  sessionId?: string
   scheduler?: RuntimeScheduler
   observers?: RuntimeObserverFactory
   commitTimeoutMs?: number

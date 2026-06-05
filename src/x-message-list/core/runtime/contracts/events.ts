@@ -14,7 +14,7 @@ type ViewportScrollSource =
   | 'underflowFill'
 
 export type NeedEventBase = {
-  feedId: string
+  sessionId: string
   generation: number
   segmentRevision: number
   requestToken: string
@@ -42,7 +42,7 @@ export type NeedMessagesAroundEvent = NeedEventBase & {
 
 export type ViewportAnchorChangedEvent = {
   type: 'viewportAnchorChanged'
-  feedId: string
+  sessionId: string
   generation: number
   segmentRevision: number
   reason: 'scroll-idle' | 'transaction-settle' | 'detach'
@@ -52,7 +52,7 @@ export type ViewportAnchorChangedEvent = {
 
 export type ViewportObservationChangedEvent = {
   type: 'viewportObservationChanged'
-  feedId: string
+  sessionId: string
   generation: number
   segmentRevision: number
   reason: ViewportObservationReason
@@ -92,7 +92,7 @@ export type ViewportObservedItem = {
 
 export type DestinationSettledEvent = {
   type: 'destinationSettled'
-  feedId: string
+  sessionId: string
   generation: number
   segmentRevision: number
   intent: 'jump' | 'restore'
@@ -103,7 +103,7 @@ export type DestinationSettledEvent = {
 
 export type SegmentTrimPressureEvent = {
   type: 'segmentTrimPressure'
-  feedId: string
+  sessionId: string
   generation: number
   segmentRevision: number
   itemCount: number
@@ -124,13 +124,13 @@ export type ViewportDiagnosticEvent = {
 
 export type ViewportReadyEvent = {
   type: 'viewportReady'
-  feedId: string
+  sessionId: string
   commitToken: ProjectionCommitToken
 }
 
 export type ViewportErrorEvent = {
   type: 'viewportError'
-  feedId: string
+  sessionId: string
   code: string
   message: string
 }

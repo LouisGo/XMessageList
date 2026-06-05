@@ -10,7 +10,7 @@
 
 ```text
 MessageListSessionRegistry 管理多个 MessageListSession
-MessageListSession 代表一个 sessionId/feedId 对应的消息列表会话实例
+MessageListSession 代表一个 sessionId 对应的消息列表会话实例
 React 只负责把 session 渲染成 <MessageList />
 Runtime 是 framework-independent 内部引擎
 ```
@@ -32,8 +32,8 @@ export type {
   MessageListAdapter,
   MessageListAnchor,
   MessageListAnchorMemoryValue,
-  MessageListFeedId,
   MessageListSessionId,
+  MessageListSegmentRetention,
   MessageListSessionRegistry,
   MessageListSessionRegistryEntry,
   MessageListSessionRegistryOptions,
@@ -74,7 +74,7 @@ export type {
 }
 ```
 
-根出口不导出 runtime/data runtime implementation：
+根出口不导出 runtime 或 Loaded Segment Store implementation：
 
 - 不导出 `createMessageListRuntime`。
 - 不导出 `MessageListRuntime`。
@@ -89,7 +89,7 @@ export type {
 const registry = createMessageListSessionRegistry({
   defaults: {
     pageSize: 32,
-    maxItems: 300,
+    retention: 'balanced',
     keepAlive: {
       maxSessions: 20,
       ttlMs: 10 * 60_000,
@@ -110,7 +110,7 @@ const registry = createMessageListSessionRegistry({
 registry.getSession(sessionId)
 registry.hasSession(sessionId)
 registry.getSessionMeta(sessionId)
-registry.retainSession(sessionId, 'active-feed')
+registry.retainSession(sessionId, 'active-session')
 registry.destroySession(sessionId)
 registry.destroyAll()
 ```
@@ -166,13 +166,13 @@ Canonical names：
 | --- | --- | --- |
 | `MessageList` | React component | 唯一公开组件名 |
 | `MessageListSessionRegistryProvider` | React component | 注入应用级 registry |
-| `useMessageListSession` | hook | 按 session/feed id 解析 session |
+| `useMessageListSession` | hook | 按 session id 解析 session |
 | `useMessageListState` | hook | 订阅 session 级只读列表状态 |
-| `MessageListSession` | public object | session/feed 的消息列表会话实例 |
+| `MessageListSession` | public object | session 的消息列表会话实例 |
 | `MessageListProps` | React props | 组件 props 类型 |
 
 ```tsx
-const session = useMessageListSession<Message>(feedId)
+const session = useMessageListSession<Message>(sessionId)
 
 return (
   <MessageList

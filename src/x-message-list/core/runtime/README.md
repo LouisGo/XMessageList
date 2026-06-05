@@ -12,7 +12,6 @@
 - 滚动源、底部锁定和直接滚动会话代码放在 `scroll/`。
 - 诊断/evidence/事件构建放在 `events/`。
 - 提交/结算/修正流程放在 `transactions/`。
-- 数据合并、裁剪和 token 逻辑放在 `data/`。
 - 跨域无状态辅助放在 `shared/`；其他域不得从 `controller/` 导入。
 
 Runtime 代码不得导入 React。视口 runtime 消费不可变的 `LoadedSegment` 快照，不得合并、去重或重排业务数据项。

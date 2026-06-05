@@ -8,21 +8,21 @@ import type {
 } from '../../runtime/index'
 import type {
   IdentityRemapInput,
-  MessageListDataRuntime,
+  LoadedSegmentStore,
   ReplaceSegmentInput,
   ResetSegmentInput,
-} from '../../runtime/data/index'
+} from '../loaded-segment-store/index'
 import {
   normalizeMessageListAnchor,
   toMessageDataItems,
 } from '../adapters/rowAdapter'
 import type {
   MessageListAdapter,
-  MessageListFeedId,
   MessageListIdentityRemap,
   MessageListPage,
   MessageListRowsReplaceInput,
   MessageListScrollToMessageOptions,
+  MessageListSegmentRetention,
   MessageListSessionId,
   MessageListSessionRegistryOptions,
 } from '../contracts'
@@ -39,14 +39,14 @@ export type AroundRequestOptions = {
 
 export type SessionDefaults = {
   pageSize: number
-  maxItems: number
+  retention: MessageListSegmentRetention
   keepAlive: {
     maxSessions: number
     ttlMs: number
   }
 }
 
-export type SessionOptions<Row, Feed = MessageListFeedId> = {
+export type SessionOptions<Row, Feed = MessageListSessionId> = {
   id: MessageListSessionId
   feed: Feed
   adapter: MessageListAdapter<Row, Feed>
@@ -54,6 +54,28 @@ export type SessionOptions<Row, Feed = MessageListFeedId> = {
   tailEvents?: MessageListSessionRegistryOptions<Row, Feed>['tailEvents']
   scrollMotion?: MessageListSessionRegistryOptions<Row, Feed>['scrollMotion']
   onRequestResult?: MessageListSessionRegistryOptions<Row, Feed>['onRequestResult']
+}
+
+const RETENTION_VIEWPORT_MULTIPLIER: Record<MessageListSegmentRetention, number> = {
+  low: 4,
+  balanced: 8,
+  high: 14,
+}
+
+export type AdaptiveTrimBudgetInput = {
+  pageSize: number
+  retention: MessageListSegmentRetention
+  rowsPerViewportEstimate: number
+}
+
+export function resolveAdaptiveTrimBudget(
+  input: AdaptiveTrimBudgetInput,
+): number {
+  const rowsPerViewport = Math.max(1, Math.ceil(input.rowsPerViewportEstimate))
+  const viewportBudget = rowsPerViewport *
+    RETENTION_VIEWPORT_MULTIPLIER[input.retention]
+
+  return Math.max(input.pageSize * 2, viewportBudget)
 }
 
 export function toSessionResetInput<Row, Feed>(
@@ -137,9 +159,9 @@ export function reindexRows<Row>(
 
 export function resolveTrimProtectKey<Row>(
   runtime: MessageListRuntime<Row>,
-  dataRuntime: MessageListDataRuntime<Row>,
+  loadedSegmentStore: LoadedSegmentStore<Row>,
 ): string | undefined {
-  const segment = dataRuntime.getSegment()
+  const segment = loadedSegmentStore.getSegment()
 
   if (runtime.getSnapshot().bottomLockState === 'LOCKED') {
     return segment.items.at(-1)?.key
@@ -163,7 +185,7 @@ function anchorsMatch(
 ): boolean {
   return Boolean(
     identity &&
-      identity.feedId === anchor.feedId &&
+      identity.sessionId === anchor.sessionId &&
       (
         identity.stableId === anchor.stableId ||
         Boolean(identity.serverId && identity.serverId === anchor.serverId) ||

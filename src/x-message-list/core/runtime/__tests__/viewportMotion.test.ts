@@ -19,7 +19,7 @@ import { FakeScheduler, createContainer, createFakeObservers, setElementMetrics 
 describe('MessageList viewport motion', () => {
   it('animates local jump destinations and settles the destination after motion', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = createRows(6, 50)
@@ -64,7 +64,7 @@ describe('MessageList viewport motion', () => {
 
   it('keeps follow-bottom semantically locked during motion and after settle', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = createRows(6, 50)
@@ -96,7 +96,7 @@ describe('MessageList viewport motion', () => {
 
   it('settles disabled motion synchronously while preserving follow-bottom and destination semantics', () => {
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scrollMotion: { enabled: false },
     })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -140,7 +140,7 @@ describe('MessageList viewport motion', () => {
 
   it('continues bottom motion when append supersedes follow-bottom motion', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = createRows(8, 50)
@@ -182,7 +182,7 @@ describe('MessageList viewport motion', () => {
 
   it('uses bottom motion for received appends while already locked', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = createRows(8, 50)
@@ -225,7 +225,7 @@ describe('MessageList viewport motion', () => {
 
   it('does not preposition away from bottom when a retry append retires a visible placeholder', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = createRows(7, 50)
@@ -275,7 +275,7 @@ describe('MessageList viewport motion', () => {
 
   it('keeps retry loading patches from replaying semantic bottom motion while locked', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = createRows(6, 50)
@@ -325,7 +325,7 @@ describe('MessageList viewport motion', () => {
 
   it('lets incoming append policy preserve position and unlock bottom', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = createRows(8, 50)
@@ -357,7 +357,7 @@ describe('MessageList viewport motion', () => {
 
   it('lets an explicit bottom command override a later preserve append', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = createRows(7, 50)
@@ -402,7 +402,7 @@ describe('MessageList viewport motion', () => {
   it('cancels active motion on explicit user scroll input', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
       observers: null,
     })
@@ -440,7 +440,7 @@ describe('MessageList viewport motion', () => {
     const scheduler = new FakeScheduler()
     const observers = createFakeObservers()
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
       observers,
     })
@@ -482,7 +482,7 @@ describe('MessageList viewport motion', () => {
     const scheduler = new FakeScheduler()
     const observers = createFakeObservers()
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
       observers,
     })
@@ -550,7 +550,7 @@ describe('MessageList viewport motion', () => {
 
   it('lets a new transaction supersede motion without publishing a cancelled destination settle', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = createRows(6, 50)
@@ -592,7 +592,7 @@ describe('MessageList viewport motion', () => {
 
   it('cancels active motion before opening a remote destination intent', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = createRows(6, 50)
@@ -647,7 +647,7 @@ describe('MessageList viewport motion', () => {
 
   it('cancels active motion before opening a remote follow-bottom intent', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = createRows(6, 50)
@@ -692,7 +692,7 @@ describe('MessageList viewport motion', () => {
 
   it('starts queued transactions before opening a post-commit motion opportunity', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = createRows(7, 50)
@@ -743,7 +743,7 @@ describe('MessageList viewport motion', () => {
 
   it('does not project stale queued revisions after a newer same-generation segment', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = createRows(6, 50)
@@ -796,7 +796,7 @@ describe('MessageList viewport motion', () => {
 
   it('carries destination motion until queued transactions drain', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const initialRows = createRows(1, 50)
@@ -847,7 +847,7 @@ describe('MessageList viewport motion', () => {
   it('carries destination motion through a queued transaction timeout', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
       commitTimeoutMs: 5,
     })
@@ -900,7 +900,7 @@ describe('MessageList viewport motion', () => {
 
   it('uses follow-bottom motion for send-style latest rebuilds', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const previousRows = createRows(2, 50)
@@ -945,7 +945,7 @@ describe('MessageList viewport motion', () => {
 
   it('uses requestless follow-bottom motion for local latest rebuilds', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const previousRows = createRows(2, 50)
@@ -996,7 +996,7 @@ describe('MessageList viewport motion', () => {
   it('does not apply direction hints or far preposition for cross-feed jumps', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
       scrollMotion: { maxDistancePx: 80 },
     })
@@ -1051,7 +1051,7 @@ describe('MessageList viewport motion', () => {
     let motionEnabled = true
     const resolveMotionEnabled = vi.fn(() => motionEnabled)
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
       scrollMotion: {
         enabled: resolveMotionEnabled,
@@ -1096,7 +1096,7 @@ describe('MessageList viewport motion', () => {
     let motionEnabled = true
     const resolveMotionEnabled = vi.fn(() => motionEnabled)
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
       scrollMotion: {
         enabled: resolveMotionEnabled,
@@ -1217,7 +1217,7 @@ function item(key: string): MessageDataItem<string> {
     renderVersion: 1,
     message: key,
     identity: {
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       stableId: key,
       serverId: key,
       version: 1,
@@ -1227,7 +1227,7 @@ function item(key: string): MessageDataItem<string> {
 
 function anchor(key: string): MessageIdentityAnchor {
   return {
-    feedId: 'feed-a',
+    sessionId: 'feed-a',
     stableId: key,
     serverId: key,
   }
@@ -1240,7 +1240,7 @@ function segment(
   overrides: Partial<LoadedSegment<string>> = {},
 ): LoadedSegment<string> {
   return {
-    feedId: 'feed-a',
+    sessionId: 'feed-a',
     generation,
     segmentRevision,
     items,

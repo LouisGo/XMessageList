@@ -7,7 +7,7 @@ export function withNextProjectionRevision<TMessage, TOptimistic>(
 ): MessageListSnapshot<TMessage, TOptimistic> {
   const projectionRevision = snapshot.projectionRevision + 1
   const commitToken = {
-    feedId: snapshot.feedId,
+    sessionId: snapshot.sessionId,
     generation: snapshot.generation,
     segmentRevision: snapshot.segmentRevision,
     projectionRevision,
@@ -57,7 +57,7 @@ export function findKeyForAnchor<TMessage, TOptimistic>(
     const identity = candidate.identity
 
     return identity &&
-      identity.feedId === anchor.feedId &&
+      identity.sessionId === anchor.sessionId &&
       (
         identity.stableId === anchor.stableId ||
         Boolean(identity.serverId && identity.serverId === anchor.serverId) ||
@@ -79,7 +79,7 @@ function resolveAnchorFromItems<TMessage, TOptimistic>(
   }
 
   return {
-    feedId: item.identity.feedId,
+    sessionId: item.identity.sessionId,
     stableId: item.identity.stableId,
     serverId: item.identity.serverId,
     localId: item.identity.localId,

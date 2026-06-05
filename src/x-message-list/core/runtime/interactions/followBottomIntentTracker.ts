@@ -2,7 +2,7 @@ import type { ScrollSource } from '../scroll/scrollIntentEngine'
 import type { MessageListSnapshot } from '../contracts/snapshot'
 
 type FollowBottomIntent = {
-  feedId: string
+  sessionId: string
   generation: number
   lastScrollTop: number
 }
@@ -29,14 +29,14 @@ export class FollowBottomIntentTracker<TMessage, TOptimistic> {
     }
 
     this.intent = {
-      feedId: snapshot.feedId,
+      sessionId: snapshot.sessionId,
       generation: snapshot.generation,
       lastScrollTop: scrollTop,
     }
   }
 
   has(snapshot: MessageListSnapshot<TMessage, TOptimistic>): boolean {
-    return this.intent?.feedId === snapshot.feedId &&
+    return this.intent?.sessionId === snapshot.sessionId &&
       this.intent.generation === snapshot.generation
   }
 
@@ -51,7 +51,7 @@ export class FollowBottomIntentTracker<TMessage, TOptimistic> {
       return snapshot
     }
 
-    if (intent.feedId !== snapshot.feedId || intent.generation !== snapshot.generation) {
+    if (intent.sessionId !== snapshot.sessionId || intent.generation !== snapshot.generation) {
       this.clear()
       return snapshot
     }

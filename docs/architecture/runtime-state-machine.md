@@ -40,7 +40,7 @@ idle -> queued -> active -> measuring -> correcting -> settling -> idle
 
 ```ts
 type ProjectionCommitToken = {
-  feedId: string;
+  sessionId: string;
   generation: number;
   segmentRevision: number;
   projectionRevision: number;

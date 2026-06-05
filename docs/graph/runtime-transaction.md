@@ -5,14 +5,14 @@
 ```mermaid
 sequenceDiagram
   participant Host as Host or Data Publisher
-  participant Data as Data Runtime
+  participant Store as Loaded Segment Store
   participant Runtime as Viewport Runtime
   participant React as React Adapter
   participant DOM as Native DOM
   participant Events as Runtime Events
 
-  Host->>Data: apply request result or local mutation
-  Data-->>Host: LoadedSegment with modifier
+  Host->>Store: apply request result or local mutation
+  Store-->>Host: LoadedSegment with modifier
   Host->>Runtime: applyLoadedSegment(segment)
 
   alt stale segment

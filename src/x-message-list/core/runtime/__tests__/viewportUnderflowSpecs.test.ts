@@ -11,7 +11,7 @@ import { createContainer, FakeScheduler, setElementMetrics } from '../../../../t
 describe('MessageList underflow spec guards', () => {
   it('stops the fill sequence when user scroll intent interrupts it', () => {
     const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', scheduler })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 20)
@@ -44,7 +44,7 @@ describe('MessageList underflow spec guards', () => {
   })
 
   it('does not continue an old underflow sequence after restore retargets the segment', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const initialRow = createRow('row-1', 0, 20)
@@ -95,7 +95,7 @@ function item(key: string): MessageDataItem<string> {
     renderVersion: 1,
     message: key,
     identity: {
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       stableId: key,
       serverId: key,
       version: 1,
@@ -105,7 +105,7 @@ function item(key: string): MessageDataItem<string> {
 
 function anchor(key: string) {
   return {
-    feedId: 'feed-a',
+    sessionId: 'feed-a',
     stableId: key,
     serverId: key,
   }
@@ -118,7 +118,7 @@ function segment(
   overrides: Partial<LoadedSegment<string>> = {},
 ): LoadedSegment<string> {
   return {
-    feedId: 'feed-a',
+    sessionId: 'feed-a',
     generation,
     segmentRevision,
     items,

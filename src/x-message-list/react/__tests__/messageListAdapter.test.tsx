@@ -346,7 +346,7 @@ describe('MessageList React adapter', () => {
     expect(events).toContainEqual(expect.objectContaining({
       type: 'needMessagesAround',
       target: expect.objectContaining({
-        feedId: 'feed-a',
+        sessionId: 'feed-a',
         stableId: 'row-9',
         serverId: 'row-9',
       }),
@@ -588,11 +588,11 @@ describe('MessageList React adapter', () => {
 
   it('detaches previous session runtime before attaching a switched session', async () => {
     const fixtureA = createSessionFixture({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       rows: ['row-a'],
     })
     const fixtureB = createSessionFixture({
-      feedId: 'feed-b',
+      sessionId: 'feed-b',
       rows: ['row-b'],
     })
     const anchorEvents: ViewportAnchorChangedEvent[] = []
@@ -898,7 +898,7 @@ describe('MessageList React adapter', () => {
 })
 
 function createSessionFixture(input: {
-  feedId?: string
+  sessionId?: string
   rows: string[]
   hasMoreBefore?: boolean
   hasMoreAfter?: boolean
@@ -907,21 +907,21 @@ function createSessionFixture(input: {
   runtime: MessageListRuntime<string>
   destroy: () => void
 } {
-  const feedId = input.feedId ?? 'feed-a'
+  const sessionId = input.sessionId ?? 'feed-a'
   const registry = createMessageListSessionRegistry<string>({
     getAdapter: () => createStringAdapter(input.rows, {
       hasMoreBefore: input.hasMoreBefore,
       hasMoreAfter: input.hasMoreAfter,
-      feedId,
+      sessionId,
     }),
   })
-  const session = registry.getSession(feedId)
+  const session = registry.getSession(sessionId)
   const runtime = getMessageListSessionInternals(session).runtime
 
   session.rows.resetLatest(page(input.rows, {
     hasMoreBefore: input.hasMoreBefore,
     hasMoreAfter: input.hasMoreAfter,
-    feedId,
+    sessionId,
   }))
 
   return {
@@ -947,7 +947,7 @@ function createFlowSnapshot(input: {
 }): MessageListSnapshot<string> {
   const projectionRevision = input.hasMoreBefore ? 1 : 2
   const commitToken = {
-    feedId: 'feed-a',
+    sessionId: 'feed-a',
     generation: 1,
     segmentRevision: 1,
     projectionRevision,
@@ -979,7 +979,7 @@ function createFlowItem(row: string): MessageDataItem<string> {
     key: row,
     rowKind: 'message',
     identity: {
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       stableId: row,
       version: 1,
     },
@@ -1013,14 +1013,14 @@ function createStringAdapter(
 
 function page(
   rows: string[],
-  overrides: Partial<MessageListPage<string>> & { feedId?: string } = {},
+  overrides: Partial<MessageListPage<string>> & { sessionId?: string } = {},
 ): MessageListPage<string> {
   return {
     rows,
     hasMoreBefore: overrides.hasMoreBefore ?? false,
     hasMoreAfter: overrides.hasMoreAfter ?? false,
     anchor: rows.at(-1)
-      ? { id: rows.at(-1), feedId: overrides.feedId }
+      ? { id: rows.at(-1), sessionId: overrides.sessionId }
       : undefined,
     anchorStatus: overrides.anchorStatus,
     total: overrides.total,

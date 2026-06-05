@@ -47,7 +47,7 @@ XMessageList 的取舍是：Telegram-style DOM 形态，加上独立 runtime 的
 
 - 不引入第二套 scroll truth，`scrollHeight` 仍只来自当前 loaded segment 的真实 DOM。
 - 能翻译成 `SegmentModifier`、identity/runtime key、projection transaction、commit ack 或 evidence oracle。
-- 不改变所有权：data runtime 发布 immutable segment，viewport runtime 负责 measurement / correction，React adapter 只投影和 ack。
+- 不改变所有权：loaded segment store 发布 immutable segment，viewport runtime 负责 measurement / correction，React adapter 只投影和 ack。
 
 可以进入 core：
 
@@ -71,14 +71,14 @@ XMessageList 的取舍是：Telegram-style DOM 形态，加上独立 runtime 的
 
 | 术语 | 定义 |
 | --- | --- |
-| Loaded Segment | data runtime 当前发布给 viewport 的一段连续消息，React 会把它完整投影到 DOM。 |
+| Loaded Segment | loaded segment store 当前发布给 viewport 的一段连续消息，React 会把它完整投影到 DOM。 |
 | Native Scroll Range | 浏览器从当前 DOM 计算出的 `scrollHeight - clientHeight`。 |
 | Edge Trigger | Segment 上下两端的正常文档流元素，只负责分页观察。 |
 | Identity Anchor | 跨进程、跨数据层可持久化的消息身份。 |
 | Visual Anchor | runtime 内部使用的 DOM row + offset，用来保持屏幕位置。 |
-| Segment Extend | before 或 after 分页后，data runtime 发布合并后的 next segment。 |
+| Segment Extend | before 或 after 分页后，loaded segment store 发布合并后的 next segment。 |
 | Segment Reset | jump / restore / latest 等目的地请求返回一段新 segment。 |
-| Segment Trim | 当前 segment 超过预算后，data runtime 发布裁剪后的 next segment，viewport 保持 visual anchor。 |
+| Segment Trim | 当前 segment 超过预算后，loaded segment store 发布裁剪后的 next segment，viewport 保持 visual anchor。 |
 
 ## 正确性优先级
 

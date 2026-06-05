@@ -76,7 +76,7 @@ export function correctTransactionAnchor<TMessage, TOptimistic>(options: {
     pushDiagnostic('correction.anchorMissing', 'warn', { key })
     emitRuntimeEvent({
       type: 'viewportError',
-      feedId: snapshot.feedId,
+      sessionId: snapshot.sessionId,
       code: 'anchor-missing',
       message: 'Anchor row was not available after projection commit.',
     })

@@ -3,7 +3,7 @@ import type {
   MessageListRuntime,
   MessageListSnapshot,
 } from '../runtime/index'
-import type { MessageListDataRuntime } from '../runtime/data/index'
+import type { LoadedSegmentStore } from './loaded-segment-store/index'
 import type {
   MessageListSession,
   MessageListViewState,
@@ -14,7 +14,7 @@ const MESSAGE_LIST_SESSION_INTERNALS: unique symbol =
 
 export type MessageListSessionInternals<Row = unknown> = {
   runtime: MessageListRuntime<Row>
-  dataRuntime: MessageListDataRuntime<Row>
+  loadedSegmentStore: LoadedSegmentStore<Row>
   getSnapshot(): MessageListSnapshot<Row>
   getViewState(): MessageListViewState
   subscribeView(listener: () => void): () => void

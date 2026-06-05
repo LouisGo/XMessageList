@@ -2,8 +2,8 @@ import type {
   MessageDataItem,
   MessageIdentityAnchor,
   MessageRuntimeItemKey,
-} from '../contracts/identity'
-import type { IdentityRemapInput } from './dataRuntime'
+} from '../../runtime/contracts/identity'
+import type { IdentityRemapInput } from './loadedSegmentStore'
 
 export type MutateSegmentItemsInput<TMessage, TOptimistic> = {
   patches: MessageDataItem<TMessage, TOptimistic>[]
@@ -154,7 +154,7 @@ export function applyIdentityRemaps<TMessage, TOptimistic>(
       ...item,
       key: remap.nextKey,
       identity: {
-        feedId: remap.to.feedId,
+        sessionId: remap.to.sessionId,
         stableId: remap.to.stableId,
         serverId: remap.to.serverId,
         localId: remap.to.localId,
@@ -225,17 +225,17 @@ function resolveProtectIndex<TMessage, TOptimistic>(
 }
 
 function serializeIdentity(identity: {
-  feedId: string
+  sessionId: string
   stableId: string
   serverId?: string
   localId?: string
 }): string {
   if (identity.serverId) {
-    return `${identity.feedId}|server:${identity.serverId}`
+    return `${identity.sessionId}|server:${identity.serverId}`
   }
 
   return [
-    identity.feedId,
+    identity.sessionId,
     `stable:${identity.stableId}`,
     identity.localId ? `local:${identity.localId}` : '',
   ].filter(Boolean).join('|')
@@ -247,7 +247,7 @@ function matchesAnchor(
 ): boolean {
   return Boolean(
     identity &&
-      identity.feedId === anchor.feedId &&
+      identity.sessionId === anchor.sessionId &&
       (
         identity.stableId === anchor.stableId ||
         (identity.serverId && identity.serverId === anchor.serverId) ||

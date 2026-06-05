@@ -9,7 +9,7 @@ Runtime evidence 来自 `ViewportEvidence`：
 
 ```ts
 type ViewportEvidence = {
-  feedId: string;
+  sessionId: string;
   generation: number;
   segmentRevision: number;
   projectionRevision: number;

@@ -7,7 +7,7 @@ flowchart LR
   Host["App / Demo Host"]
   Source["Main / Bridge or mock API"]
   Registry["MessageList Session Registry<br/>sessions, adapter routing, request bridge"]
-  Data["Renderer Data Runtime<br/>merge, dedupe, trim, request tokens"]
+  SegmentStore["Loaded Segment Store<br/>merge, dedupe, trim, request tokens"]
   Runtime["Viewport Runtime<br/>scroll, motion, measurement, correction, latches"]
   React["React Adapter<br/>snapshot projection, DOM refs, commit ack"]
   DOM["Native DOM Scroll Container<br/>real scrollHeight and row rects"]
@@ -19,8 +19,8 @@ flowchart LR
   Registry -->|"query latest / around / before / after"| Source
   Source -->|"ordered messages + boundary state"| Registry
   Host -->|"session.commands / session.rows"| Registry
-  Registry -->|"request result or local mutation"| Data
-  Data -->|"immutable LoadedSegment"| Runtime
+  Registry -->|"request result or local mutation"| SegmentStore
+  SegmentStore -->|"immutable LoadedSegment"| Runtime
   Runtime -->|"MessageListSnapshot"| React
   React -->|"render rows, triggers, bottom marker"| DOM
   React -->|"register refs + ProjectionCommitAck"| Runtime
@@ -40,7 +40,6 @@ flowchart TD
   Contracts["contracts/<br/>public runtime types"]
   Controller["controller/<br/>facade, queue, scheduler, orchestration"]
   Shared["shared/<br/>stateless identity and snapshot helpers"]
-  Data["data/<br/>loaded segment merge, trim, tokens"]
   DOMDomain["dom/<br/>registry, measurement, anchor correction, row metrics"]
   Scroll["scroll/<br/>scroll source, bottom lock, direct scroll session"]
   Motion["motion/<br/>bounded JS scroll engine"]

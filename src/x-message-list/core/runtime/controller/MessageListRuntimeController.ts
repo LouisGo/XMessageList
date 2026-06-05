@@ -64,7 +64,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       edgeActivationMarginPx: options.edgeActivationMarginPx,
       onDiagnostic: (name, severity, details) => this.pushDiagnostic(name, severity, details),
     })
-    this.snapshot = createInitialSnapshot<TMessage, TOptimistic>(options.feedId ?? 'default')
+    this.snapshot = createInitialSnapshot<TMessage, TOptimistic>(options.sessionId ?? 'default')
     this.motion = new ControllerMotionCoordinator({ scheduler: this.scheduler, options: options.scrollMotion, host: {
         stateAxes: this.stateAxes,
         getSnapshot: () => this.snapshot,
@@ -128,7 +128,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       const queued = this.transactions.enqueue(segment, policy)
       this.stateAxes.markTransactionQueued()
       this.pushDiagnostic('transaction.queued', 'info', {
-        feedId: segment.feedId,
+        sessionId: segment.sessionId,
         generation: segment.generation,
         segmentRevision: segment.segmentRevision,
         lane: policy.lane, queueLength: queued.queueLength, dropped: queued.dropped,
@@ -140,7 +140,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   private startTransaction(segment: LoadedSegment<TMessage, TOptimistic>): void {
     this.motion.cancel('transaction-supersede')
     const projectionRevision = this.snapshot.projectionRevision + 1
-    const token = { feedId: segment.feedId, generation: segment.generation, segmentRevision: segment.segmentRevision, projectionRevision }
+    const token = { sessionId: segment.sessionId, generation: segment.generation, segmentRevision: segment.segmentRevision, projectionRevision }
     const anchor = captureVisualAnchor(this.registry.snapshot())
     const timeoutHandle = this.scheduler.setTimeout(() => this.handleCommitTimeout(token), this.options.commitTimeoutMs ?? 120)
     this.transactions.setPending({
@@ -253,7 +253,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.stateAxes.markTransactionIdle()
       this.setViewportPhase('IDLE')
       this.pushDiagnostic('transaction.commitTimeout', 'error', token)
-      this.emitRuntimeEvent({ type: 'viewportError', feedId: token.feedId, code: 'commit-timeout', message: 'Projection commit timed out.' })
+      this.emitRuntimeEvent({ type: 'viewportError', sessionId: token.sessionId, code: 'commit-timeout', message: 'Projection commit timed out.' })
     } finally {
       this.transactions.endAdvancing()
     }
@@ -538,7 +538,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.lastAnchorOffsetWithinMessage = resolved.offsetWithinMessage
     this.emitRuntimeEvent({
       type: 'viewportAnchorChanged',
-      feedId: this.snapshot.feedId,
+      sessionId: this.snapshot.sessionId,
       generation: this.snapshot.generation,
       segmentRevision: this.snapshot.segmentRevision,
       reason,
@@ -562,14 +562,14 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.emitRuntimeEvent(createDestinationSettledEvent({ snapshot: this.snapshot, destination, resolvedTarget }))
   }
   private emitViewportReadyOnce(token: ProjectionCommitToken): void {
-    const key = `${token.feedId}:${token.generation}`
+    const key = `${token.sessionId}:${token.generation}`
     if (this.readyGenerationKey === key) {
       return
     }
     this.readyGenerationKey = key
     this.emitRuntimeEvent({
       type: 'viewportReady',
-      feedId: token.feedId,
+      sessionId: token.sessionId,
       commitToken: token,
     })
   }

@@ -1,9 +1,9 @@
 export type MessageListSessionId = string
-export type MessageListFeedId = string
+export type MessageListSegmentRetention = 'low' | 'balanced' | 'high'
 
 export type MessageListAnchor = {
   id?: string
-  feedId?: string
+  sessionId?: string
   stableId?: string
   serverId?: string
   localId?: string
@@ -13,7 +13,7 @@ export type MessageListAnchor = {
 
 export type MessageListResolvedAnchor = {
   id?: string
-  feedId: string
+  sessionId: string
   stableId: string
   serverId?: string
   localId?: string
@@ -45,10 +45,9 @@ export type MessageListScrollToMessageOptions = {
   }
 }
 
-export type MessageListRequestContext<Row, Feed = MessageListFeedId> = {
+export type MessageListRequestContext<Row, Feed = MessageListSessionId> = {
   id: MessageListSessionId
   sessionId: MessageListSessionId
-  feedId: MessageListFeedId
   feed: Feed
   pageSize: number
   requestToken?: string
@@ -57,7 +56,7 @@ export type MessageListRequestContext<Row, Feed = MessageListFeedId> = {
   boundaryRow?: Row
 }
 
-export type MessageListAdapter<Row, Feed = MessageListFeedId> = {
+export type MessageListAdapter<Row, Feed = MessageListSessionId> = {
   row: {
     getKey(row: Row): string
     getAnchor(row: Row): MessageListAnchor | null
@@ -96,10 +95,9 @@ export type MessageListAdapter<Row, Feed = MessageListFeedId> = {
   }
 }
 
-export type MessageListSessionContext<Feed = MessageListFeedId> = {
+export type MessageListSessionContext<Feed = MessageListSessionId> = {
   id: MessageListSessionId
   sessionId: MessageListSessionId
-  feedId: MessageListFeedId
   feed: Feed
 }
 
@@ -114,11 +112,11 @@ export type MessageListRemoteTailAppendConfig<Row, Feed = unknown> = {
 
 export type MessageListSessionRegistryOptions<
   Row,
-  Feed = MessageListFeedId,
+  Feed = MessageListSessionId,
 > = {
   defaults?: {
     pageSize?: number
-    maxItems?: number
+    retention?: MessageListSegmentRetention
     keepAlive?: {
       maxSessions?: number
       ttlMs?: number
@@ -137,7 +135,7 @@ export type MessageListSessionRegistryOptions<
 
 export type MessageListSessionRegistryOptionsPatch<
   Row,
-  Feed = MessageListFeedId,
+  Feed = MessageListSessionId,
 > = {
   defaults?: {
     pageSize?: number
@@ -156,7 +154,6 @@ export type MessageListSessionRegistryOptionsPatch<
 export type MessageListRequestResult<Row, Feed> = {
   id: MessageListSessionId
   sessionId: MessageListSessionId
-  feedId: MessageListFeedId
   feed: Feed
   kind: 'latest' | 'before' | 'after' | 'around'
   status: 'applied' | 'failed' | 'stale'
@@ -177,7 +174,6 @@ export type MessageListViewState = {
 export type MessageListSessionState<Row = unknown> = {
   id: MessageListSessionId
   sessionId: MessageListSessionId
-  feedId: MessageListFeedId
   loaded: {
     rows: Row[]
     keys: string[]
@@ -256,7 +252,6 @@ export type MessageListRemoteTailAppendContext<
 > = {
   id: MessageListSessionId
   sessionId: MessageListSessionId
-  feedId: MessageListFeedId
   feed: Feed
   rows: Row[]
   reason?: string
@@ -334,7 +329,7 @@ export type MessageListSession<Row = unknown> = {
 }
 
 export type MessageListSessionRetainReason =
-  | 'active-feed'
+  | 'active-session'
   | 'split-view'
   | 'prefetch'
 
@@ -345,7 +340,6 @@ export type MessageListSessionRegistryEntryStatus =
 
 export type MessageListSessionRegistryEntry = {
   sessionId: MessageListSessionId
-  feedId: MessageListFeedId
   createdAt: number
   lastUsedAt: number
   mountedRetainCount: number
@@ -355,7 +349,7 @@ export type MessageListSessionRegistryEntry = {
 
 export type MessageListSessionRegistry<
   Row = unknown,
-  Feed = MessageListFeedId,
+  Feed = MessageListSessionId,
 > = {
   getSession(id: MessageListSessionId): MessageListSession<Row>
   hasSession(id: MessageListSessionId): boolean

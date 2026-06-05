@@ -90,7 +90,7 @@ export function useDemoMessageCommands(input: {
           anchor: latestMessage
             ? {
                 id: latestMessage.id,
-                feedId,
+                sessionId: feedId,
                 stableId: latestMessage.id,
                 serverId: latestMessage.id,
               }
@@ -356,14 +356,14 @@ export function useDemoMessageCommands(input: {
         },
       })
       session.commands.scrollToMessage({
-        feedId: activeFeedId,
+        sessionId: activeFeedId,
         stableId: target.messageId,
         serverId: target.messageId,
       }, {
         motion: {
           origin: input?.origin
             ? {
-                feedId: activeFeedId,
+                sessionId: activeFeedId,
                 stableId: input.origin.messageId,
                 serverId: input.origin.messageId,
               }
@@ -386,7 +386,7 @@ export function useDemoMessageCommands(input: {
     }
 
     session.commands.scrollToMessage({
-      feedId: activeFeedId,
+      sessionId: activeFeedId,
       stableId: first.id,
       serverId: first.id,
     })

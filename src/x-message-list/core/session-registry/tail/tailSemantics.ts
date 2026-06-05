@@ -5,9 +5,9 @@ import type {
 } from '../../runtime/index'
 import type { MessageListSessionRegistryRuntime } from '../../runtime/internal'
 import type {
-  MessageListDataRuntime,
+  LoadedSegmentStore,
   ResetSegmentInput,
-} from '../../runtime/data/index'
+} from '../loaded-segment-store/index'
 import { toMessageDataItems } from '../adapters/rowAdapter'
 import {
   toSessionIdentityRemaps,
@@ -32,7 +32,7 @@ type SessionLiveSemanticsOptions<Row, Feed> = {
   adapter: MessageListAdapter<Row, Feed>
   tailEvents?: MessageListRemoteTailAppendConfig<Row, Feed>
   runtime: MessageListSessionRegistryRuntime<Row>
-  dataRuntime: MessageListDataRuntime<Row>
+  loadedSegmentStore: LoadedSegmentStore<Row>
   publishSegment: (segment: LoadedSegment<Row>) => void
   publishLocalResetSegment: (segment: LoadedSegment<Row>) => void
 }
@@ -124,14 +124,14 @@ export class MessageListSessionLiveSemantics<Row, Feed> {
     const items = this.toDataItems(stage.rows)
     this.rememberRetireKeys(stage.retireKeys)
     this.forgetPendingLocalKeys(stage.retireKeys)
-    const segment = this.options.dataRuntime.getSegment()
+    const segment = this.options.loadedSegmentStore.getSegment()
 
     if (stage.latest) {
       this.rememberPendingLocal(items)
       this.options.runtime.prepareFollowBottomForLocalReset()
       const { resetInput } = this.withPendingLocal(stage.latest)
       this.options.publishLocalResetSegment(
-        this.options.dataRuntime.resetLatest(resetInput),
+        this.options.loadedSegmentStore.resetLatest(resetInput),
       )
       return
     }
@@ -140,7 +140,7 @@ export class MessageListSessionLiveSemantics<Row, Feed> {
 
     if (!segment.hasMoreAfter) {
       this.options.publishSegment(
-        this.options.dataRuntime.appendItems(items, {
+        this.options.loadedSegmentStore.appendItems(items, {
           follow: 'follow',
           retireKeys: stage.retireKeys,
         }),
@@ -160,7 +160,7 @@ export class MessageListSessionLiveSemantics<Row, Feed> {
       return
     }
 
-    if (this.options.dataRuntime.getSegment().hasMoreAfter) {
+    if (this.options.loadedSegmentStore.getSegment().hasMoreAfter) {
       return
     }
 
@@ -170,7 +170,7 @@ export class MessageListSessionLiveSemantics<Row, Feed> {
       this.options.runtime.scrollToLatest()
     }
 
-    this.options.publishSegment(this.options.dataRuntime.appendItems(
+    this.options.publishSegment(this.options.loadedSegmentStore.appendItems(
       this.toDataItems(append.rows),
       { follow },
     ))
@@ -185,12 +185,12 @@ export class MessageListSessionLiveSemantics<Row, Feed> {
     this.updatePendingLocal(items)
 
     const visibleKeys = new Set(
-      this.options.dataRuntime.getSegment().items.map((item) => item.key),
+      this.options.loadedSegmentStore.getSegment().items.map((item) => item.key),
     )
     const visibleItems = items.filter((item) => visibleKeys.has(item.key))
 
     if (visibleItems.length > 0) {
-      this.options.publishSegment(this.options.dataRuntime.patchItems(visibleItems))
+      this.options.publishSegment(this.options.loadedSegmentStore.patchItems(visibleItems))
     }
   }
 
@@ -202,7 +202,7 @@ export class MessageListSessionLiveSemantics<Row, Feed> {
     const runtimeRemaps = toSessionIdentityRemaps(this.options.id, remaps)
     this.remapPendingLocal(runtimeRemaps)
 
-    const segment = this.options.dataRuntime.getSegment()
+    const segment = this.options.loadedSegmentStore.getSegment()
     const touchesVisible = runtimeRemaps.some((remap) =>
       segment.items.some((item) =>
         item.key === remap.previousKey ||
@@ -213,7 +213,7 @@ export class MessageListSessionLiveSemantics<Row, Feed> {
 
     if (touchesVisible) {
       this.options.publishSegment(
-        this.options.dataRuntime.applyIdentityRemap(runtimeRemaps),
+        this.options.loadedSegmentStore.applyIdentityRemap(runtimeRemaps),
       )
     }
   }
@@ -260,7 +260,6 @@ export class MessageListSessionLiveSemantics<Row, Feed> {
     return {
       id: this.options.id,
       sessionId: this.options.id,
-      feedId: this.options.id,
       feed: this.options.feed,
       rows: input.rows,
       reason: input.reason,
@@ -334,7 +333,7 @@ export class MessageListSessionLiveSemantics<Row, Feed> {
         ...item,
         key: remap.nextKey,
         identity: {
-          feedId: remap.to.feedId,
+          sessionId: remap.to.sessionId,
           stableId: remap.to.stableId,
           serverId: remap.to.serverId,
           localId: remap.to.localId,
@@ -526,7 +525,7 @@ function itemMatchesAnchor<Row>(
 
   return Boolean(
     identity &&
-      identity.feedId === anchor.feedId &&
+      identity.sessionId === anchor.sessionId &&
       (
         identity.stableId === anchor.stableId ||
         Boolean(identity.serverId && identity.serverId === anchor.serverId) ||
@@ -543,8 +542,8 @@ function identityTokens<Row>(item: MessageDataItem<Row>): string[] {
   }
 
   return [
-    `${identity.feedId}|stable:${identity.stableId}`,
-    identity.serverId ? `${identity.feedId}|server:${identity.serverId}` : '',
-    identity.localId ? `${identity.feedId}|local:${identity.localId}` : '',
+    `${identity.sessionId}|stable:${identity.stableId}`,
+    identity.serverId ? `${identity.sessionId}|server:${identity.serverId}` : '',
+    identity.localId ? `${identity.sessionId}|local:${identity.localId}` : '',
   ].filter(Boolean)
 }

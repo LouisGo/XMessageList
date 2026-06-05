@@ -91,7 +91,7 @@ export async function runBridgeAction({
       return
     case 'jump_to_oldest':
       scenario.activeSession.commands.scrollToMessage({
-        feedId: scenario.activeFeedId,
+        sessionId: scenario.activeFeedId,
         stableId: `${scenario.activeFeedId}-0001`,
         serverId: `${scenario.activeFeedId}-0001`,
       })
@@ -274,7 +274,7 @@ async function jumpToIdentity(input: {
   }
 
   input.scenario.activeSession.commands.scrollToMessage({
-    feedId: input.scenario.activeFeedId,
+    sessionId: input.scenario.activeFeedId,
     stableId,
     serverId: stableId,
   })

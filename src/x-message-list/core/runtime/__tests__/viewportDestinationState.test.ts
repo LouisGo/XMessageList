@@ -16,13 +16,13 @@ import {
 describe('MessageList destination state', () => {
   it('clears stale edge latches when a destination reset rebuilds the segment', () => {
     const observers = createFakeObservers()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', observers })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', observers })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const before = createMarker(0, 1)
     const rowA = createRow('row-1', 1, 50)
     const targetRow = createRow('row-9', 51, 200)
-    const target = { feedId: 'feed-a', stableId: 'row-9', serverId: 'row-9' }
+    const target = { sessionId: 'feed-a', stableId: 'row-9', serverId: 'row-9' }
     const events: MessageListRuntimeEvent[] = []
 
     container.append(before, rowA, targetRow)
@@ -73,7 +73,7 @@ describe('MessageList destination state', () => {
   it('clears follow-bottom intent when a local destination jump aligns in place', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       scheduler,
       observers: createFakeObservers(),
     })
@@ -83,7 +83,7 @@ describe('MessageList destination state', () => {
       createRow(`row-${index + 1}`, index * 50, 50)
     )
     const items = rows.map((row) => item(row.dataset.runtimeKey as string))
-    const target = { feedId: 'feed-a', stableId: 'row-1', serverId: 'row-1' }
+    const target = { sessionId: 'feed-a', stableId: 'row-1', serverId: 'row-1' }
 
     container.append(...rows)
     runtime.attachScrollContainer(container)
@@ -121,7 +121,7 @@ describe('MessageList destination state', () => {
 
   it('reopens an exhausted edge when budget trim removes that edge', () => {
     const observers = createFakeObservers()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', observers })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', observers })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 60)
@@ -183,7 +183,7 @@ describe('MessageList destination state', () => {
 
   it('pauses ordinary edge requests while underflow fill is pending', () => {
     const observers = createFakeObservers()
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a', observers })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a', observers })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const before = createMarker(0, 1)
@@ -213,14 +213,14 @@ describe('MessageList destination state', () => {
   })
 
   it('restores a remote destination with the saved offset inside the message', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 80)
     const rowB = createRow('row-2', 80, 80)
     const targetRow = createRow('row-3', 160, 80)
     const rowD = createRow('row-4', 240, 80)
-    const target = { feedId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
+    const target = { sessionId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
     const events: MessageListRuntimeEvent[] = []
 
     container.append(rowA)
@@ -264,13 +264,13 @@ describe('MessageList destination state', () => {
   })
 
   it('settles a deleted destination against the fallback anchor', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rowA = createRow('row-1', 0, 50)
     const fallbackRow = createRow('row-4', 50, 50)
-    const target = { feedId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
-    const fallback = { feedId: 'feed-a', stableId: 'row-4', serverId: 'row-4' }
+    const target = { sessionId: 'feed-a', stableId: 'row-3', serverId: 'row-3' }
+    const fallback = { sessionId: 'feed-a', stableId: 'row-4', serverId: 'row-4' }
     const events: MessageListRuntimeEvent[] = []
 
     container.append(rowA)
@@ -300,7 +300,7 @@ describe('MessageList destination state', () => {
   })
 
   it('emits segment trim pressure with the current anchor and preferred side', () => {
-    const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+    const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = Array.from({ length: 5 }, (_, index) =>
@@ -321,7 +321,7 @@ describe('MessageList destination state', () => {
 
     expect(events).toContainEqual(expect.objectContaining({
       type: 'segmentTrimPressure',
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       generation: 1,
       segmentRevision: 1,
       itemCount: 5,
@@ -338,7 +338,7 @@ function item(key: string): MessageDataItem<string> {
     renderVersion: 1,
     message: key,
     identity: {
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       stableId: key,
       serverId: key,
       version: 1,
@@ -353,7 +353,7 @@ function segment(
   overrides: Partial<LoadedSegment<string>> = {},
 ): LoadedSegment<string> {
   return {
-    feedId: 'feed-a',
+    sessionId: 'feed-a',
     generation,
     segmentRevision,
     items,

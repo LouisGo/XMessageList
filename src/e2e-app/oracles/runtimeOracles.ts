@@ -143,12 +143,12 @@ export function expectRestoreAroundAfterDetach(evidence: E2EEvidence): E2EOracle
 
 export function expectSegmentItemCountAtMost(
   evidence: E2EEvidence,
-  maxItems: number,
+  retainedItemBudget: number,
 ): E2EOracleResult {
   return {
     oracleId: 'segment-item-budget',
-    ok: evidence.segment.itemCount <= maxItems,
-    message: `items=${evidence.segment.itemCount} max=${maxItems}`,
+    ok: evidence.segment.itemCount <= retainedItemBudget,
+    message: `items=${evidence.segment.itemCount} budget=${retainedItemBudget}`,
   }
 }
 

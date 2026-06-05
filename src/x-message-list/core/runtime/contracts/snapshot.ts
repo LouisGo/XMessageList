@@ -6,7 +6,7 @@ import type {
 import type { SegmentModifier } from './segment'
 
 export type ProjectionCommitToken = {
-  feedId: string
+  sessionId: string
   generation: number
   segmentRevision: number
   projectionRevision: number
@@ -37,7 +37,7 @@ export type ViewportPhase =
 export type ShortSegmentAlignment = 'start' | 'center' | 'end'
 
 export type MessageListSnapshot<TMessage = unknown, TOptimistic = unknown> = {
-  feedId: string
+  sessionId: string
   generation: number
   segmentRevision: number
   projectionRevision: number
@@ -62,7 +62,7 @@ export type MessageListSnapshot<TMessage = unknown, TOptimistic = unknown> = {
 }
 
 export type ViewportEvidence = {
-  feedId: string
+  sessionId: string
   generation: number
   segmentRevision: number
   projectionRevision: number

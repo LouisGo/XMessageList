@@ -37,7 +37,7 @@ export type SegmentModifier =
     }
 
 export type LoadedSegment<TMessage = unknown, TOptimistic = unknown> = {
-  feedId: string
+  sessionId: string
   generation: number
   segmentRevision: number
   items: MessageDataItem<TMessage, TOptimistic>[]

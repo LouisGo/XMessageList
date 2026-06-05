@@ -9,21 +9,21 @@ import {
 import { expect, it } from 'vitest'
 
 it('exposes MessageList runtime contracts without legacy viewport names', () => {
-  const runtime = createMessageListRuntime<string>({ feedId: 'feed-a' })
+  const runtime = createMessageListRuntime<string>({ sessionId: 'feed-a' })
   const item: MessageDataItem<string> = {
     key: 'row-1',
     rowKind: 'message',
     renderVersion: 1,
     message: 'hello',
     identity: {
-      feedId: 'feed-a',
+      sessionId: 'feed-a',
       stableId: 'm1',
       serverId: 'm1',
       version: 1,
     },
   }
   const segment: LoadedSegment<string> = {
-    feedId: 'feed-a',
+    sessionId: 'feed-a',
     generation: 1,
     segmentRevision: 1,
     items: [item],
@@ -41,7 +41,7 @@ it('exposes MessageList runtime contracts without legacy viewport names', () => 
   expect(motionHint.direction).toBe('before')
   expect(scrollMotion.enabled).toBe(true)
   expect(runtime.getEvidence()).toMatchObject({
-    feedId: 'feed-a',
+    sessionId: 'feed-a',
     modifier: 'bootstrap',
     hasMoreBefore: false,
     hasMoreAfter: false,

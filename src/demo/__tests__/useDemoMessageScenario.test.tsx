@@ -153,7 +153,7 @@ describe('useDemoMessageScenario feed switching', () => {
 
     expect(harness.getScenario()?.selectedFeedId).toBe(RANDOM_CHAT_FEED_ID)
     expect(harness.getScenario()?.activeFeedId).toBe(RANDOM_CHAT_FEED_ID)
-    expect(getScenarioSnapshot(harness.getScenario()).feedId)
+    expect(getScenarioSnapshot(harness.getScenario()).sessionId)
       .toBe(RANDOM_CHAT_FEED_ID)
     expect(harness.getScenario()?.feedLoading).toBe(true)
     expect(harness.host.textContent).not.toContain('feed-runtime-')
@@ -325,7 +325,7 @@ describe('useDemoMessageScenario feed switching', () => {
 
     const scenario = harness.getScenario()
     const segment = scenario
-      ? getMessageListSessionInternals(scenario.activeSession).dataRuntime.getSegment()
+      ? getMessageListSessionInternals(scenario.activeSession).loadedSegmentStore.getSegment()
       : null
 
     expect(segment?.modifier).toEqual(expect.objectContaining({

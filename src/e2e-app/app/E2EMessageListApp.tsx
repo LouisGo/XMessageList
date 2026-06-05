@@ -247,7 +247,7 @@ function toEventRecord(event: MessageListRuntimeEvent): E2ERuntimeEventRecord {
   if (event.type === 'viewportError') {
     return {
       type: event.type,
-      feedId: event.feedId,
+      sessionId: event.sessionId,
       timestamp: Date.now(),
       error: {
         code: event.code,
@@ -258,7 +258,7 @@ function toEventRecord(event: MessageListRuntimeEvent): E2ERuntimeEventRecord {
 
   return {
     type: event.type,
-    feedId: 'feedId' in event ? event.feedId : undefined,
+    sessionId: 'sessionId' in event ? event.sessionId : undefined,
     timestamp: Date.now(),
     generation: 'generation' in event ? event.generation : undefined,
     segmentRevision: 'segmentRevision' in event ? event.segmentRevision : undefined,

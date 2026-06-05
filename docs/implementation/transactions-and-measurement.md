@@ -4,7 +4,7 @@
 
 ```text
 capture visual anchor
--> consume immutable next segment snapshot from data runtime
+-> consume immutable next segment snapshot from loaded segment store
 -> publish projection snapshot
 -> wait React commit ack
 -> measure committed DOM
@@ -38,7 +38,7 @@ container.scrollTop += delta;
 
 ```text
 capture first stable visible row
--> receive extend-before segment from data runtime
+-> receive extend-before segment from loaded segment store
 -> publish projection snapshot
 -> commit
 -> measure
@@ -57,7 +57,7 @@ Unlocked：
 
 ```text
 capture current visual anchor
--> receive extend-after segment from data runtime
+-> receive extend-after segment from loaded segment store
 -> publish projection snapshot
 -> commit
 -> preserve anchor
@@ -66,7 +66,7 @@ capture current visual anchor
 Locked / Follow：
 
 ```text
-receive extend-after, append(follow), explicit bottom intent, or locked patch segment from data runtime
+receive extend-after, append(follow), explicit bottom intent, or locked patch segment from loaded segment store
 -> publish projection snapshot
 -> commit
 -> measure bottom marker
@@ -86,7 +86,7 @@ motion。
 
 ## Reset Around / Latest
 
-Reset 会消费 data runtime 返回的整个 next segment：
+Reset 会消费 loaded segment store 返回的整个 next segment：
 
 - around reset 对齐目标 row。
 - latest reset 对齐 bottom。
@@ -99,7 +99,7 @@ Trim 是 transaction，不是数组静默裁剪：
 
 ```text
 capture visual anchor
--> receive trim-before/trim-after segment from data runtime
+-> receive trim-before/trim-after segment from loaded segment store
 -> publish projection snapshot
 -> commit
 -> measure
@@ -109,15 +109,15 @@ capture visual anchor
 Trim 策略：
 
 - viewport runtime 可以上报 trim pressure：anchor 上下真实 DOM 距离、item count、estimated DOM cost。
-- data runtime 根据 trim pressure 和业务保护区决定是否发布 trim segment。
-- 正在 follow bottom locked 时，data runtime 只能发布 trim-before。
-- 正在 read middle 时，data runtime 不能裁掉 anchor 附近保护区。
+- loaded segment store 根据 trim pressure 和业务保护区决定是否发布 trim segment。
+- 正在 follow bottom locked 时，loaded segment store 只能发布 trim-before。
+- 正在 read middle 时，loaded segment store 不能裁掉 anchor 附近保护区。
 
 ## Identity Remap
 
 ```text
 capture current visual anchor by key and identity
--> receive identity-remap segment from data runtime
+-> receive identity-remap segment from loaded segment store
 -> resolve old anchor key through remap table
 -> publish projection snapshot
 -> commit
