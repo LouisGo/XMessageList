@@ -58,6 +58,9 @@ runtime、segment、anchor、viewport events、request context、request result�
 remote append context 和 session state 都使用 `sessionId` 表达列表身份，不提供 `id` alias；
 host 的 feed identifier 只存在于 host adapter / `getSessionSource(sessionId)` 返回值中，
 不进入 XMessageList identity anchor。
+`MessageListSessionSource` 可以在简单接入中回退为 `sessionId`，但这是 fallback，
+不是概念合并：`sessionId` 表达 XMessageList session identity，source 表达 host
+选择 adapter、request route、anchor memory 和 read receipt 行为所需的来源身份。
 
 这个约定覆盖以下场景：
 
@@ -85,6 +88,8 @@ React，应在 app bootstrap、root store、dependency container 或稳定 memo 
   release；mounted session 不参与 LRU 淘汰。
 - host 可以通过 `registry.retainSession(sessionId, reason)` 保留一个未挂载但仍处于
   业务活跃状态的 session，例如分屏预加载、悬浮窗口或即将切回的 session。
+  reason 必须保持 session/workflow 语义，例如 `active-session`、`split-view` 或
+  `prefetch`；不要把 host 的 feed/conversation vocabulary 写入 public retain reason。
 - `registry.sweep()` 执行 TTL 清理；`getSession()` 和配置更新后可以自动触发一次
   sweep。
 - `destroySession(sessionId)` 是显式销毁：取消 timers、释放 runtime 和 Loaded Segment Store、
@@ -137,8 +142,9 @@ registry 需要支持配置更新，但不是所有配置都应该原地影响�
 不建议原地更新已有 session 的配置：
 
 - `retention`：这是 Message List Retention tier，会影响 session 内部
-  Loaded Segment Store 的 trim strategy。改动后应销毁并重建 session，或由未来
-  明确的 retention resize API 处理。
+  Loaded Segment Store 的 trim strategy；它不是精确 row budget，也不恢复
+  `maxItems` public API。改动后应销毁并重建 session，或由未来明确的 retention
+  resize API 处理。
 - `getSessionSource` / `getAdapter` 对已有 session 的结果：session source、row adapter、
   request route、anchor memory 和 read receipts 是 `sessionId` identity 的一部分。
   如果这些语义变化，应 `destroySession(sessionId)` 后重新 `getSession(sessionId)`。
@@ -284,12 +290,28 @@ type MessageListSession<Row> = {
 }
 ```
 
-`commands` 表示视口或请求意图。`rows` 表示 loaded segment 内普通 row 变更。
+`commands` 表示视口或请求意图。`rows`、`tail.local` 和 `tail.remote.append`
+是不可互换的三类 row 变化入口；`rows` 表示 loaded segment 内普通 row 变更。
 `tail.local` 表示本 renderer 发起的 send/retry optimistic tail 语义；
 `tail.remote.append` 表示远端、服务端、SDK 或 main process 推送的 tail 新消息，
 并携带 follow/preserve 策略进入 runtime transaction。`local` / `remote` 表达的是
 事件来源，不是消息作者；其他端发送后同步回本端的 self-authored message 仍然走
 `tail.remote.append`。
+普通 edit、delete、reaction、read marker、media update 和 streaming patch 应翻译成
+`rows.mutate(...)`，不能借用 tail 语义。
+`rows.clear()` 是 Session History Clear：当前 session 的历史聊天记录被清空，但 session
+仍保留，之后可以继续通过 `tail.local` 发送、通过 `tail.remote.append` 接收。host
+业务清空应先更新 Host Message Event Store / canonical store，再把 active session 翻译成
+`rows.clear()` 或 `rows.resetLatest(emptyPage)`；只有 session identity 或 static semantics
+作废时才使用 `destroySession(sessionId)`。
+clear 后 `hasMoreBefore` / `hasMoreAfter` 为 false，不再触发加载更多历史；如果 host
+仍认为有历史可拉，应使用 reload 或 `rows.resetLatest(page)` 重建窗口，而不是
+`rows.clear()`。
+clear 后旧 `anchorMemory` 必须由 Host Message Event Store / host persistence 失效化，
+或在后续 `anchorMemory.load` 返回 `null`；`rows.clear()` 不直接清 host 持久化。
+clear 本身不产生 read receipts；旧历史的已读/未读状态以 host canonical store 为准。
+后续只有 mounted viewport observation 看到新 rows 时，session read receipt worker 才会
+调用 `readReceipts.markRead`。
 
 这些入口仍然保持 session 级隔离：不同 `sessionId` 下的 DOM 测量、scroll
 correction、edge request、overlay、anchor memory 和 read receipt worker 互不共享。
@@ -321,6 +343,11 @@ Provider 只提供 registry：
 
 `MessageList` 接收的是已经存在的 session；React adapter 不创建 runtime、不发 request、
 不合并数据、不持久化 anchor、不运行 read receipts。
+React adapter 也不接 SDK、main process 或 bridge callbacks；这些 callbacks 只能先进入
+Host Message Event Store，再由 host 翻译成 session-level public API。
+因此核心 `MessageList` 不提供 `data` / `rows` prop。需要把全量数组接入为可滚动
+窗口时，应在外层 wrapper/helper 中创建 registry、session 和 array-backed adapter，
+再把 session 交给核心组件。
 
 如果 host 已经直接持有 session，也可以绕过 provider：
 
@@ -330,9 +357,11 @@ Provider 只提供 registry：
 
 ## Activation And Event Fanout
 
-registry 需要有 session 状态，但不应该变成全局消息事件总线。推荐分工是：
+registry 需要有 session 状态，但不应该变成全局消息事件总线。SDK、main process
+或 bridge 的 message callbacks 先进入 host-owned Host Message Event Store，
+再由 host 翻译成 session-level public API。推荐分工是：
 
-- app host 的 feed store / event store 接收 Electron/main/SDK 推送，负责 canonical
+- app host 的 Host Message Event Store 接收 Electron/main/SDK 推送，负责 canonical
   cache、dirty timestamp、未读计数和跨列表业务策略。
 - registry 只管理已经创建的 session 生命周期，不主动为所有 cached session 订阅
   重型 push stream。
@@ -343,8 +372,12 @@ registry 需要有 session 状态，但不应该变成全局消息事件总线�
   下次 session 激活、mount 或 reload 时再通过 request/dirty check 恢复。
 - read receipts 只来自 viewport observation；没有 mounted view 的 session 不会产生
   新 observation，也不应该主动 mark read。
-- edge paging 只由 mounted viewport runtime 的 semantic need events 触发；cached
-  session 不应因为后台 push 自动分页。
+- `anchorMemory` load/save 由 session 在 restore/settle 语义下调用 host adapter；
+  Host Message Event Store 和 React adapter 不直接持久化 anchor。
+- edge paging 只由 mounted viewport runtime 的 semantic need events 触发；
+  latest/around restore 可以由 session activation、mount、reload 或显式 command 触发。
+  cached session 不应因为后台 push/update 或 host background sync 自动分页；host 只更新
+  canonical store 和 dirty state。
 
 `maxSessions: 20` 的含义是最多保留 20 个 session 状态用于快速恢复，不表示 20 个
 session 都处于活跃计算状态。通常 Electron 同时 mounted 的 session 只有 1 到 2 个；

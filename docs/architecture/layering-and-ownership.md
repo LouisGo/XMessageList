@@ -6,6 +6,10 @@
 Main / Bridge
   resolves message identity and server query contracts
 
+Host Message Event Store
+  receives SDK/main callbacks, owns canonical message cache and dirty state,
+  translates active-session changes into MessageListSession API calls
+
 MessageList Session Registry
   owns per-session lifecycle, adapter routing, request bridge,
   `anchorMemory`, `readReceipts` workers and keepAlive retention
@@ -21,7 +25,8 @@ React Adapter
   renders slots, sends commit ack
 
 App / Demo Host
-  owns active session/source selection, registry construction, adapters and logging UI
+  owns active session/source selection, registry construction, adapters,
+  host message event store wiring and logging UI
 ```
 
 对外命名以 `MessageList` 为准：公开组件是 `MessageList`，公开会话对象是
@@ -50,7 +55,8 @@ MessageList Session Registry 负责：
 
 - 按 `sessionId` 懒创建和复用 `MessageListSession`。
 - 通过 app-level adapter 路由 normal / encrypted / favorite 等业务差异。
-- 接收 viewport runtime semantic need events，并调用 adapter request。
+- 接收 mounted viewport runtime semantic need events、显式 session command、
+  restore/reload，并调用 adapter request。
 - 处理 request token、stale response、failure ack、segment publish 和 trim。
 - 管理 `anchorMemory` restore/save anchor 与 `readReceipts` batching。
 - 提供 `tail.local` / `tail.remote.append` 这类 tail 语义入口，把本地发送、远端新消息
@@ -64,6 +70,7 @@ MessageList Session Registry 不负责：
 - 渲染 DOM。
 - 读取 row DOM 或 scrollTop。
 - 在 React component unmount 时销毁会话状态。
+- 让 Host Message Event Store 或 React adapter 直接运行 anchor persistence / read receipt worker。
 
 ## Loaded Segment Store
 
@@ -77,6 +84,8 @@ Loaded Segment Store 负责：
 
 Loaded Segment Store 不负责：
 
+- 接收 SDK、main process 或 bridge callbacks。
+- 维护 canonical message cache、dirty timestamp、未读计数或跨列表 fanout。
 - 在 DOM commit 前后修正滚动位置。
 - 根据 raw scrollTop 判断分页。
 - 用估算高度构造全局 offset。
@@ -97,6 +106,8 @@ Viewport runtime 负责：
 Viewport runtime 不负责：
 
 - 调 SDK。
+- 处理 push / pull / update / clear 等 message callbacks。
+- 维护 canonical message cache、dirty timestamp 或未读计数。
 - 选择 session source。
 - 解析业务权限。
 - 渲染消息 JSX。
@@ -116,6 +127,8 @@ React adapter 负责：
 
 React adapter 禁止：
 
+- 接 SDK、main process 或 bridge callbacks。
+- 合并、删除、去重或重排业务 row。
 - 自己读写 `scrollTop`。
 - 自己维护 edge paging latch。
 - 根据 DOM 查询结果持久化 anchor。
@@ -126,8 +139,12 @@ React adapter 禁止：
 Host 负责：
 
 - 在应用层创建并持有 `MessageListSessionRegistry`。
+- 通过 Host Message Event Store 接收 SDK、main process 或 bridge 的 message callbacks，
+  维护 canonical message cache、dirty timestamp、未读状态和跨列表 fanout。
 - 通过 `getSessionSource` / `getAdapter` 注入会话查询、请求、`anchorMemory`
   和 `readReceipts` 等业务依赖。
+- 提供 anchor persistence 和 mark-read 的实际业务实现；触发时机由 session/viewport
+  observation 决定。
 - 通过 registry `tailEvents.shouldFollowRemoteAppend` 或单次
   `tail.remote.append({ follow })`
   决定 receive append 是否跟随；典型策略会同时参考滚动距离、页面焦点、未读
@@ -135,11 +152,14 @@ Host 负责：
 - 选择 active session，并把对应 `MessageListSession` 交给 React adapter。
 - 通过 `session.commands` 发起 scroll / reload 意图。
 - 通过 `session.tail.local` 接入本 renderer send/retry optimistic row。
-- 通过 `session.tail.remote.append` 接入远端、SDK、main process 或服务端尾部新消息。
+- 将 Host Message Event Store 归一化后的远端、SDK、main process 或服务端尾部新消息
+  翻译为 `session.tail.remote.append`。
 - 通过 `session.rows` 接入 edit、delete、reaction、streaming patch、
   identity remap、replace 和 clear 等普通 row 变更。
 - 作为分页缓存、持久化、dirty timestamp 和未加载页脏检查的 canonical owner；
   XMessageList session registry 只接收归一化后的当前 loaded segment 变更。
+- 后台同步可以更新 canonical store 和 dirty state，但不通过 XMessageList cached session
+  自动 edge paging。
 - demo host 只使用 public session API 作为标准接入样板；E2E-only helper 可以读取
   runtime snapshot/evidence，但只服务测试证据和 fixture reset。
 

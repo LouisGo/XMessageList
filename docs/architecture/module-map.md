@@ -21,6 +21,12 @@
   `MessageListSession`。
 - `runtime/`：framework-independent viewport runtime。
 
+Host Message Event Store 不在 `src/x-message-list` 包内。SDK、main process 或 bridge
+callbacks 应先由 host event store 维护 canonical cache、dirty state、unread 和跨列表
+fanout，再通过 public `MessageListSession` API 进入包内。
+package 不导出 `HostMessageEventStore` interface；这是 host 边界术语，不是
+XMessageList public API。
+
 ## Session Registry
 
 `src/x-message-list/core/session-registry` 负责应用级生命周期：
@@ -87,6 +93,8 @@ append/edit/delete/send/clear 都通过 `session.commands`、`session.rows`、
 feed 仍由 demo data API 管理；当前 loaded rows、edge status 和 viewport status
 只能从 `session.getState()` / `useMessageListState` 推导，不维护独立 loaded-window
 镜像，也不读取 runtime 或 Loaded Segment Store。
+demo 可以模拟 Host Message Event Store，但不能把 demo-specific event fanout 或
+fixture reset 逻辑提升为核心 API。
 
 `src/e2e-app` 是 browser-side E2E harness；它可以通过 E2E-only helper 读取
 package-internal runtime snapshot/evidence，用于测试证据和 reset 辅助；应用渲染路径
@@ -100,6 +108,10 @@ package-internal runtime snapshot/evidence，用于测试证据和 reset 辅助�
 - React adapter must use runtime public or adapter-private barrels; demo and app
   code must go through registry/session APIs. E2E harness files are the only
   approved diagnostics exception.
+- Business code must not use runtime snapshot, DOM evidence, or Loaded Segment
+  Store internals as app state.
+- Demo and E2E may validate host wiring, but they must not define the package's
+  domain boundaries or introduce core dependencies on demo/e2e helpers.
 - Runtime non-controller domains must not import from `runtime/controller/`; move
   cross-domain pure helpers to `runtime/shared/`.
 - Source files should stay below the repository file budget; split by stable

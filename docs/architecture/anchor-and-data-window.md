@@ -39,6 +39,7 @@ type MessageDataItem = {
 
 约束：
 
+- `MessageListAnchor.id` 是 message-level shortcut，用于 host 只有一个消息标识字符串的场景；它不是 `sessionId`，不能用作 registry key 或 session identity。
 - `MessageIdentity.stableId` 是跨 local/server remap 的逻辑身份；同一条本地发送消息被服务端确认后，优先保持同一个 stableId。
 - `MessageRuntimeItemKey` 是 React key 与 DOM ref key；它不能用 array index，也不能直接等同于 server id。
 - 普通消息 row 必须有 `identity`；日期、系统、权限 fallback 等非消息 row 可以只有 runtime key。

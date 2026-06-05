@@ -19,6 +19,7 @@
 | [testing](./testing/README.md) | E2E 场景、oracle、证据结构 | [e2e-scenarios.md](./testing/e2e-scenarios.md) |
 | [graph](./graph/README.md) | Mermaid 图形式的跨模块关系和时序 | [module-boundaries.md](./graph/module-boundaries.md) |
 | [research](./research/telegram-web-a.md) | 研究快照与架构取舍来源 | [telegram-web-a.md](./research/telegram-web-a.md) |
+| [adr](./adr/0001-host-message-event-store-boundary.md) | 难回退的边界与架构决策记录 | [0001-host-message-event-store-boundary.md](./adr/0001-host-message-event-store-boundary.md) |
 
 ## 推荐阅读顺序
 
@@ -35,6 +36,7 @@
 11. [testing/e2e-scenarios.md](./testing/e2e-scenarios.md)
 12. [testing/oracles.md](./testing/oracles.md)
 13. [graph/README.md](./graph/README.md)
+14. [adr/0001-host-message-event-store-boundary.md](./adr/0001-host-message-event-store-boundary.md)
 
 ## 统一口径
 
