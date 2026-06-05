@@ -9,6 +9,7 @@ import type { DemoMessage } from '../data/demoData'
 import { DEMO_FEEDS, getDemoFeedDefinition } from '../data/demoFeeds'
 import {
   readDemoFeedMessages,
+  saveDemoViewportAnchor,
 } from '../data/demoMessageApi'
 import {
   clearHighlightTimer,
@@ -121,6 +122,10 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     registryStateRef.current.savedAnchors.get(feedId) ?? null, [registryStateRef])
   const saveAnchor = useCallback((feedId: string, value: SavedRuntimeAnchor) => {
     registryStateRef.current.savedAnchors.set(feedId, value)
+  }, [registryStateRef])
+  const invalidateAnchorMemory = useCallback((feedId: string) => {
+    registryStateRef.current.savedAnchors.delete(feedId)
+    saveDemoViewportAnchor(feedId, undefined)
   }, [registryStateRef])
 
   // eslint-disable-next-line react-hooks/refs -- lazy registry construction stores callbacks; it does not read ref values during render.
@@ -284,8 +289,10 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     activeFeedId,
     session: activeSession,
     getSession,
+    hasSession: (feedId) => registry.hasSession(feedId),
     getHasMoreAfter,
     getLoadedMessages,
+    invalidateAnchorMemory,
     isActiveFeed,
     pageSize: PAGE_SIZE,
     sendDelayBaseMs: SEND_DELAY_BASE_MS,

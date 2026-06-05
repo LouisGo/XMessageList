@@ -9,7 +9,6 @@ import {
   flushDemoFeedPersistence,
   readDemoFeedMessages,
   replaceDemoFeedMessages,
-  saveDemoViewportAnchor,
 } from '../data/demoMessageApi'
 import {
   createDemoRequestId,
@@ -42,8 +41,10 @@ export function useDemoMessageCommands(input: {
   activeFeedId: string
   session: MessageListSession<DemoMessage>
   getSession: (feedId: string) => MessageListSession<DemoMessage>
+  hasSession: (feedId: string) => boolean
   getHasMoreAfter: () => boolean
   getLoadedMessages: () => DemoMessage[]
+  invalidateAnchorMemory: (feedId: string) => void
   isActiveFeed: (feedId: string) => boolean
   pageSize: number
   sendDelayBaseMs: number
@@ -56,7 +57,9 @@ export function useDemoMessageCommands(input: {
     getHasMoreAfter,
     getLoadedMessages,
     getSession,
+    hasSession,
     highlightState,
+    invalidateAnchorMemory,
     isActiveFeed,
     pageSize,
     sendDelayBaseMs,
@@ -219,7 +222,7 @@ export function useDemoMessageCommands(input: {
         ],
       )
 
-      saveDemoViewportAnchor(feedId, undefined)
+      invalidateAnchorMemory(feedId)
       if (isActiveFeed(feedId)) {
         setMessageCount(persistedMessages.length)
       }
@@ -239,6 +242,7 @@ export function useDemoMessageCommands(input: {
   }, [
     getHasMoreAfter,
     getSession,
+    invalidateAnchorMemory,
     isActiveFeed,
     setLastEvent,
     setMessageCount,
@@ -266,7 +270,7 @@ export function useDemoMessageCommands(input: {
     }
     const persistedMessages = appendDemoFeedMessages(activeFeedId, [message])
 
-    saveDemoViewportAnchor(activeFeedId, undefined)
+    invalidateAnchorMemory(activeFeedId)
     if (isActiveFeed(activeFeedId)) {
       setMessageCount(persistedMessages.length)
     }
@@ -292,6 +296,7 @@ export function useDemoMessageCommands(input: {
     activeFeedId,
     completeSendAttempt,
     getHasMoreAfter,
+    invalidateAnchorMemory,
     isActiveFeed,
     stageOutgoingMessage,
     setLastEvent,
@@ -396,9 +401,12 @@ export function useDemoMessageCommands(input: {
 
   const clearFeed = useCallback((feedId: string) => {
     replaceDemoFeedMessages(feedId, [])
+    invalidateAnchorMemory(feedId)
+    if (hasSession(feedId)) {
+      getSession(feedId).rows.clear()
+    }
     if (isActiveFeed(feedId)) {
       setMessageCount(0)
-      getSession(feedId).rows.clear()
     }
     void flushDemoFeedPersistence(feedId)
     if (isActiveFeed(feedId)) {
@@ -406,6 +414,8 @@ export function useDemoMessageCommands(input: {
     }
   }, [
     getSession,
+    hasSession,
+    invalidateAnchorMemory,
     isActiveFeed,
     setLastEvent,
     setMessageCount,

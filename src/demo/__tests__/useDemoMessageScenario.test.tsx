@@ -337,6 +337,66 @@ describe('useDemoMessageScenario feed switching', () => {
     await harness.unmount()
   })
 
+  it('clears cached feed session rows and invalidates persisted anchors', async () => {
+    const harness = createScenarioHarness()
+    const feedId = 'feed-support'
+    const feedMessages = readDemoFeedMessages(feedId)
+    const target = feedMessages[29]
+
+    expect(target?.id).toBe('feed-support-0030')
+    saveDemoViewportAnchor(feedId, {
+      messageId: target.id,
+      position: target.sequence,
+      offsetWithinMessage: 17,
+    })
+
+    await harness.render()
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario && !scenario.feedLoading && scenario.loadedMessageCount > 0)
+    })
+
+    await act(async () => {
+      harness.getScenario()?.selectFeed(feedId)
+    })
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(
+        scenario?.activeFeedId === feedId &&
+          !scenario.feedLoading &&
+          getScenarioSnapshot(scenario).items.some((item) =>
+            item.message?.id === target.id
+          ),
+      )
+    })
+
+    await act(async () => {
+      harness.getScenario()?.selectFeed('feed-runtime')
+    })
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario?.activeFeedId === 'feed-runtime' && !scenario.feedLoading)
+    })
+
+    await act(async () => {
+      harness.getScenario()?.clearFeed(feedId)
+    })
+    await act(async () => {
+      harness.getScenario()?.selectFeed(feedId)
+    })
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario?.activeFeedId === feedId && !scenario.feedLoading)
+    })
+
+    const scenario = harness.getScenario()
+    expect(readDemoFeedMessages(feedId)).toEqual([])
+    expect(scenario?.loadedMessageCount).toBe(0)
+    expect(getScenarioSnapshot(scenario).items).toEqual([])
+
+    await harness.unmount()
+  })
+
   it('loads around the target when jumping to a remote quote', async () => {
     const harness = createScenarioHarness()
 

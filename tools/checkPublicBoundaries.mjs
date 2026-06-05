@@ -7,6 +7,7 @@ const ROOT = path.resolve(
   '..',
 )
 const INDEX_FILE = path.join(ROOT, 'src', 'index.ts')
+const VITE_CONFIG_FILE = path.join(ROOT, 'vite.config.ts')
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mjs'])
 const NO_GOD_FILE_BUDGET = 600
 const CHECKED_ROOTS = [
@@ -62,11 +63,22 @@ const FORBIDDEN_ROOT_EXPORTS = [
   'RuntimeDomRegistry',
   'RuntimeMeasurement',
   'VisualAnchor',
+  'HostMessageEventStore',
+  'createMessageListManager',
+  'MessageListManager',
+  'MessageListProvider',
+]
+const FORBIDDEN_PUBLIC_PATHS = [
+  'src/x-message-list/core/manager',
+  'src/x-message-list/core/runtime',
+  'src/x-message-list/core/session-registry/loaded-segment-store',
+  'x-message-list/data',
 ]
 
 const violations = []
 
 await checkRootExports()
+await checkPublishConfig()
 await checkPublicTypeFiles()
 await checkNoGodFiles()
 await checkImportGuards()
@@ -91,6 +103,18 @@ async function checkRootExports() {
     const pattern = new RegExp(`\\b${escapeRegExp(exportedName)}\\b`)
     if (pattern.test(source)) {
       violations.push(`src/index.ts must not export private ${exportedName}`)
+    }
+  }
+}
+
+async function checkPublishConfig() {
+  const source = await readFile(VITE_CONFIG_FILE, 'utf8')
+
+  for (const forbiddenPath of FORBIDDEN_PUBLIC_PATHS) {
+    if (source.includes(forbiddenPath)) {
+      violations.push(
+        `${relative(VITE_CONFIG_FILE)} must not include private or stale public declaration path ${forbiddenPath}`,
+      )
     }
   }
 }

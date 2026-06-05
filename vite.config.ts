@@ -13,10 +13,11 @@ export default defineConfig({
       entryRoot: 'src',
       include: [
         'src/index.ts',
-        'src/x-message-list/core/manager/index.ts',
-        'src/x-message-list/core/manager/types.ts',
+        'src/x-message-list/core/session-registry/index.ts',
+        'src/x-message-list/core/session-registry/contracts/index.ts',
         'src/x-message-list/react/index.ts',
         'src/x-message-list/react/components/MessageList.tsx',
+        'src/x-message-list/react/hooks/useMessageListSession.ts',
         'src/x-message-list/react/hooks/useMessageListState.ts',
         'src/x-message-list/react/types.ts',
       ],
