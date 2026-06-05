@@ -11,7 +11,11 @@ import type { SegmentModifier } from '../contracts/segment'
 import type { MessageListSnapshot } from '../contracts/snapshot'
 import type { DestinationIntent, RuntimeEdge } from '../interactions/interactionState'
 import type { ScrollSource } from '../scroll/scrollIntentEngine'
-import { RuntimeRowMetricCache } from './rowMetricCache'
+import {
+  RuntimeRowMetricCache,
+  type RuntimeMeasurementCacheContext,
+  type RuntimeSegmentSizeSnapshot,
+} from './rowMetricCache'
 
 export type RuntimeDomInteractionsOptions = {
   scheduler: RuntimeScheduler
@@ -272,8 +276,9 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     }
 
     const row = this.options.registry.getRow(anchor.key)
-    const container = this.options.registry.snapshot().scrollContainer
-    const previousTop = this.rowMetrics.getTop(anchor.key)
+    const snapshot = this.options.registry.snapshot()
+    const container = snapshot.scrollContainer
+    const previousTop = this.rowMetrics.getProjectedTop(anchor.key, snapshot)
 
     if (!row || !container || previousTop === undefined) {
       return
@@ -286,8 +291,11 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     }
   }
 
-  recordRowMetrics(measurement?: RuntimeMeasurement): void {
-    this.rowMetrics.record(this.options.registry.snapshot(), measurement)
+  recordRowMetrics(
+    measurement?: RuntimeMeasurement,
+    context?: RuntimeMeasurementCacheContext,
+  ): void {
+    this.rowMetrics.record(this.options.registry.snapshot(), measurement, context)
   }
 
   getScrollSampleKeys(limit = 32, overscanPx = 160): string[] | undefined {
@@ -296,6 +304,43 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       limit,
       overscanPx,
     )
+  }
+
+  markRowMetricDirty(key: string): void {
+    this.rowMetrics.markDirty(key)
+  }
+
+  markRowMetricDirtyKeys(keys: Iterable<string>): void {
+    this.rowMetrics.markDirtyKeys(keys)
+  }
+
+  markAllRowMetricsDirty(reason: string): void {
+    this.rowMetrics.markAllDirty(reason)
+  }
+
+  deleteRowMetric(key: string): void {
+    this.rowMetrics.deleteKey(key)
+  }
+
+  remapRowMetric(previousKey: string | undefined, nextKey: string): void {
+    this.rowMetrics.remapKey(previousKey, nextKey)
+  }
+
+  invalidateRowMetricsAfterIndex(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+    index: number | null,
+    reason: string,
+  ): void {
+    this.rowMetrics.invalidateAfterIndex(snapshot.items, index, reason)
+  }
+
+  createSizeSnapshot(input: {
+    sessionId: string
+    generation: number
+    segmentRevision: number
+    anchor?: { key: string; offsetWithinMessage: number }
+  }): RuntimeSegmentSizeSnapshot {
+    return this.rowMetrics.createSizeSnapshot(input)
   }
 
   private createEdgeObserver(

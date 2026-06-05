@@ -17,6 +17,7 @@ function MessageRowInner<TMessage, TOptimistic>({
   item,
   runtime,
   renderRow,
+  rowRenderVersion,
 }: MessageRowProps<TMessage, TOptimistic>) {
   const registerRow = useCallback((element: HTMLDivElement | null) => {
     runtime.registerRowElement(item.key, element)
@@ -30,6 +31,7 @@ function MessageRowInner<TMessage, TOptimistic>({
       data-row-kind={item.rowKind}
       data-message-stable-id={item.identity?.stableId}
       data-message-server-id={item.identity?.serverId}
+      data-message-render-version={String(rowRenderVersion ?? item.renderVersion)}
     >
       {renderRow({
         row: item.message as TMessage,

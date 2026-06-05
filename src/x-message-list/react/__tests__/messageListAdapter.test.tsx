@@ -809,6 +809,115 @@ describe('MessageList React adapter', () => {
     }
   })
 
+  it('batches custom scrollbar refresh diagnostics per animation frame', async () => {
+    const fixture = createSessionFixture({
+      rows: ['row-1', 'row-2'],
+    })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const reportOverlayDiagnostic = vi.spyOn(
+      getMessageListAdapterRuntime(fixture.runtime),
+      'reportOverlayDiagnostic',
+    )
+
+    try {
+      await act(async () => {
+        root.render(
+          <MessageList
+            session={fixture.session}
+            renderRow={({ row }) => <span>{row}</span>}
+            scrollbar="custom"
+          />,
+        )
+      })
+
+      const container = host.querySelector<HTMLElement>('[data-message-scroll-container]')
+      expect(container).not.toBeNull()
+      await act(async () => {
+        await waitForAnimationFrame()
+      })
+      reportOverlayDiagnostic.mockClear()
+
+      await act(async () => {
+        container!.dispatchEvent(new Event('scroll'))
+        container!.dispatchEvent(new Event('scroll'))
+      })
+      expect(reportOverlayDiagnostic).not.toHaveBeenCalledWith(
+        'overlay.refresh.count',
+        expect.anything(),
+      )
+
+      await act(async () => {
+        await waitForAnimationFrame()
+      })
+
+      expect(reportOverlayDiagnostic.mock.calls.filter(([name]) =>
+        name === 'overlay.refresh.count'
+      )).toHaveLength(1)
+    } finally {
+      reportOverlayDiagnostic.mockRestore()
+      await act(async () => {
+        root.unmount()
+      })
+      fixture.destroy()
+    }
+  })
+
+  it('batches custom scrollbar mutation diagnostics per animation frame', async () => {
+    const installedMutationObserver = installControllableMutationObserver()
+    const fixture = createSessionFixture({
+      rows: ['row-1', 'row-2'],
+    })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const reportOverlayDiagnostic = vi.spyOn(
+      getMessageListAdapterRuntime(fixture.runtime),
+      'reportOverlayDiagnostic',
+    )
+
+    try {
+      await act(async () => {
+        root.render(
+          <MessageList
+            session={fixture.session}
+            renderRow={({ row }) => <span>{row}</span>}
+            scrollbar="custom"
+          />,
+        )
+      })
+      await act(async () => {
+        await waitForAnimationFrame()
+      })
+      reportOverlayDiagnostic.mockClear()
+
+      await act(async () => {
+        installedMutationObserver.instances[0]?.trigger(2)
+        installedMutationObserver.instances[0]?.trigger(3)
+      })
+      expect(reportOverlayDiagnostic).not.toHaveBeenCalledWith(
+        'overlay.mutation.batch',
+        expect.anything(),
+      )
+
+      await act(async () => {
+        await waitForAnimationFrame()
+      })
+
+      expect(reportOverlayDiagnostic.mock.calls.filter(([name]) =>
+        name === 'overlay.mutation.batch'
+      )).toEqual([
+        ['overlay.mutation.batch', { records: 5 }],
+      ])
+    } finally {
+      reportOverlayDiagnostic.mockRestore()
+      await act(async () => {
+        root.unmount()
+      })
+      fixture.destroy()
+      installedMutationObserver.restore()
+    }
+  })
+
   it('rebases an active custom scrollbar drag after native range changes', async () => {
     const fixture = createSessionFixture({
       rows: ['row-1', 'row-2'],
@@ -889,6 +998,8 @@ describe('MessageList React adapter', () => {
     expect(container!.scrollTop).toBeGreaterThan(260)
     expect(fixture.runtime.getDiagnostics().map((record) => record.name))
       .toContain('directScroll.rebased')
+    expect(fixture.runtime.getDiagnostics().map((record) => record.name))
+      .toContain('overlay.drag.rebase.count')
 
     await act(async () => {
       root.unmount()
@@ -1082,6 +1193,39 @@ function installCountingObservers(): {
     counters,
     restore: () => {
       replaceGlobal('ResizeObserver', previousResizeObserver)
+      replaceGlobal('MutationObserver', previousMutationObserver)
+    },
+  }
+}
+
+function installControllableMutationObserver(): {
+  instances: Array<MutationObserver & { trigger(count: number): void }>
+  restore: () => void
+} {
+  const previousMutationObserver = globalThis.MutationObserver
+  const instances: Array<MutationObserver & { trigger(count: number): void }> = []
+
+  class ControllableMutationObserver implements MutationObserver {
+    constructor(private readonly callback: MutationCallback) {
+      instances.push(this)
+    }
+
+    observe(): void {}
+    disconnect(): void {}
+    takeRecords(): MutationRecord[] { return [] }
+    trigger(count: number): void {
+      this.callback(
+        Array.from({ length: count }, () => ({}) as MutationRecord),
+        this,
+      )
+    }
+  }
+
+  replaceGlobal('MutationObserver', ControllableMutationObserver)
+
+  return {
+    instances,
+    restore: () => {
       replaceGlobal('MutationObserver', previousMutationObserver)
     },
   }

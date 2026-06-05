@@ -1,6 +1,7 @@
 import type { MessageRuntimeItemKey } from './contracts/identity'
 import type { MessageListRuntime } from './controller/runtime'
 import type { ProjectionCommitToken } from './contracts/snapshot'
+import type { RuntimeSegmentSizeSnapshot } from './dom/rowMetricCache'
 
 export type { ProjectionCommitToken } from './contracts/snapshot'
 
@@ -17,6 +18,7 @@ export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown>
     ackProjectionCommit(token: ProjectionCommitToken): void
     retryEdgeRequest(edge: 'before' | 'after'): void
     reportOverlayMetricMismatch(details: Record<string, unknown>): void
+    reportOverlayDiagnostic?(name: string, details: Record<string, unknown>): void
     beginDirectScroll(): void
     writeDirectScrollTop(scrollTop: number): boolean
     endDirectScroll(): void
@@ -27,6 +29,7 @@ export type MessageListSessionRegistryRuntime<TMessage = unknown, TOptimistic = 
   MessageListRuntime<TMessage, TOptimistic> & {
     prepareFollowBottomForLocalReset(): void
     startEdgeRequest(edge: 'before' | 'after', reason: string): void
+    getSegmentSizeSnapshot(): RuntimeSegmentSizeSnapshot
   }
 
 export function getMessageListAdapterRuntime<

@@ -20,6 +20,10 @@ export type RuntimeMeasurement = Pick<
 > & {
   viewportTop: number
   viewportBottom: number
+  rectReadCount: number
+  rectReadRows: number
+  requestedRowCount: number | null
+  fallbackFullMeasure: boolean
 }
 
 export type RuntimeMeasurementOptions = {
@@ -31,6 +35,7 @@ export type RuntimeMeasurementOptions = {
  */
 export function captureVisualAnchor(
   registry: RuntimeDomRegistrySnapshot,
+  options: RuntimeMeasurementOptions = {},
 ): VisualAnchor | null {
   const container = registry.scrollContainer
 
@@ -39,7 +44,14 @@ export function captureVisualAnchor(
   }
 
   const containerTop = container.getBoundingClientRect().top
-  const rowRects = Array.from(registry.rows, ([key, row]) => ({
+  const rows = options.rowKeys
+    ? options.rowKeys
+        .map((key) => [key, registry.rows.get(key)] as const)
+        .filter((entry): entry is readonly [MessageRuntimeItemKey, HTMLElement] =>
+          Boolean(entry[1]),
+        )
+    : Array.from(registry.rows)
+  const rowRects = rows.map(([key, row]) => ({
     key,
     rect: row.getBoundingClientRect(),
   })).sort((first, second) => first.rect.top - second.rect.top)
@@ -63,7 +75,15 @@ export function measureRuntimeDom(
 ): RuntimeMeasurement {
   const container = registry.scrollContainer
   const empty = createEmptyRect()
-  const viewportRect = container?.getBoundingClientRect() ?? empty
+  let rectReadCount = 0
+  const readRect = (element: HTMLElement | null | undefined): DOMRectLike => {
+    if (!element) {
+      return empty
+    }
+    rectReadCount += 1
+    return element.getBoundingClientRect()
+  }
+  const viewportRect = readRect(container)
   const rows = options.rowKeys
     ? options.rowKeys
         .map((key) => [key, registry.rows.get(key)] as const)
@@ -72,14 +92,18 @@ export function measureRuntimeDom(
         )
     : Array.from(registry.rows)
 
-  return {
+  const measurement: RuntimeMeasurement = {
     scrollTop: container?.scrollTop ?? 0,
     clientHeight: container?.clientHeight ?? 0,
     scrollHeight: container?.scrollHeight ?? 0,
     viewportTop: viewportRect.top,
     viewportBottom: viewportRect.bottom,
+    rectReadCount: 0,
+    rectReadRows: rows.length,
+    requestedRowCount: options.rowKeys?.length ?? null,
+    fallbackFullMeasure: !options.rowKeys,
     visibleRows: rows.map(([key, row]) => {
-      const rect = row.getBoundingClientRect()
+      const rect = readRect(row)
       return {
         key,
         stableId: row.dataset.messageStableId,
@@ -89,12 +113,14 @@ export function measureRuntimeDom(
         bottom: rect.bottom,
       }
     }),
-    beforeTrigger: toRectLike(registry.beforeTrigger?.getBoundingClientRect() ?? empty),
-    afterTrigger: toRectLike(registry.afterTrigger?.getBoundingClientRect() ?? empty),
+    beforeTrigger: toRectLike(readRect(registry.beforeTrigger)),
+    afterTrigger: toRectLike(readRect(registry.afterTrigger)),
     bottomMarker: registry.bottomMarker
-      ? toRectLike(registry.bottomMarker.getBoundingClientRect())
+      ? toRectLike(readRect(registry.bottomMarker))
       : null,
   }
+  measurement.rectReadCount = rectReadCount
+  return measurement
 }
 
 export function createEmptyRect(): DOMRectLike {

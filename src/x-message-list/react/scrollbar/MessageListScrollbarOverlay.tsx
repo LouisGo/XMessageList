@@ -26,6 +26,8 @@ type DragState = {
   maxThumbTop: number
 }
 
+type OverlayRefreshReason = 'scroll' | 'projection' | 'resize' | 'mutation' | 'drag'
+
 export type MessageListScrollbarOverlayProps<TMessage, TOptimistic> = {
   containerRef: RefObject<HTMLElement>
   runtime: MessageListAdapterRuntime<TMessage, TOptimistic>
@@ -59,14 +61,25 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
   const dragOwnerDocumentRef = useRef<Document | null>(null)
   const hideTimerRef = useRef<number | null>(null)
   const refreshFrameRef = useRef<number | null>(null)
+  const refreshReasonRef = useRef<Set<OverlayRefreshReason>>(new Set())
+  const mutationBatchRef = useRef(0)
   const mismatchKeyRef = useRef<string | null>(null)
   const lastMismatchReportRef = useRef<number>(0)
   const lastMismatchMetricsRef = useRef<{ clientHeight: number; scrollHeight: number }>({ clientHeight: 0, scrollHeight: 0 })
   const thumbRef = useRef<HTMLDivElement>(null)
   const geometry = useMemo(() => resolveScrollbarGeometry(metrics), [metrics])
-  const refresh = useCallback(() => {
+  const refresh = useCallback((reason: OverlayRefreshReason) => {
+    const readStartedAt = performance.now()
     const next = readMetrics(containerRef.current)
+    const layoutReadMs = performance.now() - readStartedAt
     setMetrics((previous) => areSameMetrics(previous, next) ? previous : next)
+    runtime.reportOverlayDiagnostic?.('overlay.refresh.count', {
+      reason,
+      layoutReadMs,
+      scrollTop: next.scrollTop,
+      clientHeight: next.clientHeight,
+      scrollHeight: next.scrollHeight,
+    })
     const lastSizes = lastMismatchMetricsRef.current
     const sizeChanged =
       next.clientHeight !== lastSizes.clientHeight ||
@@ -106,22 +119,34 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     setVisible(true)
     clearHideTimer()
   }, [clearHideTimer])
-  const scheduleRefreshFrame = useCallback(() => {
+  const scheduleRefreshFrame = useCallback((reason: OverlayRefreshReason) => {
+    refreshReasonRef.current.add(reason)
     if (refreshFrameRef.current !== null) {
       return
     }
 
     refreshFrameRef.current = window.requestAnimationFrame(() => {
       refreshFrameRef.current = null
-      refresh()
+      const reasons = [...refreshReasonRef.current]
+      refreshReasonRef.current.clear()
+      if (reasons.includes('mutation') && mutationBatchRef.current > 0) {
+        runtime.reportOverlayDiagnostic?.('overlay.mutation.batch', {
+          records: mutationBatchRef.current,
+        })
+        mutationBatchRef.current = 0
+      }
+      refresh(reasons[0] ?? 'scroll')
     })
-  }, [refresh])
-  const scheduleRefresh = useCallback((reveal = false) => {
+  }, [refresh, runtime])
+  const scheduleRefresh = useCallback((
+    reason: OverlayRefreshReason,
+    reveal = false,
+  ) => {
     if (reveal) {
       showScrollbar()
     }
 
-    scheduleRefreshFrame()
+    scheduleRefreshFrame(reason)
   }, [scheduleRefreshFrame, showScrollbar])
   const scheduleHide = useCallback(() => {
     clearHideTimer()
@@ -161,12 +186,19 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       return
     }
 
-    const scheduleRefreshAndReveal = () => {
-      scheduleRefresh(true)
+    const scheduleScrollRefreshAndReveal = () => {
+      scheduleRefresh('scroll', true)
+    }
+    const scheduleResizeRefreshAndReveal = () => {
+      scheduleRefresh('resize', true)
+    }
+    const scheduleMutationRefreshAndReveal = (records: MutationRecord[]) => {
+      mutationBatchRef.current += records.length
+      scheduleRefresh('mutation', true)
     }
     const handleContainerPointerEnter = () => {
       showScrollbar()
-      scheduleRefresh()
+      scheduleRefresh('scroll')
     }
     const handleContainerPointerLeave = () => {
       if (!draggingRef.current) {
@@ -175,24 +207,25 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     }
     const resizeObserver = typeof ResizeObserver === 'undefined'
       ? null
-      : new ResizeObserver(scheduleRefreshAndReveal)
+      : new ResizeObserver(scheduleResizeRefreshAndReveal)
     const mutationObserver = typeof MutationObserver === 'undefined'
       ? null
-      : new MutationObserver(scheduleRefreshAndReveal)
+      : new MutationObserver(scheduleMutationRefreshAndReveal)
+    const flow = container.querySelector<HTMLElement>('[data-message-flow]')
 
-    scheduleRefreshFrame()
-    container.addEventListener('scroll', scheduleRefreshAndReveal, { passive: true })
+    scheduleRefreshFrame('projection')
+    container.addEventListener('scroll', scheduleScrollRefreshAndReveal, { passive: true })
     container.addEventListener('pointerenter', handleContainerPointerEnter)
     container.addEventListener('pointerleave', handleContainerPointerLeave)
     resizeObserver?.observe(container)
-    mutationObserver?.observe(container, {
+    mutationObserver?.observe(flow ?? container, {
       childList: true,
-      subtree: true,
+      subtree: !flow,
     })
 
     return () => {
       cancelScheduledRefresh()
-      container.removeEventListener('scroll', scheduleRefreshAndReveal)
+      container.removeEventListener('scroll', scheduleScrollRefreshAndReveal)
       container.removeEventListener('pointerenter', handleContainerPointerEnter)
       container.removeEventListener('pointerleave', handleContainerPointerLeave)
       resizeObserver?.disconnect()
@@ -201,6 +234,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
   }, [
     cancelScheduledRefresh,
     containerRef,
+    runtime,
     scheduleHide,
     scheduleRefresh,
     scheduleRefreshFrame,
@@ -208,7 +242,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
   ])
 
   useLayoutEffect(() => {
-    scheduleRefreshFrame()
+    scheduleRefreshFrame('projection')
   }, [projectionRevision, scheduleRefreshFrame])
 
   useLayoutEffect(() => {
@@ -229,7 +263,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
 
   const writeScrollTop = useCallback((scrollTop: number) => {
     runtime.writeDirectScrollTop(scrollTop)
-    refresh()
+    refresh('drag')
   }, [refresh, runtime])
 
   useLayoutEffect(() => {
@@ -265,6 +299,9 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       areSameMetrics(previous, nextMetrics) ? previous : nextMetrics
     )
     runtime.notifyDirectScrollRebased()
+    runtime.reportOverlayDiagnostic?.('overlay.drag.rebase.count', {
+      projectionRevision,
+    })
   }, [
     containerRef,
     metrics,
@@ -360,7 +397,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     }
 
     // Schedule RAF-batched refresh for telemetry sync (no-op if already pending).
-    scheduleRefreshFrame()
+    scheduleRefreshFrame('drag')
   }, [runtime, scheduleRefreshFrame])
 
   const endDrag = useCallback(() => {
@@ -369,7 +406,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       dragMetricsKeyRef.current = null
       setDraggingState(false)
       runtime.endDirectScroll()
-      refresh()
+      refresh('drag')
       scheduleHide()
     }
   }, [refresh, runtime, scheduleHide, setDraggingState])

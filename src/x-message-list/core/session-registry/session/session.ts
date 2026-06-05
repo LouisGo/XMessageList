@@ -13,6 +13,7 @@ import {
   type LoadedSegmentStore,
 } from '../loaded-segment-store/index'
 import { getMessageListSessionRegistryRuntime } from '../../runtime/internal'
+import type { RuntimeSegmentSizeSnapshot } from '../../runtime/dom/rowMetricCache'
 import { MessageListReadReceiptsWorker } from '../read-receipts/readReceipts'
 import { MessageListSessionOverlay } from './overlay'
 import { createMessageListSessionState } from './state'
@@ -61,6 +62,7 @@ export class MessageListSession<Row, Source>
   private readonly liveSemantics: MessageListSessionLiveSemantics<Row, Source>
   private viewRetainCount = 0
   private rowsPerViewportEstimate: number
+  private measurementSnapshot: RuntimeSegmentSizeSnapshot | null = null
   lastUsedAt = Date.now()
 
   constructor(private readonly options: SessionOptions<Row, Source>) {
@@ -137,6 +139,7 @@ export class MessageListSession<Row, Source>
       getRow: (item) => this.getRow(item),
       getRowRenderVersion: (item) => this.getRowRenderVersion(item),
       getRowsByKeys: (keys) => this.getRowsByKeys(keys),
+      getMeasurementSnapshot: () => this.measurementSnapshot,
     })
     this.runtimeUnsubscribe = this.#runtime.subscribeRuntimeEvent((event) => {
       this.handleRuntimeEvent(event)
@@ -204,6 +207,7 @@ export class MessageListSession<Row, Source>
     this.overlay.destroy()
     this.stateStore.destroy()
     this.#runtime.destroy()
+    this.measurementSnapshot = null
     this.viewListeners.clear()
   }
 
@@ -269,6 +273,7 @@ export class MessageListSession<Row, Source>
 
     if (event.type === 'viewportObservationChanged') {
       if (event.visibleItems.length > 0) this.rowsPerViewportEstimate = event.visibleItems.length
+      this.measurementSnapshot = getMessageListSessionRegistryRuntime(this.#runtime).getSegmentSizeSnapshot()
       this.readReceipts.handleObservation(event)
       return
     }

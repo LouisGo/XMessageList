@@ -37,13 +37,31 @@ Scroll rAF 中避免：
 ## Measurement 策略
 
 - row height cache 只用于预算和 resize 判断，不用于生成 DOM spacer。
+- loaded segment 内部维护 shadow measurement cache，字段包含 key、height、top、bottom、width bucket、renderVersion、generation、segmentRevision、projectionRevision、dirty 和 source。
 - cache key 至少要区分 sessionId、generation、width bucket 和 renderVersion，避免跨 session、跨布局或内容版本污染。
-- measurement snapshot restore 只能作为近似恢复和 diagnostics 输入；commit 后仍以真实 DOM rect + anchor correction 为准。
-- ResizeObserver 只作为 dirty signal。
+- cache 只优化 DOM 读数、scroll sample、restore hint 和 diagnostics，不拥有 scrollTop correction。
+- measurement snapshot 留在 session registry 内部，生命周期跟 session keepAlive 一致；restore/attach 后仍以真实 DOM rect + anchor correction 为准。
+- snapshot 永不参与 scrollHeight、thumb ratio 或 unloaded height。
+- ResizeObserver 只作为 dirty signal；dirty range 不完整、key/index 缺失、anchor missing 或 unknown 时回退 full measure。
 - IntersectionObserver 只作为 edge / visibility signal。
 - DOM rect read 和 scrollTop write 必须读写分批。
 - ordinary scroll rAF 只能读取 native container metrics 和少量 sampled row rect；完整 row measurement 只属于 transaction commit、resize dirty 或显式 profiling 路径。
 - local programmatic scroll 写入 `scrollTop` 后必须 schedule rAF 刷新 evidence / observation，不能等待下一次用户 scroll 或 resize。
+
+Dirty correction 规则：
+
+- dirty below anchor：只更新 cache，不做 anchor correction。
+- dirty above anchor：走 `preserveVisualAnchor`。
+- dirty contains anchor：走当前 anchor correction path。
+- unknown dirty：回退旧 full measure path。
+
+Custom scrollbar overlay 规则：
+
+- overlay refresh reason 统一为 `scroll`、`projection`、`resize`、`mutation`、`drag`。
+- overlay refresh 只读取 `scrollTop/clientHeight/scrollHeight`。
+- drag pointermove 热路径不写 React state，只直接写 native scrollTop 和 thumb transform。
+- mutation refresh 必须按 rAF batch；优先 observe message flow childList，subtree 只作 fallback。
+- mismatch report 限频到每 session 每秒最多 2 次。
 
 禁止：
 
@@ -78,6 +96,14 @@ Scroll rAF 中避免：
 - `segment.trim`
 - `commit.timeout`
 - `measurement.cache.hit/miss/invalidate`
+- `measurement.rectRead.count`
+- `measurement.rectRead.rows`
+- `measurement.transaction.latencyMs`
+- `measurement.resize.dirtyKeys`
+- `measurement.resize.fallbackFullMeasure`
+- `overlay.refresh.count`
+- `overlay.mutation.batch`
+- `overlay.drag.rebase.count`
 - `blank-area.sample`
 - `frame-gap.sample`
 

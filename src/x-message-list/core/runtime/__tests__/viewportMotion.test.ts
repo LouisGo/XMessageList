@@ -4,6 +4,7 @@ import {
   type LoadedSegment,
   type MessageDataItem,
   type MessageListRuntimeEvent,
+  type ViewportAnchorChangedEvent,
 } from '../index'
 import {
   getMessageListAdapterRuntime,
@@ -546,6 +547,209 @@ describe('MessageList viewport motion', () => {
     rowMetrics.record(snapshot, measurement)
 
     expect(counter.reads()).toBe(0)
+  })
+
+  it('projects mixed scroll-sample cache records with per-record scroll origins', () => {
+    const scheduler = new FakeScheduler()
+    const container = createContainer({ height: 100 })
+    const rows = createRows(10, 50)
+    container.append(...rows)
+    const snapshot = {
+      scrollContainer: container,
+      messageFlow: null,
+      beforeTrigger: null,
+      afterTrigger: null,
+      bottomMarker: null,
+      rows: new Map(rows.map((row) => [
+        row.dataset.runtimeKey as string,
+        row,
+      ])),
+    }
+    const rowMetrics = new RuntimeRowMetricCache({
+      scheduler,
+      onDiagnostic: () => {},
+    })
+
+    rowMetrics.record(snapshot, measureRuntimeDom(snapshot), {
+      generation: 1,
+      segmentRevision: 1,
+      projectionRevision: 1,
+      source: 'transaction',
+    })
+    container.scrollTop = 200
+    positionRows(rows, 200)
+    rowMetrics.record(snapshot, measureRuntimeDom(snapshot, {
+      rowKeys: ['row-5', 'row-6'],
+    }), {
+      generation: 1,
+      segmentRevision: 1,
+      projectionRevision: 1,
+      source: 'scroll-sample',
+    })
+    container.scrollTop = 350
+    positionRows(rows, 350)
+
+    const sampleKeys = rowMetrics.getScrollSampleKeys(snapshot, 4, 0)
+
+    expect(sampleKeys).toEqual(expect.arrayContaining(['row-8', 'row-9']))
+    expect(sampleKeys).not.toEqual(expect.arrayContaining(['row-4', 'row-5']))
+  })
+
+  it('measures only dirty resize rows plus viewport samples when dirty is below anchor', () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({
+      sessionId: 'source-a',
+      scheduler,
+      observers,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(20, 50)
+    const counter = countRowRectReads(rows)
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    container.scrollTop = 100
+    positionRows(rows, 100)
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    counter.reset()
+
+    observers.resizeObservers[0]?.trigger(rows[9], 70)
+    scheduler.flushFrame()
+
+    expect(counter.reads()).toBeLessThan(rows.length * 2)
+    expect(container.scrollTop).toBe(100)
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'measurement.resize.dirtyKeys',
+      details: expect.objectContaining({
+        dirtyKeyCount: 1,
+        fallbackFullMeasure: false,
+      }),
+    }))
+  })
+
+  it('preserves the visual anchor when a dirty resize is above anchor', () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({
+      sessionId: 'source-a',
+      scheduler,
+      observers,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(8, 50)
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    container.scrollTop = 100
+    positionRows(rows, 100)
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+
+    positionRowsWithHeights(rows, [70, 50, 50, 50, 50, 50, 50, 50], 100)
+    observers.resizeObservers[0]?.trigger(rows[0], 70)
+    scheduler.flushFrame()
+
+    expect(container.scrollTop).toBe(120)
+  })
+
+  it('invalidates stale resize suffix metrics before later scroll sampling', () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({
+      sessionId: 'source-a',
+      scheduler,
+      observers,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(10, 50)
+    const heights = [150, 50, 50, 50, 50, 50, 50, 50, 50, 50]
+    const anchorEvents: ViewportAnchorChangedEvent[] = []
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.subscribeRuntimeEvent((event) => {
+      if (event.type === 'viewportAnchorChanged') {
+        anchorEvents.push(event)
+      }
+    })
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    container.scrollTop = 100
+    positionRows(rows, 100)
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+
+    positionRowsWithHeights(rows, heights, 100)
+    observers.resizeObservers[0]?.trigger(rows[0], 150)
+    scheduler.flushFrame()
+    scheduler.flushFrames(13)
+    container.scrollTop = 450
+    positionRowsWithHeights(rows, heights, 450)
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+
+    expect(anchorEvents.at(-1)).toMatchObject({
+      reason: 'scroll-idle',
+      anchor: expect.objectContaining({ stableId: 'row-8' }),
+    })
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'measurement.rectRead.count',
+      details: expect.objectContaining({
+        source: 'scroll-sample',
+        fallbackFullMeasure: true,
+      }),
+    }))
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'measurement.cache.invalidate',
+      details: expect.objectContaining({ reason: 'resize-suffix' }),
+    }))
+  })
+
+  it('falls back to full resize measurement for unknown dirty entries', () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({
+      sessionId: 'source-a',
+      scheduler,
+      observers,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(6, 50)
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    container.scrollTop = 100
+    positionRows(rows, 100)
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+    positionRowsWithHeights(rows, [70, 50, 50, 50, 50, 50], 100)
+
+    observers.resizeObservers[0]?.trigger(container, 100)
+    scheduler.flushFrame()
+
+    expect(container.scrollTop).toBe(120)
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'measurement.resize.fallbackFullMeasure',
+      details: expect.objectContaining({
+        reason: 'unknown',
+      }),
+    }))
   })
 
   it('lets a new transaction supersede motion without publishing a cancelled destination settle', () => {

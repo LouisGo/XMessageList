@@ -3,6 +3,7 @@ import type {
   MessageListRuntime,
   MessageListSnapshot,
 } from '../runtime/index'
+import type { RuntimeSegmentSizeSnapshot } from '../runtime/dom/rowMetricCache'
 import type { LoadedSegmentStore } from './loaded-segment-store/index'
 import type {
   MessageListSession,
@@ -22,6 +23,7 @@ export type MessageListSessionInternals<Row = unknown> = {
   getRow(item: MessageDataItem<Row>): Row | null
   getRowRenderVersion(item: MessageDataItem<Row>): unknown
   getRowsByKeys(keys: string[]): Row[]
+  getMeasurementSnapshot(): RuntimeSegmentSizeSnapshot | null
 }
 
 type MessageListSessionInternalCarrier<Row> = MessageListSession<Row> & {
