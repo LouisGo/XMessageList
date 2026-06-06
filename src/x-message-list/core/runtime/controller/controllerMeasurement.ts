@@ -14,7 +14,7 @@ import type { ControllerMotionCoordinator } from './controllerMotionCoordinator'
 import type { ProjectionTransactionQueue } from './transactionQueue'
 import { findKeyForAnchor } from '../shared/snapshotIdentity'
 
-export type RuntimeMeasurementSource = 'transaction' | 'resize' | 'scroll-sample'
+export type RuntimeMeasurementSource = 'transaction' | 'transaction-precheck' | 'transaction-final' | 'resize' | 'scroll-sample'
 
 type PushDiagnostic = (name: string, severity: import('../contracts/events').ViewportDiagnosticRecord['severity'], details: Record<string, unknown>) => void
 

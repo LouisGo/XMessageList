@@ -103,7 +103,7 @@ function ConversationView({ sessionId }: { sessionId: string }) {
       renderTopPlaceholder={() => ...}
       renderOverlayStatus={({ status }) => ...}
       renderEmpty={({ reload }) => ...}
-      renderScrollToLatest={({ visible, scrollToLatest }) => ...}
+      renderScrollToLatest={({ visibleByScroll, scrollToLatest }) => ...}
     />
   )
 }

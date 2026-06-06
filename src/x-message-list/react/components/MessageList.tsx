@@ -4,12 +4,12 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
   useSyncExternalStore,
 } from 'react'
 import { getMessageListAdapterRuntime } from '../../core/runtime/internal'
 import type {
   MessageDataItem,
+  MessageListRuntime,
 } from '../../core/runtime/index'
 import type {
   MessageListSession,
@@ -24,6 +24,7 @@ import { RuntimeEventBridge } from './RuntimeEventBridge'
 import type { MessageListProps } from '../types'
 
 const noopSubscribe = () => () => undefined
+const SCROLL_TO_LATEST_VISIBILITY_DISTANCE_PX = 200
 const idleViewState: MessageListViewState = {
   overlayStatus: {
     status: 'idle',
@@ -56,9 +57,10 @@ function MessageListInner<TMessage, TOptimistic>({
   const viewState = useMessageListViewState(session)
   const adapterRuntime = getMessageListAdapterRuntime(resolvedRuntime)
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const [,
-    setScrollToLatestObservationRevision,
-  ] = useState(0)
+  const scrollToLatestVisibleByDistance = useScrollToLatestVisibleByDistance(
+    resolvedRuntime,
+    Boolean(renderScrollToLatest),
+  )
   const commands = useMemo(() => ({
     scrollToLatest: session.commands.scrollToLatest,
     scrollToMessage: session.commands.scrollToMessage,
@@ -66,32 +68,22 @@ function MessageListInner<TMessage, TOptimistic>({
   const reload = useCallback(() => {
     session.commands.reloadLatest()
   }, [session])
-  const scrollToLatestInput = renderScrollToLatest
-    ? (() => {
-        const evidence = resolvedRuntime.getEvidence()
-        const distanceToBottom = Math.max(
-          0,
-          evidence.scrollHeight - evidence.clientHeight - evidence.scrollTop,
-        )
 
-        return {
-          visible: snapshot.bottomLockState === 'UNLOCKED' &&
-            snapshot.pendingIntent !== 'follow-bottom',
-          scrollToLatest: commands.scrollToLatest,
-          bottomLockState: snapshot.bottomLockState,
-          hasMoreAfter: snapshot.segmentMeta.hasMoreAfter,
-          pendingIntent: snapshot.pendingIntent,
-          viewportPhase: snapshot.viewportPhase,
-          distanceToBottom,
-          pageFocused: resolvePageFocus(),
-        }
-      })()
+  const scrollToLatestInput = renderScrollToLatest
+    ? {
+        visibleByScroll: snapshot.bottomLockState === 'UNLOCKED' &&
+          snapshot.pendingIntent !== 'follow-bottom' &&
+          (
+            snapshot.segmentMeta.hasMoreAfter ||
+            scrollToLatestVisibleByDistance
+          ),
+        scrollToLatest: commands.scrollToLatest,
+        bottomLockState: snapshot.bottomLockState,
+        hasMoreAfter: snapshot.segmentMeta.hasMoreAfter,
+        pendingIntent: snapshot.pendingIntent,
+        viewportPhase: snapshot.viewportPhase,
+      }
     : null
-  const handleViewportObservationForSlots = useCallback(() => {
-    if (renderScrollToLatest) {
-      setScrollToLatestObservationRevision((revision) => revision + 1)
-    }
-  }, [renderScrollToLatest])
   const resolveRowRenderVersion = useMemo(() => {
     if (getRowRenderVersion) {
       return getRowRenderVersion
@@ -134,7 +126,6 @@ function MessageListInner<TMessage, TOptimistic>({
           runtime={resolvedRuntime}
           onViewportAnchorChange={onViewportAnchorChange}
           onViewportObservationChange={onViewportObservationChange}
-          onViewportObservationInternal={handleViewportObservationForSlots}
         />
         <MessageFlow
           runtime={adapterRuntime}
@@ -222,10 +213,6 @@ export const MessageList = memo(
   areMessageListPropsEqual,
 ) as typeof MessageListInner
 
-function resolvePageFocus(): boolean {
-  return globalThis.document?.hasFocus?.() ?? true
-}
-
 function useMessageListViewState(
   session: MessageListSession<unknown>,
 ): MessageListViewState {
@@ -240,4 +227,36 @@ function useMessageListViewState(
   }, [sessionInternals])
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+function useScrollToLatestVisibleByDistance(
+  runtime: MessageListRuntime<unknown>,
+  enabled: boolean,
+): boolean {
+  const subscribe = useCallback((listener: () => void) => {
+    if (!enabled) {
+      return noopSubscribe()
+    }
+
+    return runtime.subscribeViewportObservation(() => {
+      listener()
+    })
+  }, [enabled, runtime])
+  const getSnapshot = useCallback(() =>
+    enabled ? resolveScrollToLatestVisibleByDistance(runtime) : false,
+  [enabled, runtime])
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+function resolveScrollToLatestVisibleByDistance(
+  runtime: MessageListRuntime<unknown>,
+): boolean {
+  const evidence = runtime.getEvidence()
+  const distanceToBottom = Math.max(
+    0,
+    evidence.scrollHeight - evidence.clientHeight - evidence.scrollTop,
+  )
+
+  return distanceToBottom > SCROLL_TO_LATEST_VISIBILITY_DISTANCE_PX
 }

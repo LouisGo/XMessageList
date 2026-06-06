@@ -17,7 +17,6 @@ import {
   type DemoMessageScenario,
   useDemoMessageScenario,
 } from '../scenario/useDemoMessageScenario'
-import { INCOMING_FOLLOW_DISTANCE_PX } from '../scenario/demoScenarioConfig'
 
 export function DemoMessageList() {
   const scenario = useDemoMessageScenario()
@@ -483,12 +482,7 @@ export function DemoMessageListContent({
             ) : null
           }
           renderScrollToLatest={(input) =>
-            input.visible &&
-            (
-              input.hasMoreAfter ||
-              !input.pageFocused ||
-              input.distanceToBottom > INCOMING_FOLLOW_DISTANCE_PX
-            ) ? (
+            input.visibleByScroll ? (
               <button
                 type="button"
                 className="follow-bottom-button"

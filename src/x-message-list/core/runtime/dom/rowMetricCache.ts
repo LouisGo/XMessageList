@@ -4,7 +4,12 @@ import type { RuntimeScheduler } from '../contracts/options'
 import type { RuntimeDomRegistry } from './domRegistry'
 import type { RuntimeMeasurement } from './measurement'
 
-export type RuntimeMeasurementSource = 'transaction' | 'resize' | 'scroll-sample'
+export type RuntimeMeasurementSource =
+  | 'transaction'
+  | 'transaction-precheck'
+  | 'transaction-final'
+  | 'resize'
+  | 'scroll-sample'
 
 export type RuntimeRowSizeRecord = {
   key: MessageRuntimeItemKey

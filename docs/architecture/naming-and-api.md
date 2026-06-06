@@ -206,7 +206,7 @@ return (
     renderTopPlaceholder={() => ...}
     renderOverlayStatus={({ status }) => ...}
     renderEmpty={({ reload }) => ...}
-    renderScrollToLatest={({ visible, scrollToLatest }) => ...}
+    renderScrollToLatest={({ visibleByScroll, scrollToLatest }) => ...}
   />
 )
 ```

@@ -72,12 +72,19 @@ Slots 接收 runtime semantic state，不接收 raw DOM metrics：
 session view state。overlay slot 不订阅 viewport observation，避免滚动过程被
 额外 React state 打断。
 
+`renderScrollToLatest(input)` 接收 `visibleByScroll` 这类阈值化 scroll-side
+语义信号，不接收连续 `distanceToBottom`。adapter 只在阈值布尔值变化时刷新
+slot，避免滚动过程按 observation 频率重渲染。最终按钮是否展示可以由业务组件
+结合未读数等 host-owned 信号决定；page focus 这类 host-owned 状态不由 render
+slot 透传。
+
 `renderBeforeStatus` / `renderAfterStatus` 的 `retry()` 只能回调 adapter-private `retryEdgeRequest(edge)`；slot 不持有 request token，不直接请求 SDK。
 
 Slots 禁止：
 
 - query row DOM。
 - 监听 raw scroll。
+- 从 render slot 消费连续 DOM distance。
 - 直接触发 SDK 请求。
 - 直接写 `scrollTop`。
 
@@ -86,6 +93,7 @@ Slots 禁止：
 如果 adapter 提供 overlay：
 
 - overlay 只读 native metrics。
+- scroll / drag 热路径直接写 thumb transform，不用 React state 推动 `scrollTop` 对应的位置。
 - drag / track click 调 runtime adapter-private direct scroll API：`beginDirectScroll` / `writeDirectScrollTop` / `endDirectScroll`。
 - overlay metric 与 runtime evidence 的 `clientHeight` / `scrollHeight` 不一致时，必须上报 `overlay.metricMismatch` warning diagnostic。
 - overlay 不进入 core snapshot。

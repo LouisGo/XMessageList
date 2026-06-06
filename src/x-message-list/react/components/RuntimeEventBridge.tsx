@@ -1,7 +1,6 @@
 import { useLayoutEffect, useRef } from 'react'
 import type {
   MessageListRuntime,
-  ViewportObservationChangedEvent,
 } from '../../core/runtime/index'
 import type { MessageListProps } from '../types'
 
@@ -11,9 +10,6 @@ export type RuntimeEventBridgeProps<TMessage, TOptimistic> = Pick<
   | 'onViewportObservationChange'
 > & {
   runtime: MessageListRuntime<TMessage, TOptimistic>
-  onViewportObservationInternal?: (
-    event: ViewportObservationChangedEvent,
-  ) => void
 }
 
 /**
@@ -23,20 +19,16 @@ export function RuntimeEventBridge<TMessage, TOptimistic>({
   runtime,
   onViewportAnchorChange,
   onViewportObservationChange,
-  onViewportObservationInternal,
 }: RuntimeEventBridgeProps<TMessage, TOptimistic>) {
   const anchorChangeRef = useRef(onViewportAnchorChange)
   const observationChangeRef = useRef(onViewportObservationChange)
-  const observationInternalRef = useRef(onViewportObservationInternal)
 
   useLayoutEffect(() => {
     anchorChangeRef.current = onViewportAnchorChange
     observationChangeRef.current = onViewportObservationChange
-    observationInternalRef.current = onViewportObservationInternal
   }, [
     onViewportAnchorChange,
     onViewportObservationChange,
-    onViewportObservationInternal,
   ])
 
   useLayoutEffect(() => {
@@ -51,7 +43,6 @@ export function RuntimeEventBridge<TMessage, TOptimistic>({
     unsubscribers.push(
       runtime.subscribeViewportObservation((event) => {
         observationChangeRef.current?.(event)
-        observationInternalRef.current?.(event)
       }),
     )
 

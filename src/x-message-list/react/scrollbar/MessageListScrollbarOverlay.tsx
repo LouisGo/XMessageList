@@ -11,10 +11,11 @@ import type { MessageListAdapterRuntime } from '../../core/runtime/internal'
 import { resolveScrollbarGeometry, TRACK_INSET_START } from './scrollbarGeometry'
 import {
   EMPTY_METRICS,
-  areSameMetrics,
+  areSameMetricRange,
   createDragMetricsKey,
   readMetrics,
   reportMetricMismatch,
+  type NativeScrollMetrics,
 } from './scrollbarMetrics'
 import { customScrollbarStyle } from './scrollbarStyles'
 
@@ -68,11 +69,24 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
   const lastMismatchMetricsRef = useRef<{ clientHeight: number; scrollHeight: number }>({ clientHeight: 0, scrollHeight: 0 })
   const thumbRef = useRef<HTMLDivElement>(null)
   const geometry = useMemo(() => resolveScrollbarGeometry(metrics), [metrics])
+  const applyThumbTransform = useCallback((nextMetrics: NativeScrollMetrics) => {
+    const nextGeometry = resolveScrollbarGeometry(nextMetrics)
+
+    if (!thumbRef.current) {
+      return nextGeometry
+    }
+
+    thumbRef.current.style.transform = `translate3d(0, ${nextGeometry.thumbTop}px, 0)`
+    return nextGeometry
+  }, [])
   const refresh = useCallback((reason: OverlayRefreshReason) => {
     const readStartedAt = performance.now()
     const next = readMetrics(containerRef.current)
     const layoutReadMs = performance.now() - readStartedAt
-    setMetrics((previous) => areSameMetrics(previous, next) ? previous : next)
+    applyThumbTransform(next)
+    setMetrics((previous) =>
+      areSameMetricRange(previous, next) ? previous : next
+    )
     runtime.reportOverlayDiagnostic?.('overlay.refresh.count', {
       reason,
       layoutReadMs,
@@ -98,7 +112,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     } else if (hasActiveMismatch) {
       reportMetricMismatch(runtime, next, mismatchKeyRef)
     }
-  }, [containerRef, runtime])
+  }, [applyThumbTransform, containerRef, runtime])
   const cancelScheduledRefresh = useCallback(() => {
     if (refreshFrameRef.current === null) {
       return
@@ -295,16 +309,17 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       maxThumbTop: nextGeometry.maxThumbTop,
     }
     dragMetricsKeyRef.current = metricsKey
+    applyThumbTransform(nextMetrics)
     setMetrics((previous) =>
-      areSameMetrics(previous, nextMetrics) ? previous : nextMetrics
+      areSameMetricRange(previous, nextMetrics) ? previous : nextMetrics
     )
     runtime.notifyDirectScrollRebased()
     runtime.reportOverlayDiagnostic?.('overlay.drag.rebase.count', {
       projectionRevision,
     })
   }, [
+    applyThumbTransform,
     containerRef,
-    metrics,
     projectionRevision,
     runtime,
   ])
@@ -337,30 +352,37 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
   const handleThumbPointerDown = useCallback((
     event: PointerEvent<HTMLDivElement>,
   ) => {
-    if (event.button !== 0 || !geometry.visible) {
+    const nextMetrics = readMetrics(containerRef.current)
+    const nextGeometry = resolveScrollbarGeometry(nextMetrics)
+
+    if (event.button !== 0 || !nextGeometry.visible) {
       return
     }
 
     event.preventDefault()
     event.stopPropagation()
     event.currentTarget.setPointerCapture?.(event.pointerId)
+    applyThumbTransform(nextMetrics)
+    setMetrics((previous) =>
+      areSameMetricRange(previous, nextMetrics) ? previous : nextMetrics
+    )
     dragRef.current = {
       lastPointerY: event.clientY,
       startY: event.clientY,
-      startScrollTop: metrics.scrollTop,
-      maxScrollTop: geometry.maxScrollTop,
-      maxThumbTop: geometry.maxThumbTop,
+      startScrollTop: nextMetrics.scrollTop,
+      maxScrollTop: nextGeometry.maxScrollTop,
+      maxThumbTop: nextGeometry.maxThumbTop,
     }
     dragMetricsKeyRef.current = createDragMetricsKey(
       projectionRevision,
-      metrics,
+      nextMetrics,
     )
     setDraggingState(true)
     showScrollbar()
     runtime.beginDirectScroll()
   }, [
-    geometry,
-    metrics,
+    applyThumbTransform,
+    containerRef,
     projectionRevision,
     runtime,
     setDraggingState,
@@ -457,7 +479,6 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
         onLostPointerCapture={endDrag}
         style={{
           height: geometry.thumbHeight,
-          transform: `translate3d(0, ${geometry.thumbTop}px, 0)`,
         }}
       />
     </div>

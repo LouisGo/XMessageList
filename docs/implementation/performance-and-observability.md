@@ -46,6 +46,7 @@ Scroll rAF 中避免：
 - IntersectionObserver 只作为 edge / visibility signal。
 - DOM rect read 和 scrollTop write 必须读写分批。
 - ordinary scroll rAF 只能读取 native container metrics 和少量 sampled row rect；完整 row measurement 只属于 transaction commit、resize dirty 或显式 profiling 路径。
+- transaction commit 中 correction 前的测量优先使用 anchor + cached scroll sample 的有界 row set；reset-around、anchor missing、sample unavailable 或 unknown dirty 才回退 full measure。correction 后保留 authoritative measurement 更新 evidence 和 row metric cache。
 - local programmatic scroll 写入 `scrollTop` 后必须 schedule rAF 刷新 evidence / observation，不能等待下一次用户 scroll 或 resize。
 
 Dirty correction 规则：
@@ -59,6 +60,7 @@ Custom scrollbar overlay 规则：
 
 - overlay refresh reason 统一为 `scroll`、`projection`、`resize`、`mutation`、`drag`。
 - overlay refresh 只读取 `scrollTop/clientHeight/scrollHeight`。
+- scroll / drag thumb position 热路径直接写 DOM transform；React state 只承载 range geometry、visibility、hover 和 dragging 语义。
 - drag pointermove 热路径不写 React state，只直接写 native scrollTop 和 thumb transform。
 - mutation refresh 必须按 rAF batch；优先 observe message flow childList，subtree 只作 fallback。
 - mismatch report 限频到每 session 每秒最多 2 次。

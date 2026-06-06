@@ -28,6 +28,7 @@ import { ControllerMotionCoordinator } from './controllerMotionCoordinator'
 import { startPendingRuntimeMotion as startPendingRuntimeMotionContinuation } from './controllerSettledContinuations'
 import { createCommandEdgeRequest } from './controllerEdgeRequests'
 import { createMeasurementCacheContext, createSegmentSizeSnapshot, emitMeasurementDiagnostics, handleResizeEntries as handleResizeEntriesFromMeasurement, handleScrollFrame as handleScrollFrameFromMeasurement, markSegmentDirty, scheduleResizeMeasurementFrame, type RuntimeControllerMeasurementHost } from './controllerMeasurement'
+import { resolveTransactionPreCorrectionMeasurementOptions } from './controllerPreCorrectionMeasurement'
 export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unknown>
   implements MessageListAdapterRuntime<TMessage, TOptimistic> {
   private readonly scheduler: RuntimeScheduler
@@ -195,8 +196,12 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.scrollIntent.incrementFrame()
       this.stateAxes.markTransactionMeasuring()
       this.setViewportPhase('MEASURING')
-      this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
-      emitMeasurementDiagnostics(this.pushDiagnostic.bind(this), this.lastMeasurement, 'transaction')
+      this.lastMeasurement = measureRuntimeDom(this.registry.snapshot(),
+        resolveTransactionPreCorrectionMeasurementOptions({
+          anchor: pending.anchor, segment: pending.segment,
+          registry: this.registry, domInteractions: this.domInteractions, dirtyRange: this.dirtyRange.resolve(this.snapshot),
+        }))
+      emitMeasurementDiagnostics(this.pushDiagnostic.bind(this), this.lastMeasurement, 'transaction-precheck')
       if (shouldWaitForAnchorRef(pending, this.registry)) {
         pending.anchorRetryCount += 1
         this.pushDiagnostic('correction.anchorAwaitingRef', 'debug', {
@@ -230,7 +235,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
         getViewportAnchor: () => this.getViewportAnchor(),
       })
       this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
-      emitMeasurementDiagnostics(this.pushDiagnostic.bind(this), this.lastMeasurement, 'transaction')
+      emitMeasurementDiagnostics(this.pushDiagnostic.bind(this), this.lastMeasurement, 'transaction-final')
       this.domInteractions.recordRowMetrics(
         this.lastMeasurement,
         createMeasurementCacheContext(this.snapshot, 'transaction'),

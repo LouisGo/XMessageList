@@ -122,8 +122,9 @@ React adapter 负责：
 - row wrapper 用 stable key 注册 DOM ref。
 - 在 layout effect 中发送 commit ack。
 - 渲染 before / after loading、error、exhausted、bottom-follow slots。
-- 把 bottom-follow slot 所需的 `distanceToBottom`、`pageFocused` 等只读信号
-  透传给业务渲染。
+- 把 scroll-to-latest affordance 所需的 `visibleByScroll` 等滚动语义信号
+  透传给业务渲染；连续 DOM distance 和 host-owned focus / unread state 留在
+  observation / evidence 或业务组件内部，不作为 render slot 热路径输入。
 
 React adapter 禁止：
 

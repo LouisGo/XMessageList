@@ -36,6 +36,14 @@ export function areSameMetrics(
     left.scrollHeight === right.scrollHeight
 }
 
+export function areSameMetricRange(
+  left: NativeScrollMetrics,
+  right: NativeScrollMetrics,
+): boolean {
+  return left.clientHeight === right.clientHeight &&
+    left.scrollHeight === right.scrollHeight
+}
+
 export function createDragMetricsKey(
   projectionRevision: number,
   metrics: NativeScrollMetrics,

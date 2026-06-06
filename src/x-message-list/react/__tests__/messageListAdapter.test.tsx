@@ -1,4 +1,4 @@
-import { StrictMode, act } from 'react'
+import { StrictMode, act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -172,8 +172,8 @@ describe('MessageList React adapter', () => {
         <MessageList
           session={fixture.session}
           renderRow={({ row }) => <span>{row}</span>}
-          renderScrollToLatest={({ visible, scrollToLatest }) =>
-            visible ? (
+          renderScrollToLatest={({ visibleByScroll, scrollToLatest }) =>
+            visibleByScroll ? (
               <button type="button" onClick={scrollToLatest}>Latest</button>
             ) : null
           }
@@ -198,27 +198,27 @@ describe('MessageList React adapter', () => {
     fixture.destroy()
   })
 
-  it('refreshes scroll-to-latest distance from viewport observations', async () => {
+  it('updates scroll-to-latest only when scroll visibility crosses its distance threshold', async () => {
     const fixture = createSessionFixture({
       rows: ['row-1', 'row-2'],
     })
     const host = document.createElement('div')
     const root = createRoot(host)
+    const renderScrollToLatest = vi.fn(({ visibleByScroll }) =>
+      visibleByScroll ? (
+        <button type="button">Latest</button>
+      ) : null
+    )
 
     await act(async () => {
       root.render(
         <MessageList
           session={fixture.session}
           renderRow={({ row }) => <span>{row}</span>}
-          renderScrollToLatest={({ distanceToBottom }) =>
-            distanceToBottom > 100 ? (
-              <button type="button">Latest</button>
-            ) : null
-          }
+          renderScrollToLatest={renderScrollToLatest}
         />,
       )
     })
-
     const container = host.querySelector<HTMLElement>('[data-message-scroll-container]')
     expect(container).not.toBeNull()
 
@@ -237,13 +237,94 @@ describe('MessageList React adapter', () => {
       await waitForAnimationFrame()
     })
     expect(host.querySelector('button')).toBeNull()
+    const belowThresholdRenderCount = renderScrollToLatest.mock.calls.length
 
     await act(async () => {
-      container!.scrollTop = 200
+      container!.scrollTop = 340
+      container!.dispatchEvent(new Event('scroll'))
+      await waitForAnimationFrame()
+    })
+    expect(host.querySelector('button')).toBeNull()
+    expect(renderScrollToLatest)
+      .toHaveBeenCalledTimes(belowThresholdRenderCount)
+
+    await act(async () => {
+      container!.scrollTop = 100
       container!.dispatchEvent(new Event('scroll'))
       await waitForAnimationFrame()
     })
     expect(host.querySelector('button')).not.toBeNull()
+    expect(renderScrollToLatest)
+      .toHaveBeenCalledTimes(belowThresholdRenderCount + 1)
+
+    await act(async () => {
+      container!.scrollTop = 250
+      container!.dispatchEvent(new Event('scroll'))
+      await waitForAnimationFrame()
+    })
+    expect(host.querySelector('button')).toBeNull()
+    expect(renderScrollToLatest)
+      .toHaveBeenCalledTimes(belowThresholdRenderCount + 2)
+
+    await act(async () => {
+      root.unmount()
+    })
+    fixture.destroy()
+  })
+
+  it('lets the latest affordance decide final visibility from internal state', async () => {
+    const fixture = createSessionFixture({
+      rows: ['row-1'],
+      hasMoreAfter: true,
+    })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let setUnreadCount: ((count: number) => void) | null = null
+
+    function LatestButton(input: {
+      visibleByScroll: boolean
+      scrollToLatest: () => void
+    }) {
+      const [unreadCount, setUnread] = useState(0)
+      setUnreadCount = setUnread
+
+      if (!input.visibleByScroll && unreadCount === 0) {
+        return null
+      }
+
+      return (
+        <button type="button" onClick={input.scrollToLatest}>
+          {unreadCount > 0 ? `Unread ${unreadCount}` : 'Latest'}
+        </button>
+      )
+    }
+
+    await act(async () => {
+      root.render(
+        <MessageList
+          session={fixture.session}
+          renderRow={({ row }) => <span>{row}</span>}
+          renderScrollToLatest={(input) => (
+            <LatestButton
+              visibleByScroll={input.visibleByScroll}
+              scrollToLatest={input.scrollToLatest}
+            />
+          )}
+        />,
+      )
+    })
+
+    await act(async () => {
+      host.querySelector('button')?.dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      )
+    })
+    expect(host.querySelector('button')).toBeNull()
+
+    await act(async () => {
+      setUnreadCount?.(3)
+    })
+    expect(host.querySelector('button')?.textContent).toBe('Unread 3')
 
     await act(async () => {
       root.unmount()
@@ -655,10 +736,12 @@ describe('MessageList React adapter', () => {
 
     const container = host.querySelector<HTMLElement>('[data-message-scroll-container]')
     const track = host.querySelector<HTMLElement>('[data-message-scrollbar-track]')
+    const thumb = host.querySelector<HTMLElement>('[data-message-scrollbar-thumb]')
 
     expect(host.querySelector('[data-message-scrollbar-overlay]')).not.toBeNull()
     expect(container).not.toBeNull()
     expect(track).not.toBeNull()
+    expect(thumb).not.toBeNull()
 
     Object.defineProperty(container, 'clientHeight', {
       configurable: true,
@@ -684,6 +767,41 @@ describe('MessageList React adapter', () => {
       container!.dispatchEvent(new Event('scroll'))
       await new Promise((resolve) => window.requestAnimationFrame(resolve))
     })
+    expect(host.querySelector<HTMLElement>('[data-message-scrollbar-thumb]')?.style.transform)
+      .toBe('translate3d(0, 4px, 0)')
+
+    await act(async () => {
+      container!.scrollTop = 100
+      container!.dispatchEvent(new Event('scroll'))
+      await new Promise((resolve) => window.requestAnimationFrame(resolve))
+    })
+    expect(host.querySelector<HTMLElement>('[data-message-scrollbar-thumb]')?.style.transform)
+      .toBe('translate3d(0, 34px, 0)')
+
+    await act(async () => {
+      thumb!.dispatchEvent(new MouseEvent('pointerdown', {
+        bubbles: true,
+        clientY: 34,
+      }))
+    })
+    expect(thumb!.style.transform).toBe('translate3d(0, 34px, 0)')
+
+    await act(async () => {
+      thumb!.dispatchEvent(new MouseEvent('pointermove', {
+        bubbles: true,
+        clientY: 64,
+      }))
+    })
+    expect(thumb!.style.transform).toBe('translate3d(0, 64px, 0)')
+
+    await act(async () => {
+      thumb!.dispatchEvent(new MouseEvent('pointerup', {
+        bubbles: true,
+        clientY: 64,
+      }))
+    })
+    expect(thumb!.style.transform).toBe('translate3d(0, 64px, 0)')
+
     await act(async () => {
       track!.dispatchEvent(new MouseEvent('pointerdown', {
         bubbles: true,

@@ -190,6 +190,102 @@ describe('MessageList viewport interactions', () => {
     expect(rectReads.count).toBeLessThanOrEqual(32)
     expect(runtime.getEvidence().scrollTop).toBe(200)
   })
+  it('samples transaction pre-correction measurement before final full measurement', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({
+      sessionId: 'source-a',
+      scheduler,
+      observers: createFakeObservers(),
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = Array.from({ length: 80 }, (_, index) =>
+      createRow(`row-${index + 1}`, index * 20, 20),
+    )
+    const items = rows.map((row) => item(row.dataset.runtimeKey as string))
+
+    container.append(...rows)
+    runtime.attachScrollContainer(container)
+    for (const row of rows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+    runtime.applyLoadedSegment(segment(items, 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    runtime.applyLoadedSegment(segment(items, 1, 2, {
+      modifier: { type: 'patch', changedKeys: ['row-1'] },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    const measurementDiagnostics = runtime.getDiagnostics()
+      .filter((record) => record.name === 'measurement.rectRead.count')
+    const precheck = measurementDiagnostics
+      .filter((record) => record.details.source === 'transaction-precheck')
+      .at(-1)
+    const final = measurementDiagnostics
+      .filter((record) => record.details.source === 'transaction-final')
+      .at(-1)
+
+    expect(precheck).toMatchObject({
+      details: {
+        fallbackFullMeasure: false,
+        rowCount: expect.any(Number),
+        requestedRowCount: expect.any(Number),
+      },
+    })
+    expect(precheck?.details.rowCount as number).toBeLessThan(80)
+    expect(precheck?.details.requestedRowCount as number).toBeLessThan(80)
+    expect(final).toMatchObject({
+      details: {
+        fallbackFullMeasure: true,
+        rowCount: 80,
+      },
+    })
+  })
+  it('falls back to full transaction pre-correction measurement for unknown dirty state', () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({
+      sessionId: 'source-a',
+      scheduler,
+      observers,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = Array.from({ length: 80 }, (_, index) =>
+      createRow(`row-${index + 1}`, index * 20, 20),
+    )
+    const items = rows.map((row) => item(row.dataset.runtimeKey as string))
+
+    container.append(...rows)
+    runtime.attachScrollContainer(container)
+    for (const row of rows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+    runtime.applyLoadedSegment(segment(items, 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    observers.resizeObservers[0]?.trigger(document.createElement('div'), 20)
+    runtime.applyLoadedSegment(segment(items, 1, 2, {
+      modifier: { type: 'patch', changedKeys: ['row-1'] },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    const precheck = runtime.getDiagnostics()
+      .filter((record) =>
+        record.name === 'measurement.rectRead.count' &&
+        record.details.source === 'transaction-precheck'
+      )
+      .at(-1)
+
+    expect(precheck).toMatchObject({
+      details: {
+        fallbackFullMeasure: true,
+        rowCount: 80,
+        requestedRowCount: null,
+      },
+    })
+  })
   it('refreshes evidence after local programmatic scroll writes', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
@@ -440,7 +536,7 @@ describe('MessageList viewport interactions', () => {
     scheduler.flushFrame()
     expect(container.scrollTop).toBe(60)
     expect(runtime.getDiagnostics().map((record) => record.name)).toContain(
-      'measurement.resizeDirty',
+      'measurement.resize.dirtyKeys',
     )
   })
   it('records measurement cache, blank area, frame gap, and latency diagnostics', () => {
@@ -454,10 +550,12 @@ describe('MessageList viewport interactions', () => {
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const row = createRow('row-1', 0, 80)
-    container.append(row)
+    const cleanRow = createRow('row-2', 80, 80)
+    container.append(row, cleanRow)
     runtime.attachScrollContainer(container)
     adapter.registerRowElement('row-1', row)
-    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
+    adapter.registerRowElement('row-2', cleanRow)
+    runtime.applyLoadedSegment(segment([item('row-1'), item('row-2')], 1, 1))
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
     setElementMetrics(row, { top: 0, height: 90 })
     observers.resizeObservers[0]?.trigger(row, 90)

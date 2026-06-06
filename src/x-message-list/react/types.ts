@@ -19,7 +19,7 @@ export type EmptySlotInput = {
 }
 
 export type ScrollToLatestSlotInput = {
-  visible: boolean
+  visibleByScroll: boolean
   scrollToLatest: () => void
   bottomLockState: 'LOCKED' | 'UNLOCKED'
   hasMoreAfter: boolean
@@ -36,8 +36,6 @@ export type ScrollToLatestSlotInput = {
     | 'MEASURING'
     | 'CORRECTING'
     | 'MOTION'
-  distanceToBottom: number
-  pageFocused: boolean
 }
 
 export type MessageListViewportAnchorChangeEvent = {

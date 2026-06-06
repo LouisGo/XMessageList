@@ -314,13 +314,13 @@ describe('MessageList viewport kernel', () => {
     observers.resizeObservers[0]?.trigger(row, 60)
 
     expect(runtime.getDiagnostics().map((record) => record.name)).not.toContain(
-      'measurement.resizeDirty',
+      'measurement.resize.dirtyKeys',
     )
 
     scheduler.flushFrame()
 
     expect(runtime.getDiagnostics().map((record) => record.name)).toContain(
-      'measurement.resizeDirty',
+      'measurement.resize.dirtyKeys',
     )
   })
 

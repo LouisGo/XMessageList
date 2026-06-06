@@ -74,6 +74,10 @@ _Avoid_: remote append, ordinary rows mutation, retry as in-place follow-bottom 
 The path for new tail messages arriving from a remote source such as the server, SDK, or main process. Its follow behavior is decided by host policy.
 _Avoid_: rows patch, local send, forced follow-bottom for every incoming message
 
+**Scroll-To-Latest Affordance**:
+A host-rendered control that helps the reader return to the latest message context. XMessageList can provide scroll-side visibility signals for this control, but the host may combine them with host-owned signals such as unread count before deciding what to display.
+_Avoid_: treating scroll distance as the complete display policy, runtime-owned unread badge, forcing the control to render only from scroll state
+
 **Message Anchor ID**:
 A message-level shortcut used by `MessageListAnchor.id` when the host can identify a message with one string. It is not a message list session identity.
 _Avoid_: treating anchor id as sessionId, using anchor id as registry key
