@@ -4,7 +4,6 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useSyncExternalStore,
 } from 'react'
 import { getMessageListAdapterRuntime } from '../../core/runtime/internal'
 import type {
@@ -15,9 +14,13 @@ import type {
   MessageListSession,
   MessageListViewState,
 } from '../../core/session-registry/index'
-import { getMessageListSessionInternals } from '../../core/session-registry/internal'
+import {
+  getMessageListSessionInternals,
+  type MessageListSessionInternals,
+} from '../../core/session-registry/internal'
 import { MessageFlow } from './MessageFlow'
 import { MessageListScrollbarOverlay } from '../scrollbar/MessageListScrollbarOverlay'
+import { useExternalStoreSource } from '../hooks/useExternalStoreSource'
 import { useMessageListSnapshot } from '../hooks/useMessageListSnapshot'
 import { ProjectionCommitAck } from './ProjectionCommitAck'
 import { RuntimeEventBridge } from './RuntimeEventBridge'
@@ -25,12 +28,6 @@ import type { MessageListProps } from '../types'
 
 const noopSubscribe = () => () => undefined
 const SCROLL_TO_LATEST_VISIBILITY_DISTANCE_PX = 200
-const idleViewState: MessageListViewState = {
-  overlayStatus: {
-    status: 'idle',
-    retry: () => undefined,
-  },
-}
 
 function MessageListInner<TMessage, TOptimistic>({
   session,
@@ -217,36 +214,67 @@ function useMessageListViewState(
   session: MessageListSession<unknown>,
 ): MessageListViewState {
   const sessionInternals = getMessageListSessionInternals(session)
-  const subscribe = useCallback((listener: () => void) => {
-    return sessionInternals
-      ? sessionInternals.subscribeView(listener)
-      : noopSubscribe()
-  }, [sessionInternals])
-  const getSnapshot = useCallback(() => {
-    return sessionInternals?.getViewState() ?? idleViewState
-  }, [sessionInternals])
 
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  return useExternalStoreSource(
+    sessionInternals,
+    subscribeMessageListViewState,
+    getMessageListViewState,
+  )
 }
 
 function useScrollToLatestVisibleByDistance(
   runtime: MessageListRuntime<unknown>,
   enabled: boolean,
 ): boolean {
-  const subscribe = useCallback((listener: () => void) => {
-    if (!enabled) {
-      return noopSubscribe()
-    }
+  const source = useMemo(() => ({
+    enabled,
+    runtime,
+  }), [enabled, runtime])
 
-    return runtime.subscribeViewportObservation(() => {
-      listener()
-    })
-  }, [enabled, runtime])
-  const getSnapshot = useCallback(() =>
-    enabled ? resolveScrollToLatestVisibleByDistance(runtime) : false,
-  [enabled, runtime])
+  return useExternalStoreSource(
+    source,
+    subscribeScrollToLatestVisibility,
+    getScrollToLatestVisibility,
+  )
+}
 
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+function subscribeMessageListViewState(
+  sessionInternals: MessageListSessionInternals<unknown>,
+  listener: () => void,
+): () => void {
+  return sessionInternals.subscribeView(listener)
+}
+
+function getMessageListViewState(
+  sessionInternals: MessageListSessionInternals<unknown>,
+): MessageListViewState {
+  return sessionInternals.getViewState()
+}
+
+type ScrollToLatestVisibilitySource = {
+  runtime: MessageListRuntime<unknown>
+  enabled: boolean
+}
+
+function subscribeScrollToLatestVisibility(
+  source: ScrollToLatestVisibilitySource,
+  listener: () => void,
+): () => void {
+  if (!source.enabled) {
+    return noopSubscribe()
+  }
+
+  return source.runtime.subscribeViewportObservation(() => {
+    listener()
+  })
+}
+
+function getScrollToLatestVisibility(
+  source: ScrollToLatestVisibilitySource,
+): boolean {
+  return source.enabled
+    ? resolveScrollToLatestVisibleByDistance(source.runtime)
+    : false
 }
 
 function resolveScrollToLatestVisibleByDistance(

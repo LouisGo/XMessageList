@@ -18,6 +18,8 @@ import {
   type NativeScrollMetrics,
 } from './scrollbarMetrics'
 import { customScrollbarStyle } from './scrollbarStyles'
+import { useRafCallback } from '../hooks/useRafCallback'
+import { useTimeoutHandle } from '../hooks/useTimeoutHandle'
 
 type DragState = {
   lastPointerY: number
@@ -60,14 +62,13 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
   const hoveringRef = useRef(false)
   const draggingRef = useRef(false)
   const dragOwnerDocumentRef = useRef<Document | null>(null)
-  const hideTimerRef = useRef<number | null>(null)
-  const refreshFrameRef = useRef<number | null>(null)
   const refreshReasonRef = useRef<Set<OverlayRefreshReason>>(new Set())
   const mutationBatchRef = useRef(0)
   const mismatchKeyRef = useRef<string | null>(null)
   const lastMismatchReportRef = useRef<number>(0)
   const lastMismatchMetricsRef = useRef<{ clientHeight: number; scrollHeight: number }>({ clientHeight: 0, scrollHeight: 0 })
   const thumbRef = useRef<HTMLDivElement>(null)
+  const hideTimer = useTimeoutHandle()
   const geometry = useMemo(() => resolveScrollbarGeometry(metrics), [metrics])
   const applyThumbTransform = useCallback((nextMetrics: NativeScrollMetrics) => {
     const nextGeometry = resolveScrollbarGeometry(nextMetrics)
@@ -113,45 +114,25 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       reportMetricMismatch(runtime, next, mismatchKeyRef)
     }
   }, [applyThumbTransform, containerRef, runtime])
-  const cancelScheduledRefresh = useCallback(() => {
-    if (refreshFrameRef.current === null) {
-      return
+  const refreshFrame = useRafCallback(() => {
+    const reasons = [...refreshReasonRef.current]
+    refreshReasonRef.current.clear()
+    if (reasons.includes('mutation') && mutationBatchRef.current > 0) {
+      runtime.reportOverlayDiagnostic?.('overlay.mutation.batch', {
+        records: mutationBatchRef.current,
+      })
+      mutationBatchRef.current = 0
     }
-
-    window.cancelAnimationFrame(refreshFrameRef.current)
-    refreshFrameRef.current = null
-  }, [])
-  const clearHideTimer = useCallback(() => {
-    if (hideTimerRef.current === null) {
-      return
-    }
-
-    window.clearTimeout(hideTimerRef.current)
-    hideTimerRef.current = null
-  }, [])
+    refresh(reasons[0] ?? 'scroll')
+  })
   const showScrollbar = useCallback(() => {
     setVisible(true)
-    clearHideTimer()
-  }, [clearHideTimer])
+    hideTimer.clear()
+  }, [hideTimer])
   const scheduleRefreshFrame = useCallback((reason: OverlayRefreshReason) => {
     refreshReasonRef.current.add(reason)
-    if (refreshFrameRef.current !== null) {
-      return
-    }
-
-    refreshFrameRef.current = window.requestAnimationFrame(() => {
-      refreshFrameRef.current = null
-      const reasons = [...refreshReasonRef.current]
-      refreshReasonRef.current.clear()
-      if (reasons.includes('mutation') && mutationBatchRef.current > 0) {
-        runtime.reportOverlayDiagnostic?.('overlay.mutation.batch', {
-          records: mutationBatchRef.current,
-        })
-        mutationBatchRef.current = 0
-      }
-      refresh(reasons[0] ?? 'scroll')
-    })
-  }, [refresh, runtime])
+    refreshFrame.schedule()
+  }, [refreshFrame])
   const scheduleRefresh = useCallback((
     reason: OverlayRefreshReason,
     reveal = false,
@@ -163,15 +144,12 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     scheduleRefreshFrame(reason)
   }, [scheduleRefreshFrame, showScrollbar])
   const scheduleHide = useCallback(() => {
-    clearHideTimer()
-    hideTimerRef.current = window.setTimeout(() => {
-      hideTimerRef.current = null
-
+    hideTimer.set(() => {
       if (!hoveringRef.current && !draggingRef.current) {
         setVisible(false)
       }
     }, HIDE_DELAY_MS)
-  }, [clearHideTimer])
+  }, [hideTimer])
   const setDraggingState = useCallback((nextDragging: boolean) => {
     draggingRef.current = nextDragging
     setDragging(nextDragging)
@@ -238,7 +216,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
     })
 
     return () => {
-      cancelScheduledRefresh()
+      refreshFrame.cancel()
       container.removeEventListener('scroll', scheduleScrollRefreshAndReveal)
       container.removeEventListener('pointerenter', handleContainerPointerEnter)
       container.removeEventListener('pointerleave', handleContainerPointerLeave)
@@ -246,9 +224,8 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       mutationObserver?.disconnect()
     }
   }, [
-    cancelScheduledRefresh,
     containerRef,
-    runtime,
+    refreshFrame,
     scheduleHide,
     scheduleRefresh,
     scheduleRefreshFrame,
@@ -261,7 +238,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
 
   useLayoutEffect(() => {
     return () => {
-      clearHideTimer()
+      hideTimer.clear()
       if (dragRef.current) {
         dragRef.current = null
         dragMetricsKeyRef.current = null
@@ -273,7 +250,7 @@ export function MessageListScrollbarOverlay<TMessage, TOptimistic>({
       )
       dragOwnerDocumentRef.current = null
     }
-  }, [clearHideTimer, runtime])
+  }, [hideTimer, runtime])
 
   const writeScrollTop = useCallback((scrollTop: number) => {
     runtime.writeDirectScrollTop(scrollTop)

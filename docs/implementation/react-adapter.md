@@ -25,6 +25,23 @@ React adapter 不发起业务请求，不合并请求结果，不保存 anchor�
 - React 不拆分 snapshot 后自行组合。
 - `hasMoreBefore/After`、modifier、generation、segmentRevision 和 commitToken 必须随 snapshot 一起发布；adapter 不从外部 props 补这些字段。
 
+React adapter 内部订阅必须使用统一的 external-store source 范式：由 source
+对象负责 `subscribe` / `getSnapshot`，hook 只提供稳定订阅包装。需要 selector 时
+只能在 external-store selector 层筛选稳定 session state，不能在组件内把多个
+runtime/store snapshot 拆开后重新拼业务 state。
+
+## Hook Primitives
+
+Adapter-private hook primitives 只服务 React adapter，不从 package root 导出：
+
+- latest ref / latest callback：用于 runtime event bridge、DOM listener 和异步回调，
+  订阅保持稳定，回调读取最新 props。
+- RAF handle：用于 scroll/resize/mutation/drag refresh 合批，并在 unmount 时取消。
+- timeout handle：用于 hover/drag 这类可见性延迟，并在 unmount 时清理。
+
+不默认引入 debounce/throttle。scrollbar 和 viewport 相关热路径使用 RAF 或 runtime
+direct-scroll session；连续 scroll/drag 不通过 React state 驱动。
+
 ## Commit Ack
 
 每次 `projectionRevision` 改变：

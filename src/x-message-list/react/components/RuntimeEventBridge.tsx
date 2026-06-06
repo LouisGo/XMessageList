@@ -1,7 +1,8 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect } from 'react'
 import type {
   MessageListRuntime,
 } from '../../core/runtime/index'
+import { useLatestCallback } from '../hooks/useLatestCallback'
 import type { MessageListProps } from '../types'
 
 export type RuntimeEventBridgeProps<TMessage, TOptimistic> = Pick<
@@ -20,29 +21,23 @@ export function RuntimeEventBridge<TMessage, TOptimistic>({
   onViewportAnchorChange,
   onViewportObservationChange,
 }: RuntimeEventBridgeProps<TMessage, TOptimistic>) {
-  const anchorChangeRef = useRef(onViewportAnchorChange)
-  const observationChangeRef = useRef(onViewportObservationChange)
-
-  useLayoutEffect(() => {
-    anchorChangeRef.current = onViewportAnchorChange
-    observationChangeRef.current = onViewportObservationChange
-  }, [
-    onViewportAnchorChange,
+  const handleViewportAnchorChange = useLatestCallback(onViewportAnchorChange)
+  const handleViewportObservationChange = useLatestCallback(
     onViewportObservationChange,
-  ])
+  )
 
   useLayoutEffect(() => {
     const unsubscribers: Array<() => void> = []
 
     unsubscribers.push(runtime.subscribeRuntimeEvent((event) => {
       if (event.type === 'viewportAnchorChanged') {
-        anchorChangeRef.current?.(event)
+        handleViewportAnchorChange(event)
       }
     }))
 
     unsubscribers.push(
       runtime.subscribeViewportObservation((event) => {
-        observationChangeRef.current?.(event)
+        handleViewportObservationChange(event)
       }),
     )
 
@@ -51,7 +46,11 @@ export function RuntimeEventBridge<TMessage, TOptimistic>({
         unsubscribe()
       }
     }
-  }, [runtime])
+  }, [
+    handleViewportAnchorChange,
+    handleViewportObservationChange,
+    runtime,
+  ])
 
   return null
 }

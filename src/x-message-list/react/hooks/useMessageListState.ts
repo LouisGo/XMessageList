@@ -1,9 +1,9 @@
 import { useCallback } from 'react'
-import { useSyncExternalStoreWithSelector } from 'use-sync-external-store/with-selector'
 import type {
   MessageListSession,
   MessageListSessionState,
 } from '../../core/session-registry/index'
+import { useExternalStoreSourceWithSelector } from './useExternalStoreSource'
 
 export type MessageListStateSelector<Row, Selected> = (
   state: MessageListSessionState<Row>,
@@ -27,25 +27,34 @@ export function useMessageListState<Row, Selected>(
   selector?: MessageListStateSelector<Row, Selected>,
   equality?: MessageListStateEqualityFn<Selected>,
 ): MessageListSessionState<Row> | Selected {
-  const subscribe = useCallback(
-    (listener: () => void) => session.subscribe(listener),
-    [session],
-  )
-  const getSnapshot = useCallback(
-    () => session.getState(),
-    [session],
-  )
+  type Selection = MessageListSessionState<Row> | Selected
   const resolvedSelector = useCallback(
-    (state: MessageListSessionState<Row>) =>
+    (state: MessageListSessionState<Row>): Selection =>
       selector ? selector(state) : state,
     [selector],
   )
+  const resolvedEquality = equality as
+    | ((previous: Selection, next: Selection) => boolean)
+    | undefined
 
-  return useSyncExternalStoreWithSelector(
-    subscribe,
-    getSnapshot,
-    getSnapshot,
+  return useExternalStoreSourceWithSelector(
+    session,
+    subscribeSessionState,
+    getSessionState,
     resolvedSelector,
-    equality,
+    resolvedEquality,
   )
+}
+
+function subscribeSessionState<Row>(
+  session: MessageListSession<Row>,
+  listener: () => void,
+): () => void {
+  return session.subscribe(listener)
+}
+
+function getSessionState<Row>(
+  session: MessageListSession<Row>,
+): MessageListSessionState<Row> {
+  return session.getState()
 }
