@@ -13,10 +13,9 @@ import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import type { ControllerMotionCoordinator } from './controllerMotionCoordinator'
 import type { ProjectionTransactionQueue } from './transactionQueue'
 import { findKeyForAnchor } from '../shared/snapshotIdentity'
+import { emitMeasurementDiagnostics, type PushDiagnostic } from './controllerMeasurementDiagnostics'
 
 export type RuntimeMeasurementSource = 'transaction' | 'transaction-precheck' | 'transaction-final' | 'resize' | 'scroll-sample'
-
-type PushDiagnostic = (name: string, severity: import('../contracts/events').ViewportDiagnosticRecord['severity'], details: Record<string, unknown>) => void
 
 export type RuntimeControllerMeasurementHost<TMessage, TOptimistic> = {
   scheduler: RuntimeScheduler
@@ -218,26 +217,6 @@ export function createMeasurementCacheContext<TMessage, TOptimistic>(
     source,
     dirtyKeys: dirtyRange?.keys ?? undefined,
   }
-}
-
-export function emitMeasurementDiagnostics(
-  pushDiagnostic: PushDiagnostic,
-  measurement: RuntimeMeasurement,
-  source: RuntimeMeasurementSource,
-  dirtyRange?: RuntimeDirtyRange,
-): void {
-  pushDiagnostic('measurement.rectRead.count', 'debug', {
-    source,
-    rectReadCount: measurement.rectReadCount,
-    rowCount: measurement.visibleRows.length,
-    requestedRowCount: measurement.requestedRowCount,
-    fallbackFullMeasure: measurement.fallbackFullMeasure,
-  })
-  pushDiagnostic('measurement.rectRead.rows', 'debug', {
-    source,
-    rectReadRows: measurement.rectReadRows,
-    dirtyKeyCount: dirtyRange?.keys.size ?? 0,
-  })
 }
 
 export function createSegmentSizeSnapshot<TMessage, TOptimistic>(host: RuntimeControllerMeasurementHost<TMessage, TOptimistic>): RuntimeSegmentSizeSnapshot {

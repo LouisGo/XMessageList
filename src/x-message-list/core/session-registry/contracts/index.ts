@@ -130,6 +130,9 @@ export type MessageListSessionRegistryOptions<
   onRequestResult?: (
     result: MessageListRequestResult<Row, Source>,
   ) => void
+  onRuntimeEvent?: (
+    event: MessageListRuntimeLogEvent,
+  ) => void
 }
 
 export type MessageListSessionRegistryOptionsPatch<
@@ -148,6 +151,9 @@ export type MessageListSessionRegistryOptionsPatch<
   onRequestResult?: (
     result: MessageListRequestResult<Row, Source>,
   ) => void
+  onRuntimeEvent?: (
+    event: MessageListRuntimeLogEvent,
+  ) => void
 }
 
 export type MessageListRequestResult<Row, Source> = {
@@ -157,6 +163,27 @@ export type MessageListRequestResult<Row, Source> = {
   status: 'applied' | 'failed' | 'stale'
   page?: MessageListPage<Row>
   error?: unknown
+}
+
+export type MessageListRuntimeLogDiagnosticRecord = {
+  name: string
+  severity: 'debug' | 'info' | 'warn' | 'error'
+  timestamp: number
+  details: Record<string, unknown>
+}
+
+export type MessageListRuntimeLogEvent = {
+  type: string
+  sessionId?: MessageListSessionId
+  generation?: number
+  segmentRevision?: number
+  requestToken?: string
+  reason?: string
+  edge?: 'before' | 'after'
+  target?: MessageListAnchor
+  anchor?: MessageListAnchor | null
+  diagnostic?: MessageListRuntimeLogDiagnosticRecord
+  details?: Record<string, unknown>
 }
 
 export type MessageListOverlayStatus = {

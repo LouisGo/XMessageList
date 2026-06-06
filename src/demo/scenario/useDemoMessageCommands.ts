@@ -12,6 +12,8 @@ import {
 } from '../data/demoMessageApi'
 import {
   createDemoRequestId,
+  type DemoLogPhase,
+  type DemoOperationName,
   writeDemoLog,
 } from '../data/demoLocalStoreClient'
 import {
@@ -19,6 +21,11 @@ import {
   wait,
   waitMockDelay,
 } from './demoScenarioHelpers'
+import {
+  createRetriedOutgoingMessage,
+  publishRetriedOutgoingMessage,
+  updatePersistedMessage,
+} from './demoMessageCommandHelpers'
 import type {
   DemoHighlightState,
 } from './demoScenarioTypes'
@@ -67,6 +74,23 @@ export function useDemoMessageCommands(input: {
     setLastEvent,
     setMessageCount,
   } = input
+
+  const logCommand = useCallback((
+    operation: DemoOperationName,
+    phase: DemoLogPhase,
+    details: Record<string, unknown>,
+    feedId = activeFeedId,
+    messageCount?: number,
+  ) => {
+    void writeDemoLog({
+      requestId: createDemoRequestId(operation),
+      operation,
+      phase,
+      feedId,
+      messageCount,
+      details,
+    })
+  }, [activeFeedId])
 
   const stageOutgoingMessage = useCallback((
     feedId: string,
@@ -143,6 +167,19 @@ export function useDemoMessageCommands(input: {
         return
       }
 
+      logCommand(
+        'message.send',
+        failed ? 'error' : 'success',
+        {
+          reason: 'send',
+          messageId,
+          attempt,
+          status: updated.message.sendStatus,
+          sendError: updated.message.sendError,
+        },
+        feedId,
+        1,
+      )
       getSession(feedId).tail.local.patch([updated.message])
       await flushDemoFeedPersistence(feedId)
       if (isActiveFeed(feedId)) {
@@ -156,6 +193,7 @@ export function useDemoMessageCommands(input: {
   }, [
     getSession,
     isActiveFeed,
+    logCommand,
     sendDelayBaseMs,
     setLastEvent,
   ])
@@ -189,6 +227,19 @@ export function useDemoMessageCommands(input: {
           return
         }
 
+        logCommand(
+          'message.send',
+          'error',
+          {
+            reason: 'retry',
+            messageId,
+            attempt,
+            status: updated.message.sendStatus,
+            sendError: updated.message.sendError,
+          },
+          feedId,
+          1,
+        )
         getSession(feedId).tail.local.patch([updated.message])
         await flushDemoFeedPersistence(feedId)
         if (isActiveFeed(feedId)) {
@@ -234,6 +285,20 @@ export function useDemoMessageCommands(input: {
         shouldRebuildLatest,
         stageOutgoingMessage,
       })
+      logCommand(
+        'message.send',
+        'success',
+        {
+          reason: 'retry',
+          retiredMessageId: target.id,
+          messageId: retryMessage.id,
+          attempt: target.sendAttempt,
+          status: retryMessage.sendStatus,
+          shouldRebuildLatest,
+        },
+        feedId,
+        1,
+      )
       await flushDemoFeedPersistence(feedId)
       if (isActiveFeed(feedId)) {
         setLastEvent(`retried ${messageId} as ${retryMessage.id}`)
@@ -244,6 +309,7 @@ export function useDemoMessageCommands(input: {
     getSession,
     invalidateAnchorMemory,
     isActiveFeed,
+    logCommand,
     setLastEvent,
     setMessageCount,
     stageOutgoingMessage,
@@ -282,6 +348,19 @@ export function useDemoMessageCommands(input: {
       shouldRebuildLatest,
       'send',
     )
+    logCommand(
+      'message.send',
+      'start',
+      {
+        reason: 'send',
+        messageId: message.id,
+        shouldRebuildLatest,
+        messageCountBefore: allMessages.length,
+        messageCountAfter: persistedMessages.length,
+      },
+      activeFeedId,
+      1,
+    )
     if (isActiveFeed(activeFeedId)) {
       setLastEvent(
         shouldRebuildLatest
@@ -298,6 +377,7 @@ export function useDemoMessageCommands(input: {
     getHasMoreAfter,
     invalidateAnchorMemory,
     isActiveFeed,
+    logCommand,
     stageOutgoingMessage,
     setLastEvent,
     setMessageCount,
@@ -330,6 +410,17 @@ export function useDemoMessageCommands(input: {
     }
 
     getSession(activeFeedId).tail.local.patch([updated.message])
+    logCommand(
+      'message.send',
+      'start',
+      {
+        reason: 'retry',
+        messageId: target.id,
+        attempt: retrying.sendAttempt,
+      },
+      activeFeedId,
+      1,
+    )
     if (isActiveFeed(activeFeedId)) {
       setLastEvent(`retrying ${target.id}`)
     }
@@ -340,6 +431,7 @@ export function useDemoMessageCommands(input: {
     completeRetryAttempt,
     getSession,
     isActiveFeed,
+    logCommand,
     setLastEvent,
   ])
 
@@ -386,10 +478,26 @@ export function useDemoMessageCommands(input: {
 
     const first = getLoadedMessages()[0]
     if (!first) {
+      logCommand(
+        'session.command.quoteJump',
+        'skip',
+        { reason: 'no-loaded-target' },
+      )
       setLastEvent('no loaded quote target')
       return
     }
 
+    logCommand(
+      'session.command.quoteJump',
+      'info',
+      {
+        origin: null,
+        target: {
+          messageId: first.id,
+          position: first.sequence,
+        },
+      },
+    )
     session.commands.scrollToMessage({
       sessionId: activeFeedId,
       stableId: first.id,
@@ -397,9 +505,26 @@ export function useDemoMessageCommands(input: {
     })
     highlightMessage(first.id, highlightState)
     setLastEvent('jump command sent to session')
-  }, [activeFeedId, getLoadedMessages, highlightState, session, setLastEvent])
+  }, [
+    activeFeedId,
+    getLoadedMessages,
+    highlightState,
+    logCommand,
+    session,
+    setLastEvent,
+  ])
 
   const clearFeed = useCallback((feedId: string) => {
+    logCommand(
+      'feed.clear',
+      'start',
+      {
+        targetFeedId: feedId,
+        hadSession: hasSession(feedId),
+        wasActiveFeed: isActiveFeed(feedId),
+      },
+      feedId,
+    )
     replaceDemoFeedMessages(feedId, [])
     invalidateAnchorMemory(feedId)
     if (hasSession(feedId)) {
@@ -412,103 +537,44 @@ export function useDemoMessageCommands(input: {
     if (isActiveFeed(feedId)) {
       setLastEvent(`cleared ${feedId}`)
     }
+    logCommand(
+      'feed.clear',
+      'success',
+      { targetFeedId: feedId },
+      feedId,
+    )
   }, [
     getSession,
     hasSession,
     invalidateAnchorMemory,
     isActiveFeed,
+    logCommand,
     setLastEvent,
     setMessageCount,
+  ])
+
+  const followBottom = useCallback(() => {
+    logCommand(
+      'session.command.followBottom',
+      'info',
+      {
+        loadedMessageCount: getLoadedMessages().length,
+        hasMoreAfter: getHasMoreAfter(),
+      },
+    )
+    session.commands.scrollToLatest()
+  }, [
+    getHasMoreAfter,
+    getLoadedMessages,
+    logCommand,
+    session,
   ])
 
   return {
     sendMessage,
     retryFailedSend,
-    followBottom: () => session.commands.scrollToLatest(),
+    followBottom,
     jumpToQuote,
     clearFeed,
   }
-}
-
-function updatePersistedMessage(
-  feedId: string,
-  messageId: string,
-  mutate: (message: DemoMessage) => DemoMessage | undefined,
-): { message: DemoMessage; messages: DemoMessage[] } | null {
-  const feedMessages = readDemoFeedMessages(feedId)
-  let nextMessage: DemoMessage | null = null
-  const nextMessages = feedMessages.map((message) => {
-    if (message.id !== messageId) {
-      return message
-    }
-
-    const updated = mutate(message)
-
-    if (!updated) {
-      return message
-    }
-
-    nextMessage = updated
-    return updated
-  })
-
-  if (!nextMessage) {
-    return null
-  }
-
-  return {
-    message: nextMessage,
-    messages: replaceDemoFeedMessages(feedId, nextMessages),
-  }
-}
-
-function createRetriedOutgoingMessage(input: {
-  feedId: string
-  target: DemoMessage
-  sequence: number
-}): DemoMessage {
-  const { feedId, target, sequence } = input
-
-  return {
-    ...createOutgoingMessage(target.body, {
-      feedId,
-      sequence,
-    }),
-    kind: target.kind,
-    expanded: target.expanded,
-    media: target.media,
-    quote: target.quote,
-    sendStatus: 'sent',
-    sendAttempt: target.sendAttempt,
-    sendError: undefined,
-  }
-}
-
-function publishRetriedOutgoingMessage(input: {
-  feedId: string
-  targetId: string
-  retryMessage: DemoMessage
-  persistedMessages: DemoMessage[]
-  shouldRebuildLatest: boolean
-  stageOutgoingMessage: (
-    feedId: string,
-    message: DemoMessage,
-    persistedMessages: DemoMessage[],
-    shouldRebuildLatest: boolean,
-    reason: 'send' | 'retry',
-    options?: {
-      retireKeys?: string[]
-    },
-  ) => void
-}): void {
-  input.stageOutgoingMessage(
-    input.feedId,
-    input.retryMessage,
-    input.persistedMessages,
-    input.shouldRebuildLatest,
-    'retry',
-    {
-      retireKeys: [input.targetId],
-    },
-  )
 }

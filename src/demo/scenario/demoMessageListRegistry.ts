@@ -5,6 +5,7 @@ import {
   type MessageListPage,
   type MessageListRequestResult,
   type MessageListResolvedAnchor,
+  type MessageListRuntimeLogEvent,
   type MessageListSession,
   type MessageListSessionRegistry,
 } from '../../index'
@@ -59,6 +60,7 @@ export type DemoRegistryOptions = {
     result: MessageListRequestResult<DemoMessage, DemoFeedRecord>,
     eventText?: string,
   ) => void
+  onRuntimeEvent?: (event: MessageListRuntimeLogEvent) => void
 }
 
 export function createDemoRegistry(
@@ -92,6 +94,7 @@ export function createDemoRegistry(
     onRequestResult: (result) => {
       handleDemoRequestResult(result, input)
     },
+    onRuntimeEvent: input.onRuntimeEvent,
   })
 }
 

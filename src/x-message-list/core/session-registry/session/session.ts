@@ -16,6 +16,7 @@ import { getMessageListSessionRegistryRuntime } from '../../runtime/internal'
 import type { RuntimeSegmentSizeSnapshot } from '../../runtime/dom/rowMetricCache'
 import { MessageListReadReceiptsWorker } from '../read-receipts/readReceipts'
 import { MessageListSessionOverlay } from './overlay'
+import { toSessionRuntimeLogEvent } from './runtimeLogEvent'
 import { createMessageListSessionState } from './state'
 import { createSessionRows } from '../rows/sessionRows'
 import { defineMessageListSessionInternals } from '../internal'
@@ -40,10 +41,8 @@ import type {
   MessageListSessionState,
   MessageListViewState,
 } from '../contracts'
-
 type OverlayRequestOptions = { overlayRequestId?: number; requestEpoch?: number }
 type RequestResultInput<Row, Source> = Omit<MessageListRequestResult<Row, Source>, 'sessionId' | 'source'>
-
 export class MessageListSession<Row, Source>
   implements PublicMessageListSession<Row> {
   readonly #runtime: MessageListRuntime<Row>
@@ -142,11 +141,11 @@ export class MessageListSession<Row, Source>
       getMeasurementSnapshot: () => this.measurementSnapshot,
     })
     this.runtimeUnsubscribe = this.#runtime.subscribeRuntimeEvent((event) => {
+      this.options.onRuntimeEvent?.(toSessionRuntimeLogEvent(event))
       this.handleRuntimeEvent(event)
     })
     void this.bootstrap()
   }
-
   getSnapshot(): MessageListSnapshot<Row> { return this.#runtime.getSnapshot() }
 
   getViewState(): MessageListViewState { return this.overlay.getViewState() }

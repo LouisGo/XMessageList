@@ -16,6 +16,8 @@ export type {
   MessageListRequestContext,
   MessageListRequestResult,
   MessageListResolvedAnchor,
+  MessageListRuntimeLogDiagnosticRecord,
+  MessageListRuntimeLogEvent,
   MessageListRowsMutation,
   MessageListRowsReplaceInput,
   MessageListRowsResetAroundInput,

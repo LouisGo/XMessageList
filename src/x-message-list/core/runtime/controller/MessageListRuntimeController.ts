@@ -27,8 +27,8 @@ import { resolveCurrentViewportAnchor, resolveMeasuredViewportAnchor, resolveVie
 import { ControllerMotionCoordinator } from './controllerMotionCoordinator'
 import { startPendingRuntimeMotion as startPendingRuntimeMotionContinuation } from './controllerSettledContinuations'
 import { createCommandEdgeRequest } from './controllerEdgeRequests'
-import { createMeasurementCacheContext, createSegmentSizeSnapshot, emitMeasurementDiagnostics, handleResizeEntries as handleResizeEntriesFromMeasurement, handleScrollFrame as handleScrollFrameFromMeasurement, markSegmentDirty, scheduleResizeMeasurementFrame, type RuntimeControllerMeasurementHost } from './controllerMeasurement'
-import { resolveTransactionPreCorrectionMeasurementOptions } from './controllerPreCorrectionMeasurement'
+import { createMeasurementCacheContext, createSegmentSizeSnapshot, handleResizeEntries as handleResizeEntriesFromMeasurement, handleScrollFrame as handleScrollFrameFromMeasurement, markSegmentDirty, scheduleResizeMeasurementFrame, type RuntimeControllerMeasurementHost } from './controllerMeasurement'
+import { emitMeasurementDiagnostics, emitSettledTransactionMeasurementDiagnostics, measureTransactionFinal, measureTransactionPrecheck } from './controllerMeasurementDiagnostics'
 export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unknown>
   implements MessageListAdapterRuntime<TMessage, TOptimistic> {
   private readonly scheduler: RuntimeScheduler
@@ -196,12 +196,15 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.scrollIntent.incrementFrame()
       this.stateAxes.markTransactionMeasuring()
       this.setViewportPhase('MEASURING')
-      this.lastMeasurement = measureRuntimeDom(this.registry.snapshot(),
-        resolveTransactionPreCorrectionMeasurementOptions({
-          anchor: pending.anchor, segment: pending.segment,
-          registry: this.registry, domInteractions: this.domInteractions, dirtyRange: this.dirtyRange.resolve(this.snapshot),
-        }))
-      emitMeasurementDiagnostics(this.pushDiagnostic.bind(this), this.lastMeasurement, 'transaction-precheck')
+      const precheck = measureTransactionPrecheck({
+        pushDiagnostic: this.pushDiagnostic.bind(this),
+        pending,
+        snapshot: this.snapshot,
+        registry: this.registry,
+        domInteractions: this.domInteractions,
+        dirtyRange: this.dirtyRange,
+      })
+      this.lastMeasurement = precheck.measurement
       if (shouldWaitForAnchorRef(pending, this.registry)) {
         pending.anchorRetryCount += 1
         this.pushDiagnostic('correction.anchorAwaitingRef', 'debug', {
@@ -234,8 +237,13 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
         correctAnchor: (anchor, segment) => this.correctAnchor(anchor, segment),
         getViewportAnchor: () => this.getViewportAnchor(),
       })
-      this.lastMeasurement = measureRuntimeDom(this.registry.snapshot())
-      emitMeasurementDiagnostics(this.pushDiagnostic.bind(this), this.lastMeasurement, 'transaction-final')
+      const finalMeasurement = measureTransactionFinal({
+        pushDiagnostic: this.pushDiagnostic.bind(this),
+        pending,
+        registry: this.registry,
+        dirtyRange: precheck.dirtyRange,
+      })
+      this.lastMeasurement = finalMeasurement
       this.domInteractions.recordRowMetrics(
         this.lastMeasurement,
         createMeasurementCacheContext(this.snapshot, 'transaction'),
@@ -253,9 +261,11 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
         this.pendingRuntimeMotion = { settlement: scrollSettlement, scrollSource: transactionScrollSource, segment: pending.segment }
       }
       const latencyMs = this.scheduler.now() - pending.startedAt
-      this.pushDiagnostic('transaction.settle', 'info', { ...token, latencyMs })
-      this.pushDiagnostic('measurement.transaction.latencyMs', 'debug', {
-        ...token,
+      emitSettledTransactionMeasurementDiagnostics({
+        pushDiagnostic: this.pushDiagnostic.bind(this),
+        pending,
+        precheck,
+        finalMeasurement,
         latencyMs,
       })
       this.emitViewportReadyOnce(token)
@@ -341,12 +351,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       offsetWithinMessage: options.offsetWithinMessage,
     })
   }
-  private handleUserScrollIntent(): void {
-    this.pendingRuntimeMotion = null
-    this.interactions.cancelUnderflowFill()
-    this.motion.cancel('user-interrupt')
-    this.scrollIntent.markUserScrollIntent()
-  }
+  private handleUserScrollIntent(): void { this.pendingRuntimeMotion = null; this.interactions.cancelUnderflowFill(); this.motion.cancel('user-interrupt'); this.scrollIntent.markUserScrollIntent() }
   getSnapshot(): MessageListSnapshot<TMessage, TOptimistic> { return this.snapshot }
   subscribeSnapshot(listener: MessageListSnapshotListener): () => void { this.snapshotListeners.add(listener); return () => this.snapshotListeners.delete(listener) }
   subscribeRuntimeEvent(listener: MessageListRuntimeEventListener): () => void { this.eventListeners.add(listener); return () => this.eventListeners.delete(listener) }
@@ -410,14 +415,8 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       lastAnchorOffsetWithinMessage: this.lastAnchorOffsetWithinMessage,
     })
   }
-  private startDestination(intent: DestinationIntent): void {
-    this.applyInteractionUpdate(this.interactions.startDestination(this.snapshot, intent))
-  }
-  private cancelCommandMotion(): void {
-    this.pendingRuntimeMotion = null
-    this.interactions.cancelUnderflowFill()
-    this.motion.cancel('command-supersede')
-  }
+  private startDestination(intent: DestinationIntent): void { this.applyInteractionUpdate(this.interactions.startDestination(this.snapshot, intent)) }
+  private cancelCommandMotion(): void { this.pendingRuntimeMotion = null; this.interactions.cancelUnderflowFill(); this.motion.cancel('command-supersede') }
   private startPendingRuntimeMotion(): boolean {
     const pendingMotion = this.pendingRuntimeMotion
     if (!pendingMotion) return false

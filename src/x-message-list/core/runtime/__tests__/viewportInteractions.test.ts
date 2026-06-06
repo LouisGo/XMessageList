@@ -228,6 +228,12 @@ describe('MessageList viewport interactions', () => {
 
     expect(precheck).toMatchObject({
       details: {
+        modifier: 'patch',
+        transactionPhase: 'precheck',
+        measurementPlan: 'sampled-keys',
+        dirtyReason: 'render-version',
+        dirtyKeyCount: 1,
+        missingKeyCount: 0,
         fallbackFullMeasure: false,
         rowCount: expect.any(Number),
         requestedRowCount: expect.any(Number),
@@ -237,8 +243,86 @@ describe('MessageList viewport interactions', () => {
     expect(precheck?.details.requestedRowCount as number).toBeLessThan(80)
     expect(final).toMatchObject({
       details: {
+        modifier: 'patch',
+        transactionPhase: 'final',
+        measurementPlan: 'authoritative-full',
+        fullMeasureReason: 'transaction-final',
         fallbackFullMeasure: true,
         rowCount: 80,
+      },
+    })
+    expect(runtime.getDiagnostics()
+      .filter((record) => record.name === 'measurement.transaction.summary')
+      .at(-1))
+      .toMatchObject({
+        details: {
+          modifier: 'patch',
+          dirtyReason: 'render-version',
+          dirtyKeyCount: 1,
+          missingKeyCount: 0,
+          totalRectReadCount: expect.any(Number),
+          precheck: {
+            measurementPlan: 'sampled-keys',
+            fallbackFullMeasure: false,
+          },
+          final: {
+            measurementPlan: 'authoritative-full',
+            fullMeasureReason: 'transaction-final',
+            fallbackFullMeasure: true,
+          },
+        },
+      })
+  })
+  it('records transaction full-measure reason for reset-around precheck', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rowA = createRow('row-1', 0, 50)
+    const rowB = createRow('row-2', 50, 50)
+    const target = { sessionId: 'source-a', stableId: 'row-2', serverId: 'row-2' }
+    const items = [item('row-1'), item('row-2')]
+
+    container.append(rowA, rowB)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', rowA)
+    adapter.registerRowElement('row-2', rowB)
+    runtime.applyLoadedSegment(segment(items, 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    const diagnosticsBefore = runtime.getDiagnostics().length
+    runtime.applyLoadedSegment(segment(items, 1, 2, {
+      modifier: { type: 'reset-around', target },
+      anchor: target,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    const diagnostics = runtime.getDiagnostics().slice(diagnosticsBefore)
+
+    expect(diagnostics.find((record) =>
+      record.name === 'measurement.transaction.fullMeasure'
+    )).toMatchObject({
+      severity: 'info',
+      details: {
+        modifier: 'reset-around',
+        transactionPhase: 'precheck',
+        fullMeasureReason: 'reset-around',
+        rowCount: 2,
+        requestedRowCount: null,
+      },
+    })
+    expect(diagnostics.find((record) =>
+      record.name === 'measurement.transaction.summary'
+    )).toMatchObject({
+      details: {
+        modifier: 'reset-around',
+        precheck: {
+          measurementPlan: 'full-measure',
+          fullMeasureReason: 'reset-around',
+          fallbackFullMeasure: true,
+        },
+        final: {
+          measurementPlan: 'authoritative-full',
+          fallbackFullMeasure: true,
+        },
       },
     })
   })

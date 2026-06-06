@@ -12,6 +12,10 @@ import {
   saveDemoViewportAnchor,
 } from '../data/demoMessageApi'
 import {
+  createDemoRequestId,
+  writeDemoLog,
+} from '../data/demoLocalStoreClient'
+import {
   clearHighlightTimer,
   resolveLoadedBounds,
   wait,
@@ -21,6 +25,7 @@ import {
   type DemoFeed,
   prepareDemoE2EScenario,
 } from './demoMessageListRegistry'
+import { logDemoRuntimeEvent } from './demoProfilingLog'
 import {
   RANDOM_CHAT_FEED_ID,
   resolveDemoSessionDelayMs,
@@ -96,6 +101,24 @@ export function useDemoMessageScenario(): DemoMessageScenario {
       return
     }
 
+    void writeDemoLog({
+      requestId: createDemoRequestId('feed.load'),
+      operation: 'feed.load',
+      phase: 'success',
+      feedId: result.sessionId,
+      messageCount: result.page.rows.length,
+      details: {
+        kind: result.kind,
+        status: result.status,
+        total: result.page.total,
+        hasMoreBefore: result.page.hasMoreBefore,
+        hasMoreAfter: result.page.hasMoreAfter,
+        anchorId: result.page.anchor?.id,
+        anchorStatus: result.page.anchorStatus,
+        firstMessageId: result.page.rows[0]?.id,
+        lastMessageId: result.page.rows.at(-1)?.id,
+      },
+    })
     setMessageCount(result.page.total ?? readDemoFeedMessages(result.sessionId).length)
     if (eventText) {
       setLastEvent(eventText)
@@ -144,6 +167,8 @@ export function useDemoMessageScenario(): DemoMessageScenario {
       setMessageCount,
       setPendingFeedId,
       syncLoadedState: syncLoadedStateFromRequest,
+      onRuntimeEvent: (event) =>
+        logDemoRuntimeEvent(event, registryStateRef.current.activeFeedId),
     })
 
     return registryInstance
@@ -305,7 +330,21 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     },
   })
   const selectFeed = useCallback((feedId: string) => {
+    const fromFeedId = registryStateRef.current.selectedFeedId
+    const requestId = createDemoRequestId('feed.select')
+
     if (feedId === registryStateRef.current.selectedFeedId) {
+      void writeDemoLog({
+        requestId,
+        operation: 'feed.select',
+        phase: 'skip',
+        feedId,
+        details: {
+          fromFeedId,
+          toFeedId: feedId,
+          reason: 'already-selected',
+        },
+      })
       return
     }
 
@@ -322,6 +361,21 @@ export function useDemoMessageScenario(): DemoMessageScenario {
 
     const delayMs = registryStateRef.current.deferredSessionResponseDelayMs
     const activationToken = registryStateRef.current.activationToken + 1
+    const hasWarmSession = registry.hasSession(feedId)
+
+    void writeDemoLog({
+      requestId,
+      operation: 'feed.select',
+      phase: 'start',
+      feedId,
+      details: {
+        fromFeedId,
+        toFeedId: feedId,
+        delayMs,
+        hasWarmSession,
+        activationToken,
+      },
+    })
 
     registryStateRef.current.activationToken = activationToken
     registryStateRef.current.activeFeedId = feedId
@@ -331,15 +385,27 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     setMessageCount(0)
     setLastEvent(`loading ${getDemoFeedDefinition(feedId).title}`)
 
-    if (delayMs === 0 && registry.hasSession(feedId)) {
+    if (delayMs === 0 && hasWarmSession) {
       setPendingFeedId(null)
       setFeedLoadingState(false)
       setMessageCount(readDemoFeedMessages(feedId).length)
       setLastEvent(`loaded ${getDemoFeedDefinition(feedId).title}`)
+      void writeDemoLog({
+        requestId,
+        operation: 'feed.select',
+        phase: 'success',
+        feedId,
+        details: {
+          fromFeedId,
+          toFeedId: feedId,
+          mode: 'warm-immediate',
+          activationToken,
+        },
+      })
       return
     }
 
-    if (delayMs > 0 && registry.hasSession(feedId)) {
+    if (delayMs > 0 && hasWarmSession) {
       registryStateRef.current.deferredSessionResponseDelayMs = 0
       registryStateRef.current.delayedWarmActivation = {
         feedId,
@@ -351,6 +417,20 @@ export function useDemoMessageScenario(): DemoMessageScenario {
           registryStateRef.current.activationToken !== activationToken ||
           registryStateRef.current.activeFeedId !== feedId
         ) {
+          void writeDemoLog({
+            requestId,
+            operation: 'feed.select',
+            phase: 'cancel',
+            feedId,
+            details: {
+              fromFeedId,
+              toFeedId: feedId,
+              mode: 'warm-delayed',
+              activationToken,
+              currentActivationToken: registryStateRef.current.activationToken,
+              currentActiveFeedId: registryStateRef.current.activeFeedId,
+            },
+          })
           return
         }
 
@@ -359,6 +439,19 @@ export function useDemoMessageScenario(): DemoMessageScenario {
         setFeedLoadingState(false)
         setMessageCount(readDemoFeedMessages(feedId).length)
         setLastEvent(`loaded ${getDemoFeedDefinition(feedId).title}`)
+        void writeDemoLog({
+          requestId,
+          operation: 'feed.select',
+          phase: 'success',
+          feedId,
+          details: {
+            fromFeedId,
+            toFeedId: feedId,
+            mode: 'warm-delayed',
+            delayMs,
+            activationToken,
+          },
+        })
       })()
       return
     }

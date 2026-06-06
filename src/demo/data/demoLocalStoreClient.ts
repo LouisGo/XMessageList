@@ -59,6 +59,7 @@ export type PersistedDemoFeed = {
 const API_BASE = '/__x-message-list-demo'
 const FEED_STORAGE_PREFIX = 'x-message-list:demo-feed:'
 const LOG_STORAGE_KEY = 'x-message-list:demo-fallback-logs'
+let demoRequestSequence = 0
 
 export async function loadPersistedDemoFeed(
   feedId: string,
@@ -122,7 +123,8 @@ export async function writeDemoLog(entry: DemoLogEntry): Promise<void> {
 }
 
 export function createDemoRequestId(operation: DemoOperationName): string {
-  return `${operation}:${Date.now()}:${Math.random().toString(16).slice(2)}`
+  demoRequestSequence += 1
+  return `${operation}:${Date.now()}:${demoRequestSequence.toString(36)}`
 }
 
 function loadFallbackFeed(feedId: string): PersistedDemoFeed | null {

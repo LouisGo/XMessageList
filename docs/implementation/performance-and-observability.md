@@ -101,6 +101,8 @@ Custom scrollbar overlay 规则：
 - `measurement.rectRead.count`
 - `measurement.rectRead.rows`
 - `measurement.transaction.latencyMs`
+- `measurement.transaction.summary`
+- `measurement.transaction.fullMeasure`
 - `measurement.resize.dirtyKeys`
 - `measurement.resize.fallbackFullMeasure`
 - `overlay.refresh.count`
@@ -118,6 +120,7 @@ Diagnostics 要带：
 - commit token or request token
 - transaction id
 - modifier
+- transaction measurement phase, measurement plan, full-measure reason, rect-read count, row count
 - hasMoreBefore / hasMoreAfter
 - scroll source
 - anchor key

@@ -76,6 +76,7 @@ export class ApplicationMessageListSessionRegistry<Row, Source = MessageListSess
         },
       },
       onRequestResult: (result) => this.options.onRequestResult?.(result),
+      onRuntimeEvent: (event) => this.options.onRuntimeEvent?.(event),
     })
 
     this.sessions.set(sessionId, {
@@ -185,6 +186,7 @@ export class ApplicationMessageListSessionRegistry<Row, Source = MessageListSess
         : this.options.tailEvents,
       scrollMotion: options.scrollMotion ?? this.options.scrollMotion,
       onRequestResult: options.onRequestResult ?? this.options.onRequestResult,
+      onRuntimeEvent: options.onRuntimeEvent ?? this.options.onRuntimeEvent,
     }
     const nextDefaults = normalizeDefaults(this.options.defaults)
     this.defaults.pageSize = nextDefaults.pageSize

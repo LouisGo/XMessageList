@@ -261,6 +261,37 @@ describe('createMessageListSessionRegistry', () => {
     expect(requestResults).not.toContain('around:stale')
   })
 
+  it('forwards runtime events as serializable log events', async () => {
+    const runtimeEvents: Array<{
+      type: string
+      sessionId?: string
+      requestToken?: string
+      target?: { stableId?: string }
+    }> = []
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+      onRuntimeEvent: (event) => {
+        runtimeEvents.push(event)
+      },
+    })
+    const session = manager.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+
+    await waitFor(() => internals.getSnapshot().items.length === 1)
+    session.commands.scrollToMessage({ id: 'remote' })
+
+    await waitFor(() =>
+      runtimeEvents.some((event) =>
+        event.type === 'needMessagesAround' &&
+        event.sessionId === 'source-a' &&
+        event.target?.stableId === 'remote' &&
+        typeof event.requestToken === 'string'
+      )
+    )
+    manager.destroyAll()
+  })
+
   it('keeps around requests alive across same-generation live revisions', async () => {
     const pendingAround: Array<(page: MessageListPage<TestRow>) => void> = []
     const requestResults: string[] = []

@@ -55,6 +55,7 @@ export type SessionOptions<Row, Source = MessageListSessionSource> = {
   tailEvents?: MessageListSessionRegistryOptions<Row, Source>['tailEvents']
   scrollMotion?: MessageListSessionRegistryOptions<Row, Source>['scrollMotion']
   onRequestResult?: MessageListSessionRegistryOptions<Row, Source>['onRequestResult']
+  onRuntimeEvent?: MessageListSessionRegistryOptions<Row, Source>['onRuntimeEvent']
 }
 
 const RETENTION_VIEWPORT_MULTIPLIER: Record<MessageListSegmentRetention, number> = {
