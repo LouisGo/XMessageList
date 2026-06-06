@@ -39,6 +39,7 @@ const DEFAULT_SCROLL_MOTION_OPTIONS: Required<ScrollMotionOptions> = {
   maxDurationMs: 600,
   targetEpsilonPx: 1,
 }
+const MIN_ANIMATED_DISTANCE_PX = 24
 
 type NormalizedScrollMotionOptions = Omit<Required<ScrollMotionOptions>, 'enabled'> & {
   enabled: NonNullable<ScrollMotionOptions['enabled']>
@@ -82,15 +83,47 @@ export class MotionCoordinator {
 
   start(input: MotionStartInput): boolean {
     this.cancel('restart')
-    const rawDirection = resolveMotionDirection(input.container.scrollTop, input.targetTop)
+    const targetTop = Math.max(0, input.targetTop)
+    const currentTop = input.container.scrollTop
+    const distancePx = targetTop - currentTop
+    const rawDirection = resolveMotionDirection(currentTop, targetTop)
     const direction = input.enforceDirectionHint === true
       ? directionHintToMotionDirection(input.directionHint) ?? rawDirection
       : rawDirection
+
+    if (
+      !resolveMotionEnabled(this.options.enabled) ||
+      isReducedMotionRequested(input.container, this.options)
+    ) {
+      // 关闭动画时仍走 settle 回调，保证 pendingIntent、bottom lock 和事件链保持一致。
+      input.writeScrollTop(targetTop, input.source)
+      input.onSettle()
+      return false
+    }
+
+    if (Math.abs(distancePx) <= MIN_ANIMATED_DISTANCE_PX) {
+      input.onDiagnostic('scrollMotion.decision', 'debug', {
+        source: input.source,
+        decision: 'tiny-settle',
+        currentTop,
+        targetTop,
+        distancePx,
+        thresholdPx: MIN_ANIMATED_DISTANCE_PX,
+        direction,
+        rawDirection,
+        directionHint: input.directionHint ?? null,
+        enforceDirectionHint: input.enforceDirectionHint === true,
+      })
+      input.writeScrollTop(targetTop, input.source)
+      input.onSettle()
+      return false
+    }
+
     input.onDiagnostic('destinationMotion.start', 'info', {
       source: input.source,
-      targetTop: input.targetTop,
-      currentTop: input.container.scrollTop,
-      distancePx: input.targetTop - input.container.scrollTop,
+      targetTop,
+      currentTop,
+      distancePx,
       direction,
       rawDirection,
       directionHint: input.directionHint ?? null,
@@ -99,22 +132,12 @@ export class MotionCoordinator {
       clientHeight: input.container.clientHeight,
     })
 
-    if (
-      !resolveMotionEnabled(this.options.enabled) ||
-      isReducedMotionRequested(input.container, this.options)
-    ) {
-      // 关闭动画时仍走 settle 回调，保证 pendingIntent、bottom lock 和事件链保持一致。
-      input.writeScrollTop(input.targetTop, input.source)
-      input.onSettle()
-      return false
-    }
-
     this.state = 'active'
     this.activeSource = input.source
     const active = this.engine.start({
       container: input.container,
       source: input.source,
-      targetTop: input.targetTop,
+      targetTop,
       maxDistancePx: this.options.maxDistancePx,
       minDurationMs: this.options.minDurationMs,
       maxDurationMs: this.options.maxDurationMs,

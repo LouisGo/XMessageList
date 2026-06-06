@@ -1145,7 +1145,10 @@ function createSessionFixture(input: {
     }),
   })
   const session = registry.getSession(sessionId)
-  const runtime = getMessageListSessionInternals(session).runtime
+  const sessionInternals = getMessageListSessionInternals(session)
+  const releaseBootstrapRetain = sessionInternals.retainView()
+  releaseBootstrapRetain()
+  const runtime = sessionInternals.runtime
 
   session.rows.resetLatest(page(input.rows, {
     hasMoreBefore: input.hasMoreBefore,

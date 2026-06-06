@@ -24,6 +24,7 @@ export type RuntimeMeasurementDiagnosticContext = {
   transactionPhase?: 'precheck' | 'final'
   measurementPlan?: string
   fullMeasureReason?: string
+  anchorSource?: string
   dirtyReason?: RuntimeDirtyRange['reason']
   dirtyKeyCount?: number
   missingKeyCount?: number
@@ -136,6 +137,7 @@ export function emitTransactionPrecheckMeasurementDiagnostics<TMessage, TOptimis
       transactionPhase: 'precheck',
       measurementPlan: plan.mode,
       fullMeasureReason: plan.fullMeasureReason,
+      anchorSource: plan.anchorSource,
       dirtyReason: dirtyRange.reason,
       dirtyKeyCount: dirtyRange.keys.size,
       missingKeyCount: dirtyRange.missingKeys.length,
@@ -220,6 +222,7 @@ export function emitSettledTransactionMeasurementDiagnostics<TMessage, TOptimist
     precheck: {
       measurementPlan: precheckPlan.mode,
       fullMeasureReason: precheckPlan.fullMeasureReason,
+      anchorSource: precheckPlan.anchorSource,
       rectReadCount: precheckMeasurement.rectReadCount,
       rowCount: precheckMeasurement.visibleRows.length,
       requestedRowCount: precheckMeasurement.requestedRowCount,

@@ -5,6 +5,8 @@
 ## 职责
 
 - 按 `sessionId` 懒创建 `MessageListSession`。
+- `getSession(sessionId)` 只同步创建或复用 session；首次 `MessageList` mount retain、
+  `retainSession(...)` 或 command/retry/reload 才启动 bootstrap/request 副作用。
 - 通过 `getSessionSource` 和 `getAdapter` 解析应用级依赖。
 - 掌管当前 session 的 loaded segment、视口状态、边缘状态、请求桥接、`anchorMemory` 和 `readReceipts` worker。
 - 在向视口 runtime 发布 loaded segment 之前，执行请求 token、过期响应防护、segment 合并、裁剪和失败确认。

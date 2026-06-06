@@ -35,31 +35,22 @@ describe('MessageList viewport motion direction', () => {
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
 
     expect(runtime.getSnapshot()).toMatchObject({
-      viewportPhase: 'MOTION',
+      viewportPhase: 'IDLE',
       bottomLockState: 'LOCKED',
     })
-    expect(container.scrollTop).toBeLessThan(250)
+    expect(container.scrollTop).toBe(250)
+    expect(runtime.getDiagnostics().map((record) => record.name))
+      .not.toContain('destinationMotion.start')
     expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
-      name: 'destinationMotion.start',
+      name: 'scrollMotion.decision',
       details: expect.objectContaining({
-        source: 'followBottom',
+        decision: 'tiny-settle',
         direction: 'down',
         rawDirection: 'none',
         directionHint: 'after',
         enforceDirectionHint: true,
       }),
     }))
-    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
-      name: 'scrollMotion.decision',
-      details: expect.objectContaining({
-        decision: 'bounded-animate',
-        directionHint: 'after',
-        enforceDirectionHint: true,
-        semanticPrepositionTop: expect.any(Number),
-      }),
-    }))
-
-    scheduler.flushFrames(40)
 
     expect(container.scrollTop).toBe(250)
     expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')

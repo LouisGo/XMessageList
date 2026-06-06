@@ -151,6 +151,7 @@ export class ApplicationMessageListSessionRegistry<Row, Source = MessageListSess
 
     record.session.lastUsedAt = Date.now()
     record.hostRetains.set(reason, (record.hostRetains.get(reason) ?? 0) + 1)
+    record.session.ensureBootstrapStarted()
 
     let released = false
     return () => {

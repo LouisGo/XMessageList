@@ -1,6 +1,6 @@
-import { act } from 'react'
+import { StrictMode, act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   createMessageListSessionRegistry,
   type MessageListAdapter,
@@ -11,6 +11,44 @@ import { MessageListSessionRegistryProvider } from '../components/MessageListSes
 import { useMessageListSession } from '../hooks/useMessageListSession'
 
 describe('MessageList session adapter', () => {
+  it('starts the mounted session once under StrictMode', async () => {
+    const loadLatest = vi.fn(() => Promise.resolve(page(['row-a'])))
+    const registry = createMessageListSessionRegistry<string>({
+      getAdapter: () => createStringAdapter([], { loadLatest }),
+    })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    function ConversationView() {
+      const session = useMessageListSession<string>('source-a')
+
+      return (
+        <MessageList
+          session={session}
+          renderRow={({ row }) => <span>{row}</span>}
+        />
+      )
+    }
+
+    await act(async () => {
+      root.render(
+        <StrictMode>
+          <MessageListSessionRegistryProvider registry={registry}>
+            <ConversationView />
+          </MessageListSessionRegistryProvider>
+        </StrictMode>,
+      )
+    })
+    await waitFor(() => host.textContent?.includes('row-a') ?? false)
+
+    expect(loadLatest).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      root.unmount()
+    })
+    registry.destroyAll()
+  })
+
   it('resolves a session from provider and keeps the session after unmount', async () => {
     const registry = createMessageListSessionRegistry<string>({
       getAdapter: () => createStringAdapter(['row-a']),

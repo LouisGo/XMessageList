@@ -110,6 +110,7 @@ describe('createMessageListSessionRegistry', () => {
     const session = manager.getSession('favorite-1')
     const sameSession = manager.getSession('favorite-1')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     expect(session).toBe(sameSession)
     expect(manager.hasSession('favorite-1')).toBe(true)
@@ -123,6 +124,78 @@ describe('createMessageListSessionRegistry', () => {
       .toBe('favorite-latest')
   })
 
+  it('keeps getSession lazy until a view retain starts bootstrap', async () => {
+    const loadLatest = vi.fn(() => Promise.resolve(page(['latest'])))
+    const anchorLoad = vi.fn(() => null)
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => ({
+        ...createAdapter('normal', { loadLatest }),
+        anchorMemory: {
+          load: anchorLoad,
+          save: () => undefined,
+        },
+      }),
+    })
+    const session = registry.getSession('source-a')
+
+    await flushMicrotasks()
+
+    expect(anchorLoad).not.toHaveBeenCalled()
+    expect(loadLatest).not.toHaveBeenCalled()
+
+    startSession(session)
+
+    await waitFor(() => loadLatest.mock.calls.length === 1)
+
+    expect(anchorLoad).toHaveBeenCalledTimes(1)
+    expect(session.getState().loaded.keys).toEqual(['latest'])
+  })
+
+  it('starts bootstrap once across repeated view retains', async () => {
+    const loadLatest = vi.fn(() => Promise.resolve(page(['latest'])))
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadLatest }),
+    })
+    const session = registry.getSession('source-a')
+
+    const releaseFirst = getMessageListSessionInternals(session).retainView()
+    releaseFirst()
+    const releaseSecond = getMessageListSessionInternals(session).retainView()
+    releaseSecond()
+
+    await waitFor(() => loadLatest.mock.calls.length === 1)
+
+    expect(session.getState().loaded.keys).toEqual(['latest'])
+  })
+
+  it('starts bootstrap for host prefetch retains while preserving cache policy', async () => {
+    const loadLatest = vi.fn(() => Promise.resolve(page(['latest'])))
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      defaults: {
+        keepAlive: {
+          maxSessions: 1,
+          ttlMs: 10 * 60_000,
+        },
+      },
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadLatest }),
+    })
+
+    const release = registry.retainSession('source-a', 'prefetch')
+
+    await waitFor(() => loadLatest.mock.calls.length === 1)
+
+    release()
+
+    expect(registry.getSessionMeta('source-a')).toMatchObject({
+      status: 'cached',
+      hostRetainCount: 0,
+    })
+    expect(registry.hasSession('source-a')).toBe(true)
+  })
+
   it('passes sessionId and source through request context', async () => {
     const loadLatest = vi.fn((context) => Promise.resolve(page([context.source.id])))
     const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
@@ -131,6 +204,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = registry.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
 
@@ -168,6 +242,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
 
@@ -210,6 +285,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
 
@@ -249,6 +325,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
     requestResults.length = 0
@@ -277,6 +354,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
     session.commands.scrollToMessage({ id: 'remote' })
@@ -308,6 +386,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
     requestResults.length = 0
@@ -339,6 +418,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
     requestResults.length = 0
@@ -379,6 +459,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 6)
     const { container, rows } = attachSessionRows(session, [
@@ -431,6 +512,7 @@ describe('createMessageListSessionRegistry', () => {
     const unsubscribe = session.subscribe(() => {
       events.push(session.getState().loaded.keys.join(','))
     })
+    startSession(session)
 
     await waitFor(() => session.getState().loaded.keys.length === 2)
     const state = session.getState()
@@ -468,6 +550,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 3)
     ackSessionCommit(session)
@@ -511,6 +594,7 @@ describe('createMessageListSessionRegistry', () => {
       }),
     })
     const session = manager.getSession('source-a')
+    startSession(session)
 
     await waitFor(() => session.getState().loaded.keys.length === 1)
     ackSessionCommit(session)
@@ -543,6 +627,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => pending.length === 1)
 
@@ -577,6 +662,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => Boolean(resolveMemory))
 
@@ -608,6 +694,7 @@ describe('createMessageListSessionRegistry', () => {
     const bridge = session as unknown as {
       loadEdge(event: NeedMoreEvent): Promise<void>
     }
+    startSession(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
 
@@ -683,6 +770,7 @@ describe('createMessageListSessionRegistry', () => {
     const bridge = session as unknown as {
       loadEdge(event: NeedMoreEvent): Promise<void>
     }
+    startSession(session)
 
     await waitFor(() => internals.getSnapshot().items.length === 1)
     session.rows.resetAround({
@@ -730,6 +818,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'tail')
 
@@ -761,6 +850,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => pendingLatest.length === 1)
     pendingLatest[0](page(['tail']))
@@ -804,6 +894,7 @@ describe('createMessageListSessionRegistry', () => {
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
     const runtimeEvents: MessageListRuntimeEvent[] = []
+    startSession(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
     session.rows.resetAround({
@@ -848,6 +939,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => pendingLatest.length === 1)
     pendingLatest[0](page(['tail']))
@@ -889,6 +981,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
     session.rows.resetAround({
@@ -921,6 +1014,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
 
@@ -953,6 +1047,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() =>
       internals.loadedSegmentStore.getSegment().items.at(-1)?.message?.id === 'failed-local'
@@ -988,6 +1083,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'tail')
 
@@ -1028,6 +1124,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = registry.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'tail')
 
@@ -1065,6 +1162,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = registry.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'tail')
 
@@ -1085,6 +1183,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
     session.rows.resetAround({
@@ -1119,6 +1218,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await waitFor(() => pending.length === 1)
     session.commands.reloadLatest()
@@ -1147,6 +1247,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await flushMicrotasks()
     expect(pending).toHaveLength(1)
@@ -1173,6 +1274,7 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
+    startSession(session)
 
     await flushMicrotasks()
     expect(pending).toHaveLength(1)
@@ -1321,6 +1423,10 @@ function rowsByKey(rows: TestRow[]): (keys: string[]) => TestRow[] {
 
     return nextRows
   }
+}
+
+function startSession(session: MessageListSession<TestRow>): void {
+  getMessageListSessionInternals(session).retainView()
 }
 
 function ackSessionCommit(session: MessageListSession<TestRow>): void {

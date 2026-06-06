@@ -95,6 +95,44 @@ describe('MessageList viewport motion', () => {
     })
   })
 
+  it('settles tiny follow-bottom distance synchronously without starting motion', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(3, 50)
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    container.scrollTop = 30
+    positionRows(rows, 30)
+
+    runtime.scrollToLatest()
+
+    expect(container.scrollTop).toBe(50)
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'IDLE',
+      bottomLockState: 'LOCKED',
+      pendingIntent: null,
+    })
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'scrollMotion.decision',
+      details: expect.objectContaining({
+        decision: 'tiny-settle',
+        distancePx: 20,
+      }),
+    }))
+    expect(runtime.getDiagnostics().map((record) => record.name))
+      .not.toContain('destinationMotion.start')
+
+    scheduler.flushFrames(2)
+
+    expect(container.scrollTop).toBe(50)
+  })
+
   it('settles disabled motion synchronously while preserving follow-bottom and destination semantics', () => {
     const runtime = createMessageListRuntime<string>({
       sessionId: 'source-a',
@@ -268,7 +306,7 @@ describe('MessageList viewport motion', () => {
     expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
       name: 'scrollMotion.decision',
       details: expect.objectContaining({
-        decision: 'epsilon-settle',
+        decision: 'tiny-settle',
         enforceDirectionHint: false,
       }),
     }))
@@ -308,7 +346,7 @@ describe('MessageList viewport motion', () => {
       expect.objectContaining({
         name: 'scrollMotion.decision',
         details: expect.objectContaining({
-          decision: 'epsilon-settle',
+          decision: 'tiny-settle',
           enforceDirectionHint: false,
         }),
       }),
@@ -978,10 +1016,9 @@ describe('MessageList viewport motion', () => {
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
     expect(runtime.getSnapshot()).toMatchObject({
       segmentRevision: 3,
-      viewportPhase: 'MOTION',
+      viewportPhase: 'IDLE',
+      bottomLockState: 'LOCKED',
     })
-
-    scheduler.flushFrames(40)
 
     expect(runtime.getSnapshot()).toMatchObject({
       segmentRevision: 3,
@@ -1132,19 +1169,13 @@ describe('MessageList viewport motion', () => {
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
 
     expect(runtime.getSnapshot()).toMatchObject({
-      viewportPhase: 'MOTION',
+      viewportPhase: 'IDLE',
       pendingIntent: null,
       bottomLockState: 'LOCKED',
     })
-    expect(container.scrollTop).toBeLessThan(250)
-
-    scheduler.flushFrames(40)
-
     expect(container.scrollTop).toBe(250)
-    expect(runtime.getSnapshot()).toMatchObject({
-      viewportPhase: 'IDLE',
-      bottomLockState: 'LOCKED',
-    })
+    expect(runtime.getDiagnostics().map((record) => record.name))
+      .not.toContain('destinationMotion.start')
   })
 
   it('uses requestless follow-bottom motion for local latest rebuilds', () => {
@@ -1183,18 +1214,13 @@ describe('MessageList viewport motion', () => {
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
 
     expect(runtime.getSnapshot()).toMatchObject({
-      viewportPhase: 'MOTION',
+      viewportPhase: 'IDLE',
       pendingIntent: null,
       bottomLockState: 'LOCKED',
     })
-
-    scheduler.flushFrames(40)
-
     expect(container.scrollTop).toBe(250)
-    expect(runtime.getSnapshot()).toMatchObject({
-      viewportPhase: 'IDLE',
-      bottomLockState: 'LOCKED',
-    })
+    expect(runtime.getDiagnostics().map((record) => record.name))
+      .not.toContain('destinationMotion.start')
   })
 
   it('does not apply direction hints or far preposition for cross-source jumps', () => {

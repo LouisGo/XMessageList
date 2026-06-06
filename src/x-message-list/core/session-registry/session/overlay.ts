@@ -86,6 +86,9 @@ export class MessageListSessionOverlay {
   }
 
   destroy(): void {
+    this.overlayRequestId += 1
+    this.overlayPendingRequestId = null
+    this.requestEpoch += 1
     this.clearLoadingTimer()
   }
 

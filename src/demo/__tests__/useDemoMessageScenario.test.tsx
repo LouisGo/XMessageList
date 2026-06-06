@@ -290,6 +290,51 @@ describe('useDemoMessageScenario feed switching', () => {
     await harness.unmount()
   })
 
+  it('keeps all visited demo feeds warm across a full feed switch cycle', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.9)
+    const harness = createScenarioHarness()
+
+    await harness.render()
+    await waitFor(() => {
+      const scenario = harness.getScenario()
+      return Boolean(scenario && !scenario.feedLoading && scenario.loadedMessageCount > 0)
+    })
+
+    for (const feedId of [
+      'feed-design',
+      'feed-release',
+      'feed-support',
+      RANDOM_CHAT_FEED_ID,
+    ]) {
+      await act(async () => {
+        harness.getScenario()?.selectFeed(feedId)
+      })
+      await waitFor(() => {
+        const scenario = harness.getScenario()
+        return Boolean(
+          scenario?.activeFeedId === feedId &&
+            !scenario.feedLoading &&
+            scenario.loadedMessageCount > 0,
+        )
+      })
+    }
+
+    await act(async () => {
+      harness.getScenario()?.selectFeed('feed-runtime')
+    })
+    expect(harness.getScenario()?.feedLoading).toBe(false)
+
+    await act(async () => {
+      harness.getScenario()?.selectFeed('feed-design')
+    })
+
+    expect(harness.getScenario()?.activeFeedId).toBe('feed-design')
+    expect(harness.getScenario()?.feedLoading).toBe(false)
+    expect(harness.host.querySelector('[data-testid="session-loading-overlay"]')).toBeNull()
+
+    await harness.unmount()
+  })
+
   it('restores a persisted feed anchor with its message offset', async () => {
     const harness = createScenarioHarness()
     const feedId = 'feed-support'

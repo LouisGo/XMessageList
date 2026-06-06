@@ -16,6 +16,10 @@ import { getMessageListSessionRegistryRuntime } from '../../runtime/internal'
 import type { RuntimeSegmentSizeSnapshot } from '../../runtime/dom/rowMetricCache'
 import { MessageListReadReceiptsWorker } from '../read-receipts/readReceipts'
 import { MessageListSessionOverlay } from './overlay'
+import {
+  createMessageListSessionBootstrapController,
+  type MessageListSessionBootstrapController,
+} from './bootstrap'
 import { toSessionRuntimeLogEvent } from './runtimeLogEvent'
 import { createMessageListSessionState } from './state'
 import { createSessionRows } from '../rows/sessionRows'
@@ -55,6 +59,7 @@ export class MessageListSession<Row, Source>
   private readonly context: MessageListSessionContext<Source>
   private readonly readReceipts: MessageListReadReceiptsWorker<Row, Source>
   private readonly overlay: MessageListSessionOverlay
+  private readonly bootstrapController: MessageListSessionBootstrapController
   private readonly viewListeners = new Set<() => void>()
   private readonly runtimeUnsubscribe: () => void
   private readonly rowsByKey = new Map<string, Row>()
@@ -62,6 +67,7 @@ export class MessageListSession<Row, Source>
   private viewRetainCount = 0
   private rowsPerViewportEstimate: number
   private measurementSnapshot: RuntimeSegmentSizeSnapshot | null = null
+  private destroyed = false
   lastUsedAt = Date.now()
 
   constructor(private readonly options: SessionOptions<Row, Source>) {
@@ -72,30 +78,63 @@ export class MessageListSession<Row, Source>
       () => this.notifyViewListeners(),
       () => {
         this.overlay.bumpRequestEpoch()
-        void this.bootstrap()
+        this.bootstrapController.restart()
       },
     )
+    this.bootstrapController = createMessageListSessionBootstrapController({
+      sessionId: this.sessionId,
+      context: this.context,
+      isDestroyed: () => this.destroyed,
+      loadAnchorMemory: () => this.options.adapter.anchorMemory?.load(this.context),
+      startOverlayRequest: () => this.overlay.startRequest(),
+      getRequestEpoch: () => this.overlay.getRequestEpoch(),
+      isStaleOverlayRequest: (overlayRequestId) =>
+        this.overlay.isStaleRequest(overlayRequestId),
+      isStaleRequestEpoch: (requestEpoch) =>
+        this.overlay.isStaleEpoch(requestEpoch),
+      loadAround: (target, options) => this.loadAround(target, undefined, options),
+      loadLatest: (options) => this.loadLatest(undefined, options),
+      finishFailure: (error, overlayRequestId) => {
+        this.finishOverlayRequest(
+          this.emitRequestResult({ kind: 'latest', status: 'failed', error }),
+          overlayRequestId,
+        )
+      },
+    })
     this.#runtime = createMessageListRuntime<Row>({
       sessionId: options.sessionId,
       scrollMotion: options.scrollMotion,
     })
     this.#loadedSegmentStore = createLoadedSegmentStore<Row>({ sessionId: options.sessionId })
     this.commands = {
-      scrollToLatest: () => this.#runtime.scrollToLatest(),
-      scrollToMessage: (target, scrollOptions) =>
+      scrollToLatest: () => {
+        if (this.destroyed) return
+        this.ensureBootstrapStarted()
+        this.#runtime.scrollToLatest()
+      },
+      scrollToMessage: (target, scrollOptions) => {
+        if (this.destroyed) return
+        this.ensureBootstrapStarted()
         this.#runtime.scrollToMessage(
           normalizeMessageListAnchor(this.sessionId, target),
           toRuntimeScrollOptions(this.sessionId, scrollOptions),
-        ),
+        )
+      },
       reloadLatest: () => {
+        if (this.destroyed) return
+        this.bootstrapController.markStarted()
         this.overlay.bumpRequestEpoch()
         void this.loadLatest()
       },
       loadBefore: () => {
+        if (this.destroyed) return
+        this.ensureBootstrapStarted()
         getMessageListSessionRegistryRuntime(this.#runtime)
           .startEdgeRequest('before', 'command-before')
       },
       loadAfter: () => {
+        if (this.destroyed) return
+        this.ensureBootstrapStarted()
         getMessageListSessionRegistryRuntime(this.#runtime)
           .startEdgeRequest('after', 'command-after')
       },
@@ -144,7 +183,6 @@ export class MessageListSession<Row, Source>
       this.options.onRuntimeEvent?.(toSessionRuntimeLogEvent(event))
       this.handleRuntimeEvent(event)
     })
-    void this.bootstrap()
   }
   getSnapshot(): MessageListSnapshot<Row> { return this.#runtime.getSnapshot() }
 
@@ -153,7 +191,6 @@ export class MessageListSession<Row, Source>
   getState(): MessageListSessionState<Row> { return this.stateStore.getState() }
 
   subscribe(listener: () => void): () => void { return this.stateStore.subscribe(listener) }
-
   subscribeView(listener: () => void): () => void {
     this.viewListeners.add(listener)
     return () => this.viewListeners.delete(listener)
@@ -162,6 +199,7 @@ export class MessageListSession<Row, Source>
   retainView(): () => void {
     this.viewRetainCount += 1
     this.touch()
+    this.ensureBootstrapStarted()
 
     let released = false
     return () => {
@@ -177,15 +215,12 @@ export class MessageListSession<Row, Source>
 
   hasRetainedView(): boolean { return this.viewRetainCount > 0 }
   getViewRetainCount(): number { return this.viewRetainCount }
-
   getRow(item: MessageDataItem<Row>): Row | null { return item.message ?? null }
-
   getRowRenderVersion(item: MessageDataItem<Row>): unknown {
     const row = this.getRow(item)
 
     return row ? this.options.adapter.row.getVersion?.(row) : item.renderVersion
   }
-
   getRowsByKeys(keys: string[]): Row[] {
     const rows: Row[] = []
 
@@ -199,54 +234,17 @@ export class MessageListSession<Row, Source>
 
     return rows
   }
-
   destroy(): void {
+    this.destroyed = true
+    this.overlay.destroy()
     this.runtimeUnsubscribe()
     this.readReceipts.destroy()
-    this.overlay.destroy()
     this.stateStore.destroy()
     this.#runtime.destroy()
     this.measurementSnapshot = null
     this.viewListeners.clear()
   }
-
-  private async bootstrap(): Promise<void> {
-    const requestEpoch = this.overlay.getRequestEpoch()
-    const overlayRequestId = this.overlay.startRequest()
-
-    try {
-      const memoryValue = await this.options.adapter.anchorMemory?.load(this.context)
-
-      if (this.overlay.isStaleRequest(overlayRequestId) ||
-        this.overlay.isStaleEpoch(requestEpoch)) {
-        return
-      }
-
-      const runtimeAnchor = memoryValue
-        ? normalizeMessageListAnchor(this.sessionId, memoryValue.anchor)
-        : null
-
-      if (runtimeAnchor) {
-        await this.loadAround(runtimeAnchor, undefined, {
-          align: 'start',
-          offsetWithinMessage: memoryValue?.offsetWithinMessage,
-          overlayRequestId,
-          requestEpoch,
-        })
-        return
-      }
-
-      await this.loadLatest(undefined, { overlayRequestId, requestEpoch })
-    } catch (error) {
-      if (!this.overlay.isStaleRequest(overlayRequestId) &&
-        !this.overlay.isStaleEpoch(requestEpoch)) {
-        this.finishOverlayRequest(
-          this.emitRequestResult({ kind: 'latest', status: 'failed', error }),
-          overlayRequestId,
-        )
-      }
-    }
-  }
+  ensureBootstrapStarted(): void { this.bootstrapController.ensureStarted() }
 
   private handleRuntimeEvent(event: MessageListRuntimeEvent): void {
     this.touch()

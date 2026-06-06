@@ -13,6 +13,7 @@ import {
   createDemoMessages,
   type DemoMessage,
 } from '../data/demoData'
+import { DEMO_FEEDS } from '../data/demoFeeds'
 import {
   getLatestMessages,
   getMessagesAround,
@@ -40,6 +41,8 @@ import {
 type DemoFeedRecord = {
   id: string
 }
+
+const DEMO_KEEP_ALIVE_MAX_SESSIONS = DEMO_FEEDS.length
 
 export type DemoFeed = DemoFeedRecord
 
@@ -71,7 +74,7 @@ export function createDemoRegistry(
       pageSize: PAGE_SIZE,
       retention: DEMO_RETENTION,
       keepAlive: {
-        maxSessions: 3,
+        maxSessions: DEMO_KEEP_ALIVE_MAX_SESSIONS,
         ttlMs: 10 * 60_000,
       },
     },

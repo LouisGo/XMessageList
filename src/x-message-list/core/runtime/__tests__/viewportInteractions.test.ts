@@ -326,6 +326,134 @@ describe('MessageList viewport interactions', () => {
       },
     })
   })
+  it('samples reset-latest precheck from segment anchor when captured anchor left the DOM', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const previousRows = Array.from({ length: 12 }, (_, index) =>
+      createRow(`row-${index + 1}`, index * 20, 20),
+    )
+    const appendedRow = createRow('row-13', 220, 20)
+    const latestRows = [...previousRows.slice(1), appendedRow]
+    const latestAnchor = { sessionId: 'source-a', stableId: 'row-13', serverId: 'row-13' }
+
+    container.append(...previousRows)
+    runtime.attachScrollContainer(container)
+    for (const row of previousRows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+    runtime.applyLoadedSegment(segment(
+      previousRows.map((row) => item(row.dataset.runtimeKey as string)),
+      1,
+      1,
+    ))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    runtime.applyLoadedSegment(segment(
+      latestRows.map((row) => item(row.dataset.runtimeKey as string)),
+      2,
+      1,
+      {
+        modifier: { type: 'reset-latest' },
+        anchor: latestAnchor,
+      },
+    ))
+    adapter.registerRowElement('row-1', null)
+    container.replaceChildren(...latestRows)
+    adapter.registerRowElement('row-13', appendedRow)
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    const diagnostics = runtime.getDiagnostics()
+    expect(diagnostics).not.toContainEqual(expect.objectContaining({
+      name: 'measurement.transaction.fullMeasure',
+      details: expect.objectContaining({
+        modifier: 'reset-latest',
+        transactionPhase: 'precheck',
+        fullMeasureReason: 'anchor-missing-after-remap',
+      }),
+    }))
+    expect(diagnostics
+      .filter((record) => record.name === 'measurement.rectRead.count')
+      .filter((record) => record.details.source === 'transaction-precheck')
+      .at(-1))
+      .toMatchObject({
+        details: {
+          modifier: 'reset-latest',
+          measurementPlan: 'sampled-keys',
+          anchorSource: 'segment-anchor',
+          fallbackFullMeasure: false,
+        },
+      })
+    expect(diagnostics
+      .filter((record) => record.name === 'measurement.transaction.summary')
+      .at(-1))
+      .toMatchObject({
+        details: {
+          modifier: 'reset-latest',
+          precheck: {
+            measurementPlan: 'sampled-keys',
+            anchorSource: 'segment-anchor',
+            fallbackFullMeasure: false,
+          },
+        },
+      })
+  })
+  it('keeps full-measure fallback when reset-latest segment anchor is absent from DOM', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const previousRows = [createRow('old-1', 0, 50), createRow('old-2', 50, 50)]
+    const latestRows = [createRow('new-1', 0, 50), createRow('new-2', 50, 50)]
+    const missingAnchor = { sessionId: 'source-a', stableId: 'new-missing', serverId: 'new-missing' }
+
+    container.append(...previousRows)
+    runtime.attachScrollContainer(container)
+    for (const row of previousRows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+    runtime.applyLoadedSegment(segment(previousRows.map((row) =>
+      item(row.dataset.runtimeKey as string)
+    ), 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    runtime.applyLoadedSegment(segment(latestRows.map((row) =>
+      item(row.dataset.runtimeKey as string)
+    ), 2, 1, {
+      modifier: { type: 'reset-latest' },
+      anchor: missingAnchor,
+    }))
+    for (const row of previousRows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, null)
+    }
+    container.replaceChildren(...latestRows)
+    for (const row of latestRows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getDiagnostics().find((record) =>
+      record.name === 'measurement.transaction.fullMeasure' &&
+      record.details.modifier === 'reset-latest' &&
+      record.details.transactionPhase === 'precheck'
+    )).toMatchObject({
+      details: {
+        fullMeasureReason: 'anchor-missing-after-remap',
+      },
+    })
+    expect(runtime.getDiagnostics()
+      .filter((record) => record.name === 'measurement.transaction.summary')
+      .at(-1))
+      .toMatchObject({
+        details: {
+          modifier: 'reset-latest',
+          precheck: {
+            measurementPlan: 'full-measure',
+            fullMeasureReason: 'anchor-missing-after-remap',
+            fallbackFullMeasure: true,
+          },
+        },
+      })
+  })
   it('falls back to full transaction pre-correction measurement for unknown dirty state', () => {
     const scheduler = new FakeScheduler()
     const observers = createFakeObservers()

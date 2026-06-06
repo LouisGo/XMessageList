@@ -86,10 +86,14 @@ React，应在 app bootstrap、root store、dependency container 或稳定 memo 
   调用 `registry.destroyAll()`。
 - React adapter 在 `<MessageList />` mount 时自动 retain 对应 session，unmount 时
   release；mounted session 不参与 LRU 淘汰。
+- `getSession(sessionId)` 只保证同步 lazy create / reuse session；它不启动
+  bootstrap request、timer 或 runtime transaction。数据加载从 mounted retain、
+  host retain 或显式 command/retry/reload 语义开始。
 - host 可以通过 `registry.retainSession(sessionId, reason)` 保留一个未挂载但仍处于
   业务活跃状态的 session，例如分屏预加载、悬浮窗口或即将切回的 session。
   reason 必须保持 session/workflow 语义，例如 `active-session`、`split-view` 或
   `prefetch`；不要把 host 的 feed/conversation vocabulary 写入 public retain reason。
+  `retainSession(..., 'prefetch')` 会启动 session bootstrap，以便后续 warm enter。
 - `registry.sweep()` 执行 TTL 清理；`getSession()` 和配置更新后可以自动触发一次
   sweep。
 - `destroySession(sessionId)` 是显式销毁：取消 timers、释放 runtime 和 Loaded Segment Store、
