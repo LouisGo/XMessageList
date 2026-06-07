@@ -20,6 +20,7 @@ _Avoid_: id as session identity alias, feedId as public identity, conversationId
 
 **Session Source**:
 A host-provided object or value used to choose request, row, memory, and receipt behavior for a message list session. A simple integration may use the Session ID as a fallback source, but source identity is still distinct from session identity.
+When routing, permissions, or adapter behavior depend on host metadata, the source should be structured even if the Session ID itself is a single feed identifier.
 _Avoid_: Feed, getFeed, feed as public source name, treating source identity as always equal to session identity
 
 **Session Static Semantics**:
@@ -34,15 +35,21 @@ _Avoid_: runtime snapshot as business state, DOM evidence as app state, loaded s
 
 **Host Feed Identifier**:
 A host-owned data-source identifier used by integrations such as the demo when a session is backed by a feed. It is not part of XMessageList's own vocabulary.
+When a host feed identifier is globally unique and one feed corresponds to one independent reading state, the host may map it directly to a Session ID.
 _Avoid_: feedId in XMessageList contracts, feedId as registry key, feedId as component identity
 
 **Host Message Event Store**:
 The host-owned layer that receives SDK, main process, or bridge message callbacks and owns canonical message cache, dirty timestamps, unread state, and cross-list fanout. It translates active-session visual changes into Message List Session API calls.
+It may be implemented as a composition of host message, conversation, and feed stores; the term names ownership, not a required class or package boundary.
 _Avoid_: registry as event bus, SDK callbacks in React adapter, runtime-owned canonical cache
 
 **Message List Request**:
 A host-facing asynchronous page loading dependency used by a message list session to obtain rows around a reading position. It is not the loaded data store owned by XMessageList.
 _Avoid_: data API, data source as adapter group name, public loaded data model
+
+**Request Trigger**:
+The semantic source of a Message List Request, such as viewport need, user command, restore, or internal recovery. It is distinct from the request direction or target.
+_Avoid_: free-form reason as trigger contract, inferring trigger from request kind alone, treating manual and viewport paging as equivalent
 
 **Anchor Memory**:
 A host-provided persistence capability for restoring and saving a message list session's reading anchor. The session decides when to load or save it; React does not persist anchors.
@@ -62,6 +69,10 @@ _Avoid_: background pull, cached-session auto paging, global message sync
 A session entry for ordinary changes to rows that may already exist in the loaded segment, such as edits, deletes, reactions, read markers, media updates, or streaming patches. It does not mean a new tail message arrived.
 _Avoid_: generic tail update, append as ordinary patch, using tail for edit/delete
 
+**Stable Row Key**:
+A host-provided row identity that lets XMessageList preserve render, measurement, and anchor continuity across message updates such as local-to-server confirmation. It is not required to be the server message identifier.
+_Avoid_: server id as mandatory row key, changing row key on every identity update, React key as message identity
+
 **Session History Clear**:
 A row-level session change that clears the current session's chat history while keeping the session usable for future sends and receives. It removes historical edges for that session and invalidates old persisted reading anchors; it is not session destruction.
 _Avoid_: destroySession, account teardown, disabling future messages, load-more-history after clear, restoring old anchors after clear
@@ -74,13 +85,29 @@ _Avoid_: remote append, ordinary rows mutation, retry as in-place follow-bottom 
 The path for new tail messages arriving from a remote source such as the server, SDK, or main process. Its follow behavior is decided by host policy.
 _Avoid_: rows patch, local send, forced follow-bottom for every incoming message
 
+**Latest Context**:
+A reading context whose loaded rows represent the newest message area of the source. It is distinct from bottom lock: the reader may scroll away from the bottom while the loaded rows still remain in latest context.
+_Avoid_: latest as bottom lock, hasMoreAfter alone as latest context, treating every active session as latest context
+
+**Loaded Context**:
+The semantic context of the currently loaded rows, such as latest, history, or around-target reading. It tells the host whether tail append, scroll-to-latest, and downward paging should be interpreted as latest-message behavior or historical reading behavior.
+_Avoid_: boolean latest flag, deriving context from scroll position alone, treating around-target and history as the same state
+
+**Bottom Lock**:
+A viewport state where the reader is attached to the bottom of the current latest message area so new latest messages can keep the viewport at the bottom. It is a scroll state, not the same thing as Latest Context.
+_Avoid_: latest context as bottom lock, raw scrollTop equality as business state, host-owned unread policy as bottom lock
+
 **Scroll-To-Latest Affordance**:
-A host-rendered control that helps the reader return to the latest message context. XMessageList can provide scroll-side visibility signals for this control, but the host may combine them with host-owned signals such as unread count before deciding what to display.
+A host-rendered control that helps the reader return to the latest messages. XMessageList can provide scroll-side visibility signals for this control, but the host may combine them with host-owned signals such as unread count before deciding what to display.
 _Avoid_: treating scroll distance as the complete display policy, runtime-owned unread badge, forcing the control to render only from scroll state
 
 **Message Anchor ID**:
 A message-level shortcut used by `MessageListAnchor.id` when the host can identify a message with one string. It is not a message list session identity.
 _Avoid_: treating anchor id as sessionId, using anchor id as registry key
+
+**Jump Target**:
+A host-approved message anchor that can be used for destination navigation. A message that the host already knows is deleted is not a Jump Target.
+_Avoid_: deleted message as jump target, request-first deleted target handling, system row as implicit jump target
 
 **Message List Retention**:
 A host-facing tier that describes how much reading context a message list should preserve around the current reading position. It is not an exact row count or render-window size.
