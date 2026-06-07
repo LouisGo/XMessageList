@@ -11,7 +11,10 @@ import type {
   MessageListRuntimeEvent,
   ViewportObservationChangedEvent,
 } from '../../runtime/index'
-import { getMessageListAdapterRuntime } from '../../runtime/internal'
+import {
+  getMessageListAdapterRuntime,
+  getMessageListSessionRegistryRuntime,
+} from '../../runtime/internal'
 import { createContainer, setElementMetrics } from '../../../../test/fakes'
 
 type TestRow = {
@@ -807,6 +810,88 @@ describe('createMessageListSessionRegistry', () => {
     expect(internals.loadedSegmentStore.getSegment().items[0]?.message?.text)
       .toBe('after patch')
     expect(requestResults).toContain('before:stale')
+  })
+
+  it('clears stale edge responses without poisoning later edge requests', async () => {
+    const pendingBefore: Array<(page: MessageListPage<TestRow>) => void> = []
+    const requestResults: string[] = []
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadBefore: () => new Promise<MessageListPage<TestRow>>((resolve) => {
+          pendingBefore.push(resolve)
+        }),
+      }),
+      onRequestResult: (result) => {
+        requestResults.push(`${result.kind}:${result.status}`)
+      },
+    })
+    const session = manager.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length === 1)
+    session.rows.resetAround({
+      target: { id: 'middle' },
+      rows: [{ id: 'middle', text: 'before patch' }],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+      anchor: { id: 'middle' },
+    })
+    attachSessionRows(session, ['middle'])
+    ackSessionCommit(session)
+
+    const runtime = getMessageListSessionRegistryRuntime(internals.runtime)
+    runtime.startEdgeRequest('before', 'test')
+    await waitFor(() => pendingBefore.length === 1)
+    expect(internals.getSnapshot().edgeState.before.status).toBe('loading')
+
+    session.rows.patch([{ id: 'middle', text: 'after patch' }])
+    ackSessionCommit(session)
+    pendingBefore[0](page(['before'], {
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+      anchorId: 'middle',
+    }))
+
+    await waitFor(() => requestResults.includes('before:stale'))
+    expect(internals.getSnapshot().edgeState.before.status).toBe('idle')
+    expect(internals.getSnapshot().pendingIntent).toBeNull()
+
+    runtime.startEdgeRequest('before', 'retry-after-stale')
+    await waitFor(() => pendingBefore.length === 2)
+    expect(internals.getSnapshot().edgeState.before.status).toBe('loading')
+  })
+
+  it('trims oversized reset-around segments until the adaptive budget is reached', () => {
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      defaults: {
+        pageSize: 2,
+        retention: 'low',
+      },
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+    })
+    const session = manager.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    const rows = Array.from({ length: 40 }, (_, index) => ({
+      id: `row-${index + 1}`,
+    }))
+
+    session.rows.resetAround({
+      target: { id: 'row-20' },
+      rows,
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+      anchor: { id: 'row-20' },
+    })
+
+    const segment = internals.loadedSegmentStore.getSegment()
+
+    expect(segment.items).toHaveLength(8)
+    expect(segment.items.map((item) => item.key)).toContain('row-20')
+    expect(segment.hasMoreBefore).toBe(true)
+    expect(segment.hasMoreAfter).toBe(true)
   })
 
   it('stages local tail rows into the current latest segment and keeps them patchable', async () => {

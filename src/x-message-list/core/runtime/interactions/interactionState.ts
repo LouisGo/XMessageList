@@ -163,6 +163,20 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     return next
   }
 
+  reportEdgeStale(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+    edge: RuntimeEdge,
+    requestToken: string,
+  ): MessageListSnapshot<TMessage, TOptimistic> {
+    const next = this.edge.reportStale(snapshot, edge, requestToken)
+
+    if (next !== snapshot) {
+      this.axes.markReadyIdle()
+    }
+
+    return next
+  }
+
   startFollowBottom(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     scrollTop = 0,

@@ -104,6 +104,55 @@ describe('MessageList viewport motion reentrancy', () => {
     expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
   })
 
+  it('drains queued transactions before post-commit work after motion settles', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({
+      sessionId: 'source-a',
+      scheduler,
+      commitTimeoutMs: 10_000,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const initialRows = createRows(1, 20)
+    const targetRows = createRows(2, 20).slice(1)
+    const target = anchor('row-2')
+    const events: MessageListRuntimeEvent[] = []
+
+    mountRows(runtime, adapter, container, initialRows)
+    runtime.subscribeRuntimeEvent((event) => { events.push(event) })
+    runtime.applyLoadedSegment(segment(itemsFromRows(initialRows), 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    container.scrollTop = 100
+    runtime.scrollToMessage(target, { align: 'start' })
+    replaceRows(adapter, container, targetRows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(targetRows), 2, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+      modifier: { type: 'reset-around', target },
+      anchor: target,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+
+    runtime.applyLoadedSegment(segment(itemsFromRows(targetRows), 2, 2, {
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+      modifier: { type: 'patch', changedKeys: ['row-2'] },
+      anchor: target,
+    }))
+
+    scheduler.flushFrames(40)
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'PROJECTING',
+      segmentRevision: 2,
+    })
+    expect(events.some((event) =>
+      event.type === 'needMoreBefore' || event.type === 'needMoreAfter'
+    )).toBe(false)
+  })
+
   it('settles underflow fill without bottom motion after a restored latest lock', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })

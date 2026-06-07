@@ -54,7 +54,6 @@ type MotionHost<TMessage, TOptimistic> = {
     destination: DestinationIntent,
     resolvedTarget: MessageIdentityAnchor | null,
   ) => void
-  applyPostCommitInteractionUpdates: () => void
   continueAfterMotionSettle: () => void
 }
 
@@ -314,7 +313,6 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     if (resolution.destination) {
       this.host.emitDestinationSettled(resolution.destination, resolution.anchor)
     }
-    this.host.applyPostCommitInteractionUpdates()
     this.host.continueAfterMotionSettle()
   }
 

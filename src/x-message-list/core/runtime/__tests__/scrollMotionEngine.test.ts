@@ -4,6 +4,7 @@ import {
   ScrollMotionEngine,
   type ScrollMotionCancelReason,
   type ScrollMotionDecisionDiagnostic,
+  type ScrollMotionRetargetDiagnostic,
 } from '../motion/scrollMotionEngine'
 
 describe('ScrollMotionEngine', () => {
@@ -142,6 +143,46 @@ describe('ScrollMotionEngine', () => {
     scheduler.flushFrames(40)
 
     expect(container.scrollTop).toBe(targetTop)
+  })
+
+  it('preserves explicit zero epsilon when starting and retargeting motion', () => {
+    const scheduler = new FakeScheduler()
+    const engine = new ScrollMotionEngine()
+    const container = createContainer({ height: 100 })
+    const decisions: ScrollMotionDecisionDiagnostic[] = []
+    const retargetDecisions: ScrollMotionRetargetDiagnostic[] = []
+
+    container.scrollTop = 100
+
+    const started = engine.start({
+      container,
+      source: 'jump',
+      targetTop: 100.5,
+      maxDistancePx: 500,
+      minDurationMs: 100,
+      maxDurationMs: 200,
+      targetEpsilonPx: 0,
+      now: () => scheduler.now(),
+      requestFrame: (callback) => scheduler.requestAnimationFrame(callback),
+      cancelFrame: (handle) => scheduler.cancelAnimationFrame(handle),
+      onFrameWrite: (scrollTop) => { container.scrollTop = scrollTop },
+      onSettle: () => {},
+      onCancel: () => {},
+      onDecision: (decision) => { decisions.push(decision) },
+    })
+
+    expect(started).toBe(true)
+    expect(decisions[0]).toMatchObject({
+      decision: 'bounded-animate',
+      epsilonPx: 0,
+    })
+
+    engine.retarget(101, (decision) => { retargetDecisions.push(decision) })
+
+    expect(retargetDecisions[0]).toMatchObject({
+      decision: 'retarget-animate',
+      targetTop: 101,
+    })
   })
 
   it('cancels an active motion without settling or writing later frames', () => {

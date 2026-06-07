@@ -401,15 +401,12 @@ export class MessageListSession<Row, Source>
 
   private async loadEdge(event: RuntimeNeedEvent): Promise<void> {
     const edge = event.type === 'needMoreBefore' ? 'before' : 'after'
+
+    if (this.isStaleEvent(event)) { this.reportEdgeRequestStale(edge, event.requestToken); this.emitRequestResult({ kind: edge, status: 'stale' }); return }
+
     const segment = this.#loadedSegmentStore.getSegment()
     const boundaryItem = edge === 'before' ? segment.items[0] : segment.items.at(-1)
     const boundaryRow = boundaryItem?.message
-
-    if (this.isStaleEvent(event)) {
-      this.#runtime.reportEdgeRequestFailure(edge, event.requestToken)
-      this.emitRequestResult({ kind: edge, status: 'stale' })
-      return
-    }
 
     if (!boundaryRow) {
       this.#runtime.reportEdgeRequestFailure(edge, event.requestToken)
@@ -471,7 +468,7 @@ export class MessageListSession<Row, Source>
 
       if (!result.applied) {
         if (kind === 'before' || kind === 'after') {
-          this.#runtime.reportEdgeRequestFailure(kind, event?.requestToken ?? '')
+          this.reportEdgeRequestStale(kind, event?.requestToken ?? '')
         }
         return this.emitRequestResult({ kind, status: 'stale' })
       }
@@ -493,20 +490,16 @@ export class MessageListSession<Row, Source>
   private publishSegment(segment: LoadedSegment<Row>): void {
     let current = segment
     this.applySegmentToRuntime(current)
+    const budget = resolveAdaptiveTrimBudget({ pageSize: this.options.defaults.pageSize, retention: this.options.defaults.retention, rowsPerViewportEstimate: this.rowsPerViewportEstimate })
+    const maxTrimPasses = Math.max(1, current.items.length)
 
-    for (let guard = 0; guard < 4; guard += 1) {
-      const trimmed = this.#loadedSegmentStore.trimToBudget(
-        resolveAdaptiveTrimBudget({
-          pageSize: this.options.defaults.pageSize,
-          retention: this.options.defaults.retention,
-          rowsPerViewportEstimate: this.rowsPerViewportEstimate,
-        }),
-        resolveTrimProtectKey(this.#runtime, this.#loadedSegmentStore),
-      )
+    for (let guard = 0; guard < maxTrimPasses; guard += 1) {
+      if (current.items.length <= budget) return
 
-      if (trimmed === current) {
-        return
-      }
+      const previousLength = current.items.length
+      const trimmed = this.#loadedSegmentStore.trimToBudget(budget, resolveTrimProtectKey(this.#runtime, this.#loadedSegmentStore))
+
+      if (trimmed === current || trimmed.items.length >= previousLength) return
 
       current = trimmed
       this.applySegmentToRuntime(current)
@@ -536,6 +529,8 @@ export class MessageListSession<Row, Source>
       kind,
     })
   }
+
+  private reportEdgeRequestStale(edge: 'before' | 'after', requestToken: string): void { getMessageListSessionRegistryRuntime(this.#runtime).reportEdgeRequestStale(edge, requestToken) }
 
   private isStaleEvent(event: RuntimeNeedEvent | undefined): boolean {
     if (!event) {

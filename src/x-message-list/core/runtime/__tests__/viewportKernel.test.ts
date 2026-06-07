@@ -324,6 +324,43 @@ describe('MessageList viewport kernel', () => {
     )
   })
 
+  it('observes container resize as an unknown full-measure dirty signal', () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({
+      sessionId: 'source-a',
+      scheduler,
+      observers,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const row = createRow('row-1', 0, 30)
+
+    container.append(row)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', row)
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(observers.resizeObservers[0]?.observed.has(container)).toBe(true)
+
+    Object.defineProperty(container, 'clientHeight', {
+      configurable: true,
+      value: 140,
+    })
+    setElementMetrics(container, { top: 0, height: 140 })
+    observers.resizeObservers[0]?.trigger(container, 140)
+    scheduler.flushFrame()
+
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'measurement.resize.dirtyKeys',
+      details: expect.objectContaining({
+        fallbackFullMeasure: true,
+        reason: 'unknown',
+      }),
+    }))
+  })
+
   it('resolves identity-remap anchors before correcting and publishing settle', () => {
     const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -527,11 +564,13 @@ describe('MessageList viewport kernel', () => {
     adapter.registerBottomMarkerElement(bottom)
     adapter.registerRowElement('row-1', row)
 
+    expect(observers.resizeObservers[0]?.observed.has(container)).toBe(true)
     expect(observers.resizeObservers[0]?.observed.has(row)).toBe(true)
 
     runtime.detachScrollContainer()
     adapter.registerRowElement('row-1', null)
 
+    expect(observers.resizeObservers[0]?.observed.has(container)).toBe(false)
     expect(observers.resizeObservers[0]?.observed.has(row)).toBe(false)
 
     runtime.applyLoadedSegment(segment([item('row-2')], 2, 1))

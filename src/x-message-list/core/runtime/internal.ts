@@ -29,6 +29,7 @@ export type MessageListSessionRegistryRuntime<TMessage = unknown, TOptimistic = 
   MessageListRuntime<TMessage, TOptimistic> & {
     prepareFollowBottomForLocalReset(): void
     startEdgeRequest(edge: 'before' | 'after', reason: string): void
+    reportEdgeRequestStale(edge: 'before' | 'after', requestToken: string): void
     getSegmentSizeSnapshot(): RuntimeSegmentSizeSnapshot
   }
 

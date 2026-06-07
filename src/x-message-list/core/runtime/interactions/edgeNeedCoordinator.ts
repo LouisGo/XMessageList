@@ -104,6 +104,29 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
     }
   }
 
+  reportStale(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+    edge: RuntimeEdge,
+    requestToken: string,
+  ): MessageListSnapshot<TMessage, TOptimistic> {
+    if (snapshot.edgeState[edge].requestToken !== requestToken) {
+      return snapshot
+    }
+
+    const hasMore = edge === 'before'
+      ? snapshot.segmentMeta.hasMoreBefore
+      : snapshot.segmentMeta.hasMoreAfter
+
+    return {
+      ...setEdgeState(snapshot, edge, {
+        status: hasMore ? 'idle' : 'exhausted',
+      }),
+      pendingIntent: shouldClearPendingIntent(snapshot.pendingIntent, edge)
+        ? null
+        : snapshot.pendingIntent,
+    }
+  }
+
   settleSegment(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     segment: LoadedSegment<TMessage, TOptimistic>,
@@ -221,6 +244,14 @@ function clearTrimmedEdge<TMessage, TOptimistic>(
       ? null
       : snapshot.pendingIntent,
   }
+}
+
+function shouldClearPendingIntent(
+  pendingIntent: PendingIntent,
+  edge: RuntimeEdge,
+): boolean {
+  return pendingIntent === 'underflow-fill' ||
+    pendingIntent === (edge === 'before' ? 'edge-before' : 'edge-after')
 }
 
 function setEdgeState<TMessage, TOptimistic>(

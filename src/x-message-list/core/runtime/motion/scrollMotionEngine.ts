@@ -117,7 +117,7 @@ export class ScrollMotionEngine {
     this.cancel('restart')
     const targetTop = Math.max(0, input.targetTop)
     const currentTop = input.container.scrollTop
-    const epsilon = input.targetEpsilonPx || 1
+    const epsilon = input.targetEpsilonPx ?? 1
     const distancePx = targetTop - currentTop
     const maxDistancePx = Math.max(1, input.maxDistancePx)
     let startTop = currentTop
@@ -231,7 +231,7 @@ export class ScrollMotionEngine {
 
     const nextTargetTop = Math.max(0, targetTop)
     const currentTop = active.input.container.scrollTop
-    const epsilon = active.input.targetEpsilonPx || 1
+    const epsilon = active.input.targetEpsilonPx ?? 1
     const distancePx = nextTargetTop - currentTop
 
     if (Math.abs(active.targetTop - nextTargetTop) <= epsilon) {

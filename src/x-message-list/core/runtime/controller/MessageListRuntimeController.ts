@@ -97,20 +97,21 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
         emitViewportObservation: (reason, source, anchor) => this.emitViewportObservation(reason, source, anchor),
         emitAnchorChanged: (reason, anchor) => this.emitAnchorChanged(reason, anchor),
         emitDestinationSettled: (destination, anchor) => this.emitDestinationSettled(destination, anchor),
-        applyPostCommitInteractionUpdates: () => this.applyPostCommitInteractionUpdates(), continueAfterMotionSettle: () => this.applySettledTransactionContinuations(),
+        continueAfterMotionSettle: () => this.applySettledTransactionContinuations(),
       } })
     this.resizeObserver = observerFactory?.createResizeObserver((entries) => {
       handleResizeEntriesFromMeasurement(this.measurementHost(), entries)
       this.scheduleResizeMeasurement()
     }) ?? null
   }
-  attachScrollContainer(container: HTMLElement): void { this.domInteractions.attachScrollContainer(container) }
+  attachScrollContainer(container: HTMLElement): void { const previous = this.registry.snapshot().scrollContainer; if (previous && previous !== container) this.resizeObserver?.unobserve(previous); this.domInteractions.attachScrollContainer(container); this.resizeObserver?.observe(container) }
   detachScrollContainer(): void {
     this.pendingRuntimeMotion = null
     this.motion.cancel('detach')
     const anchor = this.resolveCurrentVisualAnchor()
     this.emitAnchorChanged('detach', anchor)
     this.emitViewportObservation('detach', null, anchor)
+    const container = this.registry.snapshot().scrollContainer; if (container) this.resizeObserver?.unobserve(container)
     this.domInteractions.detachScrollContainer()
     for (const row of this.registry.clearAll()) this.resizeObserver?.unobserve(row)
     this.rowKeyByElement.clear()
@@ -381,7 +382,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   }
   beginDirectScroll(): void { this.domInteractions.beginDirectScroll() } writeDirectScrollTop(scrollTop: number): boolean { return this.domInteractions.writeDirectScrollTop(scrollTop) }
   endDirectScroll(): void { this.domInteractions.endDirectScroll() } notifyDirectScrollRebased(): void { this.domInteractions.notifyDirectScrollRebased() }
-  reportEdgeRequestFailure(edge: RuntimeEdge, requestToken: string): void { this.snapshot = this.interactions.reportEdgeError(this.snapshot, edge, requestToken); this.emitSnapshot() }
+  reportEdgeRequestFailure(edge: RuntimeEdge, requestToken: string): void { this.snapshot = this.interactions.reportEdgeError(this.snapshot, edge, requestToken); this.emitSnapshot() } reportEdgeRequestStale(edge: RuntimeEdge, requestToken: string): void { this.snapshot = this.interactions.reportEdgeStale(this.snapshot, edge, requestToken); this.emitSnapshot() }
   startEdgeRequest(edge: RuntimeEdge, reason: string): void { const update = createCommandEdgeRequest({ interactions: this.interactions, snapshot: this.snapshot, edge, reason }); if (update) this.applyInteractionUpdate(update) }
   retryEdgeRequest(edge: RuntimeEdge): void { const update = this.interactions.retryEdge(this.snapshot, edge); if (update) this.applyInteractionUpdate(update) }
   reportOverlayMetricMismatch(details: Record<string, unknown>): void { this.pushDiagnostic('overlay.metricMismatch', 'warn', details) }
