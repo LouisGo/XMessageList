@@ -19,7 +19,9 @@ import {
 import type {
   MessageListAdapter,
   MessageListIdentityRemap,
+  MessageListLoadedContext,
   MessageListPage,
+  MessageListRequestTrigger,
   MessageListRowsReplaceInput,
   MessageListScrollToMessageOptions,
   MessageListSegmentRetention,
@@ -34,8 +36,30 @@ export type RuntimeNeedEvent = Extract<
 >
 
 export type AroundRequestOptions = {
+  context?: MessageListLoadedContext
+  trigger?: MessageListRequestTrigger
   align?: ResetAroundAlign
   offsetWithinMessage?: number
+}
+
+export function resolveRequestTriggerFromEvent(
+  event: RuntimeNeedEvent | undefined,
+): MessageListRequestTrigger {
+  if (!event) return 'internal'
+  if (event.type === 'needMessagesAround' || event.type === 'needLatestMessages') return 'command'
+  if (event.reason === 'underflow-fill') return 'internal'
+  if (event.reason.startsWith('command-') || event.reason.startsWith('retry-')) return 'command'
+  return 'viewport'
+}
+
+export function resolveExtendedContext(input: {
+  edge: 'before' | 'after'
+  currentContext: MessageListLoadedContext
+  reachedLatest?: boolean
+}): MessageListLoadedContext {
+  return input.edge === 'after' && input.currentContext === 'history' && input.reachedLatest
+    ? 'latest'
+    : input.currentContext
 }
 
 export type SessionDefaults = {

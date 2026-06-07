@@ -3,6 +3,44 @@ import type { MessageDataItem } from '../../../runtime/contracts/identity'
 import { createLoadedSegmentStore } from '../index'
 
 describe('LoadedSegmentStore', () => {
+  it('tracks loaded context through reset, extend, patch, remap, and trim', () => {
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
+    expect(store.getSegment().context).toBe('latest')
+
+    store.resetAround({
+      target: { sessionId: 'source-a', stableId: 'row-2' },
+      items: [item('row-2')],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      context: 'history',
+    })
+    expect(store.getSegment().context).toBe('history')
+
+    const after = store.createRequestToken('after')
+    expect(store.extendAfter({
+      requestToken: after.requestToken,
+      items: [item('row-3')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+      context: 'latest',
+    }).segment.context).toBe('latest')
+
+    expect(store.patchItems([itemWithVersion('row-3', 2)]).context)
+      .toBe('latest')
+    expect(store.applyIdentityRemap([{
+      from: { sessionId: 'source-a', stableId: 'row-3' },
+      to: { sessionId: 'source-a', stableId: 'server-3', serverId: 'server-3' },
+      previousKey: 'row-3',
+      nextKey: 'server-3',
+    }]).context).toBe('latest')
+    expect(store.trimToBudget(1).context).toBe('latest')
+    expect(store.resetLatest({
+      items: [item('tail')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    }).context).toBe('latest')
+  })
+
   it('remaps optimistic local identity to server identity', () => {
     const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({

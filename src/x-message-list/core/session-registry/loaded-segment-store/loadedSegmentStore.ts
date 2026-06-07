@@ -5,6 +5,7 @@ import type {
 } from '../../runtime/contracts/identity'
 import type {
   LoadedSegment,
+  LoadedSegmentContext,
   ResetAroundAlign,
   SegmentModifier,
 } from '../../runtime/contracts/segment'
@@ -43,6 +44,7 @@ export type ResetSegmentInput<TMessage, TOptimistic> = {
   items: MessageDataItem<TMessage, TOptimistic>[]
   hasMoreBefore: boolean
   hasMoreAfter: boolean
+  context?: LoadedSegmentContext
   anchor?: MessageIdentityAnchor
   anchorStatus?: LoadedSegment['anchorStatus']
 }
@@ -93,6 +95,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
       items: [],
       hasMoreBefore: false,
       hasMoreAfter: false,
+      context: 'latest',
       modifier: { type: 'bootstrap' },
     }
   }
@@ -114,7 +117,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
   resetLatest(
     input: ResetSegmentInput<TMessage, TOptimistic>,
   ): LoadedSegment<TMessage, TOptimistic> {
-    return this.reset(input, { type: 'reset-latest' })
+    return this.reset({ ...input, context: 'latest' }, { type: 'reset-latest' })
   }
 
   resetLatestFromRequest(
@@ -126,18 +129,19 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
 
     return {
       applied: true,
-      segment: this.reset(input, { type: 'reset-latest' }),
+      segment: this.reset({ ...input, context: 'latest' }, { type: 'reset-latest' }),
     }
   }
 
   resetAround(
     input: ResetSegmentInput<TMessage, TOptimistic> & {
       target: MessageIdentityAnchor
+      context?: LoadedSegmentContext
       align?: ResetAroundAlign
       offsetWithinMessage?: number
     },
   ): LoadedSegment<TMessage, TOptimistic> {
-    return this.reset(input, {
+    return this.reset({ ...input, context: input.context ?? 'around' }, {
       type: 'reset-around',
       target: input.target,
       align: input.align,
@@ -149,6 +153,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
     input: ResetSegmentInput<TMessage, TOptimistic> & {
       target: MessageIdentityAnchor
       requestToken: string
+      context?: LoadedSegmentContext
       align?: ResetAroundAlign
       offsetWithinMessage?: number
     },
@@ -159,7 +164,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
 
     return {
       applied: true,
-      segment: this.reset(input, {
+      segment: this.reset({ ...input, context: input.context ?? 'around' }, {
         type: 'reset-around',
         target: input.target,
         align: input.align,
@@ -208,6 +213,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
       {
         hasMoreBefore: this.segment.hasMoreBefore,
         hasMoreAfter: this.segment.hasMoreAfter,
+        context: this.segment.context,
         anchor: this.segment.anchor,
         anchorStatus: this.segment.anchorStatus,
         modifier: { type: 'patch', changedKeys: items.map((item) => item.key) },
@@ -232,6 +238,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
     this.segment = this.createSegment(mutation.items, {
       hasMoreBefore: this.segment.hasMoreBefore,
       hasMoreAfter: this.segment.hasMoreAfter,
+      context: this.segment.context,
       anchor: this.segment.anchor,
       anchorStatus: this.segment.anchorStatus,
       modifier: {
@@ -268,6 +275,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
       {
         hasMoreBefore: this.segment.hasMoreBefore,
         hasMoreAfter: this.segment.hasMoreAfter,
+        context: this.segment.context,
         anchor: this.segment.anchor,
         anchorStatus: this.segment.anchorStatus,
         modifier,
@@ -282,6 +290,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
     this.segment = this.createSegment(dedupeItems(input.items), {
       hasMoreBefore: input.hasMoreBefore ?? this.segment.hasMoreBefore,
       hasMoreAfter: input.hasMoreAfter ?? this.segment.hasMoreAfter,
+      context: this.segment.context,
       anchor: input.anchor ?? this.segment.anchor,
       anchorStatus: input.anchorStatus ?? this.segment.anchorStatus,
       modifier: { type: 'patch', changedKeys: input.changedKeys },
@@ -295,6 +304,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
       {
         hasMoreBefore: this.segment.hasMoreBefore,
         hasMoreAfter: this.segment.hasMoreAfter,
+        context: this.segment.context,
         anchor: this.segment.anchor,
         anchorStatus: this.segment.anchorStatus,
         modifier: { type: 'identity-remap', remaps },
@@ -315,6 +325,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
     this.segment = this.createSegment(trimmed.items, {
       hasMoreBefore: this.segment.hasMoreBefore || trimmed.removedBefore > 0,
       hasMoreAfter: this.segment.hasMoreAfter || trimmed.removedAfter > 0,
+      context: this.segment.context,
       anchor: this.segment.anchor,
       anchorStatus: this.segment.anchorStatus,
       modifier: trimmed.removedBefore >= trimmed.removedAfter
@@ -376,6 +387,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
     input: {
       hasMoreBefore: boolean
       hasMoreAfter: boolean
+      context?: LoadedSegmentContext
       anchor?: MessageIdentityAnchor
       anchorStatus?: LoadedSegment['anchorStatus']
       modifier: SegmentModifier
@@ -389,6 +401,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
       items,
       hasMoreBefore: input.hasMoreBefore,
       hasMoreAfter: input.hasMoreAfter,
+      context: input.context ?? this.segment.context,
       anchor: input.anchor,
       anchorStatus: input.anchorStatus,
       modifier: input.modifier,

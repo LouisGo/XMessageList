@@ -672,7 +672,7 @@ describe('useDemoMessageScenario feed switching', () => {
     await harness.unmount()
   })
 
-  it('treats a top-aligned retry success as send-style follow with one append transaction', async () => {
+  it('treats a top-aligned retry success as send-style latest rebuild', async () => {
     const random = vi.spyOn(Math, 'random')
     random
       .mockReturnValueOnce(0.9)
@@ -732,15 +732,8 @@ describe('useDemoMessageScenario feed switching', () => {
     )
 
     const snapshot = getScenarioSnapshot(harness.getScenario())
-    expect(snapshot?.segmentMeta.modifier).toEqual({
-      type: 'append',
-      changedKeys: expect.arrayContaining([
-        failedId as string,
-        expect.any(String),
-      ]),
-      follow: 'follow',
-      retireKeys: [failedId as string],
-    })
+    expect(snapshot?.segmentMeta.modifier).toEqual({ type: 'reset-latest' })
+    expect(snapshot?.segmentMeta.context).toBe('latest')
     expect(
       snapshot?.items.some((item) => item.message?.id === failedId),
     ).toBe(false)

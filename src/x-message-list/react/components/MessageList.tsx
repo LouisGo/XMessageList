@@ -74,6 +74,7 @@ function MessageListInner<TMessage, TOptimistic>({
             snapshot.segmentMeta.hasMoreAfter ||
             scrollToLatestVisibleByDistance
           ),
+        loadedContext: snapshot.segmentMeta.context,
         scrollToLatest: commands.scrollToLatest,
         bottomLockState: snapshot.bottomLockState,
         hasMoreAfter: snapshot.segmentMeta.hasMoreAfter,

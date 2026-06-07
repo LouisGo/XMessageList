@@ -10,6 +10,7 @@ export type {
 } from './contracts/identity'
 export type {
   LoadedSegment,
+  LoadedSegmentContext,
   ResetAroundAlign,
   SegmentModifier,
 } from './contracts/segment'

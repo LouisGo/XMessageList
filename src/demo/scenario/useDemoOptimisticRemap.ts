@@ -13,6 +13,7 @@ import {
   createMockNewestMessages,
   wait,
 } from './demoScenarioHelpers'
+import { createDemoLatestPage } from './demoMessageCommandHelpers'
 import type {
   PendingOptimisticRemap,
 } from './demoScenarioTypes'
@@ -29,12 +30,14 @@ export function useDemoOptimisticRemap(input: {
   activeFeedId: string
   session: MessageListSession<DemoMessage>
   isActiveFeed: (feedId: string) => boolean
+  pageSize: number
   setLastEvent: (eventText: string) => void
   onMessageCountChange: (messageCount: number) => void
 }): DemoOptimisticRemapActions {
   const {
     activeFeedId,
     isActiveFeed,
+    pageSize,
     session,
     setLastEvent,
     onMessageCountChange,
@@ -95,13 +98,20 @@ export function useDemoOptimisticRemap(input: {
     }
     session.tail.local.stage({
       rows: [optimistic, ...tailMessages],
+      latest: session.getState().loaded.context !== 'latest'
+        ? createDemoLatestPage({
+            feedId: activeFeedId,
+            messages: persistedMessages.slice(0, -tailMessages.length),
+            pageSize,
+          })
+        : undefined,
       reason: 'send',
     })
     void flushDemoFeedPersistence(activeFeedId)
     if (isActiveFeed(activeFeedId)) {
       setLastEvent('optimistic local identity published')
     }
-  }, [activeFeedId, isActiveFeed, onMessageCountChange, session, setLastEvent])
+  }, [activeFeedId, isActiveFeed, onMessageCountChange, pageSize, session, setLastEvent])
 
   const alignPendingOptimisticAtStart = useCallback(() => {
     const pending = pendingOptimisticRemapRef.current

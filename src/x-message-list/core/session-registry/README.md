@@ -11,8 +11,12 @@
 - 掌管当前 session 的 loaded segment、视口状态、边缘状态、请求桥接、`anchorMemory` 和 `readReceipts` worker。
 - 在向视口 runtime 发布 loaded segment 之前，执行请求 token、过期响应防护、segment 合并、裁剪和失败确认。
 - 通过 `loaded-segment-store/` 持有 Loaded Segment Store；viewport runtime 只消费发布后的 segment。
+- 维护 `loaded.context = latest | history | around`，把 loaded rows 的语义上下文
+  和 viewport `bottomLockState` 分开。
 - 暴露精简的公开 session，包含 `getState`、`subscribe`、`commands`、`tail.local`、`tail.remote` 和 `rows`；runtime 内部实现保持为包内部。
 - 应用分页缓存、持久化和脏时间戳检查保留在宿主 store 中。`rows.mutate` 按设计仅作用于已加载数据。
+- 对 latest page、`reachedLatest`、tail local/remote 的 public contract violation
+  发出稳定 diagnostic，并保持违规路径不修改 loaded rows。
 
 ## 公开形态
 

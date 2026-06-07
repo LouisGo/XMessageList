@@ -270,6 +270,7 @@ export function useDemoMessageScenario(): DemoMessageScenario {
     activeFeedId,
     session: activeSession,
     isActiveFeed,
+    pageSize: PAGE_SIZE,
     setLastEvent,
     onMessageCountChange: setMessageCount,
   })

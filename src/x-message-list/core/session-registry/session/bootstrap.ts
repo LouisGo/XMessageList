@@ -2,6 +2,7 @@ import type { MessageIdentityAnchor } from '../../runtime/index'
 import { normalizeMessageListAnchor } from '../adapters/rowAdapter'
 import type {
   MessageListAnchorMemoryValue,
+  MessageListRequestTrigger,
   MessageListSessionContext,
   MessageListSessionId,
 } from '../contracts'
@@ -10,6 +11,7 @@ import type { AroundRequestOptions } from './helpers'
 type BootstrapOverlayOptions = {
   overlayRequestId: number
   requestEpoch: number
+  trigger?: MessageListRequestTrigger
 }
 
 export type MessageListSessionBootstrapController = {
@@ -61,6 +63,8 @@ export function createMessageListSessionBootstrapController<Source>(
 
       if (runtimeAnchor) {
         await input.loadAround(runtimeAnchor, {
+          context: 'history',
+          trigger: 'restore',
           align: 'start',
           offsetWithinMessage: memoryValue?.offsetWithinMessage,
           overlayRequestId,
@@ -69,7 +73,7 @@ export function createMessageListSessionBootstrapController<Source>(
         return
       }
 
-      await input.loadLatest({ overlayRequestId, requestEpoch })
+      await input.loadLatest({ overlayRequestId, requestEpoch, trigger: 'internal' })
     } catch (error) {
       if (
         !input.isStaleOverlayRequest(overlayRequestId) &&

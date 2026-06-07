@@ -9,8 +9,13 @@ import {
   toSessionReplaceInput,
   toSessionResetInput,
 } from '../session/helpers'
+import {
+  MessageListContractViolation,
+  assertLatestPageContract,
+} from '../session/contractDiagnostics'
 import type {
   MessageListAdapter,
+  MessageListRuntimeLogDiagnosticRecord,
   MessageListSessionId,
   MessageListSession,
 } from '../contracts'
@@ -22,6 +27,11 @@ export function createSessionRows<Row, Source>(input: {
   publishSegment: (segment: LoadedSegment<Row>) => void
   publishLocalResetSegment: (segment: LoadedSegment<Row>) => void
   clearPendingLocal: () => void
+  reportDiagnostic: (
+    name: string,
+    severity: MessageListRuntimeLogDiagnosticRecord['severity'],
+    details?: Record<string, unknown>,
+  ) => void
 }): MessageListSession<Row>['rows'] {
   return {
     patch: (rows) => {
@@ -53,6 +63,16 @@ export function createSessionRows<Row, Source>(input: {
       ))
     },
     resetLatest: (page) => {
+      try {
+        assertLatestPageContract(page, input.reportDiagnostic, {
+          source: 'rows.resetLatest',
+        })
+      } catch (error) {
+        if (error instanceof MessageListContractViolation) {
+          return
+        }
+        throw error
+      }
       input.clearPendingLocal()
       input.publishLocalResetSegment(
         input.loadedSegmentStore.resetLatest(

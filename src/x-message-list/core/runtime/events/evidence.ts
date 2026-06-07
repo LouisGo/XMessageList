@@ -20,6 +20,7 @@ export function createViewportEvidence<TMessage, TOptimistic>(
     modifier: snapshot.segmentMeta.modifier.type,
     hasMoreBefore: snapshot.segmentMeta.hasMoreBefore,
     hasMoreAfter: snapshot.segmentMeta.hasMoreAfter,
+    context: snapshot.segmentMeta.context,
     bottomLockState: snapshot.bottomLockState,
     pendingIntent: snapshot.pendingIntent,
     shortSegmentAlignment: snapshot.segmentMeta.shortSegmentAlignment,

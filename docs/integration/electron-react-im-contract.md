@@ -10,10 +10,7 @@
 - `state.loaded.context` 表示当前 loaded rows 的语义上下文：
 
 ```ts
-type MessageListLoadedContext =
-  | 'latest'
-  | 'history'
-  | 'around'
+type MessageListLoadedContext = 'latest' | 'history' | 'around';
 ```
 
 `latest` context 表示当前 loaded segment 代表最新消息区间。用户可以向上滚动、加载更早历史，并让 `bottomLockState` 变成 `UNLOCKED`，但 `loaded.context` 仍保持 `latest`。
@@ -27,17 +24,17 @@ type MessageListLoadedContext =
 当一个全局唯一 `feedId` 对应一份独立阅读状态时，宿主可以直接把它映射为 `sessionId`：
 
 ```ts
-const sessionId = feedId
-const session = registry.getSession(sessionId)
+const sessionId = feedId;
+const session = registry.getSession(sessionId);
 ```
 
 `Session Source` 仍应使用最小结构化对象，而不是裸字符串。这样 request route 和 adapter 行为有稳定扩展点：
 
 ```ts
 type ImMessageListSource = {
-  feedId: string
-  kind: 'chat' | 'thread' | 'channel' | 'favorite' | 'ai'
-}
+  feedId: string;
+  kind: 'chat' | 'thread' | 'channel' | 'favorite' | 'ai';
+};
 ```
 
 source 字段属于 session static semantics。如果 source 语义发生变化，宿主应销毁并重建 session，而不是把既有 session 原地变成另一种列表。
@@ -64,7 +61,7 @@ type MessageListRequestTrigger =
   | 'viewport'
   | 'command'
   | 'restore'
-  | 'internal'
+  | 'internal';
 ```
 
 `trigger='viewport'` 只保留给真实 mounted viewport 的 before / after edge need。bootstrap、underflow fill、restore、manual command 和 edge retry 都不是 viewport trigger。
@@ -79,11 +76,11 @@ type MessageListRequestTrigger =
 
 ```ts
 type MessageListPage<Row> = {
-  rows: Row[]
-  hasMoreBefore: boolean
-  hasMoreAfter: boolean
-  reachedLatest?: boolean
-}
+  rows: Row[];
+  hasMoreBefore: boolean;
+  hasMoreAfter: boolean;
+  reachedLatest?: boolean;
+};
 ```
 
 `loadLatest`、`rows.resetLatest(page)` 和 `tail.local.stage({ latest })` 都要求 latest page 满足 `hasMoreAfter=false`。如果 latest page 返回 `hasMoreAfter=true`，XMessageList 应视为 contract violation，而不是自动归一化。
@@ -137,19 +134,17 @@ manual 或 programmatic after paging 可以把 `history` 提升为 `latest`，�
 
 ```ts
 type ScrollToLatestSlotInput = {
-  visibleByScroll: boolean
-  loadedContext: MessageListLoadedContext
-  scrollToLatest: () => void
-}
+  visibleByScroll: boolean;
+  loadedContext: MessageListLoadedContext;
+  scrollToLatest: () => void;
+};
 ```
 
 `visibleByScroll` 仍然只是滚动侧阈值信号，不包含未读数、宿主策略或 loaded context。宿主自行组合最终展示策略：
 
 ```ts
 const showScrollToLatest =
-  loadedContext !== 'latest' ||
-  visibleByScroll ||
-  unreadCount > 0
+  loadedContext !== 'latest' || visibleByScroll || unreadCount > 0;
 ```
 
 XMessageList 不拥有 unread count，也不内建 new-message banner。
@@ -160,9 +155,9 @@ remote append 只在 latest context 下有效：
 
 ```ts
 if (session.getState().loaded.context === 'latest') {
-  session.tail.remote.append({ rows, follow: 'auto' })
+  session.tail.remote.append({ rows, follow: 'auto' });
 } else {
-  hostStore.recordTailDirty(feedId, rows)
+  hostStore.recordTailDirty(feedId, rows);
 }
 ```
 
@@ -175,7 +170,7 @@ session.tail.local.stage({
   rows: [optimisticRow],
   latest: latestPageFromHostStore,
   reason: 'send',
-})
+});
 ```
 
 `latest` 是 baseline latest page，不需要包含本次 staged optimistic row。XMessageList 应用 latest baseline、应用 `retireKeys`、追加 staged local rows、进入 latest context，并执行 send-style follow-bottom 行为。
@@ -260,7 +255,3 @@ requestTrigger.invalidViewportUse
 - 校验 remote append 只在 latest context 下有效。
 - 校验非 latest context 下 local stage 必须提供 latest page。
 - 增加上述 contract violation 的稳定 diagnostics。
-
-## 新会话提示词
-
-请基于 `docs/integration/electron-react-im-contract.md`、`CONTEXT.md` 和 `docs/adr/0002-loaded-context-and-latest-boundary.md` 优化 XMessageList 接入 API 与实现。先通读文档并核对当前代码，不要预设旧结论；重点实现 `loaded.context = latest | history | around`、`MessageListPage.reachedLatest`、结构化 `request.trigger`、`renderScrollToLatest.loadedContext`、latest page contract 校验、remote append 只允许 latest context、非 latest context 下 local stage 必须提供 latest page，以及稳定 diagnostics。保持 latest 与 bottom lock 分离，保留现有 `loadLatest/resetLatest/scrollToLatest` 命名，不引入 `atLatest`、`tailPage`、`reachedTail` 或 `resetTail`。

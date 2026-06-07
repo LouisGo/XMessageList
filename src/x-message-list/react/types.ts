@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from 'react'
 import type {
   MessageListAnchor,
+  MessageListLoadedContext,
   MessageListOverlayStatus,
   MessageListResolvedAnchor,
   MessageListScrollToMessageOptions,
@@ -85,6 +86,8 @@ export type EmptySlotInput = {
 export type ScrollToLatestSlotInput = {
   /** 是否因滚动距离/hasMoreAfter/pending 状态应显示入口。 */
   visibleByScroll: boolean
+  /** 当前 loaded rows 的语义上下文。 */
+  loadedContext: MessageListLoadedContext
   /** 执行 scroll-to-latest 命令。 */
   scrollToLatest: () => void
   /** 当前底部锁状态。 */

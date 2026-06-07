@@ -15,6 +15,15 @@ export type ResetAroundAlign =
   /** 若目标已完整可见则不滚动，否则选择移动距离较小的一侧对齐。 */
   | 'nearest'
 
+/** 当前 loaded rows 的语义上下文。 */
+export type LoadedSegmentContext =
+  /** 当前窗口代表源最新消息区间。 */
+  | 'latest'
+  /** 当前窗口代表被恢复的非最新历史阅读区间。 */
+  | 'history'
+  /** 当前窗口代表围绕用户目标构建的跳转区间。 */
+  | 'around'
+
 /** 描述 LoadedSegment 相对上一投影的变更类型，runtime 依此选择测量、修正和滚动结算策略。 */
 export type SegmentModifier =
   /** 初始加载或完整重建 segment。 */
@@ -105,6 +114,8 @@ export type LoadedSegment<TMessage = unknown, TOptimistic = unknown> = {
   hasMoreBefore: boolean
   /** after 侧是否还有可请求数据。 */
   hasMoreAfter: boolean
+  /** 当前 loaded rows 的语义上下文。 */
+  context: LoadedSegmentContext
   /** 数据层提供的推荐锚点；runtime 可能在 DOM 中解析为当前 viewport anchor。 */
   anchor?: MessageIdentityAnchor
   /** anchor 的可用性状态，用于 jump/restore fallback 事件。 */

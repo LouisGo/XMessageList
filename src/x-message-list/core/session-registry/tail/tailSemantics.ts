@@ -13,6 +13,12 @@ import {
   toSessionIdentityRemaps,
   toSessionResetInput,
 } from '../session/helpers'
+import {
+  MessageListContractViolation,
+  assertLatestPageContract,
+  hasDuplicateItemKeys,
+  reportContractDiagnostic,
+} from '../session/contractDiagnostics'
 import type {
   MessageListAdapter,
   MessageListIdentityRemap,
@@ -21,11 +27,11 @@ import type {
   MessageListRemoteTailAppendConfig,
   MessageListRemoteTailAppendContext,
   MessageListRemoteTailAppendInput,
+  MessageListRuntimeLogDiagnosticRecord,
   MessageListSession as PublicMessageListSession,
   MessageListSessionId,
   MessageListTailAppendFollowDecision,
 } from '../contracts'
-
 type SessionLiveSemanticsOptions<Row, Source> = {
   sessionId: MessageListSessionId
   source: Source
@@ -35,13 +41,16 @@ type SessionLiveSemanticsOptions<Row, Source> = {
   loadedSegmentStore: LoadedSegmentStore<Row>
   publishSegment: (segment: LoadedSegment<Row>) => void
   publishLocalResetSegment: (segment: LoadedSegment<Row>) => void
+  reportDiagnostic: (
+    name: string,
+    severity: MessageListRuntimeLogDiagnosticRecord['severity'],
+    details?: Record<string, unknown>,
+  ) => void
 }
-
 export class MessageListSessionLiveSemantics<Row, Source> {
   readonly tail: PublicMessageListSession<Row>['tail']
   private readonly pendingLocalItemsByKey = new Map<string, MessageDataItem<Row>>()
   private readonly pendingLocalRetireKeys = new Set<string>()
-
   constructor(private readonly options: SessionLiveSemanticsOptions<Row, Source>) {
     this.tail = {
       local: {
@@ -54,7 +63,6 @@ export class MessageListSessionLiveSemantics<Row, Source> {
       },
     }
   }
-
   withPendingLocal(page: MessageListPage<Row>): {
     page: MessageListPage<Row>
     resetInput: ResetSegmentInput<Row, unknown>
@@ -69,11 +77,9 @@ export class MessageListSessionLiveSemantics<Row, Source> {
       [...this.pendingLocalItemsByKey.values()],
       this.pendingLocalRetireKeys,
     )
-
     if (pending.length === 0 && items === resetInput.items) {
       return { page, resetInput }
     }
-
     const mergedItems = mergeLocalItems(items, pending)
     return {
       page: {
@@ -88,12 +94,10 @@ export class MessageListSessionLiveSemantics<Row, Source> {
       },
     }
   }
-
   settlePendingLocalForSegment(segment: LoadedSegment<Row>): void {
     if (segment.hasMoreAfter) {
       return
     }
-
     for (const [key, pending] of [...this.pendingLocalItemsByKey]) {
       if (segment.items.some((item) =>
         item.key === pending.key || itemsShareIdentity(item, pending)
@@ -101,32 +105,48 @@ export class MessageListSessionLiveSemantics<Row, Source> {
         this.pendingLocalItemsByKey.delete(key)
       }
     }
-
     if (this.pendingLocalItemsByKey.size === 0) {
       this.pendingLocalRetireKeys.clear()
     }
   }
-
   clearPendingLocal(): void {
     this.pendingLocalItemsByKey.clear()
     this.pendingLocalRetireKeys.clear()
   }
-
   private stageLocal(
     input: Row | Row[] | MessageListLocalTailStageInput<Row>,
   ): void {
     const stage = normalizeLocalTailStageInput(input)
-
     if (stage.rows.length === 0) {
       return
     }
-
     const items = this.toDataItems(stage.rows)
-    this.rememberRetireKeys(stage.retireKeys)
-    this.forgetPendingLocalKeys(stage.retireKeys)
     const segment = this.options.loadedSegmentStore.getSegment()
-
     if (stage.latest) {
+      try {
+        assertLatestPageContract(stage.latest, this.reportDiagnostic, {
+          source: 'tail.local.stage',
+          reason: stage.reason,
+        })
+      } catch (error) {
+        if (error instanceof MessageListContractViolation) {
+          return
+        }
+        throw error
+      }
+      const latestResetInput = toSessionResetInput(
+        this.options.sessionId,
+        stage.latest,
+        this.options.adapter,
+      )
+      if (hasDuplicateItemKeys(latestResetInput.items, items)) {
+        this.reportDiagnostic('localTailStage.duplicateRowKey', 'error', {
+          reason: stage.reason,
+        })
+        return
+      }
+      this.rememberRetireKeys(stage.retireKeys)
+      this.forgetPendingLocalKeys(stage.retireKeys)
       this.rememberPendingLocal(items)
       this.options.runtime.prepareFollowBottomForLocalReset()
       const { resetInput } = this.withPendingLocal(stage.latest)
@@ -135,9 +155,16 @@ export class MessageListSessionLiveSemantics<Row, Source> {
       )
       return
     }
-
+    if (segment.context !== 'latest') {
+      this.reportDiagnostic('localTailStage.missingLatest', 'error', {
+        context: segment.context,
+        reason: stage.reason,
+      })
+      return
+    }
+    this.rememberRetireKeys(stage.retireKeys)
+    this.forgetPendingLocalKeys(stage.retireKeys)
     this.options.runtime.scrollToLatest()
-
     if (!segment.hasMoreAfter) {
       this.options.publishSegment(
         this.options.loadedSegmentStore.appendItems(items, {
@@ -147,61 +174,52 @@ export class MessageListSessionLiveSemantics<Row, Source> {
       )
       return
     }
-
     this.rememberPendingLocal(items)
   }
-
   private appendRemote(
     input: Row | Row[] | MessageListRemoteTailAppendInput<Row>,
   ): void {
     const append = normalizeRemoteTailAppendInput(input)
-
     if (append.rows.length === 0) {
       return
     }
-
-    if (this.options.loadedSegmentStore.getSegment().hasMoreAfter) {
+    const segment = this.options.loadedSegmentStore.getSegment()
+    if (segment.context !== 'latest') {
+      this.reportDiagnostic('remoteTailAppend.outsideLatestContext', 'warn', {
+        context: segment.context,
+        reason: append.reason,
+      })
       return
     }
-
     const follow = this.resolveRemoteAppendFollow(append)
-
     if (follow === 'follow') {
       this.options.runtime.scrollToLatest()
     }
-
     this.options.publishSegment(this.options.loadedSegmentStore.appendItems(
       this.toDataItems(append.rows),
       { follow },
     ))
   }
-
   private patchLocal(rows: Row[]): void {
     if (rows.length === 0) {
       return
     }
-
     const items = this.toDataItems(rows)
     this.updatePendingLocal(items)
-
     const visibleKeys = new Set(
       this.options.loadedSegmentStore.getSegment().items.map((item) => item.key),
     )
     const visibleItems = items.filter((item) => visibleKeys.has(item.key))
-
     if (visibleItems.length > 0) {
       this.options.publishSegment(this.options.loadedSegmentStore.patchItems(visibleItems))
     }
   }
-
   private applyLocalIdentityRemap(remaps: MessageListIdentityRemap[]): void {
     if (remaps.length === 0) {
       return
     }
-
     const runtimeRemaps = toSessionIdentityRemaps(this.options.sessionId, remaps)
     this.remapPendingLocal(runtimeRemaps)
-
     const segment = this.options.loadedSegmentStore.getSegment()
     const touchesVisible = runtimeRemaps.some((remap) =>
       segment.items.some((item) =>
@@ -210,43 +228,42 @@ export class MessageListSessionLiveSemantics<Row, Source> {
           itemMatchesAnchor(item, remap.from)
       ),
     )
-
     if (touchesVisible) {
       this.options.publishSegment(
         this.options.loadedSegmentStore.applyIdentityRemap(runtimeRemaps),
       )
     }
   }
-
+  private reportDiagnostic(
+    name: string,
+    severity: MessageListRuntimeLogDiagnosticRecord['severity'],
+    details: Record<string, unknown> = {},
+  ): void {
+    reportContractDiagnostic(this.options.reportDiagnostic, name, severity, details)
+  }
   private resolveRemoteAppendFollow(
     input: MessageListRemoteTailAppendInput<Row>,
   ): MessageListTailAppendFollowDecision {
     const context = this.createRemoteAppendContext(input)
     const explicit = resolveRemoteAppendFollowInput(input.follow, context)
-
     if (explicit) {
       return explicit
     }
-
     const configured = this.options.tailEvents?.shouldFollowRemoteAppend?.(
       context,
     )
     const resolvedConfigured = normalizeRemoteAppendFollowDecision(configured)
-
     if (resolvedConfigured) {
       return resolvedConfigured
     }
-
     if (context.hasMoreAfter) {
       return 'preserve'
     }
-
     return context.bottomLockState === 'LOCKED' ||
       context.pendingIntent === 'follow-bottom'
       ? 'follow'
       : 'preserve'
   }
-
   private createRemoteAppendContext(
     input: MessageListRemoteTailAppendInput<Row>,
   ): MessageListRemoteTailAppendContext<Row, Source> {
@@ -256,7 +273,6 @@ export class MessageListSessionLiveSemantics<Row, Source> {
       0,
       evidence.scrollHeight - evidence.clientHeight - evidence.scrollTop,
     )
-
     return {
       sessionId: this.options.sessionId,
       source: this.options.source,
@@ -270,51 +286,41 @@ export class MessageListSessionLiveSemantics<Row, Source> {
       pageFocused: resolvePageFocus(this.options.tailEvents?.getPageFocus),
     }
   }
-
   private toDataItems(rows: Row[]): MessageDataItem<Row>[] {
     return toMessageDataItems(this.options.sessionId, rows, this.options.adapter)
   }
-
   private rememberPendingLocal(items: MessageDataItem<Row>[]): void {
     for (const item of items) {
       this.pendingLocalItemsByKey.set(item.key, item)
     }
   }
-
   private forgetPendingLocalKeys(keys: string[] | undefined): void {
     if (!keys || keys.length === 0) {
       return
     }
-
     for (const key of keys) {
       this.pendingLocalItemsByKey.delete(key)
     }
   }
-
   private rememberRetireKeys(keys: string[] | undefined): void {
     if (!keys || keys.length === 0) {
       return
     }
-
     for (const key of keys) {
       this.pendingLocalRetireKeys.add(key)
     }
   }
-
   private updatePendingLocal(items: MessageDataItem<Row>[]): void {
     for (const item of items) {
       const existingKey = this.findPendingLocalKey(item)
-
       if (existingKey && existingKey !== item.key) {
         this.pendingLocalItemsByKey.delete(existingKey)
       }
-
       if (existingKey || this.pendingLocalItemsByKey.has(item.key)) {
         this.pendingLocalItemsByKey.set(item.key, item)
       }
     }
   }
-
   private remapPendingLocal(
     remaps: ReturnType<typeof toSessionIdentityRemaps>,
   ): void {
@@ -322,11 +328,9 @@ export class MessageListSessionLiveSemantics<Row, Source> {
       const remap = remaps.find((candidate) =>
         candidate.previousKey === item.key || itemMatchesAnchor(item, candidate.from)
       )
-
       if (!remap) {
         continue
       }
-
       this.pendingLocalItemsByKey.delete(key)
       this.pendingLocalItemsByKey.set(remap.nextKey, {
         ...item,
@@ -341,29 +345,24 @@ export class MessageListSessionLiveSemantics<Row, Source> {
       })
     }
   }
-
   private findPendingLocalKey(item: MessageDataItem<Row>): string | null {
     if (this.pendingLocalItemsByKey.has(item.key)) {
       return item.key
     }
-
     for (const [key, pending] of this.pendingLocalItemsByKey) {
       if (itemsShareIdentity(pending, item)) {
         return key
       }
     }
-
     return null
   }
 }
-
 function normalizeLocalTailStageInput<Row>(
   input: Row | Row[] | MessageListLocalTailStageInput<Row>,
 ): MessageListLocalTailStageInput<Row> {
   if (Array.isArray(input)) {
     return { rows: input, reason: 'send' }
   }
-
   if (isLocalTailStageInput<Row>(input)) {
     return {
       rows: input.rows,
@@ -372,17 +371,14 @@ function normalizeLocalTailStageInput<Row>(
       retireKeys: input.retireKeys,
     }
   }
-
   return { rows: [input], reason: 'send' }
 }
-
 function normalizeRemoteTailAppendInput<Row>(
   input: Row | Row[] | MessageListRemoteTailAppendInput<Row>,
 ): MessageListRemoteTailAppendInput<Row> {
   if (Array.isArray(input)) {
     return { rows: input }
   }
-
   if (isRemoteTailAppendInput<Row>(input)) {
     return {
       rows: input.rows,
@@ -390,17 +386,14 @@ function normalizeRemoteTailAppendInput<Row>(
       follow: input.follow,
     }
   }
-
   return { rows: [input] }
 }
-
 function isLocalTailStageInput<Row>(
   input: Row | MessageListLocalTailStageInput<Row>,
 ): input is MessageListLocalTailStageInput<Row> {
   if (!input || typeof input !== 'object') {
     return false
   }
-
   const candidate = input as { rows?: unknown; latest?: unknown; reason?: unknown }
   return Array.isArray(candidate.rows) &&
     (
@@ -410,14 +403,12 @@ function isLocalTailStageInput<Row>(
       Object.keys(candidate).length === 1
     )
 }
-
 function isRemoteTailAppendInput<Row>(
   input: Row | MessageListRemoteTailAppendInput<Row>,
 ): input is MessageListRemoteTailAppendInput<Row> {
   if (!input || typeof input !== 'object') {
     return false
   }
-
   const candidate = input as { rows?: unknown; reason?: unknown; follow?: unknown }
   return Array.isArray(candidate.rows) &&
     (
@@ -426,7 +417,6 @@ function isRemoteTailAppendInput<Row>(
       Object.keys(candidate).length === 1
     )
 }
-
 function resolveRemoteAppendFollowInput<Row>(
   follow: MessageListRemoteTailAppendInput<Row>['follow'],
   context: MessageListRemoteTailAppendContext<Row>,
@@ -434,10 +424,8 @@ function resolveRemoteAppendFollowInput<Row>(
   if (typeof follow === 'function') {
     return normalizeRemoteAppendFollowDecision(follow(context))
   }
-
   return normalizeRemoteAppendFollowDecision(follow)
 }
-
 function normalizeRemoteAppendFollowDecision(
   decision:
     | MessageListRemoteTailAppendInput<unknown>['follow']
@@ -448,26 +436,20 @@ function normalizeRemoteAppendFollowDecision(
   if (decision === true || decision === 'follow') {
     return 'follow'
   }
-
   if (decision === false || decision === 'preserve') {
     return 'preserve'
   }
-
   return null
 }
-
 function resolvePageFocus(getPageFocus?: () => boolean): boolean {
   if (getPageFocus) {
     return getPageFocus()
   }
-
   const maybeDocument = globalThis as typeof globalThis & {
     document?: { hasFocus?: () => boolean }
   }
-
   return maybeDocument.document?.hasFocus?.() ?? true
 }
-
 function mergeLocalItems<Row>(
   items: MessageDataItem<Row>[],
   localItems: MessageDataItem<Row>[],
@@ -475,27 +457,22 @@ function mergeLocalItems<Row>(
   const next: MessageDataItem<Row>[] = []
   const seenKeys = new Set<string>()
   const seenIdentityTokens = new Set<string>()
-
   for (const item of [...items, ...localItems]) {
     const tokens = identityTokens(item)
-
     if (
       seenKeys.has(item.key) ||
       tokens.some((token) => seenIdentityTokens.has(token))
     ) {
       continue
     }
-
     seenKeys.add(item.key)
     for (const token of tokens) {
       seenIdentityTokens.add(token)
     }
     next.push(item)
   }
-
   return next
 }
-
 function filterRetiredItems<Row>(
   items: MessageDataItem<Row>[],
   retireKeys: Set<string>,
@@ -503,25 +480,20 @@ function filterRetiredItems<Row>(
   if (retireKeys.size === 0) {
     return items
   }
-
   return items.filter((item) => !retireKeys.has(item.key))
 }
-
 function itemsShareIdentity<Row>(
   left: MessageDataItem<Row>,
   right: MessageDataItem<Row>,
 ): boolean {
   const leftTokens = new Set(identityTokens(left))
-
   return identityTokens(right).some((token) => leftTokens.has(token))
 }
-
 function itemMatchesAnchor<Row>(
   item: MessageDataItem<Row>,
   anchor: MessageIdentityAnchor,
 ): boolean {
   const identity = item.identity
-
   return Boolean(
     identity &&
       identity.sessionId === anchor.sessionId &&
@@ -532,14 +504,11 @@ function itemMatchesAnchor<Row>(
       ),
   )
 }
-
 function identityTokens<Row>(item: MessageDataItem<Row>): string[] {
   const identity = item.identity
-
   if (!identity) {
     return []
   }
-
   return [
     `${identity.sessionId}|stable:${identity.stableId}`,
     identity.serverId ? `${identity.sessionId}|server:${identity.serverId}` : '',

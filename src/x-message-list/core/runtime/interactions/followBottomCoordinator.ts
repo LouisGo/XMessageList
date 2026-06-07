@@ -40,7 +40,10 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
   ): InteractionUpdate<TMessage, TOptimistic> {
     this.active.ensure(snapshot, scrollTop)
 
-    if (!snapshot.segmentMeta.hasMoreAfter) {
+    if (
+      snapshot.segmentMeta.context === 'latest' &&
+      !snapshot.segmentMeta.hasMoreAfter
+    ) {
       // 已在源最新端时不发 needLatest，直接锁底并把短窗口对齐到底部。
       this.axes.markReadyIdle()
       this.axes.markDestinationSettled()
@@ -91,7 +94,7 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     segment: LoadedSegment<TMessage, TOptimistic>,
   ): MessageListSnapshot<TMessage, TOptimistic> {
-    if (segment.modifier.type !== 'reset-latest' ||
+    if (!isFollowBottomSettleSegment(segment) ||
       snapshot.pendingIntent !== 'follow-bottom') {
       return snapshot
     }
@@ -131,6 +134,16 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
 
     return next
   }
+}
+
+function isFollowBottomSettleSegment<TMessage, TOptimistic>(
+  segment: LoadedSegment<TMessage, TOptimistic>,
+): boolean {
+  return segment.modifier.type === 'reset-latest' ||
+    (
+      segment.modifier.type === 'extend-after' &&
+      segment.context === 'latest'
+    )
 }
 
 function createNeedLatestMessages<TMessage, TOptimistic>(

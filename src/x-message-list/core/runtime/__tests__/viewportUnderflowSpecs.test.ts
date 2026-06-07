@@ -126,6 +126,7 @@ function segment(
     hasMoreAfter: false,
     modifier: { type: 'bootstrap' },
     ...overrides,
+    context: overrides.context ?? 'latest',
   }
 }
 

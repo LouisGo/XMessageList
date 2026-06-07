@@ -30,6 +30,11 @@ export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown>
 export type MessageListSessionRegistryRuntime<TMessage = unknown, TOptimistic = unknown> =
   MessageListRuntime<TMessage, TOptimistic> & {
     prepareFollowBottomForLocalReset(): void
+    reportSessionDiagnostic(
+      name: string,
+      severity: 'debug' | 'info' | 'warn' | 'error',
+      details?: Record<string, unknown>,
+    ): void
     startEdgeRequest(edge: 'before' | 'after', reason: string): void
     reportEdgeRequestStale(edge: 'before' | 'after', requestToken: string): void
     getSegmentSizeSnapshot(): RuntimeSegmentSizeSnapshot

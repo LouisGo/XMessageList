@@ -3,6 +3,7 @@ import type {
   MessageListAnchor,
   MessageListBottomLockState,
   MessageListEdgeStatus,
+  MessageListLoadedContext,
   MessageListPage,
   MessageListPendingIntent,
   MessageListScrollToMessageOptions,
@@ -27,6 +28,8 @@ export type MessageListSessionState<Row = unknown> = {
     hasMoreBefore: boolean
     /** after 侧是否还有更多数据。 */
     hasMoreAfter: boolean
+    /** 当前 loaded rows 的语义上下文。 */
+    context: MessageListLoadedContext
   }
   /** before/after edge 状态。 */
   edge: {

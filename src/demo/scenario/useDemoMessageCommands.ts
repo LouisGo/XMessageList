@@ -22,6 +22,7 @@ import {
   waitMockDelay,
 } from './demoScenarioHelpers'
 import {
+  createDemoLatestPage,
   createRetriedOutgoingMessage,
   publishRetriedOutgoingMessage,
   updatePersistedMessage,
@@ -103,27 +104,13 @@ export function useDemoMessageCommands(input: {
     } = {},
   ) => {
     const targetSession = getSession(feedId)
-    if (shouldRebuildLatest) {
-      const latest = persistedMessages.slice(
-        Math.max(0, persistedMessages.length - pageSize),
+    if (shouldRebuildLatest || targetSession.getState().loaded.context !== 'latest') {
+      const baselineMessages = persistedMessages.filter((candidate) =>
+        candidate.id !== message.id
       )
-      const latestMessage = latest.at(-1)
       targetSession.tail.local.stage({
         rows: [message],
-        latest: {
-          rows: latest,
-          hasMoreBefore: persistedMessages.length > pageSize,
-          hasMoreAfter: false,
-          anchor: latestMessage
-            ? {
-                id: latestMessage.id,
-                sessionId: feedId,
-                stableId: latestMessage.id,
-                serverId: latestMessage.id,
-              }
-            : undefined,
-          anchorStatus: 'normal',
-        },
+        latest: createDemoLatestPage({ feedId, messages: baselineMessages, pageSize }),
         reason,
         retireKeys: options.retireKeys,
       })

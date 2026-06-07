@@ -104,6 +104,7 @@ function segment(
     items,
     hasMoreBefore: false,
     hasMoreAfter: false,
+    context: 'latest',
     modifier: { type: 'bootstrap' },
   }
 }

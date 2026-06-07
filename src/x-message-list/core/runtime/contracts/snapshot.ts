@@ -3,7 +3,10 @@ import type {
   MessageIdentityAnchor,
   MessageRuntimeItemKey,
 } from './identity'
-import type { SegmentModifier } from './segment'
+import type {
+  LoadedSegmentContext,
+  SegmentModifier,
+} from './segment'
 
 /** React projection commit 的唯一 token，adapter ack 时必须原样回传。 */
 export type ProjectionCommitToken = {
@@ -97,6 +100,8 @@ export type MessageListSnapshot<TMessage = unknown, TOptimistic = unknown> = {
     hasMoreBefore: boolean
     /** after 侧是否还有可请求数据。 */
     hasMoreAfter: boolean
+    /** 当前 loaded rows 的语义上下文。 */
+    context: LoadedSegmentContext
     /** 生成该快照的 segment 变更类型。 */
     modifier: SegmentModifier
     /** 数据层提供的推荐锚点。 */
@@ -155,6 +160,8 @@ export type ViewportEvidence = {
   hasMoreBefore: boolean
   /** after 侧是否还有可请求数据。 */
   hasMoreAfter: boolean
+  /** 当前 loaded rows 的语义上下文。 */
+  context: LoadedSegmentContext
   /** 当前底部锁定状态。 */
   bottomLockState: BottomLockState
   /** 当前 pending intent。 */

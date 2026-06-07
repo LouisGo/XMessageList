@@ -8,6 +8,7 @@ import {
 import { getMessageListSessionInternals } from '../internal'
 import { MessageListReadReceiptsWorker } from '../read-receipts/readReceipts'
 import type {
+  MessageDataItem,
   MessageListRuntimeEvent,
   ViewportObservationChangedEvent,
 } from '../../runtime/index'
@@ -215,7 +216,61 @@ describe('createMessageListSessionRegistry', () => {
       sessionId: 'source-a',
       source: { id: 'source-a', type: 'favorite' },
       pageSize: 32,
+      trigger: 'internal',
     }))
+  })
+
+  it('passes command request trigger through adapter context and request result', async () => {
+    const loadLatest = vi.fn(() => Promise.resolve(page(['latest'])))
+    const requestResults: string[] = []
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadLatest }),
+      onRequestResult: (result) => {
+        requestResults.push(`${result.kind}:${result.trigger}:${result.status}`)
+      },
+    })
+    const session = registry.getSession('source-a')
+    startSession(session)
+    await waitFor(() => loadLatest.mock.calls.length === 1)
+
+    session.commands.reloadLatest()
+    await waitFor(() => loadLatest.mock.calls.length === 2)
+    await waitFor(() => requestResults.includes('latest:command:applied'))
+
+    expect(loadLatest).toHaveBeenLastCalledWith(expect.objectContaining({
+      trigger: 'command',
+    }))
+    expect(requestResults).toContain('latest:command:applied')
+  })
+
+  it('rejects invalid latest pages with stable diagnostics', async () => {
+    const diagnostics: string[] = []
+    const requestResults: string[] = []
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => Promise.resolve(page(['bad-latest'], {
+          hasMoreAfter: true,
+          reachedLatest: true,
+        })),
+      }),
+      onRuntimeEvent: (event) => {
+        if (event.diagnostic) diagnostics.push(event.diagnostic.name)
+      },
+      onRequestResult: (result) => {
+        requestResults.push(`${result.kind}:${result.trigger}:${result.status}`)
+      },
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+
+    await waitFor(() => requestResults.includes('latest:internal:failed'))
+
+    expect(diagnostics).toContain('page.latestHasMoreAfter')
+    expect(diagnostics).toContain('page.reachedLatestHasMoreAfter')
+    expect(internals.loadedSegmentStore.getSegment().items).toEqual([])
   })
 
   it('evicts inactive overflow sessions by keepAlive policy', () => {
@@ -295,12 +350,14 @@ describe('createMessageListSessionRegistry', () => {
     expect(loadLatest).not.toHaveBeenCalled()
     expect(loadAround).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'source-a',
+      trigger: 'restore',
       target: expect.objectContaining({
         sessionId: 'source-a',
         stableId: 'restored',
       }),
     }))
     expect(internals.getSnapshot().items[0].message?.id).toBe('restored')
+    expect(internals.loadedSegmentStore.getSegment().context).toBe('history')
     expect(internals.loadedSegmentStore.getSegment().modifier).toEqual(
       expect.objectContaining({
         type: 'reset-around',
@@ -308,6 +365,53 @@ describe('createMessageListSessionRegistry', () => {
         offsetWithinMessage: 12,
       }),
     )
+  })
+
+  it('promotes history to latest when after paging reaches latest without command follow-bottom', async () => {
+    const loadAfter = vi.fn(() => Promise.resolve(page(['tail'], {
+      reachedLatest: true,
+      hasMoreAfter: false,
+    })))
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadAfter }),
+    })
+    const session = manager.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
+    attachSessionRows(session, ['normal-latest'])
+    ackSessionCommit(session)
+    await waitFor(() => internals.getSnapshot().viewportPhase === 'IDLE')
+    const historySegment = internals.loadedSegmentStore.resetAround({
+      target: { sessionId: 'source-a', stableId: 'restored' },
+      items: [testDataItem('restored')],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      context: 'history',
+    })
+    internals.runtime.applyLoadedSegment(historySegment)
+    await (session as unknown as {
+      loadEdge(event: MessageListRuntimeEvent): Promise<void>
+    }).loadEdge({
+      type: 'needMoreAfter',
+      edge: 'after',
+      sessionId: 'source-a',
+      generation: historySegment.generation,
+      segmentRevision: historySegment.segmentRevision,
+      requestToken: 'source-a:after:history-test',
+      reason: 'command-after',
+    })
+    await waitFor(() => internals.loadedSegmentStore.getSegment().context === 'latest')
+
+    expect(loadAfter).toHaveBeenCalledWith(expect.objectContaining({
+      trigger: 'command',
+      boundaryRow: { id: 'restored' },
+    }))
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
+      .toEqual(['restored', 'tail'])
+    expect(internals.getSnapshot().pendingIntent).not.toBe('follow-bottom')
   })
 
   it('publishes event-driven around requests instead of self-staling them', async () => {
@@ -339,6 +443,101 @@ describe('createMessageListSessionRegistry', () => {
 
     expect(requestResults).toContain('around:applied')
     expect(requestResults).not.toContain('around:stale')
+  })
+
+  it('keeps around context when around request reports reachedLatest', async () => {
+    const diagnostics: string[] = []
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => Promise.resolve(page(['target'], {
+          reachedLatest: true,
+          hasMoreAfter: false,
+        })),
+      }),
+      onRuntimeEvent: (event) => {
+        if (event.diagnostic) diagnostics.push(event.diagnostic.name)
+      },
+    })
+    const session = manager.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
+    session.commands.scrollToMessage({ id: 'target' })
+    await waitFor(() =>
+      internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'target'
+    )
+
+    expect(diagnostics).toContain('aroundReachedLatestIgnored')
+    expect(internals.loadedSegmentStore.getSegment().context).toBe('around')
+  })
+
+  it('downgrades invalid viewport trigger on non-edge requests', async () => {
+    const diagnostics: string[] = []
+    const requestResults: string[] = []
+    const loadAround = vi.fn(() => Promise.resolve(page(['target'])))
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadAround }),
+      onRuntimeEvent: (event) => {
+        if (event.diagnostic) diagnostics.push(event.diagnostic.name)
+      },
+      onRequestResult: (result) => {
+        requestResults.push(`${result.kind}:${result.trigger}:${result.status}`)
+      },
+    })
+    const session = manager.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
+    await (session as unknown as {
+      loadAround(
+        target: { sessionId: string; stableId: string },
+        event: undefined,
+        options: { trigger: 'viewport' },
+      ): Promise<void>
+    }).loadAround({ sessionId: 'source-a', stableId: 'target' }, undefined, {
+      trigger: 'viewport',
+    })
+
+    expect(diagnostics).toContain('requestTrigger.invalidViewportUse')
+    expect(loadAround).toHaveBeenLastCalledWith(expect.objectContaining({
+      trigger: 'internal',
+    }))
+    expect(requestResults).toContain('around:internal:applied')
+  })
+
+  it('rejects reachedLatest pages that still report hasMoreAfter', async () => {
+    const diagnostics: string[] = []
+    const requestResults: string[] = []
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => Promise.resolve(page(['target'], {
+          reachedLatest: true,
+          hasMoreAfter: true,
+        })),
+      }),
+      onRuntimeEvent: (event) => {
+        if (event.diagnostic) diagnostics.push(event.diagnostic.name)
+      },
+      onRequestResult: (result) => {
+        requestResults.push(`${result.kind}:${result.status}`)
+      },
+    })
+    const session = manager.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
+    session.commands.scrollToMessage({ id: 'target' })
+    await waitFor(() => requestResults.includes('around:failed'))
+
+    expect(diagnostics).toContain('page.reachedLatestHasMoreAfter')
+    expect(internals.loadedSegmentStore.getSegment().items[0]?.message?.id)
+      .not.toBe('target')
   })
 
   it('forwards runtime events as serializable log events', async () => {
@@ -440,6 +639,36 @@ describe('createMessageListSessionRegistry', () => {
     expect(internals.getSnapshot().segmentMeta.hasMoreAfter).toBe(false)
     expect(requestResults).toContain('latest:applied')
     expect(requestResults).not.toContain('latest:stale')
+  })
+
+  it('loads latest when scrollToLatest starts from around context without after edge', async () => {
+    const loadLatest = vi.fn(() => Promise.resolve(page(['tail'])))
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadLatest }),
+    })
+    const session = manager.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+
+    await waitFor(() => internals.getSnapshot().items.length === 1)
+    loadLatest.mockClear()
+    session.rows.resetAround({
+      target: { id: 'middle' },
+      rows: [{ id: 'middle' }],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+      anchor: { id: 'middle' },
+    })
+
+    session.commands.scrollToLatest()
+
+    await waitFor(() => internals.getSnapshot().items[0]?.message?.id === 'tail')
+
+    expect(loadLatest).toHaveBeenCalledWith(expect.objectContaining({
+      trigger: 'command',
+    }))
+    expect(internals.getSnapshot().segmentMeta.context).toBe('latest')
   })
 
   it('threads registry scrollMotion into runtime and disables follow-bottom and jump motion without rebuilding the session', async () => {
@@ -923,8 +1152,9 @@ describe('createMessageListSessionRegistry', () => {
       ])
   })
 
-  it('queues local tail rows from a non-latest segment and merges them into latest', async () => {
+  it('rejects local tail rows from a non-latest segment without a latest baseline', async () => {
     const pendingLatest: Array<(page: MessageListPage<TestRow>) => void> = []
+    const diagnostics: string[] = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
       getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
@@ -932,6 +1162,9 @@ describe('createMessageListSessionRegistry', () => {
           pendingLatest.push(resolve)
         }),
       }),
+      onRuntimeEvent: (event) => {
+        if (event.diagnostic) diagnostics.push(event.diagnostic.name)
+      },
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
@@ -951,21 +1184,11 @@ describe('createMessageListSessionRegistry', () => {
     const scrollToLatest = vi.spyOn(internals.runtime, 'scrollToLatest')
     session.tail.local.stage({ id: 'local', text: 'sending' })
 
-    expect(scrollToLatest).toHaveBeenCalledTimes(1)
+    expect(scrollToLatest).toHaveBeenCalledTimes(0)
+    expect(diagnostics).toContain('localTailStage.missingLatest')
     expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
       .toEqual(['middle'])
-
-    await waitFor(() => pendingLatest.length === 2)
-    pendingLatest[1](page(['tail-2']))
-    await waitFor(() =>
-      internals.loadedSegmentStore.getSegment().items.some((item) =>
-        item.message?.id === 'local'
-      ),
-    )
-
-    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
-      .toEqual(['tail-2', 'local'])
-    expect(internals.loadedSegmentStore.getSegment().hasMoreAfter).toBe(false)
+    expect(pendingLatest).toHaveLength(1)
   })
 
   it('uses local tail latest input to rebuild latest without requesting latest again', async () => {
@@ -995,10 +1218,10 @@ describe('createMessageListSessionRegistry', () => {
 
     session.tail.local.stage({
       rows: [{ id: 'local' }],
-      latest: page(['tail', 'local'], {
+      latest: page(['tail'], {
         hasMoreBefore: true,
         hasMoreAfter: false,
-        anchorId: 'local',
+        anchorId: 'tail',
       }),
     })
     unsubscribe()
@@ -1010,6 +1233,38 @@ describe('createMessageListSessionRegistry', () => {
     expect(runtimeEvents.map((event) => event.type))
       .not.toContain('needLatestMessages')
     expect(internals.getSnapshot().pendingIntent).toBe('follow-bottom')
+  })
+
+  it('rejects local tail latest baseline that duplicates staged row keys', async () => {
+    const diagnostics: string[] = []
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+      onRuntimeEvent: (event) => {
+        if (event.diagnostic) diagnostics.push(event.diagnostic.name)
+      },
+    })
+    const session = manager.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+
+    await waitFor(() => internals.loadedSegmentStore.getSegment().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'middle' },
+      rows: [{ id: 'middle' }],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      anchor: { id: 'middle' },
+    })
+
+    session.tail.local.stage({
+      rows: [{ id: 'local' }],
+      latest: page(['tail', 'local']),
+    })
+
+    expect(diagnostics).toContain('localTailStage.duplicateRowKey')
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
+      .toEqual(['middle'])
   })
 
   it('clears pending local tail rows when the host locally resets the segment', async () => {
@@ -1037,13 +1292,17 @@ describe('createMessageListSessionRegistry', () => {
       hasMoreAfter: true,
       anchor: { id: 'middle' },
     })
-    session.tail.local.stage({ id: 'local', text: 'sending' })
-    await waitFor(() => pendingLatest.length === 2)
+    session.tail.local.stage({
+      rows: [{ id: 'local', text: 'sending' }],
+      latest: page(['tail-2']),
+    })
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
+      .toEqual(['tail-2', 'local'])
 
     session.rows.clear()
     session.commands.reloadLatest()
-    await waitFor(() => pendingLatest.length === 3)
-    pendingLatest[2](page(['fresh']))
+    await waitFor(() => pendingLatest.length === 2)
+    pendingLatest[1](page(['fresh']))
 
     await waitFor(() =>
       internals.loadedSegmentStore.getSegment().items[0]?.message?.id === 'fresh'
@@ -1079,10 +1338,10 @@ describe('createMessageListSessionRegistry', () => {
 
     session.tail.local.stage({
       rows: [{ id: 'retry-server', text: 'sent' }],
-      latest: page(['tail', 'failed-local', 'retry-server'], {
+      latest: page(['tail', 'failed-local'], {
         hasMoreBefore: true,
         hasMoreAfter: false,
-        anchorId: 'retry-server',
+        anchorId: 'failed-local',
       }),
       reason: 'retry',
       retireKeys: ['failed-local'],
@@ -1262,9 +1521,13 @@ describe('createMessageListSessionRegistry', () => {
   })
 
   it('does not insert remote tail append into a non-latest segment', async () => {
+    const diagnostics: string[] = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
       getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal'),
+      onRuntimeEvent: (event) => {
+        if (event.diagnostic) diagnostics.push(event.diagnostic.name)
+      },
     })
     const session = manager.getSession('source-a')
     const internals = getMessageListSessionInternals(session)
@@ -1281,6 +1544,7 @@ describe('createMessageListSessionRegistry', () => {
 
     session.tail.remote.append({ id: 'remote' })
 
+    expect(diagnostics).toContain('remoteTailAppend.outsideLatestContext')
     expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
       .toEqual(['middle'])
     expect(internals.loadedSegmentStore.getSegment().modifier.type).toBe('reset-around')
@@ -1477,7 +1741,7 @@ function page(
   ids: string[],
   options: Partial<Pick<
     MessageListPage<TestRow>,
-    'hasMoreBefore' | 'hasMoreAfter'
+    'hasMoreBefore' | 'hasMoreAfter' | 'reachedLatest'
   >> & {
     anchorId?: string
   } = {},
@@ -1486,9 +1750,25 @@ function page(
     rows: ids.map((id) => ({ id })),
     hasMoreBefore: options.hasMoreBefore ?? false,
     hasMoreAfter: options.hasMoreAfter ?? false,
+    reachedLatest: options.reachedLatest,
     anchor: options.anchorId
       ? { id: options.anchorId }
       : ids.at(-1) ? { id: ids.at(-1) } : undefined,
+  }
+}
+
+function testDataItem(id: string): MessageDataItem<TestRow> {
+  return {
+    key: id,
+    rowKind: 'message',
+    renderVersion: 1,
+    message: { id },
+    identity: {
+      sessionId: 'source-a',
+      stableId: id,
+      serverId: id,
+      version: 1,
+    },
   }
 }
 

@@ -37,6 +37,7 @@ export function createInitialSnapshot<TMessage, TOptimistic>(
     segmentMeta: {
       hasMoreBefore: false,
       hasMoreAfter: false,
+      context: 'latest',
       modifier: { type: 'bootstrap' },
       shortSegmentAlignment: 'start',
       underflow: 'unknown',
@@ -73,6 +74,7 @@ export function createSnapshotFromSegment<TMessage, TOptimistic>(
     segmentMeta: {
       hasMoreBefore: segment.hasMoreBefore,
       hasMoreAfter: segment.hasMoreAfter,
+      context: segment.context,
       modifier: segment.modifier,
       anchor: segment.anchor,
       anchorStatus: segment.anchorStatus,

@@ -133,6 +133,7 @@ function segment(items: MessageDataItem<string>[]): LoadedSegment<string> {
     items,
     hasMoreBefore: false,
     hasMoreAfter: false,
+    context: 'latest',
     modifier: { type: 'reset-latest' },
   }
 }

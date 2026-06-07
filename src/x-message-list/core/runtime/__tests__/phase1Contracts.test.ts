@@ -29,6 +29,7 @@ it('exposes MessageList runtime contracts without legacy viewport names', () => 
     items: [item],
     hasMoreBefore: false,
     hasMoreAfter: false,
+    context: 'latest',
     modifier: { type: 'bootstrap' },
   }
 

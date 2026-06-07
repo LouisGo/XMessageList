@@ -388,10 +388,8 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   reportOverlayMetricMismatch(details: Record<string, unknown>): void { this.pushDiagnostic('overlay.metricMismatch', 'warn', details) }
   reportOverlayDiagnostic(name: string, details: Record<string, unknown>): void { if (name.startsWith('overlay.')) this.pushDiagnostic(name, 'debug', details) }
   getSegmentSizeSnapshot(): RuntimeSegmentSizeSnapshot { return createSegmentSizeSnapshot(this.measurementHost()) }
-  prepareFollowBottomForLocalReset(): void {
-    this.cancelCommandMotion()
-    this.applyInteractionUpdate(this.interactions.startFollowBottomForLocalReset(this.snapshot, this.readCurrentScrollTop()))
-  }
+  prepareFollowBottomForLocalReset(): void { this.cancelCommandMotion(); this.applyInteractionUpdate(this.interactions.startFollowBottomForLocalReset(this.snapshot, this.readCurrentScrollTop())) }
+  reportSessionDiagnostic(name: string, severity: 'debug' | 'info' | 'warn' | 'error', details: Record<string, unknown> = {}): void { this.pushDiagnostic(name, severity, { sessionId: this.snapshot.sessionId, ...details }) }
   private correctAnchor(
     anchor: VisualAnchor | null,
     segment: LoadedSegment<TMessage, TOptimistic>,

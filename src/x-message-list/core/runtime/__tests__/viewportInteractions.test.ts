@@ -723,6 +723,33 @@ describe('MessageList viewport interactions', () => {
     expect(container.scrollTop).toBe(50)
     expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
   })
+  it('requests latest when following from a non-latest context without after edge', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rowA = createRow('row-1', 0, 50)
+    const events: MessageListRuntimeEvent[] = []
+    container.append(rowA)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', rowA)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      context: 'around',
+      hasMoreAfter: false,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    runtime.scrollToLatest()
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'needLatestMessages',
+      reason: 'bottom-follow',
+    }))
+    expect(runtime.getSnapshot()).toMatchObject({
+      pendingIntent: 'follow-bottom',
+      bottomLockState: 'UNLOCKED',
+    })
+  })
   it('stabilizes dynamic height changes above the visual anchor', () => {
     const scheduler = new FakeScheduler()
     const observers = createFakeObservers()
@@ -881,6 +908,7 @@ function segment(
     hasMoreAfter: false,
     modifier: { type: 'bootstrap' },
     ...overrides,
+    context: overrides.context ?? 'latest',
   }
 }
 function createRow(key: string, top: number, height: number): HTMLDivElement {

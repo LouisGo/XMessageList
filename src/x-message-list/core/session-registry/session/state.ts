@@ -82,6 +82,7 @@ function createState<Row>(
       keys: snapshot.items.map((item) => item.key),
       hasMoreBefore: snapshot.segmentMeta.hasMoreBefore,
       hasMoreAfter: snapshot.segmentMeta.hasMoreAfter,
+      context: snapshot.segmentMeta.context,
     },
     edge: {
       before: { status: snapshot.edgeState.before.status },

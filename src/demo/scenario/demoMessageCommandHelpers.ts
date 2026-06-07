@@ -1,3 +1,4 @@
+import type { MessageListPage } from '../../index'
 import {
   createOutgoingMessage,
   type DemoMessage,
@@ -58,6 +59,29 @@ export function createRetriedOutgoingMessage(input: {
     sendStatus: 'sent',
     sendAttempt: target.sendAttempt,
     sendError: undefined,
+  }
+}
+
+export function createDemoLatestPage(input: {
+  feedId: string
+  messages: DemoMessage[]
+  pageSize: number
+}): MessageListPage<DemoMessage> {
+  const latest = input.messages.slice(Math.max(0, input.messages.length - input.pageSize))
+  const latestMessage = latest.at(-1)
+  return {
+    rows: latest,
+    hasMoreBefore: input.messages.length > input.pageSize,
+    hasMoreAfter: false,
+    anchor: latestMessage
+      ? {
+          id: latestMessage.id,
+          sessionId: input.feedId,
+          stableId: latestMessage.id,
+          serverId: latestMessage.id,
+        }
+      : undefined,
+    anchorStatus: 'normal',
   }
 }
 

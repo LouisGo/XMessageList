@@ -12,6 +12,24 @@ export type MessageListSegmentRetention =
   | 'balanced'
   /** 高保留，适合频繁切换或关键会话。 */
   | 'high'
+/** 当前 loaded rows 的语义上下文。 */
+export type MessageListLoadedContext =
+  /** 当前窗口代表源最新消息区间。 */
+  | 'latest'
+  /** 当前窗口代表被恢复的非最新历史阅读区间。 */
+  | 'history'
+  /** 当前窗口代表围绕用户目标构建的跳转区间。 */
+  | 'around'
+/** 数据请求的语义触发来源。 */
+export type MessageListRequestTrigger =
+  /** 真实 mounted viewport 的 before/after edge need。 */
+  | 'viewport'
+  /** 用户或宿主命令触发。 */
+  | 'command'
+  /** anchor memory restore 触发。 */
+  | 'restore'
+  /** bootstrap、underflow 或内部恢复触发。 */
+  | 'internal'
 /** 锚点不可用时的 fallback 原因。 */
 export type AnchorFallbackReason =
   /** 目标消息已删除。 */
@@ -124,6 +142,8 @@ export type MessageListPage<Row> = {
   hasMoreBefore: boolean
   /** after 侧是否还有更多数据。 */
   hasMoreAfter: boolean
+  /** after page 证明已抵达最新区间。 */
+  reachedLatest?: boolean
   /** 页面推荐锚点；未传时 runtime 使用当前可见锚点或数据窗口推导。 */
   anchor?: MessageListAnchor
   /** 页面推荐锚点可用性；未传时不提供可用性状态，runtime 仅在异常状态存在时启用 fallback 语义。 */
@@ -173,6 +193,8 @@ export type MessageListRequestContext<Row, Source = MessageListSessionSource> = 
   pageSize: number
   /** runtime 请求 token；返回结果通过该 token 判 stale。 */
   requestToken?: string
+  /** 本次请求的结构化触发来源。 */
+  trigger: MessageListRequestTrigger
   /** 请求原因。 */
   reason?: string
   /** around 请求目标。 */
@@ -325,6 +347,8 @@ export type MessageListRequestResult<Row, Source> = {
     | 'failed'
     /** 请求结果已过期，被丢弃。 */
     | 'stale'
+  /** 本次请求的结构化触发来源。 */
+  trigger: MessageListRequestTrigger
   /** 成功返回的页面。 */
   page?: MessageListPage<Row>
   /** 失败时的错误对象。 */

@@ -206,7 +206,7 @@ return (
     renderTopPlaceholder={() => ...}
     renderOverlayStatus={({ status }) => ...}
     renderEmpty={({ reload }) => ...}
-    renderScrollToLatest={({ visibleByScroll, scrollToLatest }) => ...}
+    renderScrollToLatest={({ visibleByScroll, loadedContext, scrollToLatest }) => ...}
   />
 )
 ```
@@ -286,6 +286,13 @@ type MessageListLocalTailStageInput<Row> = {
 }
 ```
 
+`MessageListPage` 可携带 `reachedLatest?: boolean`，只用于 after page 证明历史窗口
+抵达 latest 边界；`loadLatest`、`rows.resetLatest(page)` 和
+`tail.local.stage({ latest })` 的 latest page 必须满足 `hasMoreAfter=false`。
+`MessageListRequestContext` / `MessageListRequestResult` 携带结构化
+`trigger: 'viewport' | 'command' | 'restore' | 'internal'`，`reason` 仅保留为
+诊断细节。
+
 `commands` 表示视口/请求意图；`rows`、`tail.local` 和 `tail.remote.append`
 是不可互换的三类 row 变化入口。`rows` 表示普通 row 变更入口，用于 edit、
 delete、reaction、read marker、media loaded、streaming patch、replace、clear
@@ -325,6 +332,8 @@ session 会用这个 window 做本地 latest rebuild 并继承 send-style follow
 不会再额外触发 `loadLatest` 或 runtime 的普通 latest request。`retireKeys` 对
 这条 rebuild 路径同样生效，旧占位必须在 reset latest 和 pending local tail 合并前
 被过滤掉。
+当当前 `state.loaded.context !== 'latest'` 时，`stage` 必须携带 `latest` baseline；
+缺失 baseline 属于 integration error，不会修改当前 rows。
 
 如果接入方把 retry 设计成重新发送，应创建新的业务 row，并把 retry 的业务等待拆成
 两段：先把旧 failed 占位原地 patch 为 retrying/loading，不触发 follow-bottom；

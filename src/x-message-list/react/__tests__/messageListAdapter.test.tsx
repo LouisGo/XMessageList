@@ -123,15 +123,10 @@ describe('MessageList React adapter', () => {
   it('uses session command for scroll-to-latest slot', async () => {
     const fixture = createSessionFixture({
       rows: ['row-1'],
-      hasMoreAfter: true,
     })
-    const events: string[] = []
     const host = document.createElement('div')
     const root = createRoot(host)
-
-    fixture.runtime.subscribeRuntimeEvent((event) => {
-      events.push(event.type)
-    })
+    const scrollToLatest = vi.spyOn(fixture.session.commands, 'scrollToLatest')
 
     await act(async () => {
       root.render(
@@ -144,6 +139,13 @@ describe('MessageList React adapter', () => {
         />,
       )
     })
+    await act(async () => {
+      fixture.session.rows.resetAround({
+        ...page(['row-1'], { hasMoreAfter: true }),
+        target: { id: 'row-1' },
+      })
+      await waitForAnimationFrame()
+    })
 
     await act(async () => {
       host.querySelector('button')?.dispatchEvent(
@@ -151,7 +153,7 @@ describe('MessageList React adapter', () => {
       )
     })
 
-    expect(events).toContain('needLatestMessages')
+    expect(scrollToLatest).toHaveBeenCalledTimes(1)
 
     await act(async () => {
       root.unmount()
@@ -159,37 +161,47 @@ describe('MessageList React adapter', () => {
     fixture.destroy()
   })
 
-  it('hides scroll-to-latest slot while follow-bottom is pending', async () => {
+  it('passes loaded context into the scroll-to-latest slot', async () => {
     const fixture = createSessionFixture({
       rows: ['row-1'],
-      hasMoreAfter: true,
     })
     const host = document.createElement('div')
     const root = createRoot(host)
+    const loadedContexts: string[] = []
 
     await act(async () => {
       root.render(
         <MessageList
           session={fixture.session}
           renderRow={({ row }) => <span>{row}</span>}
-          renderScrollToLatest={({ visibleByScroll, scrollToLatest }) =>
-            visibleByScroll ? (
+          renderScrollToLatest={({ visibleByScroll, loadedContext, scrollToLatest }) => {
+            loadedContexts.push(loadedContext)
+            return loadedContext !== 'latest' || visibleByScroll ? (
               <button type="button" onClick={scrollToLatest}>Latest</button>
             ) : null
-          }
+          }}
         />,
       )
     })
+    await act(async () => {
+      fixture.session.rows.resetAround({
+        ...page(['row-1'], { hasMoreAfter: true }),
+        target: { id: 'row-1' },
+      })
+      await waitForAnimationFrame()
+    })
 
     expect(host.querySelector('button')).not.toBeNull()
+    expect(loadedContexts).toContain('around')
 
     await act(async () => {
       host.querySelector('button')?.dispatchEvent(
         new MouseEvent('click', { bubbles: true }),
       )
+      await waitForAnimationFrame()
     })
 
-    expect(fixture.runtime.getSnapshot().pendingIntent).toBe('follow-bottom')
+    expect(loadedContexts).toContain('latest')
     expect(host.querySelector('button')).toBeNull()
 
     await act(async () => {
@@ -1140,7 +1152,7 @@ function createSessionFixture(input: {
   const registry = createMessageListSessionRegistry<string>({
     getAdapter: () => createStringAdapter(input.rows, {
       hasMoreBefore: input.hasMoreBefore,
-      hasMoreAfter: input.hasMoreAfter,
+      hasMoreAfter: false,
       sessionId,
     }),
   })
@@ -1150,11 +1162,20 @@ function createSessionFixture(input: {
   releaseBootstrapRetain()
   const runtime = sessionInternals.runtime
 
-  session.rows.resetLatest(page(input.rows, {
+  const fixturePage = page(input.rows, {
     hasMoreBefore: input.hasMoreBefore,
     hasMoreAfter: input.hasMoreAfter,
     sessionId,
-  }))
+  })
+
+  if (input.hasMoreAfter) {
+    session.rows.resetAround({
+      ...fixturePage,
+      target: { id: input.rows.at(-1) ?? 'target' },
+    })
+  } else {
+    session.rows.resetLatest(fixturePage)
+  }
 
   return {
     session,
@@ -1192,6 +1213,7 @@ function createFlowSnapshot(input: {
     segmentMeta: {
       hasMoreBefore: input.hasMoreBefore,
       hasMoreAfter: false,
+      context: 'latest',
       modifier: { type: 'reset-latest' },
       shortSegmentAlignment: 'start',
       underflow: 'settled',

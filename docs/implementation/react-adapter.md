@@ -90,10 +90,11 @@ session view state。overlay slot 不订阅 viewport observation，避免滚动�
 额外 React state 打断。
 
 `renderScrollToLatest(input)` 接收 `visibleByScroll` 这类阈值化 scroll-side
-语义信号，不接收连续 `distanceToBottom`。adapter 只在阈值布尔值变化时刷新
+语义信号和 `loadedContext`。`visibleByScroll` 不接收连续 `distanceToBottom`，
+也不包含 loaded context、未读数或 host 策略；adapter 只在阈值布尔值变化时刷新
 slot，避免滚动过程按 observation 频率重渲染。最终按钮是否展示可以由业务组件
-结合未读数等 host-owned 信号决定；page focus 这类 host-owned 状态不由 render
-slot 透传。
+组合 `loadedContext !== 'latest' || visibleByScroll || unreadCount > 0` 决定；
+page focus 这类 host-owned 状态不由 render slot 透传。
 
 `renderBeforeStatus` / `renderAfterStatus` 的 `retry()` 只能回调 adapter-private `retryEdgeRequest(edge)`；slot 不持有 request token，不直接请求 SDK。
 
