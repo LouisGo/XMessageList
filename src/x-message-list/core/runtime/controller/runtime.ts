@@ -17,6 +17,7 @@ import type {
   ViewportEvidence,
 } from '../contracts/snapshot'
 
+// 公开 facade 只暴露宿主可调用的视口能力；React adapter 专用 DOM 注册能力在 internal.ts 扩展。
 export type MessageListRuntime<TMessage = unknown, TOptimistic = unknown> = {
   attachScrollContainer(container: HTMLElement): void
   detachScrollContainer(): void

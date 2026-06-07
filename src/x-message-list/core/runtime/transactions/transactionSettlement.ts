@@ -53,6 +53,7 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
   } = options
 
   if (destination && segment.modifier.type === 'reset-around') {
+    // 显式 destination 优先：reset-around 的目标对齐语义高于普通锚点保持。
     return settleResetAround({
       snapshot,
       segment,
@@ -85,6 +86,7 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
       snapshot.pendingIntent === 'follow-bottom'
 
     if (segment.modifier.follow === 'follow' || shouldForceBottom) {
+      // 源底部 append 且仍处于 follow 语义时，结算到真实 bottom，而不是保留旧视觉锚点。
       return settleBottomMotion(
         domInteractions,
         'followBottom',

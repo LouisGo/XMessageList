@@ -60,6 +60,7 @@ export type RuntimeMeasurementCacheContext = {
   dirtyKeys?: Iterable<MessageRuntimeItemKey>
 }
 
+// 行度量缓存保存 content 坐标系下的高度和位置，用于滚动采样、resize 局部测量和 size snapshot。
 export class RuntimeRowMetricCache {
   private readonly rowMetricsByKey = new Map<MessageRuntimeItemKey, RuntimeRowSizeRecord>()
   private rowMetricOrder: RuntimeRowSizeRecord[] = []
@@ -302,6 +303,7 @@ export class RuntimeRowMetricCache {
     }
 
     if (visibleKeys.length === 0) {
+      // cache 可能因 scrollTop 跳变暂时找不到可见行；退到 overscan 窗口，避免整表读 rect。
       const keys = collectMetricWindow(this.rowMetricOrder, sampleStart, sampleEnd, limit)
       return keys.length > 0 ? keys : undefined
     }
@@ -545,6 +547,7 @@ function findFirstMetricEndingAfter(
   metrics: RuntimeRowSizeRecord[],
   threshold: number,
 ): number {
+  // rowMetricOrder 按 contentTop 排序，contentBottom 单调时可二分定位首个可能可见行。
   let low = 0
   let high = metrics.length
 

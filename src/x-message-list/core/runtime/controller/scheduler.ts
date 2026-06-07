@@ -3,6 +3,7 @@ import type { RuntimeScheduler } from '../contracts/options'
 let nextFallbackTimerId = 1
 const fallbackTimers = new Map<number, ReturnType<typeof globalThis.setTimeout>>()
 
+// scheduler 抽象让 runtime tests 可控；浏览器缺 RAF 时用 timeout 近似一帧。
 export function createDefaultScheduler(): RuntimeScheduler {
   return {
     requestAnimationFrame: (callback) => {

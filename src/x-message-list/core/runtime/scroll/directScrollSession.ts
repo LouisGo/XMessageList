@@ -12,6 +12,7 @@ export type DirectScrollSessionSnapshot = DirectScrollSessionState & {
   edgeIntent: RuntimeEdge | null
 }
 
+// custom scrollbar 拖拽的边缘意图状态机；防止一次拖到边缘后重复触发同一侧加载。
 export class DirectScrollSession {
   private state: DirectScrollSessionState = { status: 'IDLE' }
 
@@ -89,6 +90,7 @@ export class DirectScrollSession {
       return null
     }
 
+    // pending 期间若 overlay 已按新 metrics rebased，继续允许拖拽产生下一次 edge intent。
     this.state = this.rebasedWhilePending
       ? { status: 'DRAGGING_REBASED' }
       : { status: 'REBOUND_BLOCKED', edge: this.state.edge }

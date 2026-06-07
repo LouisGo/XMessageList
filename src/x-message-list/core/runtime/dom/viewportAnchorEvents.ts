@@ -19,6 +19,7 @@ export type ViewportAnchorEventInput =
   | null
   | ResolvedViewportAnchor
 
+// 优先实时捕获 viewport 顶部锚点；容器不可测时才回退到上次 runtime anchor。
 export function resolveCurrentViewportAnchor<TMessage, TOptimistic>(input: {
   registry: RuntimeDomRegistry
   snapshot: MessageListSnapshot<TMessage, TOptimistic>
@@ -87,6 +88,7 @@ export function resolveViewportAnchorEventInput(input: {
     return { anchor: input.eventInput }
   }
 
+  // 调用方传入裸 anchor 时，只有它仍是当前可视锚点，才继承 offsetWithinMessage。
   const current = input.resolveCurrent()
   if (current.anchor && isSameAnchorIdentity(input.eventInput, current.anchor)) {
     return {

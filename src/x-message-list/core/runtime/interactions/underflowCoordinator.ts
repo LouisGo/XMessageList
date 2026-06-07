@@ -74,6 +74,7 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
     const requestKey = `${snapshot.sessionId}:${snapshot.generation}:${snapshot.segmentRevision}:${edge}`
 
     if (this.requests.has(requestKey)) {
+      // 同一 revision 同一 edge 已请求过，继续等待数据层返回，避免 underflow 自旋。
       return null
     }
 

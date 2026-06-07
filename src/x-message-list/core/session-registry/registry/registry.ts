@@ -254,6 +254,7 @@ export class ApplicationMessageListSessionRegistry<Row, Source = MessageListSess
 
 }
 
+/** 创建 MessageList session registry；每个 registry 管理多个 session 的数据请求、缓存和 runtime 生命周期。 */
 export function createMessageListSessionRegistry<
   Row,
   Source = MessageListSessionSource,

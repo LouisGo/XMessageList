@@ -2,6 +2,7 @@ import type { MessageIdentityAnchor, MessageRuntimeItemKey } from '../contracts/
 import type { LoadedSegment } from '../contracts/segment'
 import type { MessageListSnapshot } from '../contracts/snapshot'
 
+// interaction-only snapshot 变更也要递增 projectionRevision，确保 React adapter 收到新 commitToken。
 export function withNextProjectionRevision<TMessage, TOptimistic>(
   snapshot: MessageListSnapshot<TMessage, TOptimistic>,
 ): MessageListSnapshot<TMessage, TOptimistic> {
@@ -28,6 +29,7 @@ export function resolveRemappedAnchorKey<TMessage, TOptimistic>(
     return key
   }
 
+  // optimistic -> confirmed remap 后，旧 visual anchor 需要落到 nextKey 才能继续修正。
   const remap = segment.modifier.remaps.find((candidate) =>
     candidate.previousKey === key || candidate.nextKey === key
   )

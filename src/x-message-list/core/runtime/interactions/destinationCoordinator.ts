@@ -43,6 +43,7 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     intent: DestinationIntent,
   ): InteractionUpdate<TMessage, TOptimistic> {
+    // destination 先请求 around 数据；若目标已在本地，controller/motion 会绕过这里直接 settle。
     this.pending = intent
     this.lastDirection = resolveDestinationDirection(intent)
     this.axes.markDestinationPending()

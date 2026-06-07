@@ -99,6 +99,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     this.disconnectEdgeObservers()
     this.options.registry.setScrollContainer(container)
     if (this.detachedScrollTop !== null) {
+      // warm attach 先恢复上次 scrollTop，下一帧再按新 scrollHeight clamp，减少切 session 白屏跳动。
       this.restoreDetachedScrollTop(container, this.detachedScrollTop)
     } else {
       this.lastKnownScrollTop = container.scrollTop
@@ -161,6 +162,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     this.cancelAttachRestore()
     this.options.onUserScrollIntent()
     this.markEdgeSourceActive(this.options.scheduler.now())
+    // 直接滚动写入也要记录 edge intent，拖拽到边缘后由 post-commit 阶段统一发 needMore。
     const edgeIntent = resolveDirectScrollEdgeIntent(
       scrollTop,
       container,
@@ -358,6 +360,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
         entries.some((entry) => entry.isIntersecting) &&
         this.isEdgeSourceActive()
       ) {
+        // IntersectionObserver 只在近期用户/直接滚动活跃时触发加载，避免布局变化自发拉数据。
         this.options.onEdgeIntersect(edge)
       }
     }, {

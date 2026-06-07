@@ -23,6 +23,7 @@ export function createViewportObservationEvent<TMessage, TOptimistic>(input: {
   previousScrollTop: number
   anchor: ResolvedViewportAnchor
 }): ViewportObservationChangedEvent {
+  // clientHeight 为 0 通常表示测试/未布局环境，此时保留测量行用于断言，不按可见比例过滤。
   const visibleItems = input.measurement.clientHeight === 0
     ? input.measurement.visibleRows.map((row) => ({
         key: row.key,
@@ -68,6 +69,7 @@ export function createDestinationSettledEvent<TMessage, TOptimistic>(input: {
   destination: DestinationIntent
   resolvedTarget: MessageIdentityAnchor | null
 }): DestinationSettledEvent {
+  // deleted/unavailable 等 fallback 也会 settle，但 resolution 必须暴露是否命中原始目标。
   const resolution = input.resolvedTarget &&
     isSameAnchorIdentity(input.destination.target, input.resolvedTarget)
     ? 'target'
@@ -208,6 +210,7 @@ function resolvePreferredTrimSide<TMessage, TOptimistic>(
     : -1
 
   if (index >= 0) {
+    // 优先裁剪离 anchor 更远的一侧，降低后续锚点恢复失败概率。
     return index <= (snapshot.items.length - 1) / 2 ? 'after' : 'before'
   }
 

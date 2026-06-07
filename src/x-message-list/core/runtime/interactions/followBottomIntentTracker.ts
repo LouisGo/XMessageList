@@ -9,6 +9,7 @@ type FollowBottomIntent = {
 
 const USER_SCROLL_DIRECTION_EPSILON_PX = 1
 
+// follow-bottom intent 只在同一 session/generation 内有效；用户向上滚动即取消。
 export class FollowBottomIntentTracker<TMessage, TOptimistic> {
   private intent: FollowBottomIntent | null = null
 

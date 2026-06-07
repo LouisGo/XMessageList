@@ -3,6 +3,7 @@ import type { RuntimeScheduler } from '../contracts/options'
 
 const DEFAULT_DIAGNOSTIC_LIMIT = 80
 
+// 内存诊断只保留最近窗口；需要长期复现时由外层把 runtime event 落盘。
 export class DiagnosticRingBuffer {
   private readonly records: ViewportDiagnosticRecord[] = []
 

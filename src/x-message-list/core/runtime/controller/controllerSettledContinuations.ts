@@ -48,6 +48,7 @@ export function startPendingRuntimeMotion<TMessage, TOptimistic>(
     return true
   }
 
+  // motion 因配置或小距离同步 settle 时，也必须补齐 observation/anchor/destination 事件。
   callbacks.setViewportPhase('IDLE')
   callbacks.emitViewportObservation(
     'transaction-settle',

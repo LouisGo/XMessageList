@@ -5,6 +5,7 @@ import type {
 } from '../../core/session-registry/index'
 import { MessageListSessionRegistryContext } from '../components/MessageListSessionRegistryContext'
 
+/** 从最近的 MessageListSessionRegistryProvider 中按 sessionId 获取 session。 */
 export function useMessageListSession<Row = unknown>(
   sessionId: MessageListSessionId,
 ): MessageListSession<Row> {

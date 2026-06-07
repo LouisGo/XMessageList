@@ -235,6 +235,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
       return 'inactive'
     }
 
+    // resize 会改变目标 DOM 坐标；继续原 targetTop 会停在错误位置。
     const targetTop = this.resolveRetargetTop(this.activeMotion.resolution)
 
     if (targetTop === null) {
@@ -336,6 +337,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
       reason === 'transaction-supersede' ||
       reason === 'restart'
     ) {
+      // 新事务/新 motion 会接管 phase 和 snapshot，旧 cancel 不能抢先清空 pending 状态。
       return
     }
 

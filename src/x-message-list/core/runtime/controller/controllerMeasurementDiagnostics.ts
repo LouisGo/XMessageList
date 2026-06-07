@@ -47,6 +47,7 @@ export function measureTransactionPrecheck<TMessage, TOptimistic>(
   },
 ): TransactionPrecheckMeasurement {
   const { dirtyRange, domInteractions, pending, pushDiagnostic, registry, snapshot } = input
+  // precheck 可以采样，目标是判断修正策略和记录证据，不作为最终 authoritative measurement。
   const resolvedDirtyRange = dirtyRange.resolve(snapshot)
   const plan = resolveTransactionPreCorrectionMeasurementPlan({
     anchor: pending.anchor,
@@ -80,6 +81,7 @@ export function measureTransactionFinal<TMessage, TOptimistic>(
   },
 ): RuntimeMeasurement {
   const { dirtyRange, pending, pushDiagnostic, registry } = input
+  // final measurement 固定全量读取，作为 settle 后 evidence/diagnostics 的权威样本。
   const measurement = measureRuntimeDom(registry.snapshot())
   emitTransactionFinalMeasurementDiagnostics({
     pushDiagnostic,

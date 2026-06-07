@@ -41,6 +41,7 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
     this.active.ensure(snapshot, scrollTop)
 
     if (!snapshot.segmentMeta.hasMoreAfter) {
+      // 已在源最新端时不发 needLatest，直接锁底并把短窗口对齐到底部。
       this.axes.markReadyIdle()
       this.axes.markDestinationSettled()
       return {
@@ -96,6 +97,7 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
     }
 
     if (segment.hasMoreAfter) {
+      // latest 请求仍未到源底部时继续保持 follow-bottom pending，等待下一段 reset-latest。
       this.axes.markFollowBottomPending()
       this.axes.markDestinationPendingData()
     } else {

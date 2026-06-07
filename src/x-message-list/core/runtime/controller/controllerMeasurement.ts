@@ -113,10 +113,12 @@ export function scheduleResizeMeasurementFrame<TMessage, TOptimistic>(host: Runt
     host.scrollIntent.incrementFrame()
     host.resizeFrame = null
     if (host.snapshot.viewportPhase === 'MOTION') {
+      // motion 期间 resize 只 retarget 动画；避免同时做 anchor correction 造成双重 scrollTop 写入。
       const result = host.motion.handleResizeDuringMotion()
       if (result !== 'inactive' && result !== 'cancelled') return
     }
     if (host.transactions.hasPending() || host.snapshot.viewportPhase !== 'IDLE') {
+      // projection/settle 未完成时推迟 resize 测量，保持 commit 流水线单写者。
       host.scheduleResizeMeasurement()
       return
     }
@@ -178,6 +180,7 @@ export function handleScrollFrame<TMessage, TOptimistic>(host: RuntimeController
     host.pushDiagnostic(name, severity, details)
   const previousScrollTop = host.lastMeasurement.scrollTop
   const scrollSource = host.scrollIntent.classifyFrameScroll()
+  // scroll idle 只采样视口附近行，避免每帧滚动把全部 DOM row 都读一遍。
   host.lastMeasurement = measureRuntimeDom(host.registry.snapshot(), {
     rowKeys: host.domInteractions.getScrollSampleKeys(),
   })

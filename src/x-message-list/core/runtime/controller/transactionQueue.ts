@@ -27,6 +27,7 @@ export type ProjectionTransactionEnqueueResult = {
   dropped: number
 }
 
+// projection 事务队列按 lane/priority 串行提交；可合并事务会丢弃被更新 revision 覆盖的旧项。
 export class ProjectionTransactionQueue<TMessage, TOptimistic> {
   private pending: PendingTransaction<TMessage, TOptimistic> | null = null
 
@@ -98,6 +99,7 @@ export class ProjectionTransactionQueue<TMessage, TOptimistic> {
 
     while (this.queue.length > 0) {
       const next = this.queue.shift()
+      // 出队时再次判 stale，覆盖 pending/motion 期间到达的更新。
       if (!next || isStaleLoadedSegment(next.segment, undefined, snapshot)) {
         continue
       }

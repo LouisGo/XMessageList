@@ -142,7 +142,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       return
     }
     this.cancelTransactionsBeforeGeneration(segment)
-    if (this.transactions.shouldQueue() || (this.motion.isActive() && policy.queueDuringMotion)) {
+    if (this.transactions.shouldQueue() || (this.motion.isActive() && policy.queueDuringMotion)) { // pending commit 未完成时先入队；仅 motion 占用时，不允许排队的 segment 会打断 motion 启动新事务。
       const queued = this.transactions.enqueue(segment, policy)
       this.stateAxes.markTransactionQueued()
       this.pushDiagnostic('transaction.queued', 'info', {
@@ -160,7 +160,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     markSegmentDirty(segment, this.measurementHost())
     const projectionRevision = this.snapshot.projectionRevision + 1
     const token = { sessionId: segment.sessionId, generation: segment.generation, segmentRevision: segment.segmentRevision, projectionRevision }
-    const anchor = captureVisualAnchor(this.registry.snapshot())
+    const anchor = captureVisualAnchor(this.registry.snapshot()) // React commit 前捕获 visual anchor，commit ack 后才能按新 DOM 位置做 scrollTop 修正。
     const timeoutHandle = this.scheduler.setTimeout(() => this.handleCommitTimeout(token), this.options.commitTimeoutMs ?? 120)
     this.transactions.setPending({
       token,
@@ -206,7 +206,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
         dirtyRange: this.dirtyRange,
       })
       this.lastMeasurement = precheck.measurement
-      if (shouldWaitForAnchorRef(pending, this.registry)) {
+      if (shouldWaitForAnchorRef(pending, this.registry)) { // React 可能先 ack 父级 commit，目标 row ref 下一帧才注册；只等一帧，避免无限挂起。
         pending.anchorRetryCount += 1
         this.pushDiagnostic('correction.anchorAwaitingRef', 'debug', {
           ...token,
@@ -258,7 +258,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.transactions.clearPending()
       this.stateAxes.markTransactionIdle()
       const shouldStartRuntimeMotion = scrollSettlement.kind === 'motion'
-      if (shouldStartRuntimeMotion) {
+      if (shouldStartRuntimeMotion) { // 先完成事务 settle，再让 continuation 启动 motion；队列里更高优先级事务仍可先执行。
         this.pendingRuntimeMotion = { settlement: scrollSettlement, scrollSource: transactionScrollSource, segment: pending.segment }
       }
       const latencyMs = this.scheduler.now() - pending.startedAt
@@ -303,7 +303,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     }
     this.applySettledTransactionContinuations({ evaluatePostCommitInteractions: false })
   }
-  private applySettledTransactionContinuations(options: { evaluatePostCommitInteractions?: boolean } = {}): void {
+  private applySettledTransactionContinuations(options: { evaluatePostCommitInteractions?: boolean } = {}): void { // continuation 顺序固定：队列事务 > 延迟 motion > post-commit underflow/direct-scroll。
     if (this.startNextQueuedTransaction()) return
     if (this.startPendingRuntimeMotion()) return
     if (options.evaluatePostCommitInteractions === false) return
@@ -505,7 +505,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     if (
       generation > this.snapshot.generation &&
       !shouldPreservePendingIntentForSegment(this.snapshot, segment)
-    ) {
+    ) { // 新 generation 会让旧 pending intent 的 requestToken 失效；只有匹配 follow/latest 或 destination/around 时保留。
       this.pendingRuntimeMotion = null
       this.snapshot = this.interactions.resetForGeneration(this.snapshot)
       this.syncScrollIntentBottomLock()

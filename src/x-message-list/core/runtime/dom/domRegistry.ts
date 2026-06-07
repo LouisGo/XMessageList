@@ -9,6 +9,7 @@ export type RuntimeDomRegistrySnapshot = {
   rows: Map<MessageRuntimeItemKey, HTMLElement>
 }
 
+// 保存 adapter 注册的当前 DOM refs；snapshot 返回 rows 副本，避免测量期间被外部迭代副作用影响。
 export class RuntimeDomRegistry {
   private scrollContainer: HTMLElement | null = null
   private messageFlow: HTMLElement | null = null

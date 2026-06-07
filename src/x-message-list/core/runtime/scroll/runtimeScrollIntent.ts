@@ -69,6 +69,7 @@ export class RuntimeScrollIntentCoordinator {
     )
     const userScrolledUp = isUserDrivenScroll(scrollSource) &&
       measurement.scrollTop < previousScrollTop - 1
+    // 仍有 after 数据或用户向上滚动时强制解锁；只有接近真实底部才允许重新锁定。
     const changed = snapshot.segmentMeta.hasMoreAfter || userScrolledUp
       ? this.scrollIntent.setBottomLockState('UNLOCKED')
       : this.scrollIntent.updateBottomLockFromDistance(

@@ -10,6 +10,7 @@ export function createViewportEvidence<TMessage, TOptimistic>(
   measurement: RuntimeMeasurement,
   pendingToken: ProjectionCommitToken | null,
 ): ViewportEvidence {
+  // evidence 是当前 viewport 可观测状态快照；pendingToken 优先展示未完成的 projection commit。
   return {
     sessionId: snapshot.sessionId,
     generation: snapshot.generation,

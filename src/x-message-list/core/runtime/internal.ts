@@ -5,6 +5,7 @@ import type { RuntimeSegmentSizeSnapshot } from './dom/rowMetricCache'
 
 export type { ProjectionCommitToken } from './contracts/snapshot'
 
+// React adapter 持有 DOM ref 和 commit ack，因此比公开 runtime 多出 DOM 注册与 direct-scroll 方法。
 export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown> =
   MessageListRuntime<TMessage, TOptimistic> & {
     registerMessageFlowElement(element: HTMLElement | null): void
@@ -25,6 +26,7 @@ export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown>
     notifyDirectScrollRebased(): void
   }
 
+// session-registry 只需要命令式数据/边缘请求入口，类型层不暴露 adapter 的 DOM 写入能力。
 export type MessageListSessionRegistryRuntime<TMessage = unknown, TOptimistic = unknown> =
   MessageListRuntime<TMessage, TOptimistic> & {
     prepareFollowBottomForLocalReset(): void

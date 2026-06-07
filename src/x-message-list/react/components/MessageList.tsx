@@ -205,6 +205,7 @@ function areMessageListPropsEqual<TMessage, TOptimistic>(
   return true
 }
 
+/** 渲染单个 MessageList session，并把 React commit ack、viewport events 和滚动条接入 runtime。 */
 export const MessageList = memo(
   MessageListInner,
   areMessageListPropsEqual,

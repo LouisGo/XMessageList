@@ -29,6 +29,7 @@ export function resolveTransactionPreCorrectionMeasurementPlan<TMessage, TOptimi
   }
 
   if (input.segment.modifier.type === 'reset-around') {
+    // reset-around 会重建目标附近窗口，旧局部采样不能代表新 DOM 分布。
     return fullMeasure('reset-around')
   }
 
@@ -82,6 +83,7 @@ function resolveMeasurementAnchor<TMessage, TOptimistic>(
     }
   }
 
+  // reset-latest 允许用 segment.anchor 兜底；它描述源最新窗口锚点，比旧 DOM anchor 更可信。
   if (input.segment.modifier.type !== 'reset-latest' || !input.segment.anchor) {
     return null
   }

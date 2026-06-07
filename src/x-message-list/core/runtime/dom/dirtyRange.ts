@@ -17,6 +17,7 @@ export type RuntimeDirtyRange = {
   missingKeys: MessageRuntimeItemKey[]
 }
 
+// dirty range 把 ResizeObserver/segment 变更压缩成测量计划；无法定位 key 时才退回全量测量。
 export class RuntimeDirtyRangeRegistry {
   private readonly keys = new Map<MessageRuntimeItemKey, RuntimeDirtyReason>()
   private allDirtyReason: RuntimeDirtyReason | null = null

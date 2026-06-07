@@ -23,6 +23,7 @@ export function createBrowserObserverFactory(): RuntimeObserverFactory | null {
 export function createInitialSnapshot<TMessage, TOptimistic>(
   sessionId: string,
 ): MessageListSnapshot<TMessage, TOptimistic> {
+  // 初始 commitToken 是空投影基线；后续 segment projection 会递增 projectionRevision。
   const commitToken = {
     sessionId,
     generation: 0,
@@ -109,10 +110,12 @@ function resolveShortSegmentAlignment<TMessage, TOptimistic>(
     previous.bottomLockState === 'LOCKED' ||
     segment.modifier.type === 'reset-latest'
   ) {
+    // latest/bottom-lock 短窗口要贴底，避免首屏短内容停在顶部。
     return 'end'
   }
 
   if (segment.modifier.type === 'reset-around') {
+    // around 短窗口居中，更接近跳转目标的用户预期。
     return 'center'
   }
 
