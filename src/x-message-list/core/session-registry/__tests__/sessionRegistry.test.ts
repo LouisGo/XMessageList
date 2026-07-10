@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createMessageListSessionRegistry,
   type MessageListAdapter,
+  type MessageListInitialWindow,
   type MessageListPage,
   type MessageListRuntimeLogDiagnosticRecord,
   type MessageListSession,
@@ -366,6 +367,113 @@ describe('createMessageListSessionRegistry', () => {
         offsetWithinMessage: 12,
       }),
     )
+  })
+
+  it('applies an atomic history initial window before anchorMemory or latest bootstrap', async () => {
+    const loadLatest = vi.fn(() => Promise.resolve(page(['latest'])))
+    const anchorLoad = vi.fn(() => ({ anchor: { id: 'stale-memory' } }))
+    const loadInitial = vi.fn(() => Promise.resolve({
+      context: 'history',
+      page: page(['before', 'restored', 'after'], {
+        hasMoreBefore: true,
+        hasMoreAfter: true,
+      }),
+      restore: {
+        anchor: { id: 'restored' },
+        offsetWithinMessage: 18,
+      },
+    } satisfies MessageListInitialWindow<TestRow>))
+    const requestResults: string[] = []
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => ({
+        ...createAdapter('normal', { loadInitial, loadLatest }),
+        anchorMemory: {
+          load: anchorLoad,
+          save: () => undefined,
+        },
+      }),
+      onRequestResult: (result) => {
+        requestResults.push(`${result.kind}:${result.status}`)
+      },
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+
+    await waitFor(() => requestResults.includes('initial:applied'))
+
+    expect(anchorLoad).not.toHaveBeenCalled()
+    expect(loadLatest).not.toHaveBeenCalled()
+    expect(session.getState().loaded).toMatchObject({
+      keys: ['before', 'restored', 'after'],
+      context: 'history',
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    })
+    expect(internals.loadedSegmentStore.getSegment().modifier).toEqual(
+      expect.objectContaining({
+        type: 'reset-around',
+        target: expect.objectContaining({ stableId: 'restored' }),
+        align: 'start',
+        offsetWithinMessage: 18,
+      }),
+    )
+  })
+
+  it('keeps latest initial windows under the strict latest contract', async () => {
+    const diagnostics: string[] = []
+    const requestResults: string[] = []
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadInitial: () => Promise.resolve({
+          context: 'latest',
+          page: page(['bad-latest'], { hasMoreAfter: true }),
+        }),
+      }),
+      onRuntimeEvent: (event) => {
+        if (event.diagnostic) diagnostics.push(event.diagnostic.name)
+      },
+      onRequestResult: (result) => {
+        requestResults.push(`${result.kind}:${result.status}`)
+      },
+    })
+    const session = registry.getSession('source-a')
+    startSession(session)
+
+    await waitFor(() => requestResults.includes('initial:failed'))
+
+    expect(diagnostics).toContain('page.latestHasMoreAfter')
+    expect(session.getState().loaded.keys).toEqual([])
+  })
+
+  it('rejects a history initial window whose restore target is absent', async () => {
+    const diagnostics: string[] = []
+    const requestResults: string[] = []
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadInitial: () => Promise.resolve({
+          context: 'history',
+          page: page(['other'], { hasMoreAfter: true }),
+          restore: { anchor: { id: 'missing' }, offsetWithinMessage: 4 },
+        }),
+      }),
+      onRuntimeEvent: (event) => {
+        if (event.diagnostic) diagnostics.push(event.diagnostic.name)
+      },
+      onRequestResult: (result) => {
+        requestResults.push(`${result.kind}:${result.status}`)
+      },
+    })
+    const session = registry.getSession('source-a')
+    startSession(session)
+
+    await waitFor(() => requestResults.includes('initial:failed'))
+
+    expect(diagnostics).toContain('page.initialRestoreTargetMissing')
+    expect(session.getState().loaded.keys).toEqual([])
   })
 
   it('promotes history to latest when after paging reaches latest without command follow-bottom', async () => {
@@ -2627,6 +2735,7 @@ function createAdapter(
       getVersion: (row) => row.text,
     },
     request: {
+      loadInitial: overrides.loadInitial,
       loadLatest: overrides.loadLatest ?? (() => Promise.resolve(
         page([`${label}-latest`]),
       )),

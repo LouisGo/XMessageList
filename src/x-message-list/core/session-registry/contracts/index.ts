@@ -2,6 +2,7 @@ export type {
   MessageListAdapter,
   MessageListAnchor,
   MessageListAnchorMemoryValue,
+  MessageListInitialWindow,
   MessageListLoadedContext,
   MessageListOverlayStatus,
   MessageListPage,

@@ -60,6 +60,20 @@ export function assertReachedLatestContract<Row>(
   }
 }
 
+export function assertInitialHistoryPageContract<Row>(input: {
+  items: MessageDataItem<Row>[]
+  report: ReportDiagnostic
+  target: MessageIdentityAnchor
+}): void {
+  const targetExists = input.items.some(
+    (item) => item.identity && anchorsMatch(item.identity, input.target),
+  )
+  if (targetExists) return
+
+  input.report('page.initialRestoreTargetMissing', 'error')
+  throw new MessageListContractViolation('page.initialRestoreTargetMissing')
+}
+
 export function hasDuplicateItemKeys<Row>(
   left: MessageDataItem<Row>[],
   right: MessageDataItem<Row>[],

@@ -32,6 +32,7 @@ export type {
   MessageListAdapter,
   MessageListAnchor,
   MessageListAnchorMemoryValue,
+  MessageListInitialWindow,
   MessageListSessionId,
   MessageListSessionSource,
   MessageListSegmentRetention,
@@ -152,6 +153,7 @@ type MessageListAdapter<Row, Source> = {
   }
 
   request: {
+    loadInitial?(ctx): Promise<MessageListInitialWindow<Row>>
     loadLatest(ctx): Promise<MessageListPage<Row>>
     loadBefore(ctx): Promise<MessageListPage<Row>>
     loadAfter(ctx): Promise<MessageListPage<Row>>
@@ -175,6 +177,8 @@ type MessageListAdapter<Row, Source> = {
 
 - 使用 `request`，不使用 `data`，因为这里放的是 host-side async page loading
   dependency，不是 XMessageList 的 public data model。
+- 使用可选 `loadInitial` 表达“首次进入时由宿主原子判定 latest/history”；它不是
+  `loadLatest` 别名，并在提供时优先于 `anchorMemory.load`。
 - 使用 `anchorMemory`，不使用 `memory`，避免误解成通用缓存。
 - 使用 `readReceipts`，不使用 `readReceipt`，表达这是已读能力组。
 `anchorMemory` 和 `readReceipts` 是 host-provided adapter capabilities：host 提供

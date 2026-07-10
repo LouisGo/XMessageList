@@ -47,6 +47,14 @@ _Avoid_: registry as event bus, SDK callbacks in React adapter, runtime-owned ca
 A host-facing asynchronous page loading dependency used by a message list session to obtain rows around a reading position. It is not the loaded data store owned by XMessageList.
 _Avoid_: data API, data source as adapter group name, public loaded data model
 
+**Initial Window**:
+The host's atomic result for entering a Message List Session. It is explicitly classified as either Latest Context or a restorable History Context with an anchor and pixel offset. When provided, it owns bootstrap classification and takes precedence over a separate Anchor Memory load.
+_Avoid_: treating initial as a synonym for latest, inferring history from hasMoreAfter, issuing a second around request for the same feed entry
+
+**Latest Window**:
+A window explicitly requested from the newest message area. It must have no after-side data and must not carry historical restore metadata.
+_Avoid_: accepting hasMoreAfter=true, silently discarding restore metadata, using latest to enter a persisted history position
+
 **Request Trigger**:
 The semantic source of a Message List Request, such as viewport need, user command, restore, or internal recovery. It is distinct from the request direction or target.
 _Avoid_: free-form reason as trigger contract, inferring trigger from request kind alone, treating manual and viewport paging as equivalent

@@ -12,7 +12,7 @@ import { defineMessageListSessionInternals } from '../internal'
 import { normalizeMessageListAnchor } from '../adapters/rowAdapter'
 import { MessageListSessionLiveSemantics } from '../tail/tailSemantics'
 import { assertLatestPageContract, assertReachedLatestContract, reportContractDiagnostic } from './contractDiagnostics'
-import { reindexRows, resolveExtendedContext, resolveRequestTriggerFromEvent, toRuntimeScrollOptions, toSessionResetInput, type AroundRequestOptions, type RuntimeNeedEvent, type SessionOptions } from './helpers'
+import { reindexRows, resolveRequestTriggerFromEvent, toRuntimeScrollOptions, toSessionResetInput, type AroundRequestOptions, type RuntimeNeedEvent, type SessionOptions } from './helpers'
 import type { MessageListPage, MessageListRequestTrigger, MessageListRequestResult, MessageListSessionId, MessageListSession as PublicMessageListSession, MessageListSessionContext, MessageListSessionState, MessageListViewState } from '../contracts'
 import { MessageListAnchorMemoryWriter } from './anchorMemoryWriter'
 import { MessageListSessionReloadController } from './reloadCurrent'
@@ -22,6 +22,8 @@ import {
 } from './sessionFacade'
 import { prepareSessionSegmentForPublish } from './publishSegment'
 import { createSessionRuntimeEventRouter } from './runtimeEventRouter'
+import { applyMessageListInitialWindow } from './initialWindow'
+import { loadMessageListEdgeWindow } from './edgeWindow'
 type OverlayRequestOptions = { overlayRequestId?: number; requestEpoch?: number; trigger?: MessageListRequestTrigger }
 type RequestResultInput<Row, Source> = Omit<MessageListRequestResult<Row, Source>, 'sessionId' | 'source'>
 export class MessageListSession<Row, Source>
@@ -80,12 +82,15 @@ export class MessageListSession<Row, Source>
         this.overlay.isStaleRequest(overlayRequestId),
       isStaleRequestEpoch: (requestEpoch) =>
         this.overlay.isStaleEpoch(requestEpoch),
+      ...(this.options.adapter.request.loadInitial
+        ? { loadInitial: (options) => this.loadInitial(options) }
+        : {}),
       loadAround: (target, options) => this.loadAround(target, undefined, options),
       loadLatest: (options) => this.loadLatest(undefined, options),
       finishFailure: (error, overlayRequestId) => {
         this.finishOverlayRequest(
           this.emitRequestResult({
-            kind: 'latest',
+            kind: this.options.adapter.request.loadInitial ? 'initial' : 'latest',
             status: 'failed',
             trigger: 'internal',
             error,
@@ -334,6 +339,50 @@ export class MessageListSession<Row, Source>
     })
     this.finishOverlayRequest(result, overlayRequestId)
   }
+  private async loadInitial(
+    options: OverlayRequestOptions = {},
+  ): Promise<void> {
+    const loadInitial = this.options.adapter.request.loadInitial
+    if (!loadInitial) {
+      await this.loadLatest(undefined, options)
+      return
+    }
+    const overlayRequestId = options.overlayRequestId ?? this.overlay.startRequest()
+    const requestEpoch = options.requestEpoch ?? this.overlay.getRequestEpoch()
+    const requestSegment = this.#loadedSegmentStore.getSegment()
+    const trigger = this.resolveRequestTrigger('initial', undefined, options.trigger)
+    const result = await this.runRequest('initial', undefined, trigger, async () => {
+      const initial = await loadInitial({
+        ...this.context,
+        pageSize: this.options.defaults.pageSize,
+        trigger,
+        signal: this.lifecycleAbortController.signal,
+      })
+      if (
+        this.overlay.isStaleRequest(overlayRequestId) ||
+        this.overlay.isStaleEpoch(requestEpoch) ||
+        this.isStaleSegment(requestSegment.generation, requestSegment.segmentRevision)
+      ) {
+        return {
+          page: initial.page,
+          segment: this.#loadedSegmentStore.getSegment(),
+          applied: false,
+        }
+      }
+      const applied = applyMessageListInitialWindow({
+        sessionId: this.sessionId,
+        initial,
+        adapter: this.options.adapter,
+        loadedSegmentStore: this.#loadedSegmentStore,
+        withPendingLocal: (page) => this.liveSemantics.withPendingLocal(page),
+        report: (name, severity, details) =>
+          this.reportContractDiagnostic(name, severity, details),
+        trigger,
+      })
+      return { ...applied, applied: true }
+    })
+    this.finishOverlayRequest(result, overlayRequestId)
+  }
   private async loadAround(
     target: MessageIdentityAnchor,
     event?: RuntimeNeedEvent,
@@ -421,75 +470,20 @@ export class MessageListSession<Row, Source>
       return
     }
     this.adoptRequestToken(event, edge)
-    await this.runRequest(edge, event, trigger, async () => {
-      const page = await (
-        edge === 'before'
-          ? this.options.adapter.request.loadBefore
-          : this.options.adapter.request.loadAfter
-      )({
-        ...this.context,
+    await this.runRequest(edge, event, trigger, () =>
+      loadMessageListEdgeWindow({
+        adapter: this.options.adapter, boundaryRow, context: this.context,
+        edge, event, isStale: () => this.isStaleEvent(event),
+        loadedSegmentStore: this.#loadedSegmentStore,
         pageSize: this.options.defaults.pageSize,
-        requestToken: event.requestToken,
+        report: (name, severity, details) => this.reportContractDiagnostic(name, severity, details),
+        runtime: getMessageListSessionRegistryRuntime(this.#runtime),
+        sessionId: this.sessionId, signal: this.lifecycleAbortController.signal,
         trigger,
-        reason: event.reason,
-        boundaryRow,
-        signal: this.lifecycleAbortController.signal,
-      })
-      if (this.isStaleEvent(event)) {
-        return {
-          page,
-          segment: this.#loadedSegmentStore.getSegment(),
-          applied: false,
-        }
-      }
-      const currentSegment = this.#loadedSegmentStore.getSegment()
-      assertReachedLatestContract(page, (name, severity, details) =>
-        this.reportContractDiagnostic(name, severity, details), {
-          requestKind: edge,
-          trigger,
-          context: currentSegment.context,
-        })
-      if (edge === 'after' && page.reachedLatest && currentSegment.context === 'around') {
-        this.reportContractDiagnostic('aroundReachedLatestIgnored', 'warn', {
-          requestKind: edge,
-          trigger,
-        })
-      }
-      const nextContext = resolveExtendedContext({
-        edge,
-        currentContext: currentSegment.context,
-        reachedLatest: page.reachedLatest,
-      })
-      if (
-        edge === 'after' &&
-        currentSegment.context === 'history' &&
-        nextContext === 'latest' &&
-        trigger === 'viewport'
-      ) {
-        getMessageListSessionRegistryRuntime(this.#runtime)
-          .prepareFollowBottomForLocalReset()
-      }
-      const input = {
-        ...toSessionResetInput(this.sessionId, page, this.options.adapter),
-        hasMoreBefore: edge === 'before'
-          ? page.hasMoreBefore
-          : currentSegment.hasMoreBefore,
-        hasMoreAfter: edge === 'after'
-          ? page.hasMoreAfter
-          : currentSegment.hasMoreAfter,
-        context: nextContext,
-        requestToken: event.requestToken,
-        anchor: currentSegment.anchor,
-        anchorStatus: currentSegment.anchorStatus,
-      }
-      const applied = edge === 'before'
-        ? this.#loadedSegmentStore.extendBefore(input)
-        : this.#loadedSegmentStore.extendAfter(input)
-      return { page, segment: applied.segment, applied: applied.applied }
-    })
+      }))
   }
   private async runRequest(
-    kind: 'latest' | 'before' | 'after' | 'around',
+    kind: 'initial' | 'latest' | 'before' | 'after' | 'around',
     event: RuntimeNeedEvent | undefined,
     trigger: MessageListRequestTrigger,
     request: () => Promise<{
@@ -573,7 +567,7 @@ export class MessageListSession<Row, Source>
     )
   }
   private resolveRequestTrigger(
-    kind: 'latest' | 'before' | 'after' | 'around',
+    kind: 'initial' | 'latest' | 'before' | 'after' | 'around',
     event?: RuntimeNeedEvent,
     override?: MessageListRequestTrigger,
   ): MessageListRequestTrigger {

@@ -33,6 +33,7 @@ export function createMessageListSessionBootstrapController<Source>(
     getRequestEpoch: () => number
     isStaleOverlayRequest: (overlayRequestId: number) => boolean
     isStaleRequestEpoch: (requestEpoch: number) => boolean
+    loadInitial?: (options: BootstrapOverlayOptions) => Promise<void>
     loadAround: (
       target: MessageIdentityAnchor,
       options: AroundRequestOptions & BootstrapOverlayOptions,
@@ -48,6 +49,15 @@ export function createMessageListSessionBootstrapController<Source>(
     const overlayRequestId = input.startOverlayRequest()
 
     try {
+      if (input.loadInitial) {
+        await input.loadInitial({
+          overlayRequestId,
+          requestEpoch,
+          trigger: 'internal',
+        })
+        return
+      }
+
       const memoryValue = await input.loadAnchorMemory()
 
       if (

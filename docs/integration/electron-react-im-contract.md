@@ -50,7 +50,7 @@ main / SDK / bridge
 -> XMessageList
 ```
 
-adapter request 层是宿主 query facade。它可以读取 renderer canonical store、请求 main process、调用 SDK API 或组合这些来源；XMessageList 只表达需要哪类窗口：latest、before、after 或 around。
+adapter request 层是宿主 query facade。它可以读取 renderer canonical store、请求 main process、调用 SDK API 或组合这些来源；XMessageList 只表达需要哪类窗口：initial、latest、before、after 或 around。
 
 ## Request 合同
 
@@ -87,13 +87,36 @@ type MessageListPage<Row> = {
 
 `reachedLatest=true` 只用于 after page 证明某个 historical window 已抵达最新消息区间的场景。它也必须满足 `hasMoreAfter=false`。
 
+## Initial Window 合同
+
+宿主拥有“切换进入会话时，数据源原子返回上次阅读位置”的能力时，应提供：
+
+```ts
+adapter.request.loadInitial(ctx): Promise<
+  | { context: 'latest'; page: MessageListPage<Row> }
+  | {
+      context: 'history';
+      page: MessageListPage<Row>;
+      restore: MessageListAnchorMemoryValue;
+    }
+>
+```
+
+`loadInitial` 只用于 session bootstrap。它返回 history 时，restore anchor 必须存在于 page rows 中，offset 是锚点消息相对视口基准的像素偏移；runtime 使用单次 `reset-around` 事务恢复，不再补发 `loadAround`。返回 latest 时必须满足严格 latest 合同。
+
+提供 `loadInitial` 后，bootstrap 不再调用 `anchorMemory.load`；`anchorMemory.save` 仍可用于宿主观察和持久化阅读锚点。未提供 `loadInitial` 的普通接入继续沿用 `anchorMemory.load -> loadAround` 或 `loadLatest` 的兼容路径。
+
 ## Loaded Context 流转
 
 核心状态流转：
 
 ```text
-loadLatest / resetLatest / clear:
+loadInitial(context='latest') / loadLatest / resetLatest / clear:
   context = 'latest'
+
+loadInitial(context='history'):
+  context = 'history'
+  restore anchor + pixel offset in one reset transaction
 
 user scrolls upward in latest:
   context remains 'latest'
@@ -245,6 +268,7 @@ public contract violation 应有稳定 diagnostic name。建议名称：
 ```text
 page.latestHasMoreAfter
 page.reachedLatestHasMoreAfter
+page.initialRestoreTargetMissing
 remoteTailAppend.outsideLatestContext
 localTailStage.missingLatest
 localTailStage.duplicateRowKey

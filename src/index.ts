@@ -11,6 +11,7 @@ export type {
   MessageListAdapter,
   MessageListAnchor,
   MessageListAnchorMemoryValue,
+  MessageListInitialWindow,
   MessageListIdentityRemap,
   MessageListLoadedContext,
   MessageListLocalTailStageInput,

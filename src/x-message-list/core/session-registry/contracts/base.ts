@@ -152,6 +152,23 @@ export type MessageListPage<Row> = {
   total?: number
 }
 
+/** 会话首次进入时的一次性初始化窗口。 */
+export type MessageListInitialWindow<Row> =
+  | {
+      /** 当前初始化结果就是源最新消息区间。 */
+      context: 'latest'
+      /** latest page 必须满足 hasMoreAfter=false。 */
+      page: MessageListPage<Row>
+    }
+  | {
+      /** 当前初始化结果是宿主恢复出的历史阅读窗口。 */
+      context: 'history'
+      /** 历史窗口可以同时拥有 before/after 数据。 */
+      page: MessageListPage<Row>
+      /** 恢复锚点和该消息相对视口基准的像素偏移。 */
+      restore: MessageListAnchorMemoryValue
+    }
+
 /** 需要跨 session/卸载保存的视口锚点记忆。 */
 export type MessageListAnchorMemoryValue = {
   /** 保存的消息锚点。 */
@@ -228,6 +245,11 @@ export type MessageListAdapter<Row, Source = MessageListSessionSource> = {
   }
   /** 数据请求入口。 */
   request: {
+    /**
+     * 原子加载首次进入窗口。提供后由宿主完整判定 latest/history，
+     * 并优先于 anchorMemory.load；未提供时沿用原 bootstrap 协议。
+     */
+    loadInitial?(context: MessageListRequestContext<Row, Source>): Promise<MessageListInitialWindow<Row>>
     /** 加载最新窗口。 */
     loadLatest(context: MessageListRequestContext<Row, Source>): Promise<MessageListPage<Row>>
     /** 向 before 侧加载更多。 */
@@ -333,6 +355,8 @@ export type MessageListRequestResult<Row, Source> = {
   source: Source
   /** 请求类型。 */
   kind:
+    /** 会话首次进入的原子初始化窗口。 */
+    | 'initial'
     /** 加载最新窗口。 */
     | 'latest'
     /** 加载 before 侧。 */
