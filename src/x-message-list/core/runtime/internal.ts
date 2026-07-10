@@ -1,4 +1,4 @@
-import type { MessageRuntimeItemKey } from './contracts/identity'
+import type { MessageIdentityAnchor, MessageRuntimeItemKey } from './contracts/identity'
 import type { MessageListRuntime } from './controller/runtime'
 import type { ProjectionCommitToken } from './contracts/snapshot'
 import type { RuntimeSegmentSizeSnapshot } from './dom/rowMetricCache'
@@ -29,6 +29,11 @@ export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown>
 // session-registry 只需要命令式数据/边缘请求入口，类型层不暴露 adapter 的 DOM 写入能力。
 export type MessageListSessionRegistryRuntime<TMessage = unknown, TOptimistic = unknown> =
   MessageListRuntime<TMessage, TOptimistic> & {
+    /** session-only live anchor capture; unlike the public identity getter, this retains row-local offset. */
+    getViewportAnchorMemory(): {
+      anchor: MessageIdentityAnchor
+      offsetWithinMessage?: number
+    } | null
     prepareFollowBottomForLocalReset(): void
     reportSessionDiagnostic(
       name: string,

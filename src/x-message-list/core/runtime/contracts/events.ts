@@ -3,6 +3,18 @@ import type {
   MessageRuntimeItemKey,
 } from './identity'
 import type { ProjectionCommitToken } from './snapshot'
+import type {
+  DestinationCancelledEvent,
+  DestinationSettledEvent,
+  ProjectionSettledEvent,
+  ViewportNavigationIntentEvent,
+} from './orchestrationEvents'
+export type {
+  DestinationCancelledEvent,
+  DestinationSettledEvent,
+  ProjectionSettledEvent,
+  ViewportNavigationIntentEvent,
+} from './orchestrationEvents'
 
 /** viewport observation 里暴露的滚动来源分类。 */
 type ViewportScrollSource =
@@ -111,6 +123,8 @@ export type ViewportObservationChangedEvent = {
   anchor: MessageIdentityAnchor | null
   /** anchor 消息内部的垂直偏移。 */
   offsetWithinMessage?: number
+  /** 观测时距离 native bottom 的像素距离，由已完成的 runtime measurement 提供。 */
+  distanceToBottom: number
   /** 本次测量可见 row 的首尾 key。 */
   visibleRange: ViewportVisibleRange
   /** 本次 DOM 测量窗口内的可见 row，不代表完整 loaded segment。 */
@@ -164,34 +178,6 @@ export type ViewportObservedItem = {
   key: MessageRuntimeItemKey
   /** row 可见比例，范围为 0 到 1。 */
   visibleRatio: number
-}
-
-/** jump/restore destination 完成事件。 */
-export type DestinationSettledEvent = {
-  /** 事件类型。 */
-  type: 'destinationSettled'
-  /** 当前 session。 */
-  sessionId: string
-  /** 当前数据 generation。 */
-  generation: number
-  /** 当前 segment revision。 */
-  segmentRevision: number
-  /** 完成的 destination 类型。 */
-  intent:
-    /** 用户显式跳转到消息。 */
-    | 'jump'
-    /** 按保存锚点恢复视口。 */
-    | 'restore'
-  /** 调用方请求的原始目标。 */
-  target: MessageIdentityAnchor
-  /** 是否命中原始目标；fallback 表示落到了替代锚点。 */
-  resolution:
-    /** 实际落点就是请求目标。 */
-    | 'target'
-    /** 实际落点为 fallback 或可解析替代锚点。 */
-    | 'fallback'
-  /** 实际落点；fallback 或不可解析时可能不同于 target。 */
-  resolvedTarget?: MessageIdentityAnchor
 }
 
 /** runtime 建议数据层考虑裁剪窗口的事件。 */
@@ -264,12 +250,15 @@ export type MessageListRuntimeEvent =
   | NeedMoreAfterEvent
   | NeedLatestMessagesEvent
   | NeedMessagesAroundEvent
+  | DestinationCancelledEvent
+  | ViewportNavigationIntentEvent
   | DestinationSettledEvent
   | SegmentTrimPressureEvent
   | ViewportAnchorChangedEvent
   | ViewportObservationChangedEvent
   | ViewportDiagnosticEvent
   | ViewportReadyEvent
+  | ProjectionSettledEvent
   | ViewportErrorEvent
 
 /** runtime event 订阅回调。 */

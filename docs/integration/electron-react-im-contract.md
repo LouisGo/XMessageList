@@ -198,6 +198,16 @@ XMessageList 不匹配 server push 和 local optimistic row。local id、client 
 
 普通 edit、delete、reaction、read marker、media update、streaming patch 和相邻分组变化使用 `rows.mutate`。如果目标 row 不在 loaded segment，宿主只记录 canonical dirty state，并让未来 request 返回更新后的 row。
 
+删除 mutation 会在 XMessageList 内部按删除前 segment 生成显式 remove modifier。
+Host 不传 index，也不猜相邻 position；runtime 先选择被删锚点的存活 successor，
+无 successor 才选择 predecessor，并仅失效首个删除位置开始的 suffix metric。
+
+Host 无法用局部 mutation 证明当前窗口结构正确时调用
+`session.commands.reloadCurrent({ reason: 'structural' })`。请求期间保留旧 rows，且只在
+返回 `applied` 后按对应 host dirty revision 条件清理。around 目标已删除时，page 必须
+用 `anchorStatus:'deleted'` 和 `anchor.fallbackStableId` 明确给出 successor-first 的
+fallback；XMessageList 不从 message id 推断服务端顺序。
+
 日期和未读标记是宿主渲染在普通 message row 内部的 title slot。XMessageList 不把它们建模为 row kind。它们影响布局时，宿主必须 bump row version 或传入 `invalidateKeys`。
 
 system message 是稳定 row kind，但在本接入模型中不是 jump target。它的 `getAnchor` 返回 `null`。

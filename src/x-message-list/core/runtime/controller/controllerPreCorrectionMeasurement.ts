@@ -4,7 +4,7 @@ import type { RuntimeDomInteractions } from '../dom/domInteractions'
 import type { RuntimeDomRegistry } from '../dom/domRegistry'
 import type { RuntimeDirtyRange } from '../dom/dirtyRange'
 import type { RuntimeMeasurementOptions, VisualAnchor } from '../dom/measurement'
-import { resolveRemappedAnchorKey } from '../shared/snapshotIdentity'
+import { resolveTransactionAnchorCandidateKeys } from '../shared/snapshotIdentity'
 
 export type TransactionPreCorrectionMeasurementPlan = {
   options: RuntimeMeasurementOptions
@@ -25,6 +25,12 @@ export function resolveTransactionPreCorrectionMeasurementPlan<TMessage, TOptimi
   const measurementAnchor = resolveMeasurementAnchor(input)
 
   if (!measurementAnchor) {
+    if (input.segment.modifier.type === 'remove' && input.segment.items.length === 0) {
+      return {
+        options: { rowKeys: [] },
+        mode: 'sampled-keys',
+      }
+    }
     return fullMeasure(input.anchor ? 'anchor-missing-after-remap' : 'no-anchor')
   }
 
@@ -73,8 +79,11 @@ function resolveMeasurementAnchor<TMessage, TOptimistic>(
   },
 ): { key: MessageRuntimeItemKey; source: NonNullable<TransactionPreCorrectionMeasurementPlan['anchorSource']> } | null {
   if (input.anchor) {
-    const capturedAnchorKey = resolveRemappedAnchorKey(input.anchor.key, input.segment)
-    if (input.registry.getRow(capturedAnchorKey)) {
+    const capturedAnchorKey = resolveTransactionAnchorCandidateKeys(
+      input.anchor.key,
+      input.segment,
+    ).find((key) => input.registry.getRow(key))
+    if (capturedAnchorKey) {
       return { key: capturedAnchorKey, source: 'captured' }
     }
 

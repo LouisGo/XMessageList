@@ -269,6 +269,9 @@ type MessageListSession<Row> = {
     loadBefore(): void
     loadAfter(): void
     reloadLatest(): void
+    reloadCurrent(options: {
+      reason: 'structural'
+    }): Promise<MessageListReloadCurrentResult<Row>>
   }
 
   rows: {
@@ -293,6 +296,12 @@ type MessageListSession<Row> = {
   }
 }
 ```
+
+`reloadCurrent` 是 host structural dirty 的对账命令，不是用户 jump 的别名：真实
+latest 且 locked 时请求 latest；其余状态捕获第一条可见消息 identity 与
+`offsetWithinMessage`，静默请求 around 并按 start 恢复。旧 rows 保留到新 page 的
+projection transaction 完整 settle。只有返回 `status:'applied'` 才表示 DOM 已提交、
+测量和唯一一次 correction 已完成；`stale` / `failed` 不允许 host 清 structural dirty。
 
 `commands` 表示视口或请求意图。`rows`、`tail.local` 和 `tail.remote.append`
 是不可互换的三类 row 变化入口；`rows` 表示 loaded segment 内普通 row 变更。

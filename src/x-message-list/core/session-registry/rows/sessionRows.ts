@@ -35,10 +35,26 @@ export function createSessionRows<Row, Source>(input: {
 }): MessageListSession<Row>['rows'] {
   return {
     patch: (rows) => {
-      input.publishSegment(
-        input.loadedSegmentStore.patchItems(
-          toMessageDataItems(input.sessionId, rows, input.adapter),
+      const items = toMessageDataItems(input.sessionId, rows, input.adapter)
+      const loadedKeys = new Set(
+        input.loadedSegmentStore.getSegment().items.map((item) => item.key),
+      )
+      const missingKeys = [
+        ...new Set(
+          items
+            .filter((item) => !loadedKeys.has(item.key))
+            .map((item) => item.key),
         ),
+      ]
+      if (missingKeys.length > 0) {
+        input.reportDiagnostic(
+          'rows.patch.missingKeyUpsertDeprecated',
+          'warn',
+          { missingKeys },
+        )
+      }
+      input.publishSegment(
+        input.loadedSegmentStore.patchItems(items),
       )
     },
     mutate: (mutation) => {
@@ -49,6 +65,7 @@ export function createSessionRows<Row, Source>(input: {
           : undefined,
         removeKeys: mutation.removeKeys,
         invalidateKeys: mutation.invalidateKeys,
+        reason: mutation.reason,
       })
 
       if (segment === previousSegment) {
@@ -58,6 +75,12 @@ export function createSessionRows<Row, Source>(input: {
       input.publishSegment(segment)
     },
     replace: (replaceInput) => {
+      if (
+        input.loadedSegmentStore.getSegment().context === 'latest' &&
+        replaceInput.hasMoreAfter
+      ) {
+        input.reportDiagnostic('rows.replace.latestBoundaryLost', 'warn')
+      }
       input.publishSegment(input.loadedSegmentStore.replaceItems(
         toSessionReplaceInput(input.sessionId, replaceInput, input.adapter),
       ))

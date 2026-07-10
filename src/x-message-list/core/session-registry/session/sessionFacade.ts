@@ -1,0 +1,126 @@
+import type { MessageListSession } from '../contracts'
+import {
+  normalizeLocalTailStageInput,
+  normalizeRemoteTailAppendInput,
+} from '../tail/tailSemantics'
+import type { ReloadMutationGuard } from './reloadCurrent'
+
+export function createSessionCommands<Row>(input: {
+  isDestroyed: () => boolean
+  scrollToLatest: () => void
+  scrollToMessage: MessageListSession<Row>['commands']['scrollToMessage']
+  reloadLatest: () => void
+  reloadCurrent: MessageListSession<Row>['commands']['reloadCurrent']
+  loadBefore: () => void
+  loadAfter: () => void
+}): MessageListSession<Row>['commands'] {
+  return {
+    scrollToLatest: () => { if (!input.isDestroyed()) input.scrollToLatest() },
+    scrollToMessage: (target, options) => {
+      if (!input.isDestroyed()) input.scrollToMessage(target, options)
+    },
+    reloadLatest: () => { if (!input.isDestroyed()) input.reloadLatest() },
+    reloadCurrent: (options) => input.reloadCurrent(options),
+    loadBefore: () => { if (!input.isDestroyed()) input.loadBefore() },
+    loadAfter: () => { if (!input.isDestroyed()) input.loadAfter() },
+  }
+}
+
+export function createGuardedSessionMutations<Row>(input: {
+  isDestroyed: () => boolean
+  rows: MessageListSession<Row>['rows']
+  tail: MessageListSession<Row>['tail']
+  reloadController: ReloadMutationGuard<Row>
+}): Pick<MessageListSession<Row>, 'rows' | 'tail'> {
+  return {
+    rows: {
+      patch: (rows) => {
+        if (input.isDestroyed()) return
+        input.reloadController.applyRowsPatch(
+          rows,
+          () => input.rows.patch(rows),
+        )
+      },
+      mutate: (mutation) => {
+        if (input.isDestroyed()) return
+        input.reloadController.applyRowsMutation(
+          mutation,
+          () => input.rows.mutate(mutation),
+        )
+      },
+      replace: (replace) => {
+        if (input.isDestroyed()) return
+        input.reloadController.applyTopologyMutation(
+          () => input.rows.replace(replace),
+        )
+      },
+      resetLatest: (page) => {
+        if (input.isDestroyed()) return
+        input.reloadController.applyTopologyMutation(
+          () => input.rows.resetLatest(page),
+        )
+      },
+      resetAround: (around) => {
+        if (input.isDestroyed()) return
+        input.reloadController.applyTopologyMutation(
+          () => input.rows.resetAround(around),
+        )
+      },
+      applyIdentityRemap: (remaps) => {
+        if (input.isDestroyed()) return
+        input.reloadController.applyIdentityRemap(
+          remaps,
+          () => input.rows.applyIdentityRemap(remaps),
+        )
+      },
+      clear: () => {
+        if (input.isDestroyed()) return
+        input.reloadController.applyTopologyMutation(input.rows.clear)
+      },
+    },
+    tail: {
+      local: {
+        stage: (stageInput) => {
+          if (input.isDestroyed()) return
+          const stage = normalizeLocalTailStageInput(stageInput)
+          if (stage.latest && stage.rows.length > 0) {
+            input.reloadController.applyTopologyMutation(
+              () => input.tail.local.stage(stage),
+            )
+            return
+          }
+          input.reloadController.applyTailAppend(
+            stage.rows,
+            stage.retireKeys,
+            () => input.tail.local.stage(stage),
+          )
+        },
+        patch: (rows) => {
+          if (input.isDestroyed()) return
+          input.reloadController.applyVisibleRowsPatch(
+            rows,
+            () => input.tail.local.patch(rows),
+          )
+        },
+        applyIdentityRemap: (remaps) => {
+          if (input.isDestroyed()) return
+          input.reloadController.applyIdentityRemap(
+            remaps,
+            () => input.tail.local.applyIdentityRemap(remaps),
+          )
+        },
+      },
+      remote: {
+        append: (appendInput) => {
+          if (input.isDestroyed()) return
+          const append = normalizeRemoteTailAppendInput(appendInput)
+          input.reloadController.applyTailAppend(
+            append.rows,
+            undefined,
+            () => input.tail.remote.append(append),
+          )
+        },
+      },
+    },
+  }
+}

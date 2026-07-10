@@ -27,7 +27,12 @@ export function resolveCurrentViewportAnchor<TMessage, TOptimistic>(input: {
   lastAnchor: MessageIdentityAnchor | null
   lastAnchorOffsetWithinMessage: number | undefined
 }): ResolvedViewportAnchor {
-  const anchor = captureVisualAnchor(input.registry.snapshot())
+  const anchor = captureVisualAnchor(input.registry.snapshot(), {
+    // date/system/slot rows can be visually first but do not define message
+    // navigation identity. Anchor memory must advance to the first visible
+    // identity-bearing row instead of silently reusing an unrelated old anchor.
+    rowKeys: identityRowKeys(input.snapshot),
+  })
 
   if (!anchor) {
     return {
@@ -61,9 +66,12 @@ export function resolveMeasuredViewportAnchor<TMessage, TOptimistic>(input: {
   }
 
   const containerTop = container.getBoundingClientRect().top
+  const identityKeys = new Set(identityRowKeys(input.snapshot))
   const measuredAnchor = [...input.measurement.visibleRows]
     .sort((first, second) => first.top - second.top)
-    .find((row) => row.bottom > containerTop + 1)
+    .find((row) =>
+      identityKeys.has(row.key) && row.bottom > containerTop + 1
+    )
 
   if (!measuredAnchor) {
     return input.resolveCurrent()
@@ -74,6 +82,14 @@ export function resolveMeasuredViewportAnchor<TMessage, TOptimistic>(input: {
       input.fallbackAnchor,
     offsetWithinMessage: Math.max(0, containerTop - measuredAnchor.top),
   }
+}
+
+function identityRowKeys<TMessage, TOptimistic>(
+  snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+): string[] {
+  return snapshot.items
+    .filter((item) => Boolean(item.identity))
+    .map((item) => item.key)
 }
 
 export function resolveViewportAnchorEventInput(input: {

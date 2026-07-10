@@ -197,6 +197,8 @@ export type MessageListRequestContext<Row, Source = MessageListSessionSource> = 
   trigger: MessageListRequestTrigger
   /** 请求原因。 */
   reason?: string
+  /** 可选取消信号；session 销毁、请求被新 reload 取代或用户导航时会触发 abort。 */
+  signal?: AbortSignal
   /** around 请求目标。 */
   target?: MessageListResolvedAnchor
   /** before/after 请求的边界 row。 */

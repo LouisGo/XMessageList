@@ -1,6 +1,6 @@
 import {
   resolveAnchorFromKey,
-  resolveRemappedAnchorKey,
+  resolveTransactionAnchorCandidateKeys,
 } from '../shared/snapshotIdentity'
 import type { RuntimeDomRegistry } from './domRegistry'
 import type { RuntimeDomInteractions } from './domInteractions'
@@ -40,7 +40,10 @@ export function correctTransactionAnchor<TMessage, TOptimistic>(options: {
     return segment.anchor ?? null
   }
 
-  const key = resolveRemappedAnchorKey(anchor.key, segment)
+  const anchorCandidateKeys = resolveTransactionAnchorCandidateKeys(anchor.key, segment)
+  const key = anchorCandidateKeys.find((candidate) => registry.getRow(candidate)) ??
+    anchorCandidateKeys[0] ??
+    anchor.key
   const row = registry.getRow(key)
   const container = registry.snapshot().scrollContainer
   const resolvedAnchor = resolveAnchorFromKey(segment, key) ?? segment.anchor ?? null
@@ -94,6 +97,15 @@ export function correctTransactionAnchor<TMessage, TOptimistic>(options: {
   }
 
   pushDiagnostic('correction.anchorPreserved', 'info', { key, delta })
+  if (segment.modifier.type === 'remove' && key !== anchor.key) {
+    const removed = segment.modifier.removed.find((entry) => entry.key === anchor.key)
+    pushDiagnostic('correction.deletedAnchorFallback', 'info', {
+      removedKey: anchor.key,
+      fallbackKey: key,
+      strategy: removed?.successorKey === key ? 'successor' : 'predecessor',
+      delta,
+    })
+  }
   return resolvedAnchor
 }
 

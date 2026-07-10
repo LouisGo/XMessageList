@@ -20,8 +20,10 @@ export type {
 } from './contracts/snapshot'
 export type {
   DestinationSettledEvent,
+  DestinationCancelledEvent,
   MessageListRuntimeEvent,
   MessageListRuntimeEventListener,
+  ProjectionSettledEvent,
   SegmentTrimPressureEvent,
   ViewportAnchorChangedEvent,
   ViewportDiagnosticEvent,
@@ -31,6 +33,7 @@ export type {
   ViewportObservationChangedEvent,
   ViewportObservationListener,
   ViewportObservationReason,
+  ViewportNavigationIntentEvent,
   ViewportScrollDirection,
   ViewportVisibleRange,
 } from './contracts/events'

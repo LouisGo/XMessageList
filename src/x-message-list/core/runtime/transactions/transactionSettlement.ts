@@ -105,20 +105,31 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
     }
   }
 
-  if (
-    snapshot.pendingIntent === 'follow-bottom' &&
-    segment.modifier.type === 'reset-latest' &&
-    !segment.hasMoreAfter
-  ) {
-    return settleBottomMotion(
-      domInteractions,
-      'followBottom',
-      segment.anchor ?? getViewportAnchor(),
-      { enforceDirectionHint: true },
-    )
-  }
-
   if (segment.modifier.type === 'reset-latest') {
+    if (segment.modifier.reason === 'structural') {
+      if (!segment.hasMoreAfter) {
+        // Structural reload already paid for the authoritative post-commit measure.
+        // Install the new latest projection with one native recovery write; animation
+        // would incorrectly turn a data refresh into a second navigation lifecycle.
+        domInteractions.scrollToNativeBottom('recovery')
+        return {
+          kind: 'instant',
+          anchor: segment.anchor ?? getViewportAnchor(),
+          bottomLockState: 'LOCKED',
+        }
+      }
+      return { kind: 'instant', anchor: segment.anchor ?? getViewportAnchor() }
+    }
+
+    if (snapshot.pendingIntent === 'follow-bottom' && !segment.hasMoreAfter) {
+      return settleBottomMotion(
+        domInteractions,
+        'followBottom',
+        segment.anchor ?? getViewportAnchor(),
+        { enforceDirectionHint: true },
+      )
+    }
+
     if (!segment.hasMoreAfter) {
       if (snapshot.bottomLockState === 'LOCKED' || activeFollowBottom) {
         return settleBottomMotion(

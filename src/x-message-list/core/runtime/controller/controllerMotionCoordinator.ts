@@ -1,6 +1,6 @@
 import type { MessageIdentityAnchor } from '../contracts/identity'
 import type { MessageListScrollMotionHint, RuntimeScheduler, ScrollMotionOptions } from '../contracts/options'
-import type { MessageListSnapshot } from '../contracts/snapshot'
+import type { MessageListSnapshot, ProjectionCommitToken } from '../contracts/snapshot'
 import type { ViewportDiagnosticRecord, ViewportObservationReason } from '../contracts/events'
 import type { RuntimeMeasurement } from '../dom/measurement'
 import type { DestinationIntent } from '../interactions/interactionState'
@@ -55,11 +55,16 @@ type MotionHost<TMessage, TOptimistic> = {
     resolvedTarget: MessageIdentityAnchor | null,
   ) => void
   continueAfterMotionSettle: () => void
+  emitProjectionSettled: (
+    token: ProjectionCommitToken,
+    status: 'applied' | 'motion-cancelled',
+  ) => void
 }
 
 type ActiveControllerMotion = {
   resolution: MotionResolution
   targetTop: number
+  projectionCommitToken?: ProjectionCommitToken
 }
 
 export type MotionResizeHandlingResult =
@@ -184,6 +189,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
   startResolution(
     resolution: MotionResolution,
     scrollSource: ScrollSource | null,
+    projectionCommitToken?: ProjectionCommitToken,
   ): boolean {
     const container = this.host.getScrollContainer()
     if (!container) return false
@@ -194,6 +200,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     this.activeMotion = {
       resolution,
       targetTop,
+      projectionCommitToken,
     }
     this.host.stateAxes.markMotionActive()
     this.host.stateAxes.markDestinationMotionActive()
@@ -288,6 +295,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     scrollSource: ScrollSource,
     targetTop: number,
   ): void {
+    const projectionCommitToken = this.activeMotion?.projectionCommitToken
     const measurement = this.host.measureRuntimeDom()
     this.host.recordRowMetrics(measurement)
     this.activeMotion = null
@@ -314,6 +322,9 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     if (resolution.destination) {
       this.host.emitDestinationSettled(resolution.destination, resolution.anchor)
     }
+    if (projectionCommitToken) {
+      this.host.emitProjectionSettled(projectionCommitToken, 'applied')
+    }
     this.host.continueAfterMotionSettle()
   }
 
@@ -321,12 +332,17 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     reason: ScrollMotionCancelReason,
     source: ScrollMotionSource,
   ): void {
+    const projectionCommitToken = this.activeMotion?.projectionCommitToken
     this.host.pushDiagnostic('destinationMotion.cancel', 'info', {
       reason,
       source,
       scrollTop: this.host.readCurrentScrollTop(),
     })
     this.activeMotion = null
+
+    if (projectionCommitToken) {
+      this.host.emitProjectionSettled(projectionCommitToken, 'motion-cancelled')
+    }
 
     if (this.host.getSnapshot().viewportPhase !== 'MOTION') {
       return

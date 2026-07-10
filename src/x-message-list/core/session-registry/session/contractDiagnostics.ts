@@ -1,4 +1,7 @@
-import type { MessageDataItem } from '../../runtime/index'
+import type {
+  MessageDataItem,
+  MessageIdentityAnchor,
+} from '../../runtime/index'
 import type {
   MessageListPage,
   MessageListRuntimeLogDiagnosticRecord,
@@ -63,4 +66,48 @@ export function hasDuplicateItemKeys<Row>(
 ): boolean {
   const keys = new Set(left.map((item) => item.key))
   return right.some((item) => keys.has(item.key))
+}
+
+export function assertReloadAroundPageContract<Row>(input: {
+  page: MessageListPage<Row>
+  target: MessageIdentityAnchor
+  items: MessageDataItem<Row>[]
+  report: ReportDiagnostic
+}): void {
+  const abnormal = input.page.anchorStatus && input.page.anchorStatus !== 'normal'
+  const fallbackStableId = input.page.anchor?.fallbackStableId
+  const expected = abnormal
+    ? input.items.find((item) =>
+        item.identity?.sessionId === input.target.sessionId &&
+        Boolean(fallbackStableId) &&
+        item.identity?.stableId === fallbackStableId
+      )
+    : input.items.find((item) => item.identity && anchorsMatch(
+        item.identity,
+        input.target,
+      ))
+
+  if (abnormal && !fallbackStableId) {
+    input.report('page.reloadFallbackAnchorMissing', 'error')
+    throw new MessageListContractViolation('page.reloadFallbackAnchorMissing')
+  }
+
+  if (!expected) {
+    const name = abnormal
+      ? 'page.reloadFallbackRowMissing'
+      : 'page.reloadTargetRowMissing'
+    input.report(name, 'error')
+    throw new MessageListContractViolation(name)
+  }
+}
+
+function anchorsMatch(
+  identity: NonNullable<MessageDataItem['identity']>,
+  anchor: MessageIdentityAnchor,
+): boolean {
+  return identity.sessionId === anchor.sessionId && (
+    identity.stableId === anchor.stableId ||
+    Boolean(identity.serverId && identity.serverId === anchor.serverId) ||
+    Boolean(identity.localId && identity.localId === anchor.localId)
+  )
 }

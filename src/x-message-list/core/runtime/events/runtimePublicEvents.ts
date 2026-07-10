@@ -55,6 +55,7 @@ export function createViewportObservationEvent<TMessage, TOptimistic>(input: {
     activity: resolveActivity(input.reason),
     anchor: input.anchor.anchor,
     offsetWithinMessage: input.anchor.offsetWithinMessage,
+    distanceToBottom: resolveDistanceToBottom(input.measurement),
     visibleRange: {
       firstKey: visibleItems[0]?.key ?? null,
       lastKey: visibleItems.at(-1)?.key ?? null,
@@ -62,6 +63,13 @@ export function createViewportObservationEvent<TMessage, TOptimistic>(input: {
     visibleItems,
     visibleKeys: visibleItems.map((item) => item.key),
   }
+}
+
+function resolveDistanceToBottom(measurement: RuntimeMeasurement): number {
+  const distance = measurement.scrollHeight -
+    measurement.clientHeight -
+    measurement.scrollTop
+  return Number.isFinite(distance) ? Math.max(0, distance) : 0
 }
 
 export function createDestinationSettledEvent<TMessage, TOptimistic>(input: {

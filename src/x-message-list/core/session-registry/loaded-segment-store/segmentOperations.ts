@@ -3,6 +3,7 @@ import type {
   MessageIdentityAnchor,
   MessageRuntimeItemKey,
 } from '../../runtime/contracts/identity'
+import type { SegmentModifier } from '../../runtime/contracts/segment'
 import type { IdentityRemapInput } from './loadedSegmentStore'
 
 export type MutateSegmentItemsInput<TMessage, TOptimistic> = {
@@ -81,16 +82,28 @@ export function mutateSegmentItems<TMessage, TOptimistic>(
 ): {
   items: MessageDataItem<TMessage, TOptimistic>[]
   changedKeys: MessageRuntimeItemKey[]
+  removedKeys: MessageRuntimeItemKey[]
+  removed: Extract<SegmentModifier, { type: 'remove' }>['removed']
+  firstAffectedIndex: number | null
 } {
   const patchByKey = new Map(input.patches.map((item) => [item.key, item]))
   const removeKeys = new Set(input.removeKeys)
   const invalidateKeys = new Set(input.invalidateKeys)
   const changedKeys = new Set<MessageRuntimeItemKey>()
+  const predecessorKeys = resolveSurvivingPredecessorKeys(current, removeKeys)
+  const successorKeys = resolveSurvivingSuccessorKeys(current, removeKeys)
+  const removed: Extract<SegmentModifier, { type: 'remove' }>['removed'] = []
   const next: MessageDataItem<TMessage, TOptimistic>[] = []
 
-  for (const item of current) {
+  for (let index = 0; index < current.length; index += 1) {
+    const item = current[index]
     if (removeKeys.has(item.key)) {
-      changedKeys.add(item.key)
+      removed.push({
+        key: item.key,
+        previousIndex: index,
+        successorKey: successorKeys[index],
+        predecessorKey: predecessorKeys[index],
+      })
       continue
     }
 
@@ -110,10 +123,51 @@ export function mutateSegmentItems<TMessage, TOptimistic>(
     next.push(item)
   }
 
+  const items = dedupeItems(next)
+  const survivingKeys = new Set(items.map((item) => item.key))
   return {
-    items: dedupeItems(next),
-    changedKeys: [...changedKeys],
+    items,
+    changedKeys: [...changedKeys].filter((key) => survivingKeys.has(key)),
+    removedKeys: removed.map((entry) => entry.key),
+    removed,
+    firstAffectedIndex: removed.length > 0
+      ? Math.min(...removed.map((entry) => entry.previousIndex))
+      : null,
   }
+}
+
+function resolveSurvivingPredecessorKeys<TMessage, TOptimistic>(
+  items: MessageDataItem<TMessage, TOptimistic>[],
+  removeKeys: Set<MessageRuntimeItemKey>,
+): Array<MessageRuntimeItemKey | undefined> {
+  const keys: Array<MessageRuntimeItemKey | undefined> = new Array(items.length)
+  let predecessorKey: MessageRuntimeItemKey | undefined
+
+  for (let index = 0; index < items.length; index += 1) {
+    keys[index] = predecessorKey
+    if (!removeKeys.has(items[index].key)) {
+      predecessorKey = items[index].key
+    }
+  }
+
+  return keys
+}
+
+function resolveSurvivingSuccessorKeys<TMessage, TOptimistic>(
+  items: MessageDataItem<TMessage, TOptimistic>[],
+  removeKeys: Set<MessageRuntimeItemKey>,
+): Array<MessageRuntimeItemKey | undefined> {
+  const keys: Array<MessageRuntimeItemKey | undefined> = new Array(items.length)
+  let successorKey: MessageRuntimeItemKey | undefined
+
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    keys[index] = successorKey
+    if (!removeKeys.has(items[index].key)) {
+      successorKey = items[index].key
+    }
+  }
+
+  return keys
 }
 
 export function appendSegmentItems<TMessage, TOptimistic>(

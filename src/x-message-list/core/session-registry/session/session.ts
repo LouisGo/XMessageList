@@ -12,8 +12,16 @@ import { defineMessageListSessionInternals } from '../internal'
 import { normalizeMessageListAnchor } from '../adapters/rowAdapter'
 import { MessageListSessionLiveSemantics } from '../tail/tailSemantics'
 import { assertLatestPageContract, assertReachedLatestContract, reportContractDiagnostic } from './contractDiagnostics'
-import { reindexRows, resolveAdaptiveTrimBudget, resolveExtendedContext, resolveRequestTriggerFromEvent, resolveTrimProtectKey, toRuntimeScrollOptions, toSessionResetInput, type AroundRequestOptions, type RuntimeNeedEvent, type SessionOptions } from './helpers'
+import { reindexRows, resolveExtendedContext, resolveRequestTriggerFromEvent, toRuntimeScrollOptions, toSessionResetInput, type AroundRequestOptions, type RuntimeNeedEvent, type SessionOptions } from './helpers'
 import type { MessageListPage, MessageListRequestTrigger, MessageListRequestResult, MessageListSessionId, MessageListSession as PublicMessageListSession, MessageListSessionContext, MessageListSessionState, MessageListViewState } from '../contracts'
+import { MessageListAnchorMemoryWriter } from './anchorMemoryWriter'
+import { MessageListSessionReloadController } from './reloadCurrent'
+import {
+  createGuardedSessionMutations,
+  createSessionCommands,
+} from './sessionFacade'
+import { prepareSessionSegmentForPublish } from './publishSegment'
+import { createSessionRuntimeEventRouter } from './runtimeEventRouter'
 type OverlayRequestOptions = { overlayRequestId?: number; requestEpoch?: number; trigger?: MessageListRequestTrigger }
 type RequestResultInput<Row, Source> = Omit<MessageListRequestResult<Row, Source>, 'sessionId' | 'source'>
 export class MessageListSession<Row, Source>
@@ -33,15 +41,27 @@ export class MessageListSession<Row, Source>
   private readonly runtimeUnsubscribe: () => void
   private readonly rowsByKey = new Map<string, Row>()
   private readonly liveSemantics: MessageListSessionLiveSemantics<Row, Source>
+  private readonly reloadController: MessageListSessionReloadController<Row, Source>
+  private readonly anchorMemoryWriter: MessageListAnchorMemoryWriter<Source> | null
+  private readonly lifecycleAbortController = new AbortController()
   private viewRetainCount = 0
   private rowsPerViewportEstimate: number
   private measurementSnapshot: RuntimeSegmentSizeSnapshot | null = null
   private destroyed = false
+  private lastPublishedSegment: LoadedSegment<Row>
   lastUsedAt = Date.now()
   constructor(private readonly options: SessionOptions<Row, Source>) {
     this.sessionId = options.sessionId
     this.rowsPerViewportEstimate = options.defaults.pageSize
     this.context = { sessionId: options.sessionId, source: options.source }
+    this.anchorMemoryWriter = options.adapter.anchorMemory
+      ? new MessageListAnchorMemoryWriter(
+          this.context, options.adapter.anchorMemory.save,
+          (error) => this.reportContractDiagnostic(
+            'anchorMemory.saveFailed', 'warn', { error },
+          ),
+        )
+      : null
     this.overlay = new MessageListSessionOverlay(
       () => this.notifyViewListeners(),
       () => {
@@ -74,19 +94,29 @@ export class MessageListSession<Row, Source>
         )
       },
     })
-    this.#runtime = createMessageListRuntime<Row>({
-      sessionId: options.sessionId,
-      scrollMotion: options.scrollMotion,
-    })
+    this.#runtime = createMessageListRuntime<Row>({ sessionId: options.sessionId, scrollMotion: options.scrollMotion })
     this.#loadedSegmentStore = createLoadedSegmentStore<Row>({ sessionId: options.sessionId })
-    this.commands = {
+    this.lastPublishedSegment = this.#loadedSegmentStore.getSegment()
+    this.reloadController = new MessageListSessionReloadController({
+      sessionId: this.sessionId,
+      context: this.context,
+      adapter: this.options.adapter,
+      runtime: getMessageListSessionRegistryRuntime(this.#runtime),
+      loadedSegmentStore: this.#loadedSegmentStore,
+      getPageSize: () => this.options.defaults.pageSize,
+      publishSegment: (segment) => this.publishSegment(segment),
+      reportDiagnostic: (name, severity, details) => this.reportContractDiagnostic(name, severity, details),
+      onRequestResult: (result) => this.options.onRequestResult?.(result),
+    })
+    this.commands = createSessionCommands({
+      isDestroyed: () => this.destroyed,
       scrollToLatest: () => {
-        if (this.destroyed) return
+        this.reloadController.markNavigationChanged()
         this.ensureBootstrapStarted()
         this.#runtime.scrollToLatest()
       },
       scrollToMessage: (target, scrollOptions) => {
-        if (this.destroyed) return
+        this.reloadController.markNavigationChanged()
         this.ensureBootstrapStarted()
         this.#runtime.scrollToMessage(
           normalizeMessageListAnchor(this.sessionId, target),
@@ -94,24 +124,23 @@ export class MessageListSession<Row, Source>
         )
       },
       reloadLatest: () => {
-        if (this.destroyed) return
+        this.reloadController.markNavigationChanged()
         this.bootstrapController.markStarted()
         this.overlay.bumpRequestEpoch()
         void this.loadLatest(undefined, { trigger: 'command' })
       },
+      reloadCurrent: (reloadOptions) => this.reloadController.reloadCurrent(reloadOptions),
       loadBefore: () => {
-        if (this.destroyed) return
         this.ensureBootstrapStarted()
         getMessageListSessionRegistryRuntime(this.#runtime)
           .startEdgeRequest('before', 'command-before')
       },
       loadAfter: () => {
-        if (this.destroyed) return
         this.ensureBootstrapStarted()
         getMessageListSessionRegistryRuntime(this.#runtime)
           .startEdgeRequest('after', 'command-after')
       },
-    }
+    })
     this.liveSemantics = new MessageListSessionLiveSemantics({
       sessionId: this.sessionId,
       source: this.options.source,
@@ -121,20 +150,25 @@ export class MessageListSession<Row, Source>
       loadedSegmentStore: this.#loadedSegmentStore,
       publishSegment: (segment) => this.publishSegment(segment),
       publishLocalResetSegment: (segment) => this.publishLocalResetSegment(segment),
-      reportDiagnostic: (name, severity, details) =>
-        this.reportContractDiagnostic(name, severity, details),
+      reportDiagnostic: (name, severity, details) => this.reportContractDiagnostic(name, severity, details),
     })
-    this.rows = createSessionRows({
+    const sessionRows = createSessionRows({
       sessionId: this.sessionId,
       adapter: this.options.adapter,
       loadedSegmentStore: this.#loadedSegmentStore,
       publishSegment: (segment) => this.publishSegment(segment),
       publishLocalResetSegment: (segment) => this.publishLocalResetSegment(segment),
       clearPendingLocal: () => this.liveSemantics.clearPendingLocal(),
-      reportDiagnostic: (name, severity, details) =>
-        this.reportContractDiagnostic(name, severity, details),
+      reportDiagnostic: (name, severity, details) => this.reportContractDiagnostic(name, severity, details),
     })
-    this.tail = this.liveSemantics.tail
+    const guarded = createGuardedSessionMutations({
+      isDestroyed: () => this.destroyed,
+      rows: sessionRows,
+      tail: this.liveSemantics.tail,
+      reloadController: this.reloadController,
+    })
+    this.rows = guarded.rows
+    this.tail = guarded.tail
     this.stateStore = createMessageListSessionState({
       sessionId: this.sessionId,
       runtime: this.#runtime,
@@ -144,6 +178,17 @@ export class MessageListSession<Row, Source>
       options.adapter,
       (keys) => this.getRowsByKeys(keys),
     )
+    const routeRuntimeEvent = createSessionRuntimeEventRouter({
+      isCurrent: (generation, revision) =>
+        this.isStaleSegment(generation, revision) === false,
+      onNavigation: () => this.reloadController.markNavigationChanged(),
+      onDestinationCancelled: (requestToken) => this.cancelDestination(requestToken),
+      saveAnchor: (value) => this.anchorMemoryWriter?.enqueue(value),
+      onObservation: (event) => this.handleViewportObservation(event),
+      loadEdge: (event) => { void this.loadEdge(event) },
+      loadLatest: (event) => { void this.loadLatest(event) },
+      loadAround: (target, event) => { void this.loadAround(target, event) },
+    })
     defineMessageListSessionInternals<Row>(this, {
       runtime: this.#runtime,
       loadedSegmentStore: this.#loadedSegmentStore,
@@ -158,7 +203,10 @@ export class MessageListSession<Row, Source>
     })
     this.runtimeUnsubscribe = this.#runtime.subscribeRuntimeEvent((event) => {
       this.options.onRuntimeEvent?.(toSessionRuntimeLogEvent(event))
-      this.handleRuntimeEvent(event)
+      if (this.destroyed) return
+      this.reloadController.handleRuntimeEvent(event)
+      this.touch()
+      routeRuntimeEvent(event)
     })
   }
   getSnapshot(): MessageListSnapshot<Row> { return this.#runtime.getSnapshot() }
@@ -201,7 +249,11 @@ export class MessageListSession<Row, Source>
     return rows
   }
   destroy(): void {
+    if (this.destroyed) return
     this.destroyed = true
+    this.lifecycleAbortController.abort()
+    this.reloadController.destroy()
+    this.anchorMemoryWriter?.destroy()
     this.overlay.destroy()
     this.runtimeUnsubscribe()
     this.readReceipts.destroy()
@@ -211,42 +263,18 @@ export class MessageListSession<Row, Source>
     this.viewListeners.clear()
   }
   ensureBootstrapStarted(): void { this.bootstrapController.ensureStarted() }
-  private handleRuntimeEvent(event: MessageListRuntimeEvent): void {
-    this.touch()
-    if (event.type === 'viewportAnchorChanged' && event.anchor) {
-      const snapshot = this.#runtime.getSnapshot()
-      if (
-        snapshot.generation !== event.generation ||
-        snapshot.segmentRevision !== event.segmentRevision
-      ) {
-        return
-      }
-      void this.options.adapter.anchorMemory?.save(
-        this.context,
-        {
-          anchor: event.anchor,
-          offsetWithinMessage: event.offsetWithinMessage,
-        },
-      )
-      return
-    }
-    if (event.type === 'viewportObservationChanged') {
-      if (event.visibleItems.length > 0) this.rowsPerViewportEstimate = event.visibleItems.length
-      this.measurementSnapshot = getMessageListSessionRegistryRuntime(this.#runtime).getSegmentSizeSnapshot()
-      this.readReceipts.handleObservation(event)
-      return
-    }
-    if (event.type === 'needMoreBefore' || event.type === 'needMoreAfter') {
-      void this.loadEdge(event)
-      return
-    }
-    if (event.type === 'needLatestMessages') {
-      void this.loadLatest(event)
-      return
-    }
-    if (event.type === 'needMessagesAround') {
-      void this.loadAround(event.target, event)
-    }
+  private cancelDestination(requestToken: string): void {
+    this.#loadedSegmentStore.cancelRequestToken(requestToken)
+    this.overlay.bumpRequestEpoch()
+    this.overlay.cancelRequest()
+    this.reloadController.markNavigationChanged()
+  }
+  private handleViewportObservation(
+    event: Extract<MessageListRuntimeEvent, { type: 'viewportObservationChanged' }>,
+  ): void {
+    if (event.visibleItems.length > 0) this.rowsPerViewportEstimate = event.visibleItems.length
+    this.measurementSnapshot = getMessageListSessionRegistryRuntime(this.#runtime).getSegmentSizeSnapshot()
+    this.readReceipts.handleObservation(event)
   }
   private async loadLatest(
     event?: RuntimeNeedEvent,
@@ -268,6 +296,7 @@ export class MessageListSession<Row, Source>
         requestToken: event?.requestToken,
         trigger,
         reason: event?.reason,
+        signal: this.lifecycleAbortController.signal,
       })
       if (this.overlay.isStaleRequest(overlayRequestId) ||
         this.overlay.isStaleEpoch(requestEpoch)) {
@@ -328,6 +357,7 @@ export class MessageListSession<Row, Source>
         trigger,
         reason: event?.reason,
         target,
+        signal: this.lifecycleAbortController.signal,
       })
       if (this.overlay.isStaleRequest(overlayRequestId) ||
         this.overlay.isStaleEpoch(requestEpoch)) {
@@ -403,6 +433,7 @@ export class MessageListSession<Row, Source>
         trigger,
         reason: event.reason,
         boundaryRow,
+        signal: this.lifecycleAbortController.signal,
       })
       if (this.isStaleEvent(event)) {
         return {
@@ -490,18 +521,17 @@ export class MessageListSession<Row, Source>
     }
   }
   private publishSegment(segment: LoadedSegment<Row>): void {
-    let current = segment
-    this.applySegmentToRuntime(current)
-    const budget = resolveAdaptiveTrimBudget({ pageSize: this.options.defaults.pageSize, retention: this.options.defaults.retention, rowsPerViewportEstimate: this.rowsPerViewportEstimate })
-    const maxTrimPasses = Math.max(1, current.items.length)
-    for (let guard = 0; guard < maxTrimPasses; guard += 1) {
-      if (current.items.length <= budget) return
-      const previousLength = current.items.length
-      const trimmed = this.#loadedSegmentStore.trimToBudget(budget, resolveTrimProtectKey(this.#runtime, this.#loadedSegmentStore))
-      if (trimmed === current || trimmed.items.length >= previousLength) return
-      current = trimmed
-      this.applySegmentToRuntime(current)
-    }
+    const prepared = prepareSessionSegmentForPublish({
+      segment,
+      previous: this.lastPublishedSegment,
+      runtime: this.#runtime,
+      loadedSegmentStore: this.#loadedSegmentStore,
+      defaults: this.options.defaults,
+      rowsPerViewportEstimate: this.rowsPerViewportEstimate,
+    })
+    this.lastPublishedSegment = prepared.segment
+    this.applySegmentToRuntime(prepared.segment)
+    if (prepared.topologyChanged) this.reloadController.markTopologyChanged()
   }
   private applySegmentToRuntime(segment: LoadedSegment<Row>): void {
     this.liveSemantics.settlePendingLocalForSegment(segment)
@@ -559,7 +589,7 @@ export class MessageListSession<Row, Source>
     return trigger
   }
   private reportEdgeRequestStale(edge: 'before' | 'after', requestToken: string): void { getMessageListSessionRegistryRuntime(this.#runtime).reportEdgeRequestStale(edge, requestToken) }
-  private isStaleEvent(event: RuntimeNeedEvent | undefined): boolean { if (!event) return false; const segment = this.#loadedSegmentStore.getSegment(); return segment.generation !== event.generation || segment.segmentRevision !== event.segmentRevision }
+  private isStaleEvent(event: RuntimeNeedEvent | undefined): boolean { if (!event) return false; return this.#loadedSegmentStore.getSegment().generation !== event.generation }
   private isStaleResetRequest(event: RuntimeNeedEvent | undefined, requestGeneration: number, requestSegmentRevision: number): boolean { return event ? this.#loadedSegmentStore.getSegment().generation !== event.generation : this.isStaleSegment(requestGeneration, requestSegmentRevision) }
   private isStaleSegment(generation: number, segmentRevision: number): boolean { const segment = this.#loadedSegmentStore.getSegment(); return segment.generation !== generation || segment.segmentRevision !== segmentRevision }
   private emitRequestResult(result: RequestResultInput<Row, Source>): MessageListRequestResult<Row, Source> { const next = { sessionId: this.sessionId, source: this.options.source, ...result }; this.options.onRequestResult?.(next); return next }

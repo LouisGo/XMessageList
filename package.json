@@ -1,9 +1,9 @@
 {
   "name": "x-message-list",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
-  "description": "Deterministic IM message viewport runtime prototype for TypeX.",
+  "description": "Deterministic message-anchor viewport runtime for React IM clients.",
   "main": "./dist/x-message-list.cjs",
   "module": "./dist/x-message-list.js",
   "types": "./dist/index.d.ts",
@@ -15,8 +15,7 @@
     }
   },
   "files": [
-    "dist",
-    "docs"
+    "dist"
   ],
   "scripts": {
     "dev": "vite",
@@ -32,6 +31,7 @@
     "preview": "vite preview",
     "preview:demo": "vite preview --config vite.demo.config.ts",
     "test": "vitest run --config vitest.config.ts --passWithNoTests",
+    "test:pack": "npm run build && node tools/checkPackedConsumer.mjs",
     "typecheck": "tsc -b"
   },
   "peerDependencies": {

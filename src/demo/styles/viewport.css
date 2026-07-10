@@ -34,15 +34,6 @@
   display: none;
 }
 
-[data-message-scroll-container] {
-  min-height: 0;
-  height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  overflow-anchor: none;
-}
-
 [data-message-list][data-scrollbar-mode="custom"] [data-message-scroll-container] {
   scrollbar-width: none;
 }
@@ -56,41 +47,8 @@
   display: none;
 }
 
-[data-message-list-overlay-layer] {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  pointer-events: none;
-}
-
-[data-message-list-overlay-content] {
-  pointer-events: auto;
-}
-
 [data-message-flow] {
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  min-height: 100%;
   padding: 12px 22px;
-}
-
-[data-message-flow][data-short-align="start"] {
-  justify-content: flex-start;
-}
-
-[data-message-flow][data-short-align="center"] {
-  justify-content: center;
-}
-
-[data-message-flow][data-short-align="end"] {
-  justify-content: flex-end;
-}
-
-[data-edge-trigger],
-[data-bottom-marker] {
-  flex: 0 0 auto;
-  min-height: 1px;
 }
 
 [data-edge-trigger] {

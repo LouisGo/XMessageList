@@ -57,6 +57,26 @@ describe('MessageList viewport kernel', () => {
     )
   })
 
+  it('rejects loaded segments from another session', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const wrongSession = {
+      ...segment([item('row-2')], 1, 1),
+      sessionId: 'source-b',
+    }
+
+    runtime.applyLoadedSegment(wrongSession)
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      sessionId: 'source-a',
+      generation: 0,
+      segmentRevision: 0,
+    })
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'transaction.wrongSessionSegment',
+      severity: 'error',
+    }))
+  })
+
   it('serializes projection transactions instead of replacing active work', () => {
     const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -224,6 +244,15 @@ describe('MessageList viewport kernel', () => {
       type: 'viewportError',
       code: 'commit-timeout',
     }))
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'projectionSettled',
+      commitToken: expect.objectContaining({ generation: 1, segmentRevision: 1 }),
+      status: 'commit-timeout',
+    }))
+    expect(runtime.getSnapshot()).toMatchObject({
+      pendingIntent: null,
+      bottomLockState: 'UNLOCKED',
+    })
   })
 
   it('keeps the reserved motion slot no-op for committed projections', () => {
@@ -502,6 +531,158 @@ describe('MessageList viewport kernel', () => {
     }))
   })
 
+  it('uses the declared surviving successor when the visual anchor is deleted', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rowA = createRow('row-1', -50, 50)
+    const deletedRow = createRow('row-2', 0, 50)
+    const successorRow = createRow('row-3', 50, 50)
+
+    container.scrollTop = 50
+    container.append(rowA, deletedRow, successorRow)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', rowA)
+    adapter.registerRowElement('row-2', deletedRow)
+    adapter.registerRowElement('row-3', successorRow)
+    runtime.applyLoadedSegment(segment([
+      item('row-1'),
+      item('row-2'),
+      item('row-3'),
+    ], 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    runtime.applyLoadedSegment(segment([item('row-1'), item('row-3')], 1, 2, {
+      modifier: {
+        type: 'remove',
+        changedKeys: [],
+        removedKeys: ['row-2'],
+        removed: [{
+          key: 'row-2',
+          previousIndex: 1,
+          successorKey: 'row-3',
+          predecessorKey: 'row-1',
+        }],
+        firstAffectedIndex: 1,
+      },
+    }))
+    deletedRow.remove()
+    adapter.registerRowElement('row-2', null)
+    setElementMetrics(successorRow, { top: 20, height: 50 })
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(container.scrollTop).toBe(70)
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'correction.deletedAnchorFallback',
+      details: expect.objectContaining({
+        removedKey: 'row-2',
+        fallbackKey: 'row-3',
+        strategy: 'successor',
+      }),
+    }))
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'measurement.cache.invalidate',
+      details: expect.objectContaining({
+        reason: 'remove-suffix',
+        firstIndex: 1,
+        inclusive: true,
+      }),
+    }))
+    expect(runtime.getDiagnostics()).not.toContainEqual(expect.objectContaining({
+      name: 'measurement.transaction.fullMeasure',
+      details: expect.objectContaining({
+        segmentRevision: 2,
+        fullMeasureReason: 'anchor-missing-after-remap',
+      }),
+    }))
+  })
+
+  it('preserves the predecessor own geometry when deleting the final visual anchor', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const predecessorRow = createRow('row-1', -50, 50)
+    const deletedRow = createRow('row-2', 0, 50)
+
+    container.scrollTop = 50
+    container.append(predecessorRow, deletedRow)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', predecessorRow)
+    adapter.registerRowElement('row-2', deletedRow)
+    runtime.applyLoadedSegment(segment([item('row-1'), item('row-2')], 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 2, {
+      modifier: {
+        type: 'remove',
+        changedKeys: [],
+        removedKeys: ['row-2'],
+        removed: [{
+          key: 'row-2',
+          previousIndex: 1,
+          predecessorKey: 'row-1',
+        }],
+        firstAffectedIndex: 1,
+      },
+    }))
+    deletedRow.remove()
+    adapter.registerRowElement('row-2', null)
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(container.scrollTop).toBe(50)
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'correction.anchorPreserved',
+      details: expect.objectContaining({ key: 'row-1', delta: 0 }),
+    }))
+  })
+
+  it('settles an empty deletion with a null anchor and no missing-anchor recovery', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const deletedRow = createRow('row-1', 0, 50)
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(deletedRow)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', deletedRow)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    runtime.applyLoadedSegment(segment([], 1, 2, {
+      modifier: {
+        type: 'remove',
+        changedKeys: [],
+        removedKeys: ['row-1'],
+        removed: [{ key: 'row-1', previousIndex: 0 }],
+        firstAffectedIndex: 0,
+      },
+    }))
+    deletedRow.remove()
+    adapter.registerRowElement('row-1', null)
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'viewportAnchorChanged',
+      reason: 'transaction-settle',
+      anchor: null,
+    }))
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: 'viewportError',
+      code: 'anchor-missing',
+    }))
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'measurement.rectRead.count',
+      details: expect.objectContaining({
+        source: 'transaction-precheck',
+        segmentRevision: 2,
+        fallbackFullMeasure: false,
+        rowCount: 0,
+      }),
+    }))
+  })
+
   it('emits viewport anchor checkpoints on settle and detach', () => {
     const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -582,6 +763,40 @@ describe('MessageList viewport kernel', () => {
       afterTrigger: { top: 0, bottom: 0, height: 0 },
       bottomMarker: null,
     })
+  })
+
+  it('keeps destroy idempotent and rejects later attach or segment work', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({
+      sessionId: 'source-a',
+      scheduler,
+    })
+    const container = createContainer({ height: 100 })
+    const initialSnapshot = runtime.getSnapshot()
+
+    runtime.destroy()
+    runtime.destroy()
+    runtime.attachScrollContainer(container)
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
+    scheduler.flushTimers()
+
+    expect(runtime.getSnapshot()).toBe(initialSnapshot)
+    expect(runtime.getEvidence()).toMatchObject({
+      sessionId: 'source-a',
+      generation: 0,
+      segmentRevision: 0,
+      visibleRows: [],
+    })
+    expect(runtime.getDiagnostics()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'runtime.destroyedOperation',
+        details: { operation: 'attachScrollContainer' },
+      }),
+      expect.objectContaining({
+        name: 'runtime.destroyedOperation',
+        details: { operation: 'applyLoadedSegment' },
+      }),
+    ]))
   })
 })
 

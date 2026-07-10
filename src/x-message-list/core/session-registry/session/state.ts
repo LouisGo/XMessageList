@@ -7,6 +7,8 @@ import type {
   MessageListViewState,
 } from '../contracts'
 
+const DISTANCE_TO_BOTTOM_NOTIFY_THRESHOLD_PX = 0.5
+
 export function createMessageListSessionState<Row>(input: {
   sessionId: string
   runtime: MessageListRuntime<Row>
@@ -21,11 +23,22 @@ export function createMessageListSessionState<Row>(input: {
   let cachedSnapshot: MessageListSnapshot<Row> | null = null
   let cachedViewState: MessageListViewState | null = null
   let cachedState: MessageListSessionState<Row> | null = null
+  let distanceToBottom = readDistanceToBottom(input.runtime)
   const notify = () => {
     for (const listener of listeners) listener()
   }
   const unsubscribeRuntime = input.runtime.subscribeSnapshot(() => {
     cachedSnapshot = null
+    notify()
+  })
+  const unsubscribeObservation = input.runtime.subscribeViewportObservation((event) => {
+    const nextDistance = event.distanceToBottom
+    if (
+      Math.abs(nextDistance - distanceToBottom) <
+      DISTANCE_TO_BOTTOM_NOTIFY_THRESHOLD_PX
+    ) return
+    distanceToBottom = nextDistance
+    cachedState = null
     notify()
   })
 
@@ -44,7 +57,12 @@ export function createMessageListSessionState<Row>(input: {
 
       cachedSnapshot = snapshot
       cachedViewState = viewState
-      cachedState = createState(input.sessionId, snapshot, viewState, input.runtime)
+      cachedState = createState(
+        input.sessionId,
+        snapshot,
+        viewState,
+        distanceToBottom,
+      )
       return cachedState
     },
     subscribe: (listener) => {
@@ -57,6 +75,7 @@ export function createMessageListSessionState<Row>(input: {
     },
     destroy: () => {
       unsubscribeRuntime()
+      unsubscribeObservation()
       listeners.clear()
     },
   }
@@ -66,13 +85,8 @@ function createState<Row>(
   sessionId: string,
   snapshot: MessageListSnapshot<Row>,
   viewState: MessageListViewState,
-  runtime: MessageListRuntime<Row>,
+  distanceToBottom: number,
 ): MessageListSessionState<Row> {
-  const evidence = runtime.getEvidence()
-  const distanceToBottom = Math.max(
-    0,
-    evidence.scrollHeight - evidence.clientHeight - evidence.scrollTop,
-  )
   const rows = snapshot.items.map((item) => item.message as Row)
 
   return {
@@ -96,4 +110,10 @@ function createState<Row>(
       distanceToBottom,
     },
   }
+}
+
+function readDistanceToBottom(runtime: MessageListRuntime<unknown>): number {
+  const evidence = runtime.getEvidence()
+  const distance = evidence.scrollHeight - evidence.clientHeight - evidence.scrollTop
+  return Number.isFinite(distance) ? Math.max(0, distance) : 0
 }

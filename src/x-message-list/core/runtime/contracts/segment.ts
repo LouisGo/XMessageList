@@ -49,9 +49,15 @@ export type SegmentModifier =
       align?: ResetAroundAlign
       /** 目标消息内部的垂直偏移，用于 restore。 */
       offsetWithinMessage?: number
+      /** runtime-origin around request token；用于丢弃被用户打断的旧 destination 响应。 */
+      requestToken?: string
     }
   /** 重置到源最新窗口，常用于 follow-bottom/latest。 */
-  | { type: 'reset-latest' }
+  | {
+      type: 'reset-latest'
+      /** 结构性刷新只需将新投影原子安装到当前位置，不表达用户发起的 follow motion。 */
+      reason?: 'structural'
+    }
   /** 裁掉 before 侧数据窗口。 */
   | {
       type: 'trim-before'
@@ -69,6 +75,25 @@ export type SegmentModifier =
       type: 'patch'
       /** 本次 patch 影响的 row key。 */
       changedKeys: MessageRuntimeItemKey[]
+    }
+  /** 从当前 loaded segment 删除 row，并携带删除前位置与确定性的存活邻居。 */
+  | {
+      type: 'remove'
+      /** 本次 patch/invalidate 后仍存活的 changed row key；不包含 removedKeys。 */
+      changedKeys: MessageRuntimeItemKey[]
+      /** 实际存在并被删除的 row key，顺序与 removed 一致。 */
+      removedKeys: MessageRuntimeItemKey[]
+      /** 每个被删除 row 在删除前的位置，以及删除后仍存活的最近邻居。 */
+      removed: Array<{
+        key: MessageRuntimeItemKey
+        previousIndex: number
+        successorKey?: MessageRuntimeItemKey
+        predecessorKey?: MessageRuntimeItemKey
+      }>
+      /** 删除前最早被删除 row 的 index；runtime 从该 index 起失效位置缓存。 */
+      firstAffectedIndex: number
+      /** host 提供的删除原因，仅用于诊断。 */
+      reason?: string
     }
   /** 在尾部追加新 row，可选择保持锚点或跟随到底部。 */
   | {

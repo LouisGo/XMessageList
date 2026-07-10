@@ -67,6 +67,7 @@ export type MutateSegmentInput<TMessage, TOptimistic> = {
   patches?: MessageDataItem<TMessage, TOptimistic>[]
   removeKeys?: MessageRuntimeItemKey[]
   invalidateKeys?: MessageRuntimeItemKey[]
+  reason?: string
 }
 
 export type IdentityRemapInput = Extract<
@@ -81,6 +82,8 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
   private generation = 0
 
   private segmentRevision = 0
+
+  private topologyRevision = 0
 
   private readonly requestTokens: LoadedSegmentRequestTokenRegistry
 
@@ -105,13 +108,26 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
   }
 
   createRequestToken(kind: LoadedSegmentRequestKind): LoadedSegmentRequestToken {
-    return this.requestTokens.create(kind, this.generation, this.segmentRevision)
+    return this.requestTokens.create(
+      kind,
+      this.generation,
+      this.segmentRevision,
+      this.topologyRevision,
+    )
   }
 
   adoptRequestToken(
     request: LoadedSegmentRequestToken,
   ): void {
-    this.requestTokens.adopt(request, this.generation, this.segmentRevision)
+    this.requestTokens.adopt(
+      request,
+      this.generation,
+      this.topologyRevision,
+    )
+  }
+
+  cancelRequestToken(requestToken: string): boolean {
+    return this.requestTokens.cancel(requestToken)
   }
 
   resetLatest(
@@ -169,6 +185,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
         target: input.target,
         align: input.align,
         offsetWithinMessage: input.offsetWithinMessage,
+        requestToken: input.requestToken,
       }),
     }
   }
@@ -231,9 +248,23 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
       invalidateKeys: input.invalidateKeys ?? [],
     })
 
-    if (mutation.changedKeys.length === 0) {
+    if (mutation.changedKeys.length === 0 && mutation.removed.length === 0) {
       return this.segment
     }
+
+    const modifier: SegmentModifier = mutation.removed.length > 0
+      ? {
+          type: 'remove',
+          changedKeys: mutation.changedKeys,
+          removedKeys: mutation.removedKeys,
+          removed: mutation.removed,
+          firstAffectedIndex: mutation.firstAffectedIndex as number,
+          ...(input.reason ? { reason: input.reason } : {}),
+        }
+      : {
+          type: 'patch',
+          changedKeys: mutation.changedKeys,
+        }
 
     this.segment = this.createSegment(mutation.items, {
       hasMoreBefore: this.segment.hasMoreBefore,
@@ -241,10 +272,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
       context: this.segment.context,
       anchor: this.segment.anchor,
       anchorStatus: this.segment.anchorStatus,
-      modifier: {
-        type: 'patch',
-        changedKeys: mutation.changedKeys,
-      },
+      modifier,
     })
     return this.segment
   }
@@ -287,10 +315,13 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
   replaceItems(
     input: ReplaceSegmentInput<TMessage, TOptimistic>,
   ): LoadedSegment<TMessage, TOptimistic> {
+    const hasMoreAfter = input.hasMoreAfter ?? this.segment.hasMoreAfter
     this.segment = this.createSegment(dedupeItems(input.items), {
       hasMoreBefore: input.hasMoreBefore ?? this.segment.hasMoreBefore,
-      hasMoreAfter: input.hasMoreAfter ?? this.segment.hasMoreAfter,
-      context: this.segment.context,
+      hasMoreAfter,
+      context: this.segment.context === 'latest' && hasMoreAfter
+        ? 'history'
+        : this.segment.context,
       anchor: input.anchor ?? this.segment.anchor,
       anchorStatus: input.anchorStatus ?? this.segment.anchorStatus,
       modifier: { type: 'patch', changedKeys: input.changedKeys },
@@ -322,10 +353,13 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
     }
 
     const trimmed = trimAroundKey(this.segment.items, budget, protectKey)
+    const context = this.segment.context === 'latest' && trimmed.removedAfter > 0
+      ? 'history'
+      : this.segment.context
     this.segment = this.createSegment(trimmed.items, {
       hasMoreBefore: this.segment.hasMoreBefore || trimmed.removedBefore > 0,
       hasMoreAfter: this.segment.hasMoreAfter || trimmed.removedAfter > 0,
-      context: this.segment.context,
+      context,
       anchor: this.segment.anchor,
       anchorStatus: this.segment.anchorStatus,
       modifier: trimmed.removedBefore >= trimmed.removedAfter
@@ -370,7 +404,7 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
       requestToken,
       expectedKind,
       this.generation,
-      this.segmentRevision,
+      this.topologyRevision,
     )
   }
 
@@ -393,6 +427,9 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
       modifier: SegmentModifier
     },
   ): LoadedSegment<TMessage, TOptimistic> {
+    if (hasBoundaryTopologyChange(this.segment, items, input)) {
+      this.topologyRevision += 1
+    }
     this.segmentRevision += 1
     return {
       sessionId: this.options.sessionId,
@@ -407,6 +444,22 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
       modifier: input.modifier,
     }
   }
+}
+
+function hasBoundaryTopologyChange<TMessage, TOptimistic>(
+  previous: LoadedSegment<TMessage, TOptimistic>,
+  items: MessageDataItem<TMessage, TOptimistic>[],
+  input: {
+    hasMoreBefore: boolean
+    hasMoreAfter: boolean
+    context?: LoadedSegmentContext
+  },
+): boolean {
+  return previous.items[0]?.key !== items[0]?.key ||
+    previous.items.at(-1)?.key !== items.at(-1)?.key ||
+    previous.hasMoreBefore !== input.hasMoreBefore ||
+    previous.hasMoreAfter !== input.hasMoreAfter ||
+    previous.context !== (input.context ?? previous.context)
 }
 
 export function createLoadedSegmentStore<

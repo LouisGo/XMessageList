@@ -33,7 +33,7 @@ describe('LoadedSegmentStore', () => {
       previousKey: 'row-3',
       nextKey: 'server-3',
     }]).context).toBe('latest')
-    expect(store.trimToBudget(1).context).toBe('latest')
+    expect(store.trimToBudget(1).context).toBe('history')
     expect(store.resetLatest({
       items: [item('tail')],
       hasMoreBefore: true,
@@ -299,7 +299,7 @@ describe('LoadedSegmentStore', () => {
     ])
   })
 
-  it('rejects same-generation edge responses after the segment revision changes', () => {
+  it('accepts same-generation edge responses after a content-only revision', () => {
     const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [item('row-1')],
@@ -315,11 +315,9 @@ describe('LoadedSegmentStore', () => {
       items: [item('stale-before')],
       hasMoreBefore: false,
       hasMoreAfter: false,
-    })).toMatchObject({
-      applied: false,
-      reason: 'stale-request',
-    })
+    })).toMatchObject({ applied: true })
     expect(store.getSegment().items.map((nextItem) => nextItem.key)).toEqual([
+      'stale-before',
       'row-1',
     ])
   })
@@ -422,7 +420,25 @@ describe('LoadedSegmentStore', () => {
     expect(segment.hasMoreBefore).toBe(true)
   })
 
-  it('mutates loaded rows with patch, remove, and invalidate in one patch segment', () => {
+  it('degrades latest context when replacement reopens the after boundary', () => {
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
+    store.resetLatest({
+      items: [item('row-1'), item('row-2')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })
+
+    const segment = store.replaceItems({
+      items: [item('row-1')],
+      changedKeys: ['row-2'],
+      hasMoreAfter: true,
+    })
+
+    expect(segment.context).toBe('history')
+    expect(segment.hasMoreAfter).toBe(true)
+  })
+
+  it('publishes deletion metadata while preserving surviving row references', () => {
     const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     store.resetLatest({
       items: [
@@ -461,8 +477,55 @@ describe('LoadedSegmentStore', () => {
     expect(segment.items.find((nextItem) => nextItem.key === 'row-14'))
       .not.toBe(row14)
     expect(segment.modifier).toEqual({
-      type: 'patch',
-      changedKeys: ['row-12', 'row-13', 'row-14'],
+      type: 'remove',
+      changedKeys: ['row-12', 'row-14'],
+      removedKeys: ['row-13'],
+      removed: [{
+        key: 'row-13',
+        previousIndex: 3,
+        successorKey: 'row-14',
+        predecessorKey: 'row-12',
+      }],
+      firstAffectedIndex: 3,
+    })
+  })
+
+  it('records surviving neighbors for adjacent actual removals only', () => {
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
+    store.resetLatest({
+      items: [item('row-1'), item('row-2'), item('row-3'), item('row-4')],
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+    })
+    const previous = store.getSegment()
+
+    const segment = store.mutateItems({
+      removeKeys: ['missing', 'row-2', 'row-3'],
+      reason: 'message-deleted',
+    })
+
+    expect(segment.items[0]).toBe(previous.items[0])
+    expect(segment.items[1]).toBe(previous.items[3])
+    expect(segment.modifier).toEqual({
+      type: 'remove',
+      changedKeys: [],
+      removedKeys: ['row-2', 'row-3'],
+      removed: [
+        {
+          key: 'row-2',
+          previousIndex: 1,
+          successorKey: 'row-4',
+          predecessorKey: 'row-1',
+        },
+        {
+          key: 'row-3',
+          previousIndex: 2,
+          successorKey: 'row-4',
+          predecessorKey: 'row-1',
+        },
+      ],
+      firstAffectedIndex: 1,
+      reason: 'message-deleted',
     })
   })
 
@@ -596,6 +659,7 @@ describe('LoadedSegmentStore', () => {
     ])
     expect(secondTrim.hasMoreBefore).toBe(true)
     expect(secondTrim.hasMoreAfter).toBe(true)
+    expect(secondTrim.context).toBe('history')
   })
 })
 

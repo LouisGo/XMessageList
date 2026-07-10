@@ -39,6 +39,10 @@ export class ProjectionTransactionQueue<TMessage, TOptimistic> {
     return this.pending
   }
 
+  recordScrollWrite(): void {
+    if (this.pending) this.pending.scrollWriteCount += 1
+  }
+
   setPending(pending: PendingTransaction<TMessage, TOptimistic>): void {
     this.pending = pending
   }

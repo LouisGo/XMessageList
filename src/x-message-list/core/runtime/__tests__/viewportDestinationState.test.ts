@@ -119,6 +119,53 @@ describe('MessageList destination state', () => {
     expect(container.scrollTop).toBe(0)
   })
 
+  it('lets user input cancel pending destination data and rejects its late around segment', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const row = createRow('row-1', 0, 50)
+    const target = { sessionId: 'source-a', stableId: 'row-9', serverId: 'row-9' }
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(row)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', row)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    runtime.scrollToMessage(target)
+    const around = events.find((event) => event.type === 'needMessagesAround')
+    expect(runtime.getSnapshot().pendingIntent).toBe('destination')
+
+    container.dispatchEvent(new Event('wheel'))
+
+    expect(runtime.getSnapshot().pendingIntent).toBeNull()
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'destinationCancelled',
+      requestToken: around && 'requestToken' in around ? around.requestToken : undefined,
+      reason: 'user-interrupt',
+    }))
+
+    runtime.applyLoadedSegment(segment([item('row-9')], 2, 1, {
+      modifier: {
+        type: 'reset-around',
+        target,
+        requestToken: around && 'requestToken' in around ? around.requestToken : undefined,
+      },
+      anchor: target,
+    }))
+
+    expect(runtime.getSnapshot()).toMatchObject({
+      generation: 1,
+      segmentRevision: 1,
+      items: [expect.objectContaining({ key: 'row-1' })],
+    })
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'destination.staleSegment',
+    }))
+  })
+
   it('reopens an exhausted edge when budget trim removes that edge', () => {
     const observers = createFakeObservers()
     const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', observers })
@@ -181,7 +228,7 @@ describe('MessageList destination state', () => {
       .toHaveLength(previousAfterNeeds + 1)
   })
 
-  it('pauses ordinary edge requests while underflow fill is pending', () => {
+  it('lets explicit user scroll cancel underflow before ordinary edge paging resumes', () => {
     const observers = createFakeObservers()
     const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', observers })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -209,7 +256,38 @@ describe('MessageList destination state', () => {
     container.dispatchEvent(new Event('scroll'))
     observers.intersectionObservers[1]?.trigger(after, true)
 
-    expect(events.some((event) => event.type === 'needMoreAfter')).toBe(false)
+    expect(runtime.getSnapshot().pendingIntent).toBe('edge-after')
+    expect(events.some((event) => event.type === 'needMoreAfter')).toBe(true)
+  })
+
+  it('keeps underflow pending on passive patches until the matching edge segment settles', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const row = createRow('row-1', 0, 20)
+    const events: MessageListRuntimeEvent[] = []
+
+    container.append(row)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', row)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getSnapshot().pendingIntent).toBe('underflow-fill')
+
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 2, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      modifier: { type: 'patch', changedKeys: ['row-1'] },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getSnapshot().pendingIntent).toBe('underflow-fill')
+    expect(events.filter((event) => event.type === 'needMoreBefore')).toHaveLength(1)
+    expect(events.filter((event) => event.type === 'needMoreAfter')).toHaveLength(0)
   })
 
   it('restores a remote destination with the saved offset inside the message', () => {

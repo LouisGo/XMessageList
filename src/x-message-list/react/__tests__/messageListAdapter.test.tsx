@@ -62,9 +62,21 @@ describe('MessageList React adapter', () => {
     expect(host.querySelector('[data-testid="after-slot"]')).not.toBeNull()
     expect(host.querySelector('[data-testid="overlay"]')).not.toBeNull()
     expect(host.querySelector('[data-message-list-overlay-layer]')).not.toBeNull()
-    expect(host.querySelector('[data-message-scroll-container]')?.contains(
+    const scrollContainer = host.querySelector<HTMLElement>(
+      '[data-message-scroll-container]',
+    )
+    expect(scrollContainer?.contains(
       host.querySelector('[data-testid="overlay"]'),
     )).toBe(false)
+    expect(scrollContainer?.contains(
+      host.querySelector('button'),
+    )).toBe(false)
+    expect(host.querySelector('[data-message-list-affordance-layer]'))
+      .not.toBeNull()
+    expect(scrollContainer?.style.overflowY).toBe('auto')
+    expect(scrollContainer?.style.overflowAnchor).toBe('none')
+    expect(host.querySelector<HTMLElement>('[data-message-flow]')?.style.display)
+      .toBe('flex')
     expect(fixture.runtime.getSnapshot().viewportPhase).toBe('IDLE')
     expect(fixture.runtime.getDiagnostics().map((record) => record.name))
       .toContain('transaction.settle')
@@ -517,6 +529,7 @@ describe('MessageList React adapter', () => {
         />,
       )
     })
+    const previousItems = fixture.runtime.getSnapshot().items
     renderCounts.clear()
 
     await act(async () => {
@@ -534,6 +547,16 @@ describe('MessageList React adapter', () => {
     expect(renderCounts.get('row-11') ?? 0).toBe(0)
     expect(renderCounts.get('row-12') ?? 0).toBe(0)
     expect(renderCounts.get('row-14')).toBe(1)
+    expect(fixture.runtime.getSnapshot().items[0]).toBe(previousItems[0])
+    expect(fixture.runtime.getSnapshot().items[1]).toBe(previousItems[1])
+    expect(fixture.runtime.getSnapshot().items[2]).toBe(previousItems[2])
+    expect(fixture.runtime.getSnapshot().items[3]).not.toBe(previousItems[4])
+    expect(fixture.runtime.getSnapshot().segmentMeta.modifier).toMatchObject({
+      type: 'remove',
+      changedKeys: ['row-14'],
+      removedKeys: ['row-13'],
+      firstAffectedIndex: 3,
+    })
 
     await act(async () => {
       root.unmount()

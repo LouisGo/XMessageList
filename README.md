@@ -13,6 +13,7 @@ npm run typecheck
 npm run lint
 npm run test
 npm run build
+npm run test:pack
 npm run build:demo
 npm run e2e:correctness
 npm run e2e:perf
@@ -115,7 +116,8 @@ function ConversationView({ sessionId }: { sessionId: string }) {
 - 包根不导出 `createMessageListRuntime`、`MessageListRuntime`、`MessageListSnapshot`、`MessageListRuntimeEvent`、`LoadedSegment`、`MessageDataItem`、loaded segment store 类型或 `x-message-list/data` 子路径。
 - `MessageListSessionRegistry` 掌管所有 `sessionId` 关联的 session。`MessageList` 卸载时仅分离视图，不会销毁 session。
 - 应用 store 仍然是分页消息缓存、持久化和脏时间戳检查的规范持有者。XMessageList session 仅掌管当前 loaded segment、边缘状态、视口状态和已加载行的变更。
-- `MessageListSession` 仅暴露公开应用命令和本地行变更入口：`commands.scrollToLatest`、`commands.scrollToMessage`、`commands.loadBefore`、`commands.loadAfter`、`commands.reloadLatest`、`getState`、`subscribe`、`rows.patch`、`rows.mutate`、`rows.replace`、`rows.resetLatest`、`rows.resetAround`、`rows.applyIdentityRemap` 和 `rows.clear`。
+- `MessageListSession` 仅暴露公开应用命令和本地行变更入口：`commands.scrollToLatest`、`commands.scrollToMessage`、`commands.loadBefore`、`commands.loadAfter`、`commands.reloadLatest`、`commands.reloadCurrent`、`getState`、`subscribe`、`rows.patch`、`rows.mutate`、`rows.replace`、`rows.resetLatest`、`rows.resetAround`、`rows.applyIdentityRemap` 和 `rows.clear`。
+- Host 无法用局部 mutation 证明窗口结构正确时调用 `commands.reloadCurrent({ reason: 'structural' })`；只有返回 `applied` 才表示对应 projection 已完成 DOM settle。
 - React 是 `MessageListSession` 之上的适配器；它不得调用 request API、合并数据、持久化锚点或执行已读回执。
 - Runtime 和 Loaded Segment Store 保持为包内部实现细节。
 

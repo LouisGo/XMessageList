@@ -25,6 +25,10 @@ type PendingRuntimeMotionCallbacks<TMessage, TOptimistic> = {
     segment: LoadedSegment<TMessage, TOptimistic>,
     anchor: MessageIdentityAnchor | null,
   ): void
+  emitProjectionSettled(
+    token: PendingRuntimeMotion<TMessage, TOptimistic>['commitToken'],
+    status: 'applied',
+  ): void
 }
 
 export function startPendingRuntimeMotion<TMessage, TOptimistic>(
@@ -39,6 +43,7 @@ export function startPendingRuntimeMotion<TMessage, TOptimistic>(
     callbacks.motion.startResolution(
       pendingMotion.settlement,
       pendingMotion.scrollSource,
+      pendingMotion.commitToken,
     )
   ) {
     callbacks.emitSegmentTrimPressure(
@@ -69,5 +74,6 @@ export function startPendingRuntimeMotion<TMessage, TOptimistic>(
     pendingMotion.segment,
     pendingMotion.settlement.anchor,
   )
+  callbacks.emitProjectionSettled(pendingMotion.commitToken, 'applied')
   return false
 }

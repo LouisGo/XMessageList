@@ -108,6 +108,8 @@ oracle 都不能通过这些字段补答案。
 | Dynamic height | height change 由 DOM/ResizeObserver 触发；above-anchor growth 后 visual anchor 稳定；不通过 reset 掩盖。 |
 | Segment trim | item count 低于预算；trim modifier 方向符合场景预期；visual anchor 或 bottom lock 保持稳定。 |
 | Identity remap | modifier 显式携带 `from` / `to` 与 `previousKey -> nextKey`；remap 后 anchor 和 persisted identity 更新。 |
+| Remove transaction | removed key 不触发 full-measure fallback；只失效 `firstAffectedIndex` 起的 metric；survivor renderVersion 不变；被删锚点 successor-first。 |
+| Structural reload | pending/failed/stale 保留旧 rows；用户新导航使旧结果 stale；`applied` 晚于 DOM settle；一次 transaction 最多一次 scrollTop correction。 |
 | Custom overlay | thumb top/height 与 native metrics 误差在阈值内；overlay 不访问 paging、bottom lock、trim 或 anchor state。 |
 | Held drag continuity | edge loading 期间同方向不重复请求；load settle 后 thumb 随真实 range 回落，同一次 drag 不被取消或锁死。 |
 | Loading overlay | cold session overlay 不在 scroll container 内；慢请求超过阈值才显示，快请求不显示。 |

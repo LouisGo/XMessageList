@@ -99,10 +99,42 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
     }
   }
 
-  settlePending(
+  cancelPending(
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
   ): MessageListSnapshot<TMessage, TOptimistic> {
     if (snapshot.pendingIntent !== 'underflow-fill') {
+      return snapshot
+    }
+
+    this.reset()
+    this.axes.markReadyIdle()
+    return {
+      ...snapshot,
+      pendingIntent: null,
+    }
+  }
+
+  shouldSettlePending(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+    segment: import('../contracts/segment').LoadedSegment<TMessage, TOptimistic>,
+  ): boolean {
+    if (snapshot.pendingIntent !== 'underflow-fill' || !this.lastEdge) {
+      return false
+    }
+
+    const requestToken = snapshot.edgeState[this.lastEdge].requestToken
+    return this.lastEdge === 'before'
+      ? segment.modifier.type === 'extend-before' &&
+          segment.modifier.requestToken === requestToken
+      : segment.modifier.type === 'extend-after' &&
+          segment.modifier.requestToken === requestToken
+  }
+
+  settlePending(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+    shouldSettle: boolean,
+  ): MessageListSnapshot<TMessage, TOptimistic> {
+    if (!shouldSettle) {
       return snapshot
     }
 

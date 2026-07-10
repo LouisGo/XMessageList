@@ -91,6 +91,49 @@ export type MessageListRowsMutation<Row> = {
   reason?: string
 }
 
+/** 重新读取当前用户所见窗口的选项。 */
+export type MessageListReloadCurrentOptions = {
+  /** 当前只允许结构性刷新；调用方必须显式说明意图。 */
+  reason: 'structural'
+}
+
+/** reloadCurrent 被判定为过期的原因。 */
+export type MessageListReloadCurrentStaleReason =
+  | 'superseded'
+  | 'navigation-changed'
+  | 'topology-changed'
+  | 'session-destroyed'
+
+/** reloadCurrent 失败的原因。 */
+export type MessageListReloadCurrentFailureReason =
+  | 'request-failed'
+  | 'anchor-unavailable'
+  | 'contract-violation'
+  | 'commit-timeout'
+
+type MessageListReloadCurrentResultBase = {
+  /** 本次按当前状态选择的请求类型。 */
+  requestKind: 'latest' | 'around'
+}
+
+/** reloadCurrent 的唯一终态结果。 */
+export type MessageListReloadCurrentResult<Row> =
+  | MessageListReloadCurrentResultBase & {
+      status: 'applied'
+      page: MessageListPage<Row>
+      resolvedAnchor?: MessageListAnchor
+      resolution?: 'exact' | 'fallback'
+    }
+  | MessageListReloadCurrentResultBase & {
+      status: 'stale'
+      staleReason: MessageListReloadCurrentStaleReason
+    }
+  | MessageListReloadCurrentResultBase & {
+      status: 'failed'
+      failureReason: MessageListReloadCurrentFailureReason
+      error?: unknown
+    }
+
 /** 乐观消息确认后的身份重映射。 */
 export type MessageListIdentityRemap = {
   /** remap 前的消息锚点。 */
@@ -196,6 +239,10 @@ export type MessageListSession<Row = unknown> = {
     loadAfter(): void
     /** 重新加载 latest 窗口。 */
     reloadLatest(): void
+    /** 静默重新读取当前用户所见窗口，并在对应 projection transaction settle 后返回。 */
+    reloadCurrent(
+      options: MessageListReloadCurrentOptions,
+    ): Promise<MessageListReloadCurrentResult<Row>>
   }
   /** 直接操作当前 rows。 */
   rows: {

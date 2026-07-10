@@ -1,6 +1,5 @@
 import type { MessageIdentityAnchor, MessageRuntimeItemKey } from '../contracts/identity'
 import type { RuntimeScheduler } from '../contracts/options'
-import type { LoadedSegment } from '../contracts/segment'
 import type { MessageListSnapshot } from '../contracts/snapshot'
 import type { RuntimeDomInteractions } from '../dom/domInteractions'
 import type { RuntimeDomRegistry } from '../dom/domRegistry'
@@ -64,47 +63,6 @@ export function handleResizeEntries<TMessage, TOptimistic>(host: RuntimeControll
   }
 }
 
-export function markSegmentDirty<TMessage, TOptimistic>(segment: LoadedSegment<TMessage, TOptimistic>, host: RuntimeControllerMeasurementHost<TMessage, TOptimistic>): void {
-  switch (segment.modifier.type) {
-    case 'bootstrap':
-    case 'reset-latest':
-    case 'reset-around':
-    case 'trim-before':
-    case 'trim-after':
-      host.dirtyRange.markAllDirty('segment')
-      host.domInteractions.markAllRowMetricsDirty('segment')
-      break
-    case 'extend-before':
-    case 'extend-after': {
-      const keys = segment.items.map((item) => item.key)
-      host.dirtyRange.markDirtyKeys(keys, 'segment')
-      host.domInteractions.markRowMetricDirtyKeys(keys)
-      break
-    }
-    case 'patch':
-      host.dirtyRange.markDirtyKeys(segment.modifier.changedKeys, 'render-version')
-      host.domInteractions.markRowMetricDirtyKeys(segment.modifier.changedKeys)
-      break
-    case 'append':
-      host.dirtyRange.markDirtyKeys(segment.modifier.changedKeys, 'segment')
-      host.domInteractions.markRowMetricDirtyKeys(segment.modifier.changedKeys)
-      for (const retired of segment.modifier.retireKeys ?? []) {
-        host.domInteractions.deleteRowMetric(retired)
-        host.dirtyRange.deleteKey(retired)
-      }
-      break
-    case 'identity-remap':
-      for (const remap of segment.modifier.remaps) {
-        host.dirtyRange.markDirty(remap.nextKey, 'render-version')
-        host.domInteractions.remapRowMetric(remap.previousKey, remap.nextKey)
-      }
-      break
-    default:
-      host.dirtyRange.markAllDirty('unknown')
-      host.domInteractions.markAllRowMetricsDirty('unknown')
-  }
-}
-
 export function scheduleResizeMeasurementFrame<TMessage, TOptimistic>(host: RuntimeControllerMeasurementHost<TMessage, TOptimistic>): void {
   if (host.resizeFrame !== null) return
   const pushDiagnostic: PushDiagnostic = (name, severity, details) =>
@@ -136,7 +94,23 @@ export function scheduleResizeMeasurementFrame<TMessage, TOptimistic>(host: Runt
     host.lastMeasurement = measureRuntimeDom(host.registry.snapshot(), measurementOptions)
     emitMeasurementDiagnostics(pushDiagnostic, host.lastMeasurement, 'resize', dirtyRange)
     host.setViewportPhase('CORRECTING')
-    if (shouldPreserveAnchorForDirtyRange(dirtyRange, anchor, host.snapshot)) {
+    const shouldFollowNativeBottom = host.snapshot.bottomLockState === 'LOCKED' &&
+      !host.snapshot.segmentMeta.hasMoreAfter
+    const distanceToBottom = Math.max(
+      0,
+      host.lastMeasurement.scrollHeight -
+        host.lastMeasurement.clientHeight -
+        host.lastMeasurement.scrollTop,
+    )
+    if (shouldFollowNativeBottom && distanceToBottom > 1) {
+      host.domInteractions.scrollToNativeBottom('followBottom')
+      host.pushDiagnostic('measurement.resize.bottomFollow', 'info', {
+        distanceToBottom,
+      })
+    } else if (
+      !shouldFollowNativeBottom &&
+      shouldPreserveAnchorForDirtyRange(dirtyRange, anchor, host.snapshot)
+    ) {
       host.domInteractions.preserveVisualAnchor(anchor)
     }
     host.lastMeasurement = measureRuntimeDom(host.registry.snapshot(), measurementOptions)
@@ -223,27 +197,16 @@ export function createMeasurementCacheContext<TMessage, TOptimistic>(
 }
 
 export function createSegmentSizeSnapshot<TMessage, TOptimistic>(host: RuntimeControllerMeasurementHost<TMessage, TOptimistic>): RuntimeSegmentSizeSnapshot {
-  const anchorKey = host.lastAnchor
-    ? findKeyForAnchor(host.snapshot, host.lastAnchor)
-    : null
+  const anchorKey = host.lastAnchor ? findKeyForAnchor(host.snapshot, host.lastAnchor) : null
 
   return host.domInteractions.createSizeSnapshot({
-    sessionId: host.snapshot.sessionId,
-    generation: host.snapshot.generation,
-    segmentRevision: host.snapshot.segmentRevision,
-    anchor: anchorKey
-      ? {
-          key: anchorKey,
-          offsetWithinMessage: host.lastAnchorOffsetWithinMessage ?? 0,
-        }
-      : undefined,
+    sessionId: host.snapshot.sessionId, generation: host.snapshot.generation, segmentRevision: host.snapshot.segmentRevision,
+    anchor: anchorKey ? { key: anchorKey, offsetWithinMessage: host.lastAnchorOffsetWithinMessage ?? 0 } : undefined,
   })
 }
 
 function resolveResizeCaptureKeys<TMessage, TOptimistic>(dirtyRange: RuntimeDirtyRange, domInteractions: RuntimeDomInteractions<TMessage, TOptimistic>): string[] | undefined {
-  if (dirtyRange.fallbackFullMeasure || dirtyRange.keys.size === 0) {
-    return domInteractions.getScrollSampleKeys()
-  }
+  if (dirtyRange.fallbackFullMeasure || dirtyRange.keys.size === 0) return domInteractions.getScrollSampleKeys()
 
   const keys = new Set<string>()
   for (const key of dirtyRange.keys) keys.add(key)

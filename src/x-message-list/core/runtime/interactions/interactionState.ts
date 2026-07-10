@@ -83,12 +83,43 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     this.destination.markLocalSettled()
   }
 
+  acceptsDestinationSegment(
+    segment: LoadedSegment<TMessage, TOptimistic>,
+  ): boolean {
+    return this.destination.acceptsSegment(segment)
+  }
+
+  interruptDestinationForUserInput(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+  ): InteractionUpdate<TMessage, TOptimistic> | null {
+    const interrupted = this.destination.interruptForUserInput()
+    if (!interrupted?.requestToken) {
+      return null
+    }
+
+    return {
+      snapshot: snapshot.pendingIntent === 'destination'
+        ? { ...snapshot, pendingIntent: null }
+        : snapshot,
+      event: {
+        type: 'destinationCancelled',
+        sessionId: snapshot.sessionId,
+        generation: snapshot.generation,
+        segmentRevision: snapshot.segmentRevision,
+        requestToken: interrupted.requestToken,
+        reason: 'user-interrupt',
+      },
+    }
+  }
+
   clearFollowBottom(): void {
     this.followBottom.clear()
   }
 
-  cancelUnderflowFill(): void {
-    this.underflow.reset()
+  cancelUnderflowFill(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+  ): MessageListSnapshot<TMessage, TOptimistic> {
+    return this.underflow.cancelPending(snapshot)
   }
 
   startEdgeNeed(
@@ -157,6 +188,9 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     const next = this.edge.reportError(snapshot, edge, requestToken)
 
     if (next !== snapshot) {
+      if (snapshot.pendingIntent === 'underflow-fill') {
+        this.underflow.reset()
+      }
       this.axes.markReadyIdle()
     }
 
@@ -171,10 +205,43 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     const next = this.edge.reportStale(snapshot, edge, requestToken)
 
     if (next !== snapshot) {
+      if (snapshot.pendingIntent === 'underflow-fill') {
+        this.underflow.reset()
+      }
       this.axes.markReadyIdle()
     }
 
     return next
+  }
+
+  projectEdgeStateForSegment(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+    segment: LoadedSegment<TMessage, TOptimistic>,
+  ): MessageListSnapshot<TMessage, TOptimistic> {
+    const next = this.edge.settleSegment({
+      ...snapshot,
+      segmentMeta: {
+        ...snapshot.segmentMeta,
+        hasMoreBefore: segment.hasMoreBefore,
+        hasMoreAfter: segment.hasMoreAfter,
+      },
+    }, segment)
+    const edge = segment.modifier.type === 'extend-before'
+      ? 'before'
+      : segment.modifier.type === 'extend-after'
+        ? 'after'
+        : null
+    if (!edge) return next
+    return {
+      ...next,
+      edgeState: {
+        ...next.edgeState,
+        [edge]: {
+          ...next.edgeState[edge],
+          requestToken: snapshot.edgeState[edge].requestToken,
+        },
+      },
+    }
   }
 
   startFollowBottom(
@@ -206,6 +273,10 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     segment: LoadedSegment<TMessage, TOptimistic>,
   ): MessageListSnapshot<TMessage, TOptimistic> {
     let next = snapshot
+    const shouldSettleUnderflow = this.underflow.shouldSettlePending(
+      snapshot,
+      segment,
+    )
 
     if (isSegmentReset(segment)) {
       next = this.edge.reset(next)
@@ -214,7 +285,7 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     next = this.edge.settleSegment(next, segment)
     next = this.destination.settleSegment(next, segment)
     next = this.followBottom.settleSegment(next, segment)
-    next = this.underflow.settlePending(next)
+    next = this.underflow.settlePending(next, shouldSettleUnderflow)
 
     if (!this.followBottom.hasActive(next)) {
       this.followBottom.reset()

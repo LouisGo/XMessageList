@@ -252,6 +252,9 @@ type MessageListSession<Row> = {
     loadBefore(): void
     loadAfter(): void
     reloadLatest(): void
+    reloadCurrent(options: {
+      reason: 'structural'
+    }): Promise<MessageListReloadCurrentResult<Row>>
   }
 
   rows: {

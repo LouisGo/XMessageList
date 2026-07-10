@@ -5,7 +5,10 @@ import {
   type MessageDataItem,
   type MessageListRuntimeEvent,
 } from '../index'
-import { getMessageListAdapterRuntime } from '../internal'
+import {
+  getMessageListAdapterRuntime,
+  getMessageListSessionRegistryRuntime,
+} from '../internal'
 import {
   createContainer,
   createFakeObservers,
@@ -13,6 +16,81 @@ import {
   FakeScheduler,
 } from '../../../../test/fakes'
 describe('MessageList viewport interactions', () => {
+  it('corrects before loading and error slot height changes after React commit', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const sessionRuntime = getMessageListSessionRegistryRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const before = createMarker(0, 1)
+    const row = createRow('row-1', 1, 180)
+
+    container.append(before, row)
+    runtime.attachScrollContainer(container)
+    adapter.registerBeforeTriggerElement(before)
+    adapter.registerRowElement('row-1', row)
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    sessionRuntime.startEdgeRequest('before', 'test-before')
+    const requestToken = runtime.getSnapshot().edgeState.before.requestToken as string
+    setElementMetrics(before, { top: 0, height: 31 })
+    setElementMetrics(row, { top: 31, height: 180 })
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(container.scrollTop).toBe(30)
+
+    // The first correction restored the row to visual top=1. Error content is
+    // twenty pixels taller than loading content, so the second commit adds 20.
+    setElementMetrics(row, { top: 1, height: 180 })
+    runtime.reportEdgeRequestFailure('before', requestToken)
+    setElementMetrics(before, { top: 0, height: 51 })
+    setElementMetrics(row, { top: 21, height: 180 })
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(container.scrollTop).toBe(50)
+    expect(runtime.getDiagnostics().filter((record) =>
+      record.name === 'edgeSlot.anchorPreserved'
+    )).toHaveLength(2)
+  })
+
+  it('follows native bottom once when a locked after slot changes height', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const sessionRuntime = getMessageListSessionRegistryRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const row = createRow('row-1', 0, 200)
+    const after = createMarker(200, 1)
+
+    container.append(row, after)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', row)
+    adapter.registerAfterTriggerElement(after)
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      modifier: { type: 'reset-latest', reason: 'structural' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(container.scrollTop).toBe(101)
+
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 2, {
+      hasMoreAfter: true,
+      modifier: { type: 'patch', changedKeys: [] },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
+
+    sessionRuntime.startEdgeRequest('after', 'test-after')
+    setElementMetrics(after, { top: 200, height: 41 })
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(container.scrollTop).toBe(141)
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'edgeSlot.bottomFollow',
+      details: expect.objectContaining({ edge: 'after', applied: true }),
+    }))
+  })
+
   it('latches edge paging, reports errors, and retries through runtime state', () => {
     const observers = createFakeObservers()
     const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', observers })
@@ -190,7 +268,7 @@ describe('MessageList viewport interactions', () => {
     expect(rectReads.count).toBeLessThanOrEqual(32)
     expect(runtime.getEvidence().scrollTop).toBe(200)
   })
-  it('samples transaction pre-correction measurement before final full measurement', () => {
+  it('bounds ordinary patch precheck and final measurement to relevant rows', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
       sessionId: 'source-a',
@@ -245,12 +323,14 @@ describe('MessageList viewport interactions', () => {
       details: {
         modifier: 'patch',
         transactionPhase: 'final',
-        measurementPlan: 'authoritative-full',
-        fullMeasureReason: 'transaction-final',
-        fallbackFullMeasure: true,
-        rowCount: 80,
+        measurementPlan: 'bounded-authoritative',
+        fallbackFullMeasure: false,
+        rowCount: expect.any(Number),
+        requestedRowCount: expect.any(Number),
       },
     })
+    expect(final?.details.rowCount as number).toBeLessThan(80)
+    expect(final?.details.requestedRowCount as number).toBeLessThan(80)
     expect(runtime.getDiagnostics()
       .filter((record) => record.name === 'measurement.transaction.summary')
       .at(-1))
@@ -266,9 +346,8 @@ describe('MessageList viewport interactions', () => {
             fallbackFullMeasure: false,
           },
           final: {
-            measurementPlan: 'authoritative-full',
-            fullMeasureReason: 'transaction-final',
-            fallbackFullMeasure: true,
+            measurementPlan: 'bounded-authoritative',
+            fallbackFullMeasure: false,
           },
         },
       })
@@ -321,10 +400,66 @@ describe('MessageList viewport interactions', () => {
         },
         final: {
           measurementPlan: 'authoritative-full',
+          fullMeasureReason: 'structural-reset',
           fallbackFullMeasure: true,
         },
       },
     })
+    expect(diagnostics.find((record) =>
+      record.name === 'transaction.settle'
+    )?.details.scrollWriteCount as number).toBeLessThanOrEqual(1)
+  })
+
+  it('keeps remove suffix final measurement bounded', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = Array.from({ length: 80 }, (_, index) =>
+      createRow(`row-${index + 1}`, index * 20, 20)
+    )
+    const items = rows.map((row) => item(row.dataset.runtimeKey as string))
+
+    container.append(...rows)
+    runtime.attachScrollContainer(container)
+    for (const row of rows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+    runtime.applyLoadedSegment(segment(items, 1, 1))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    const removedRow = rows[9]
+    const nextItems = items.filter((nextItem) => nextItem.key !== 'row-10')
+    runtime.applyLoadedSegment(segment(nextItems, 1, 2, {
+      modifier: {
+        type: 'remove',
+        changedKeys: [],
+        removedKeys: ['row-10'],
+        removed: [{
+          key: 'row-10',
+          previousIndex: 9,
+          successorKey: 'row-11',
+          predecessorKey: 'row-9',
+        }],
+        firstAffectedIndex: 9,
+      },
+    }))
+    removedRow?.remove()
+    adapter.registerRowElement('row-10', null)
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    const final = runtime.getDiagnostics().filter((record) =>
+      record.name === 'measurement.rectRead.count' &&
+      record.details.source === 'transaction-final'
+    ).at(-1)
+    expect(final).toMatchObject({
+      details: {
+        modifier: 'remove',
+        measurementPlan: 'bounded-authoritative',
+        fallbackFullMeasure: false,
+        requestedRowCount: expect.any(Number),
+      },
+    })
+    expect(final?.details.requestedRowCount as number).toBeLessThan(80)
   })
   it('samples reset-latest precheck from segment anchor when captured anchor left the DOM', () => {
     const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })

@@ -8,6 +8,7 @@ import { measureRuntimeDom, type RuntimeMeasurement } from '../dom/measurement'
 import { resolveTransactionPreCorrectionMeasurementPlan, type TransactionPreCorrectionMeasurementPlan } from './controllerPreCorrectionMeasurement'
 import type { PendingTransaction } from './controllerTransactionHelpers'
 import type { RuntimeMeasurementSource } from './controllerMeasurement'
+import { resolveTransactionFinalMeasurementPlan, type TransactionFinalMeasurementPlan } from './controllerFinalMeasurement'
 
 export type PushDiagnostic = (
   name: string,
@@ -77,20 +78,28 @@ export function measureTransactionFinal<TMessage, TOptimistic>(
     pushDiagnostic: PushDiagnostic
     pending: PendingTransaction<TMessage, TOptimistic>
     registry: RuntimeDomRegistry
+    domInteractions: RuntimeDomInteractions<TMessage, TOptimistic>
     dirtyRange: RuntimeDirtyRange
   },
-): RuntimeMeasurement {
-  const { dirtyRange, pending, pushDiagnostic, registry } = input
-  // final measurement 固定全量读取，作为 settle 后 evidence/diagnostics 的权威样本。
-  const measurement = measureRuntimeDom(registry.snapshot())
+): { measurement: RuntimeMeasurement; plan: TransactionFinalMeasurementPlan } {
+  const { dirtyRange, domInteractions, pending, pushDiagnostic, registry } = input
+  const plan = resolveTransactionFinalMeasurementPlan({
+    anchor: pending.anchor,
+    segment: pending.segment,
+    dirtyRange,
+    registry,
+    domInteractions,
+  })
+  const measurement = measureRuntimeDom(registry.snapshot(), plan.options)
   emitTransactionFinalMeasurementDiagnostics({
     pushDiagnostic,
     token: pending.token,
     segment: pending.segment,
     dirtyRange,
     measurement,
+    plan,
   })
-  return measurement
+  return { measurement, plan }
 }
 
 export function emitMeasurementDiagnostics(
@@ -167,9 +176,10 @@ export function emitTransactionFinalMeasurementDiagnostics<TMessage, TOptimistic
     segment: LoadedSegment<TMessage, TOptimistic>
     dirtyRange: RuntimeDirtyRange
     measurement: RuntimeMeasurement
+    plan: TransactionFinalMeasurementPlan
   },
 ): void {
-  const { dirtyRange, measurement, pushDiagnostic, segment, token } = input
+  const { dirtyRange, measurement, plan, pushDiagnostic, segment, token } = input
 
   emitMeasurementDiagnostics(
     pushDiagnostic,
@@ -180,8 +190,8 @@ export function emitTransactionFinalMeasurementDiagnostics<TMessage, TOptimistic
       ...token,
       modifier: segment.modifier.type,
       transactionPhase: 'final',
-      measurementPlan: 'authoritative-full',
-      fullMeasureReason: 'transaction-final',
+      measurementPlan: plan.mode,
+      fullMeasureReason: plan.fullMeasureReason,
       dirtyReason: dirtyRange.reason,
       dirtyKeyCount: dirtyRange.keys.size,
       missingKeyCount: dirtyRange.missingKeys.length,
@@ -195,11 +205,12 @@ export function emitSettledTransactionMeasurementDiagnostics<TMessage, TOptimist
     pending: PendingTransaction<TMessage, TOptimistic>
     precheck: TransactionPrecheckMeasurement
     finalMeasurement: RuntimeMeasurement
+    finalPlan: TransactionFinalMeasurementPlan
     latencyMs: number
   },
 ): void {
   const {
-    finalMeasurement,
+    finalMeasurement, finalPlan,
     latencyMs,
     pending,
     precheck,
@@ -208,10 +219,15 @@ export function emitSettledTransactionMeasurementDiagnostics<TMessage, TOptimist
   const { dirtyRange, measurement: precheckMeasurement, plan: precheckPlan } = precheck
   const { segment, token } = pending
 
-  pushDiagnostic('transaction.settle', 'info', { ...token, latencyMs })
+  pushDiagnostic('transaction.settle', 'info', {
+    ...token,
+    latencyMs,
+    scrollWriteCount: pending.scrollWriteCount,
+  })
   pushDiagnostic('measurement.transaction.latencyMs', 'debug', {
     ...token,
     latencyMs,
+    scrollWriteCount: pending.scrollWriteCount,
   })
   pushDiagnostic('measurement.transaction.summary', 'info', {
     ...token,
@@ -231,8 +247,8 @@ export function emitSettledTransactionMeasurementDiagnostics<TMessage, TOptimist
       fallbackFullMeasure: precheckMeasurement.fallbackFullMeasure,
     },
     final: {
-      measurementPlan: 'authoritative-full',
-      fullMeasureReason: 'transaction-final',
+      measurementPlan: finalPlan.mode,
+      fullMeasureReason: finalPlan.fullMeasureReason,
       rectReadCount: finalMeasurement.rectReadCount,
       rowCount: finalMeasurement.visibleRows.length,
       requestedRowCount: finalMeasurement.requestedRowCount,

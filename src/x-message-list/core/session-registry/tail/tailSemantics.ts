@@ -184,9 +184,10 @@ export class MessageListSessionLiveSemantics<Row, Source> {
       return
     }
     const segment = this.options.loadedSegmentStore.getSegment()
-    if (segment.context !== 'latest') {
+    if (segment.context !== 'latest' || segment.hasMoreAfter) {
       this.reportDiagnostic('remoteTailAppend.outsideLatestContext', 'warn', {
         context: segment.context,
+        hasMoreAfter: segment.hasMoreAfter,
         reason: append.reason,
       })
       return
@@ -357,7 +358,7 @@ export class MessageListSessionLiveSemantics<Row, Source> {
     return null
   }
 }
-function normalizeLocalTailStageInput<Row>(
+export function normalizeLocalTailStageInput<Row>(
   input: Row | Row[] | MessageListLocalTailStageInput<Row>,
 ): MessageListLocalTailStageInput<Row> {
   if (Array.isArray(input)) {
@@ -373,7 +374,7 @@ function normalizeLocalTailStageInput<Row>(
   }
   return { rows: [input], reason: 'send' }
 }
-function normalizeRemoteTailAppendInput<Row>(
+export function normalizeRemoteTailAppendInput<Row>(
   input: Row | Row[] | MessageListRemoteTailAppendInput<Row>,
 ): MessageListRemoteTailAppendInput<Row> {
   if (Array.isArray(input)) {

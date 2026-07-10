@@ -37,6 +37,36 @@ export function resolveRemappedAnchorKey<TMessage, TOptimistic>(
   return remap?.nextKey ?? key
 }
 
+/**
+ * 返回 transaction 中旧 visual anchor 的候选 key。删除 anchor 时确定性地先选存活
+ * successor，再选 predecessor；其他 modifier 只返回 remap 后 key。
+ */
+export function resolveTransactionAnchorCandidateKeys<TMessage, TOptimistic>(
+  key: MessageRuntimeItemKey,
+  segment: LoadedSegment<TMessage, TOptimistic>,
+): MessageRuntimeItemKey[] {
+  const remappedKey = resolveRemappedAnchorKey(key, segment)
+
+  if (segment.modifier.type !== 'remove') {
+    return [remappedKey]
+  }
+
+  const removed = segment.modifier.removed.find((entry) => entry.key === remappedKey)
+  if (!removed) {
+    return [remappedKey]
+  }
+
+  return [removed.successorKey, removed.predecessorKey]
+    .filter((candidate): candidate is MessageRuntimeItemKey => Boolean(candidate))
+}
+
+export function resolveTransactionAnchorKey<TMessage, TOptimistic>(
+  key: MessageRuntimeItemKey,
+  segment: LoadedSegment<TMessage, TOptimistic>,
+): MessageRuntimeItemKey {
+  return resolveTransactionAnchorCandidateKeys(key, segment)[0] ?? key
+}
+
 export function resolveAnchorFromKey<TMessage, TOptimistic>(
   segment: LoadedSegment<TMessage, TOptimistic>,
   key: MessageRuntimeItemKey,

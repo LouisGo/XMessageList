@@ -13,19 +13,20 @@ export default defineConfig({
       entryRoot: 'src',
       include: [
         'src/index.ts',
-        'src/x-message-list/core/session-registry/index.ts',
-        'src/x-message-list/core/session-registry/contracts/index.ts',
-        'src/x-message-list/react/index.ts',
-        'src/x-message-list/react/components/MessageList.tsx',
-        'src/x-message-list/react/hooks/useMessageListSession.ts',
-        'src/x-message-list/react/hooks/useMessageListState.ts',
-        'src/x-message-list/react/types.ts',
+        'src/x-message-list/**/*.ts',
+        'src/x-message-list/**/*.tsx',
+      ],
+      exclude: [
+        'src/x-message-list/**/__tests__/**',
+        'src/x-message-list/**/*.test.ts',
+        'src/x-message-list/**/*.test.tsx',
       ],
       insertTypesEntry: true,
       tsconfigPath: './tsconfig.app.json',
     }),
   ],
   build: {
+    copyPublicDir: false,
     lib: {
       entry: {
         index: fileURLToPath(new URL('./src/index.ts', import.meta.url)),

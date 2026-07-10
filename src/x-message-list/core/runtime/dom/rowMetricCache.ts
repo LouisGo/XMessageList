@@ -153,6 +153,36 @@ export class RuntimeRowMetricCache {
     })
   }
 
+  invalidateFromIndex(
+    snapshotItems: Array<{ key: MessageRuntimeItemKey }>,
+    index: number,
+    reason: string,
+  ): void {
+    let invalidated = 0
+
+    for (
+      let itemIndex = Math.max(0, index);
+      itemIndex < snapshotItems.length;
+      itemIndex += 1
+    ) {
+      if (this.rowMetricsByKey.delete(snapshotItems[itemIndex].key)) {
+        invalidated += 1
+      }
+    }
+
+    if (invalidated === 0) {
+      return
+    }
+
+    this.rebuildMetricOrder()
+    this.options.onDiagnostic('measurement.cache.invalidate', 'info', {
+      invalidated,
+      reason,
+      firstIndex: index,
+      inclusive: true,
+    })
+  }
+
   remapKey(
     previousKey: MessageRuntimeItemKey | undefined,
     nextKey: MessageRuntimeItemKey,

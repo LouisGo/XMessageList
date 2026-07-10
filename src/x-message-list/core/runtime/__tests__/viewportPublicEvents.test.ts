@@ -5,7 +5,10 @@ import {
   type MessageDataItem,
   type MessageListRuntimeEvent,
 } from '../index'
-import { getMessageListAdapterRuntime } from '../internal'
+import {
+  getMessageListAdapterRuntime,
+  getMessageListSessionRegistryRuntime,
+} from '../internal'
 import {
   createContainer,
   createFakeObservers,
@@ -14,6 +17,109 @@ import {
 } from '../../../../test/fakes'
 
 describe('MessageList public runtime events', () => {
+  it('captures live row-local anchor memory and retains it without DOM', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const sessionRuntime = getMessageListSessionRegistryRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const row = createRow('row-1', -24, 60)
+
+    container.append(row)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', row)
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(sessionRuntime.getViewportAnchorMemory()).toEqual({
+      anchor: expect.objectContaining({
+        sessionId: 'source-a',
+        stableId: 'row-1',
+      }),
+      offsetWithinMessage: 24,
+    })
+
+    runtime.detachScrollContainer()
+
+    expect(sessionRuntime.getViewportAnchorMemory()).toEqual({
+      anchor: expect.objectContaining({ stableId: 'row-1' }),
+      offsetWithinMessage: 24,
+    })
+  })
+
+  it('skips visible structural rows when resolving current and measured anchors', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const sessionRuntime = getMessageListSessionRegistryRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const dateRow = createRow('date-1', -10, 30)
+    const messageRow = createRow('row-1', 20, 60)
+    const events: MessageListRuntimeEvent[] = []
+
+    dateRow.dataset.rowKind = 'date-separator'
+    delete dateRow.dataset.messageStableId
+    delete dateRow.dataset.messageServerId
+    container.append(dateRow, messageRow)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('date-1', dateRow)
+    adapter.registerRowElement('row-1', messageRow)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([
+      {
+        key: 'date-1',
+        rowKind: 'date-separator',
+        renderVersion: 1,
+      },
+      item('row-1'),
+    ], 1, 1, { hasMoreAfter: true }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(sessionRuntime.getViewportAnchorMemory()).toEqual({
+      anchor: expect.objectContaining({ stableId: 'row-1' }),
+      offsetWithinMessage: 0,
+    })
+
+    events.length = 0
+    container.dispatchEvent(new Event('scroll'))
+    scheduler.flushFrame()
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'viewportAnchorChanged',
+      reason: 'scroll-idle',
+      anchor: expect.objectContaining({ stableId: 'row-1' }),
+      offsetWithinMessage: 0,
+    }))
+  })
+
+  it('emits user navigation intent synchronously before scroll-frame observation', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
+    const container = createContainer({ height: 100 })
+    const events: MessageListRuntimeEvent[] = []
+
+    runtime.attachScrollContainer(container)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([], 1, 1, { hasMoreAfter: true }))
+    getMessageListAdapterRuntime(runtime)
+      .ackProjectionCommit(runtime.getSnapshot().commitToken)
+    events.length = 0
+
+    container.dispatchEvent(new Event('wheel'))
+
+    expect(events).toEqual([{
+      type: 'viewportNavigationIntent',
+      sessionId: 'source-a',
+      generation: 1,
+      segmentRevision: 1,
+      reason: 'user-scroll',
+    }])
+    expect(events.some((event) =>
+      event.type === 'viewportObservationChanged'
+    )).toBe(false)
+  })
+
   it('reports visible ratio, range, source, direction, and activity', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({
@@ -95,6 +201,28 @@ describe('MessageList public runtime events', () => {
           commitToken: expect.objectContaining({ generation: 2 }),
         }),
       ])
+  })
+
+  it('emits one applied projectionSettled event per committed transaction', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const events: MessageListRuntimeEvent[] = []
+
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
+    const token = runtime.getSnapshot().commitToken
+    adapter.ackProjectionCommit(token)
+
+    expect(events.filter((event) => event.type === 'projectionSettled')).toEqual([
+      {
+        type: 'projectionSettled',
+        sessionId: 'source-a',
+        generation: 1,
+        segmentRevision: 1,
+        commitToken: token,
+        status: 'applied',
+      },
+    ])
   })
 
   it('emits destinationSettled when an around jump resolves target', () => {

@@ -12,6 +12,7 @@ export type DestinationIntent = {
   align: 'start' | 'center' | 'end' | 'nearest'
   offsetWithinMessage?: number
   motion?: MessageListScrollMotionHint
+  requestToken?: string
 }
 
 export type InteractionUpdate<TMessage, TOptimistic> = {

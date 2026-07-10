@@ -13,6 +13,8 @@
       <div data-bottom-marker></div>
     </div>
   </div>
+  <div data-message-list-affordance-layer><!-- scroll-to-latest --></div>
+  <div data-message-list-overlay-layer><!-- loading/error overlay --></div>
 </div>
 ```
 
@@ -21,36 +23,17 @@
 - `data-message-list` 是 `MessageList` component 的 root。
 - `data-message-scroll-container` 是唯一 scroll container。
 - rows、triggers、bottom marker 都在正常文档流中。
+- scroll-to-latest 与 overlay 都在 scroll container 外的 root overlay layer；它们不能
+  增加 `scrollHeight` 或改变 bottom marker 的几何含义。
 - 不用额外占位高度伪造未加载历史。
 - `data-message-flow` 在短内容时按 snapshot 的 short alignment 负责真实布局。
 - `overflow-anchor` 由 runtime 统一关闭或控制，避免浏览器 scroll anchoring 与 runtime correction 竞争。
 
-## CSS 布局原则
+## 结构布局原则
 
-```css
-[data-message-scroll-container] {
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-[data-message-flow] {
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-[data-message-flow][data-short-align="end"] {
-  justify-content: flex-end;
-}
-
-[data-message-flow][data-short-align="start"] {
-  justify-content: flex-start;
-}
-
-[data-message-flow][data-short-align="center"] {
-  justify-content: center;
-}
-```
+`MessageList` 直接提供唯一 scroll owner、`overflow-anchor:none`、flow flex、短窗口
+对齐、edge/bottom marker 最小尺寸以及 overlay positioning。Host CSS 只负责高度、
+padding、颜色和 slot 视觉样式，不能复制或覆盖这些滚动正确性不变量。
 
 说明：
 
@@ -58,6 +41,8 @@
 - around restore / jump 的短 segment 可以使用 `center` 或 `start`，不能被默认吸底语义覆盖。
 - 一旦 rows 高度超过 viewport，浏览器按真实 DOM 高度滚动。
 - trigger 可以是 1px 或视觉隐藏元素，但必须存在于文档流。
+- root 所在 flex/grid 子树仍必须给 `MessageList` 一个确定高度；组件内已经固定
+  `min-width:0/min-height:0`，避免产生第二个 overflow owner。
 
 ## Ref Registry
 

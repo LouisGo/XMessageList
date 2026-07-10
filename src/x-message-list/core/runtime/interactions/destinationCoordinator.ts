@@ -44,11 +44,11 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
     intent: DestinationIntent,
   ): InteractionUpdate<TMessage, TOptimistic> {
     // destination 先请求 around 数据；若目标已在本地，controller/motion 会绕过这里直接 settle。
-    this.pending = intent
+    const requestToken = this.nextRequestToken('around')
+    this.pending = { ...intent, requestToken }
     this.lastDirection = resolveDestinationDirection(intent)
     this.axes.markDestinationPending()
     this.axes.markDestinationPendingData()
-    const requestToken = this.nextRequestToken('around')
     const event: NeedMessagesAroundEvent = {
       type: 'needMessagesAround',
       sessionId: snapshot.sessionId,
@@ -69,6 +69,27 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
     }
   }
 
+  interruptForUserInput(): DestinationIntent | null {
+    const pending = this.pending
+    if (!pending) {
+      return null
+    }
+
+    this.pending = null
+    this.lastDirection = null
+    this.axes.markReadyIdle()
+    this.axes.markDestinationInterrupted()
+    return pending
+  }
+
+  acceptsSegment(segment: LoadedSegment<TMessage, TOptimistic>): boolean {
+    if (segment.modifier.type !== 'reset-around' || !segment.modifier.requestToken) {
+      return true
+    }
+
+    return this.pending?.requestToken === segment.modifier.requestToken
+  }
+
   markLocalSettled(): void {
     this.pending = null
     this.lastDirection = null
@@ -86,7 +107,11 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
     snapshot: MessageListSnapshot<TMessage, TOptimistic>,
     segment: LoadedSegment<TMessage, TOptimistic>,
   ): MessageListSnapshot<TMessage, TOptimistic> {
-    if (segment.modifier.type !== 'reset-around' || !this.pending) {
+    if (
+      segment.modifier.type !== 'reset-around' ||
+      !this.pending ||
+      !this.acceptsSegment(segment)
+    ) {
       return snapshot
     }
 

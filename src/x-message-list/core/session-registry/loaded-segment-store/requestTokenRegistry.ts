@@ -8,6 +8,7 @@ export type LoadedSegmentRequestToken = {
   requestToken: string
   generation: number
   segmentRevision: number
+  topologyRevision?: number
   kind: LoadedSegmentRequestKind
 }
 
@@ -17,7 +18,10 @@ export type LoadedSegmentRequestToken = {
 export class LoadedSegmentRequestTokenRegistry {
   private requestSequence = 0
 
-  private readonly pendingRequests = new Map<string, LoadedSegmentRequestToken>()
+  private readonly pendingRequests = new Map<
+    string,
+    LoadedSegmentRequestToken & { topologyRevision: number }
+  >()
 
   private readonly currentRequestByKind = new Map<LoadedSegmentRequestKind, string>()
 
@@ -27,11 +31,13 @@ export class LoadedSegmentRequestTokenRegistry {
     kind: LoadedSegmentRequestKind,
     generation: number,
     segmentRevision: number,
+    topologyRevision: number,
   ): LoadedSegmentRequestToken {
     const request = {
       requestToken: `${this.sessionId}:${kind}:${this.requestSequence + 1}`,
       generation,
       segmentRevision,
+      topologyRevision,
       kind,
     }
     this.requestSequence += 1
@@ -44,20 +50,15 @@ export class LoadedSegmentRequestTokenRegistry {
   adopt(
     request: LoadedSegmentRequestToken,
     generation: number,
-    segmentRevision: number,
+    topologyRevision: number,
   ): void {
-    if (
-      request.generation !== generation ||
-      (
-        !isResetRequestKind(request.kind) &&
-        request.segmentRevision !== segmentRevision
-      )
-    ) {
+    if (request.generation !== generation) {
       return
     }
 
     this.supersedeConflictingKinds(request.kind)
-    this.pendingRequests.set(request.requestToken, request)
+    const adopted = { ...request, topologyRevision }
+    this.pendingRequests.set(request.requestToken, adopted)
     this.currentRequestByKind.set(request.kind, request.requestToken)
   }
 
@@ -65,7 +66,7 @@ export class LoadedSegmentRequestTokenRegistry {
     requestToken: string,
     expectedKind: LoadedSegmentRequestKind,
     generation: number,
-    segmentRevision: number,
+    topologyRevision: number,
   ): LoadedSegmentRequestToken | null {
     const request = this.pendingRequests.get(requestToken)
     // 只删除被消费的 token；如果它已被更新 token 替代，current pointer 必须保留。
@@ -83,7 +84,7 @@ export class LoadedSegmentRequestTokenRegistry {
       request.generation !== generation ||
       (
         !isResetRequestKind(request.kind) &&
-        request.segmentRevision !== segmentRevision
+        request.topologyRevision !== topologyRevision
       ) ||
       !isCurrent
     ) {
@@ -95,6 +96,16 @@ export class LoadedSegmentRequestTokenRegistry {
 
     this.currentRequestByKind.delete(request.kind)
     return request
+  }
+
+  cancel(requestToken: string): boolean {
+    const request = this.pendingRequests.get(requestToken)
+    if (!request) return false
+    this.pendingRequests.delete(requestToken)
+    if (this.currentRequestByKind.get(request.kind) === requestToken) {
+      this.currentRequestByKind.delete(request.kind)
+    }
+    return true
   }
 
   reset(): void {

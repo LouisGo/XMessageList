@@ -3,6 +3,7 @@ import {
   createMessageListSessionRegistry,
   type MessageListAdapter,
   type MessageListPage,
+  type MessageListRuntimeLogDiagnosticRecord,
   type MessageListSession,
 } from '../index'
 import { getMessageListSessionInternals } from '../internal'
@@ -773,6 +774,80 @@ describe('createMessageListSessionRegistry', () => {
     unsubscribe()
   })
 
+  it('publishes viewport distance subscriptions only for meaningful observation changes', async () => {
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+    })
+    const session = manager.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+
+    let reportedDistance = 40
+    const observedDistances: number[] = []
+    const unsubscribe = session.subscribe(() => {
+      observedDistances.push(session.getState().viewport.distanceToBottom)
+    })
+    const emitObservation = () => {
+      ;(internals.runtime as unknown as {
+        emitRuntimeEvent(event: MessageListRuntimeEvent): void
+      }).emitRuntimeEvent(observation([], reportedDistance))
+    }
+
+    emitObservation()
+    emitObservation()
+    reportedDistance = 40.25
+    emitObservation()
+    reportedDistance = 41
+    emitObservation()
+
+    expect(observedDistances).toEqual([40, 41])
+    expect(session.getState().viewport.distanceToBottom).toBe(41)
+    unsubscribe()
+  })
+
+  it('keeps missing-key rows.patch upserts while reporting their deprecated use', async () => {
+    const diagnostics: MessageListRuntimeLogDiagnosticRecord[] = []
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => Promise.resolve(page(['existing'])),
+      }),
+      onRuntimeEvent: (event) => {
+        if (event.diagnostic) diagnostics.push(event.diagnostic)
+      },
+    })
+    const session = manager.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => session.getState().loaded.keys[0] === 'existing')
+    ackSessionCommit(session)
+
+    session.rows.patch([
+      { id: 'existing', text: 'patched' },
+      { id: 'missing-a' },
+      { id: 'missing-b' },
+      { id: 'missing-a', text: 'duplicate input' },
+    ])
+    ackSessionCommit(session)
+
+    expect(session.getState().loaded.keys).toEqual([
+      'existing',
+      'missing-a',
+      'missing-b',
+    ])
+    expect(internals.loadedSegmentStore.getSegment().items[1]?.message)
+      .toEqual({ id: 'missing-a' })
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      name: 'rows.patch.missingKeyUpsertDeprecated',
+      severity: 'warn',
+      details: expect.objectContaining({
+        missingKeys: ['missing-a', 'missing-b'],
+      }),
+    }))
+  })
+
   it('mutates only loaded rows and invalidates render versions without row data changes', async () => {
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
       getSessionSource: (id) => ({ id, type: 'normal' }),
@@ -805,8 +880,17 @@ describe('createMessageListSessionRegistry', () => {
     expect(snapshot.items[0]?.renderVersion).toBe(before[0].renderVersion + 1)
     expect(snapshot.items[1]?.message).toEqual({ id: 'row-12', text: 'edited' })
     expect(snapshot.segmentMeta.modifier).toEqual({
-      type: 'patch',
-      changedKeys: ['row-10', 'row-11', 'row-12'],
+      type: 'remove',
+      changedKeys: ['row-10', 'row-12'],
+      removedKeys: ['row-11'],
+      removed: [{
+        key: 'row-11',
+        previousIndex: 1,
+        successorKey: 'row-12',
+        predecessorKey: 'row-10',
+      }],
+      firstAffectedIndex: 1,
+      reason: 'push-update',
     })
     expect(session.getState().loaded.keys).toEqual(['row-10', 'row-12'])
   })
@@ -982,7 +1066,7 @@ describe('createMessageListSessionRegistry', () => {
     expect(internals.loadedSegmentStore.getSegment().hasMoreAfter).toBe(true)
   })
 
-  it('rejects same-generation edge responses after local patches advance segment revision', async () => {
+  it('applies same-generation edge responses across content-only patches', async () => {
     type NeedMoreEvent = Extract<MessageListRuntimeEvent, { edge: 'before' | 'after' }>
     const pendingBefore: Array<(page: MessageListPage<TestRow>) => void> = []
     const requestResults: string[] = []
@@ -1035,13 +1119,13 @@ describe('createMessageListSessionRegistry', () => {
     await request
 
     expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.message?.id))
-      .toEqual(['middle'])
-    expect(internals.loadedSegmentStore.getSegment().items[0]?.message?.text)
+      .toEqual(['before', 'middle'])
+    expect(internals.loadedSegmentStore.getSegment().items[1]?.message?.text)
       .toBe('after patch')
-    expect(requestResults).toContain('before:stale')
+    expect(requestResults).toContain('before:applied')
   })
 
-  it('clears stale edge responses without poisoning later edge requests', async () => {
+  it('settles an edge response after a content patch without poisoning edge state', async () => {
     const pendingBefore: Array<(page: MessageListPage<TestRow>) => void> = []
     const requestResults: string[] = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
@@ -1083,13 +1167,11 @@ describe('createMessageListSessionRegistry', () => {
       anchorId: 'middle',
     }))
 
-    await waitFor(() => requestResults.includes('before:stale'))
-    expect(internals.getSnapshot().edgeState.before.status).toBe('idle')
-    expect(internals.getSnapshot().pendingIntent).toBeNull()
-
-    runtime.startEdgeRequest('before', 'retry-after-stale')
-    await waitFor(() => pendingBefore.length === 2)
-    expect(internals.getSnapshot().edgeState.before.status).toBe('loading')
+    await waitFor(() => requestResults.includes('before:applied'))
+    ackSessionCommit(session)
+    expect(internals.getSnapshot().edgeState.before.status).toBe('exhausted')
+    expect(internals.getSnapshot().items.map((item) => item.key))
+      .toEqual(['before', 'middle'])
   })
 
   it('trims oversized reset-around segments until the adaptive budget is reached', () => {
@@ -1550,6 +1632,30 @@ describe('createMessageListSessionRegistry', () => {
     expect(internals.loadedSegmentStore.getSegment().modifier.type).toBe('reset-around')
   })
 
+  it('does not bridge a missing latest boundary with remote tail append', async () => {
+    const diagnostics: string[] = []
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+      onRuntimeEvent: (event) => {
+        if (event.diagnostic) diagnostics.push(event.diagnostic.name)
+      },
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    internals.loadedSegmentStore.resetLatest({
+      items: [testDataItem('loaded-before-gap')],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    })
+
+    session.tail.remote.append({ id: 'remote-after-gap' })
+
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.key))
+      .toEqual(['loaded-before-gap'])
+    expect(diagnostics).toContain('remoteTailAppend.outsideLatestContext')
+  })
+
   it('rejects stale bootstrap/reload responses without overwriting newer rows', async () => {
     const pending: Array<(page: MessageListPage<TestRow>) => void> = []
     const adapter = createAdapter('normal', {
@@ -1640,6 +1746,757 @@ describe('createMessageListSessionRegistry', () => {
   })
 })
 
+describe('reloadCurrent', () => {
+  it.each([
+    { hasMoreAfter: true, expectedContext: 'history' as const },
+    { hasMoreAfter: false, expectedContext: 'latest' as const },
+  ])('reloads an unlocked latest anchor into $expectedContext context', async ({
+    hasMoreAfter,
+    expectedContext,
+  }) => {
+    const ids = ['row-1', 'row-2', 'row-3', 'row-4', 'row-5', 'row-6']
+    const loadAround = vi.fn((context) => Promise.resolve({
+      rows: ids.map((id) => ({ id, text: 'fresh' })),
+      hasMoreBefore: true,
+      hasMoreAfter,
+      anchor: context.target,
+    }))
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadLatest: () => Promise.resolve(page(ids)),
+        loadAround,
+      }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length === ids.length)
+    const { rows } = attachSessionRows(session, ids)
+    positionRuntimeRows(rows, 20)
+    ackSessionCommit(session)
+    expect(internals.getSnapshot().bottomLockState).toBe('UNLOCKED')
+
+    const resultPromise = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => internals.getSnapshot().items[0]?.message?.text === 'fresh')
+    expect(internals.getSnapshot().segmentMeta.modifier).toMatchObject({
+      type: 'reset-around',
+      align: 'start',
+      offsetWithinMessage: 20,
+    })
+    ackSessionCommit(session)
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'applied', requestKind: 'around', resolution: 'exact',
+    })
+    expect(session.getState().loaded.context).toBe(expectedContext)
+  })
+
+  it('silently reloads a locked latest window and resolves only after structural settle', async () => {
+    let loadCount = 0
+    let resolveReload: ((page: MessageListPage<TestRow>) => void) | null = null
+    const ids = ['row-1', 'row-2', 'row-3', 'row-4', 'row-5', 'row-6']
+    const loadLatest = vi.fn(() => {
+      loadCount += 1
+      if (loadCount === 1) return Promise.resolve(page(ids))
+      return new Promise<MessageListPage<TestRow>>((resolve) => {
+        resolveReload = resolve
+      })
+    })
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      scrollMotion: { enabled: false },
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadLatest }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length === ids.length)
+    const { rows } = attachSessionRows(session, ids)
+    ackSessionCommit(session)
+    positionRuntimeRows(rows, 0)
+    session.commands.scrollToLatest()
+    expect(internals.getSnapshot().bottomLockState).toBe('LOCKED')
+
+    const resultPromise = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => loadLatest.mock.calls.length === 2)
+    expect(internals.getViewState().overlayStatus.status).toBe('idle')
+    expect(internals.getSnapshot().items[0]?.message?.text).toBeUndefined()
+    resolveReload?.({
+      rows: ids.map((id) => ({ id, text: 'fresh' })),
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+      anchor: { id: ids.at(-1) },
+    })
+    await waitFor(() => internals.getSnapshot().items[0]?.message?.text === 'fresh')
+    ackSessionCommit(session)
+
+    const result = await resultPromise
+    expect(result).toMatchObject({
+      status: 'applied',
+      requestKind: 'latest',
+    })
+    expect(result.status === 'applied' && result.page.rows[0]).toEqual(
+      expect.objectContaining({ text: 'fresh' }),
+    )
+    expect(internals.getSnapshot().bottomLockState).toBe('LOCKED')
+  })
+
+  it('reloads the visible around anchor, rebases a concurrent delete, and resolves after commit', async () => {
+    let resolveAround: ((page: MessageListPage<TestRow>) => void) | null = null
+    const loadAround = vi.fn(() => new Promise<MessageListPage<TestRow>>((resolve) => {
+      resolveAround = resolve
+    }))
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadAround }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    const currentIds = ['middle', 'a', 'b', 'other', 'c', 'd']
+    session.rows.resetAround({
+      target: { id: 'middle' },
+      rows: currentIds.map((id) => ({ id })),
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      anchor: { id: 'middle' },
+    })
+    const { rows } = attachSessionRows(session, currentIds)
+    positionRuntimeRows(rows, 20)
+    ackSessionCommit(session)
+    ackSessionCommit(session)
+
+    const resultPromise = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => loadAround.mock.calls.length === 1)
+    expect(loadAround).toHaveBeenCalledWith(expect.objectContaining({
+      trigger: 'command',
+      reason: 'structural',
+      target: expect.objectContaining({ stableId: 'middle' }),
+      signal: expect.any(AbortSignal),
+    }))
+    session.rows.mutate({ removeKeys: ['other'], reason: 'deleted' })
+    ackSessionCommit(session)
+    resolveAround?.({
+      rows: currentIds.map((id) => ({
+        id,
+        text: id === 'middle' ? 'fresh' : undefined,
+      })),
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      anchor: { id: 'middle' },
+    })
+    await waitFor(() => internals.getSnapshot().items[0]?.message?.text === 'fresh')
+    let settled = false
+    void resultPromise.then(() => { settled = true })
+    await flushMicrotasks()
+    expect(settled).toBe(false)
+    ackSessionCommit(session)
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'applied',
+      requestKind: 'around',
+      resolution: 'exact',
+      resolvedAnchor: expect.objectContaining({ stableId: 'middle' }),
+    })
+    expect(session.getState().loaded.keys).toEqual(['middle', 'a', 'b', 'c', 'd'])
+  })
+
+  it.each(['local', 'remote'] as const)(
+    'rebases a legal %s tail append without dropping it from the response',
+    async (tailKind) => {
+      let loadCount = 0
+      let resolveReload: ((page: MessageListPage<TestRow>) => void) | null = null
+      const ids = ['row-1', 'row-2', 'row-3', 'row-4', 'row-5', 'row-6']
+      const loadLatest = vi.fn(() => {
+        loadCount += 1
+        if (loadCount === 1) return Promise.resolve(page(ids))
+        return new Promise<MessageListPage<TestRow>>((resolve) => {
+          resolveReload = resolve
+        })
+      })
+      const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+        scrollMotion: { enabled: false },
+        getSessionSource: (id) => ({ id, type: 'normal' }),
+        getAdapter: () => createAdapter('normal', { loadLatest }),
+      })
+      const session = registry.getSession('source-a')
+      const internals = getMessageListSessionInternals(session)
+      startSession(session)
+      await waitFor(() => internals.getSnapshot().items.length === ids.length)
+      const { rows } = attachSessionRows(session, ids)
+      ackSessionCommit(session)
+      positionRuntimeRows(rows, 0)
+      session.commands.scrollToLatest()
+
+      const resultPromise = session.commands.reloadCurrent({ reason: 'structural' })
+      await waitFor(() => loadLatest.mock.calls.length === 2)
+      if (tailKind === 'local') {
+        session.tail.local.stage({ id: 'tail-during-request' })
+      } else {
+        session.tail.remote.append({
+          rows: [{ id: 'tail-during-request' }],
+          follow: 'preserve',
+        })
+      }
+      ackSessionCommit(session)
+      resolveReload?.({
+        rows: ids.map((id) => ({ id, text: 'fresh' })),
+        hasMoreBefore: true,
+        hasMoreAfter: false,
+        anchor: { id: ids.at(-1) },
+      })
+      await waitFor(() =>
+        internals.getSnapshot().items[0]?.message?.text === 'fresh' &&
+        internals.getSnapshot().items.at(-1)?.key === 'tail-during-request'
+      )
+      ackSessionCommit(session)
+
+      const result = await resultPromise
+      expect(result).toMatchObject({ status: 'applied', requestKind: 'latest' })
+      expect(result.status === 'applied' && result.page.rows.map((row) => row.id))
+        .toEqual([...ids, 'tail-during-request'])
+    },
+  )
+
+  it('rebases identity remap key and identity onto the returned page projection', async () => {
+    let resolveAround: ((page: MessageListPage<TestRow>) => void) | null = null
+    const ids = ['local', 'a', 'b', 'c', 'd', 'e']
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => new Promise((resolve) => { resolveAround = resolve }),
+      }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'local' }, rows: ids.map((id) => ({ id })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'local' },
+    })
+    attachSessionRows(session, ids)
+    ackSessionCommit(session)
+
+    const resultPromise = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => resolveAround !== null)
+    session.rows.applyIdentityRemap([{
+      from: { id: 'local' },
+      to: { id: 'server' },
+      previousKey: 'local',
+      nextKey: 'server',
+    }])
+    ackSessionCommit(session)
+    resolveAround?.({
+      rows: ids.map((id) => ({ id, text: 'fresh' })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'local' },
+    })
+    await waitFor(() =>
+      internals.getSnapshot().items[0]?.key === 'server' &&
+      internals.getSnapshot().items[0]?.message?.text === 'fresh'
+    )
+    ackSessionCommit(session)
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'applied',
+      resolution: 'exact',
+      resolvedAnchor: expect.objectContaining({ stableId: 'server' }),
+    })
+    expect(internals.getSnapshot().items[0]).toMatchObject({
+      key: 'server',
+      identity: expect.objectContaining({ stableId: 'server' }),
+      message: { id: 'local', text: 'fresh' },
+    })
+  })
+
+  it('replays patch upserts in operation order after server rows', async () => {
+    let resolveAround: ((page: MessageListPage<TestRow>) => void) | null = null
+    const ids = ['middle', 'a', 'b', 'c', 'd', 'e']
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => new Promise((resolve) => { resolveAround = resolve }),
+      }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'middle' }, rows: ids.map((id) => ({ id })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    attachSessionRows(session, ids)
+    ackSessionCommit(session)
+
+    const resultPromise = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => resolveAround !== null)
+    session.rows.patch([
+      { id: 'b', text: 'locally patched' },
+      { id: 'upsert-1' },
+      { id: 'upsert-2' },
+    ])
+    session.rows.patch([{ id: 'upsert-1', text: 'patched again' }])
+    ackSessionCommit(session)
+    resolveAround?.({
+      rows: ids.map((id) => ({ id, text: 'server' })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    await waitFor(() =>
+      internals.getSnapshot().items.at(-1)?.key === 'upsert-2' &&
+      internals.getSnapshot().items[2]?.message?.text === 'locally patched'
+    )
+    ackSessionCommit(session)
+
+    const result = await resultPromise
+    expect(result.status === 'applied' && result.page.rows.map((row) => row.id))
+      .toEqual([...ids, 'upsert-1', 'upsert-2'])
+    expect(internals.getSnapshot().items.at(-2)?.message?.text)
+      .toBe('patched again')
+  })
+
+  it('falls back to the deletion successor when the exact target is removed', async () => {
+    let resolveAround: ((page: MessageListPage<TestRow>) => void) | null = null
+    const ids = ['middle', 'successor', 'a', 'b', 'c', 'd']
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => new Promise((resolve) => { resolveAround = resolve }),
+      }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'middle' }, rows: ids.map((id) => ({ id })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    attachSessionRows(session, ids)
+    ackSessionCommit(session)
+
+    const resultPromise = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => resolveAround !== null)
+    session.rows.mutate({ removeKeys: ['middle'], reason: 'deleted' })
+    ackSessionCommit(session)
+    resolveAround?.({
+      rows: ids.map((id) => ({ id, text: 'fresh' })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    await waitFor(() => internals.getSnapshot().items[0]?.key === 'successor')
+    ackSessionCommit(session)
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'applied',
+      resolution: 'fallback',
+      resolvedAnchor: expect.objectContaining({ stableId: 'successor' }),
+    })
+    expect(session.getState().loaded.keys).not.toContain('middle')
+  })
+
+  it('falls back again when the server fallback row is concurrently removed', async () => {
+    let resolveAround: ((page: MessageListPage<TestRow>) => void) | null = null
+    const ids = ['middle', 'fallback', 'successor', 'a', 'b', 'c']
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => new Promise((resolve) => { resolveAround = resolve }),
+      }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'middle' }, rows: ids.map((id) => ({ id })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    attachSessionRows(session, ids)
+    ackSessionCommit(session)
+
+    const resultPromise = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => resolveAround !== null)
+    session.rows.mutate({ removeKeys: ['fallback'], reason: 'deleted' })
+    ackSessionCommit(session)
+    resolveAround?.({
+      rows: ids.slice(1).map((id) => ({ id, text: 'fresh' })),
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      anchor: {
+        id: 'middle',
+        fallbackStableId: 'fallback',
+        fallbackReason: 'deleted',
+      },
+      anchorStatus: 'deleted',
+    })
+    await waitFor(() => internals.getSnapshot().items[0]?.key === 'successor')
+    ackSessionCommit(session)
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'applied',
+      resolution: 'fallback',
+      resolvedAnchor: expect.objectContaining({ stableId: 'successor' }),
+    })
+    expect(session.getState().loaded.keys).not.toContain('fallback')
+  })
+
+  it('prefers an appended retry replacement when the retired target was the tail', async () => {
+    let resolveAround: ((page: MessageListPage<TestRow>) => void) | null = null
+    const ids = ['a', 'b', 'c', 'd', 'e', 'failed-tail']
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => new Promise((resolve) => { resolveAround = resolve }),
+      }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    session.rows.resetLatest(page(ids, {
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+      anchorId: 'failed-tail',
+    }))
+    const { rows } = attachSessionRows(session, ids)
+    positionRuntimeRows(rows, 250)
+    ackSessionCommit(session)
+
+    const resultPromise = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => resolveAround !== null)
+    session.tail.local.stage({
+      rows: [{ id: 'retry-server' }],
+      reason: 'retry',
+      retireKeys: ['failed-tail'],
+    })
+    ackSessionCommit(session)
+    resolveAround?.({
+      rows: ids.map((id) => ({ id, text: 'fresh' })),
+      hasMoreBefore: true, hasMoreAfter: false, anchor: { id: 'failed-tail' },
+    })
+    await waitFor(() => internals.getSnapshot().items.at(-1)?.key === 'retry-server')
+    ackSessionCommit(session)
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'applied',
+      resolution: 'fallback',
+      resolvedAnchor: expect.objectContaining({ stableId: 'retry-server' }),
+    })
+  })
+
+  it('stales on journal overflow without publishing the eventual response', async () => {
+    let resolveAround: ((page: MessageListPage<TestRow>) => void) | null = null
+    const ids = ['middle', 'a', 'b', 'c', 'd', 'e']
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => new Promise((resolve) => { resolveAround = resolve }),
+      }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'middle' }, rows: ids.map((id) => ({ id })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    attachSessionRows(session, ids)
+    ackSessionCommit(session)
+
+    const resultPromise = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => resolveAround !== null)
+    session.rows.patch(Array.from({ length: 257 }, (_, index) => ({
+      id: `overflow-${index}`,
+    })))
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'stale', staleReason: 'topology-changed',
+    })
+    const generation = internals.getSnapshot().generation
+    resolveAround?.({
+      rows: ids.map((id) => ({ id, text: 'must-not-publish' })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    await flushMicrotasks()
+    expect(internals.getSnapshot().generation).toBe(generation)
+  })
+
+  it('stales when a topology mutation lands during projection settling', async () => {
+    let resolveAround: ((page: MessageListPage<TestRow>) => void) | null = null
+    const ids = ['middle', 'a', 'b', 'c', 'd', 'e']
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => new Promise((resolve) => { resolveAround = resolve }),
+      }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'middle' }, rows: ids.map((id) => ({ id })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    attachSessionRows(session, ids)
+    ackSessionCommit(session)
+
+    const resultPromise = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => resolveAround !== null)
+    resolveAround?.({
+      rows: ids.map((id) => ({ id, text: 'fresh' })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    await waitFor(() => internals.getSnapshot().items[0]?.message?.text === 'fresh')
+    session.rows.patch([{ id: 'settling-upsert' }])
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'stale', staleReason: 'topology-changed',
+    })
+    expect(internals.loadedSegmentStore.getSegment().items.at(-1)?.key)
+      .toBe('settling-upsert')
+  })
+
+  it('classifies local stage with an authoritative latest page as topology stale', async () => {
+    let resolveAround: ((page: MessageListPage<TestRow>) => void) | null = null
+    const ids = ['middle', 'a', 'b', 'c', 'd', 'e']
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => new Promise((resolve) => { resolveAround = resolve }),
+      }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'middle' }, rows: ids.map((id) => ({ id })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    attachSessionRows(session, ids)
+    ackSessionCommit(session)
+
+    const resultPromise = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => resolveAround !== null)
+    session.tail.local.stage({
+      rows: [{ id: 'local' }],
+      latest: page(['authoritative-latest']),
+    })
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'stale', staleReason: 'topology-changed',
+    })
+  })
+
+  it('aborts and returns one stale result when the session is destroyed', async () => {
+    let requestSignal: AbortSignal | undefined
+    const loadAround = vi.fn((context) => {
+      requestSignal = context.signal
+      return new Promise<MessageListPage<TestRow>>(() => undefined)
+    })
+    const requestResults: string[] = []
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadAround }),
+      onRequestResult: (result) => requestResults.push(`${result.kind}:${result.status}`),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    const ids = ['middle', 'a', 'b', 'c', 'd', 'e']
+    session.rows.resetAround({
+      target: { id: 'middle' }, rows: ids.map((id) => ({ id })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    attachSessionRows(session, ids)
+    ackSessionCommit(session)
+
+    const resultPromise = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => loadAround.mock.calls.length === 1)
+    registry.destroySession('source-a')
+
+    await expect(resultPromise).resolves.toEqual({
+      status: 'stale',
+      requestKind: 'around',
+      staleReason: 'session-destroyed',
+    })
+    expect(requestSignal?.aborted).toBe(true)
+    expect(requestResults.filter((result) => result === 'around:stale')).toHaveLength(1)
+  })
+
+  it('lets a second reload supersede the first and aborts the older signal', async () => {
+    const ids = ['middle', 'a', 'b', 'c', 'd', 'e']
+    const pending: Array<{
+      signal?: AbortSignal
+      resolve: (page: MessageListPage<TestRow>) => void
+    }> = []
+    const loadAround = vi.fn((context) => new Promise<MessageListPage<TestRow>>((resolve) => {
+      pending.push({ signal: context.signal, resolve })
+    }))
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadAround }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'middle' }, rows: ids.map((id) => ({ id })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    attachSessionRows(session, ids)
+    ackSessionCommit(session)
+    ackSessionCommit(session)
+
+    const first = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => pending.length === 1)
+    const second = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => pending.length === 2)
+    await expect(first).resolves.toMatchObject({
+      status: 'stale', staleReason: 'superseded',
+    })
+    expect(pending[0].signal?.aborted).toBe(true)
+    pending[1].resolve({
+      rows: ids.map((id) => ({ id, text: id === 'middle' ? 'second' : undefined })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    await waitFor(() => internals.getSnapshot().items[0]?.message?.text === 'second')
+    ackSessionCommit(session)
+    await expect(second).resolves.toMatchObject({ status: 'applied' })
+  })
+
+  it('stales synchronously on viewport navigation intent without publishing the response', async () => {
+    let resolveAround: ((page: MessageListPage<TestRow>) => void) | null = null
+    const loadAround = vi.fn(() => new Promise<MessageListPage<TestRow>>((resolve) => {
+      resolveAround = resolve
+    }))
+    const ids = ['middle', 'a', 'b', 'c', 'd', 'e']
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadAround }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'middle' }, rows: ids.map((id) => ({ id })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    attachSessionRows(session, ids)
+    ackSessionCommit(session)
+    ackSessionCommit(session)
+    const before = internals.getSnapshot()
+    const result = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => loadAround.mock.calls.length === 1)
+
+    ;(internals.runtime as unknown as {
+      emitRuntimeEvent(event: MessageListRuntimeEvent): void
+    }).emitRuntimeEvent({
+      type: 'viewportNavigationIntent',
+      sessionId: 'source-a',
+      generation: before.generation,
+      segmentRevision: before.segmentRevision,
+      reason: 'user-scroll',
+    })
+    await expect(result).resolves.toMatchObject({
+      status: 'stale', staleReason: 'navigation-changed',
+    })
+    resolveAround?.({
+      rows: ids.map((id) => ({ id, text: 'must-not-publish' })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    await flushMicrotasks()
+    expect(internals.getSnapshot().generation).toBe(before.generation)
+    expect(internals.getSnapshot().items[0]?.message?.text).toBeUndefined()
+  })
+
+  it('rejects a deleted page without fallback and accepts a deterministic fallback', async () => {
+    let requestCount = 0
+    const loadAround = vi.fn(() => {
+      requestCount += 1
+      return Promise.resolve(requestCount === 1
+        ? {
+            rows: [{ id: 'fallback' }], hasMoreBefore: true, hasMoreAfter: true,
+            anchor: { id: 'middle' }, anchorStatus: 'deleted' as const,
+          }
+        : {
+            rows: [{ id: 'fallback' }], hasMoreBefore: true, hasMoreAfter: true,
+            anchor: {
+              id: 'middle', fallbackStableId: 'fallback', fallbackReason: 'deleted' as const,
+            },
+            anchorStatus: 'deleted' as const,
+          })
+    })
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadAround }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    const ids = ['middle', 'a', 'b', 'c', 'd', 'e']
+    session.rows.resetAround({
+      target: { id: 'middle' }, rows: ids.map((id) => ({ id })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    attachSessionRows(session, ids)
+    ackSessionCommit(session)
+    ackSessionCommit(session)
+    const generation = internals.getSnapshot().generation
+
+    await expect(session.commands.reloadCurrent({ reason: 'structural' }))
+      .resolves.toMatchObject({
+        status: 'failed', failureReason: 'contract-violation',
+      })
+    expect(internals.getSnapshot().generation).toBe(generation)
+
+    const valid = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => internals.getSnapshot().items[0]?.key === 'fallback')
+    ackSessionCommit(session)
+    await expect(valid).resolves.toMatchObject({
+      status: 'applied',
+      resolution: 'fallback',
+      resolvedAnchor: expect.objectContaining({ stableId: 'fallback' }),
+    })
+  })
+
+  it('returns commit-timeout when the structural projection is not acknowledged', async () => {
+    const ids = ['middle', 'a', 'b', 'c', 'd', 'e']
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => Promise.resolve({
+          rows: ids.map((id) => ({ id, text: id === 'middle' ? 'fresh' : undefined })),
+          hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+        }),
+      }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'middle' }, rows: ids.map((id) => ({ id })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    attachSessionRows(session, ids)
+    ackSessionCommit(session)
+    ackSessionCommit(session)
+
+    await expect(session.commands.reloadCurrent({ reason: 'structural' }))
+      .resolves.toMatchObject({
+        status: 'failed', failureReason: 'commit-timeout',
+      })
+  })
+})
+
 describe('MessageListReadReceiptsWorker', () => {
   it('batches visible rows and dedupes already sent keys', async () => {
     const markRead = vi.fn((rows: TestRow[]) => {
@@ -1711,10 +2568,56 @@ describe('MessageListReadReceiptsWorker', () => {
   })
 })
 
+describe('anchorMemory writer', () => {
+  it('serializes saves, coalesces to latest, and captures rejection diagnostics', async () => {
+    let resolveFirst: (() => void) | null = null
+    const diagnostics: string[] = []
+    const save = vi.fn((_context, value) => {
+      if (value.anchor.stableId === 'a') {
+        return new Promise<void>((resolve) => { resolveFirst = resolve })
+      }
+      return Promise.reject(new Error('persistence unavailable'))
+    })
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        anchorMemory: { load: () => null, save },
+      }),
+      onRuntimeEvent: (event) => {
+        if (event.diagnostic) diagnostics.push(event.diagnostic.name)
+      },
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    const snapshot = internals.getSnapshot()
+    const emitAnchor = (id: string) => {
+      ;(internals.runtime as unknown as {
+        emitRuntimeEvent(event: MessageListRuntimeEvent): void
+      }).emitRuntimeEvent({
+        type: 'viewportAnchorChanged', sessionId: 'source-a',
+        generation: snapshot.generation, segmentRevision: snapshot.segmentRevision,
+        reason: 'scroll-idle', anchor: { sessionId: 'source-a', stableId: id },
+      })
+    }
+
+    emitAnchor('a')
+    emitAnchor('b')
+    emitAnchor('c')
+    expect(save).toHaveBeenCalledTimes(1)
+    resolveFirst?.()
+    await waitFor(() => save.mock.calls.length === 2)
+    expect(save.mock.calls[1][1].anchor.stableId).toBe('c')
+    await waitFor(() => diagnostics.includes('anchorMemory.saveFailed'))
+  })
+})
+
 function createAdapter(
   label: string,
   overrides: Partial<MessageListAdapter<TestRow, TestConversation>['request']> & {
     readReceipts?: MessageListAdapter<TestRow, TestConversation>['readReceipts']
+    anchorMemory?: MessageListAdapter<TestRow, TestConversation>['anchorMemory']
   } = {},
 ): MessageListAdapter<TestRow, TestConversation> {
   return {
@@ -1734,6 +2637,7 @@ function createAdapter(
       )),
     },
     readReceipts: overrides.readReceipts,
+    anchorMemory: overrides.anchorMemory,
   }
 }
 
@@ -1818,7 +2722,10 @@ function attachSessionRows(
   return { container, rows }
 }
 
-function observation(keys: string[]): ViewportObservationChangedEvent {
+function observation(
+  keys: string[],
+  distanceToBottom = 0,
+): ViewportObservationChangedEvent {
   return {
     type: 'viewportObservationChanged',
     sessionId: 'source-a',
@@ -1829,6 +2736,7 @@ function observation(keys: string[]): ViewportObservationChangedEvent {
     direction: 'none',
     activity: 'settling',
     anchor: null,
+    distanceToBottom,
     visibleRange: {
       firstKey: keys[0] ?? null,
       lastKey: keys.at(-1) ?? null,

@@ -37,6 +37,15 @@ export function toSessionRuntimeLogEvent(
 
   if (event.type === 'viewportReady') {
     base.details = { commitToken: event.commitToken }
+  } else if (event.type === 'projectionSettled') {
+    base.details = {
+      commitToken: event.commitToken,
+      status: event.status,
+    }
+  } else if (event.type === 'destinationCancelled') {
+    base.details = { reason: event.reason }
+  } else if (event.type === 'viewportNavigationIntent') {
+    base.details = { reason: event.reason }
   } else if (event.type === 'viewportError') {
     base.details = {
       code: event.code,
@@ -65,6 +74,7 @@ export function toSessionRuntimeLogEvent(
       scrollSource: event.scrollSource,
       direction: event.direction,
       activity: event.activity,
+      distanceToBottom: event.distanceToBottom,
       offsetWithinMessage: event.offsetWithinMessage,
       visibleRange: event.visibleRange,
       visibleKeys: event.visibleKeys,

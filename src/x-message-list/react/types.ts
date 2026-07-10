@@ -3,6 +3,8 @@ import type {
   MessageListAnchor,
   MessageListLoadedContext,
   MessageListOverlayStatus,
+  MessageListReloadCurrentOptions,
+  MessageListReloadCurrentResult,
   MessageListResolvedAnchor,
   MessageListScrollToMessageOptions,
   MessageListSession,
@@ -168,6 +170,8 @@ export type MessageListViewportObservationEvent = {
   anchor: MessageListResolvedAnchor | null
   /** anchor 消息内部垂直偏移。 */
   offsetWithinMessage?: number
+  /** 观测时距离 native bottom 的像素距离。 */
+  distanceToBottom: number
   /** 可见 row 首尾 key。 */
   visibleRange: {
     /** 第一个可见 row key。 */
@@ -187,7 +191,7 @@ export type MessageListViewportObservationEvent = {
 }
 
 /** MessageList session commands 的 React 侧类型形状。 */
-export type MessageListCommands = {
+export type MessageListCommands<Row = unknown> = {
   /** 滚动或加载到源最新。 */
   scrollToLatest: () => void
   /** 滚动或加载到指定消息；options 未传时 align 默认 center。 */
@@ -201,6 +205,10 @@ export type MessageListCommands = {
   loadAfter: () => void
   /** 重新加载 latest 窗口。 */
   reloadLatest: () => void
+  /** 静默按当前视觉锚点执行结构重载，并等待 projection settle。 */
+  reloadCurrent: (
+    options: MessageListReloadCurrentOptions,
+  ) => Promise<MessageListReloadCurrentResult<Row>>
 }
 
 /** renderRow 回调输入。 */

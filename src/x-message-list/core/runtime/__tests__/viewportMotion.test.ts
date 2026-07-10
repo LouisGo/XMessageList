@@ -18,6 +18,110 @@ import { RuntimeRowMetricCache } from '../dom/rowMetricCache'
 import { FakeScheduler, createContainer, createFakeObservers, setElementMetrics } from '../../../../test/fakes'
 
 describe('MessageList viewport motion', () => {
+  it('settles projection only after its bottom motion reaches a terminal state', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(6, 50)
+    const events: MessageListRuntimeEvent[] = []
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest', reason: 'structural' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    container.scrollTop = 0
+    positionRows(rows, 0)
+    events.length = 0
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 2, {
+      modifier: { type: 'reset-latest' },
+    }))
+    const commitToken = runtime.getSnapshot().commitToken
+    adapter.ackProjectionCommit(commitToken)
+
+    expect(runtime.getSnapshot().viewportPhase).toBe('MOTION')
+    expect(events.some((event) => event.type === 'projectionSettled')).toBe(false)
+
+    scheduler.flushFrames(40)
+
+    expect(events.filter((event) => event.type === 'projectionSettled')).toEqual([{
+      type: 'projectionSettled',
+      sessionId: 'source-a',
+      generation: 1,
+      segmentRevision: 2,
+      commitToken,
+      status: 'applied',
+    }])
+  })
+
+  it('reports a projection motion cancelled by user input without applied', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(6, 50)
+    const events: MessageListRuntimeEvent[] = []
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest', reason: 'structural' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    container.scrollTop = 0
+    positionRows(rows, 0)
+    events.length = 0
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 2, {
+      modifier: { type: 'reset-latest' },
+    }))
+    const commitToken = runtime.getSnapshot().commitToken
+    adapter.ackProjectionCommit(commitToken)
+    container.dispatchEvent(new Event('wheel'))
+
+    expect(events.filter((event) => event.type === 'projectionSettled')).toEqual([{
+      type: 'projectionSettled',
+      sessionId: 'source-a',
+      generation: 1,
+      segmentRevision: 2,
+      commitToken,
+      status: 'motion-cancelled',
+    }])
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
+  })
+
+  it('installs structural latest reset with one native bottom write and no motion', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(6, 50)
+    const events: MessageListRuntimeEvent[] = []
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.subscribeRuntimeEvent((event) => events.push(event))
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest', reason: 'structural' },
+    }))
+    const commitToken = runtime.getSnapshot().commitToken
+    adapter.ackProjectionCommit(commitToken)
+
+    expect(container.scrollTop).toBe(200)
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'IDLE',
+      bottomLockState: 'LOCKED',
+    })
+    expect(events.filter((event) => event.type === 'projectionSettled')).toEqual([
+      expect.objectContaining({ commitToken, status: 'applied' }),
+    ])
+    expect(runtime.getDiagnostics().map((record) => record.name))
+      .not.toContain('destinationMotion.start')
+    expect(runtime.getDiagnostics().find((record) =>
+      record.name === 'transaction.settle'
+    )?.details.scrollWriteCount as number).toBeLessThanOrEqual(1)
+  })
+
   it('animates local jump destinations and settles the destination after motion', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
@@ -698,6 +802,38 @@ describe('MessageList viewport motion', () => {
     scheduler.flushFrame()
 
     expect(container.scrollTop).toBe(120)
+  })
+
+  it('follows native bottom once when a DOM-only resize grows the locked tail', () => {
+    const scheduler = new FakeScheduler()
+    const observers = createFakeObservers()
+    const runtime = createMessageListRuntime<string>({
+      sessionId: 'source-a',
+      scheduler,
+      observers,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = createRows(4, 50)
+
+    mountRows(runtime, adapter, container, rows)
+    runtime.applyLoadedSegment(segment(itemsFromRows(rows), 1, 1, {
+      modifier: { type: 'reset-latest' },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    runtime.scrollToLatest()
+    expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
+    expect(container.scrollTop).toBe(100)
+
+    positionRowsWithHeights(rows, [50, 50, 50, 100], 100)
+    observers.resizeObservers[0]?.trigger(rows[3], 100)
+    scheduler.flushFrame()
+
+    expect(container.scrollTop).toBe(150)
+    expect(runtime.getSnapshot().bottomLockState).toBe('LOCKED')
+    expect(runtime.getDiagnostics().filter((record) =>
+      record.name === 'measurement.resize.bottomFollow'
+    )).toHaveLength(1)
   })
 
   it('invalidates stale resize suffix metrics before later scroll sampling', () => {

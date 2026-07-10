@@ -92,8 +92,10 @@ function MessageListInner<TMessage, TOptimistic>({
   }, [getRowRenderVersion, sessionInternals])
   const usesRowRenderVersion = Boolean(getRowRenderVersion)
   const rootStyle = useMemo(() => ({
-    position: 'relative' as const,
     ...style,
+    position: 'relative' as const,
+    minWidth: 0,
+    minHeight: 0,
   }), [style])
   const attachContainer = useCallback((element: HTMLDivElement | null) => {
     containerRef.current = element
@@ -119,6 +121,7 @@ function MessageListInner<TMessage, TOptimistic>({
       <div
         ref={attachContainer}
         data-message-scroll-container
+        style={scrollContainerStyle}
       >
         <RuntimeEventBridge
           runtime={resolvedRuntime}
@@ -137,17 +140,30 @@ function MessageListInner<TMessage, TOptimistic>({
           renderEmpty={renderEmpty}
           reload={reload}
         />
-        {renderScrollToLatest && scrollToLatestInput
-          ? renderScrollToLatest(scrollToLatestInput)
-          : null}
         <ProjectionCommitAck
           runtime={adapterRuntime}
           token={snapshot.commitToken}
         />
       </div>
+      {renderScrollToLatest && scrollToLatestInput ? (
+        <div
+          data-message-list-affordance-layer
+          style={affordanceLayerStyle}
+        >
+          <div style={affordanceContentStyle}>
+            {renderScrollToLatest(scrollToLatestInput)}
+          </div>
+        </div>
+      ) : null}
       {renderOverlayStatus ? (
-        <div data-message-list-overlay-layer>
-          <div data-message-list-overlay-content>
+        <div
+          data-message-list-overlay-layer
+          style={overlayLayerStyle}
+        >
+          <div
+            data-message-list-overlay-content
+            style={overlayContentStyle}
+          >
             {renderOverlayStatus({
               ...viewState.overlayStatus,
             })}
@@ -166,6 +182,39 @@ function MessageListInner<TMessage, TOptimistic>({
     </div>
   )
 }
+
+const scrollContainerStyle = {
+  height: '100%',
+  minWidth: 0,
+  minHeight: 0,
+  overflowX: 'hidden',
+  overflowY: 'auto',
+  overscrollBehavior: 'contain',
+  overflowAnchor: 'none',
+} as const
+
+const affordanceLayerStyle = {
+  position: 'absolute',
+  inset: 0,
+  zIndex: 2,
+  pointerEvents: 'none',
+} as const
+
+const affordanceContentStyle = {
+  display: 'contents',
+  pointerEvents: 'auto',
+} as const
+
+const overlayLayerStyle = {
+  position: 'absolute',
+  inset: 0,
+  zIndex: 3,
+  pointerEvents: 'none',
+} as const
+
+const overlayContentStyle = {
+  pointerEvents: 'auto',
+} as const
 
 
 

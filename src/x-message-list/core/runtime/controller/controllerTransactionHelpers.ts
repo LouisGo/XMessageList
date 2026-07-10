@@ -1,4 +1,4 @@
-import { resolveRemappedAnchorKey } from '../shared/snapshotIdentity'
+import { resolveTransactionAnchorKey } from '../shared/snapshotIdentity'
 import type { RuntimeDomRegistry } from '../dom/domRegistry'
 import type { DestinationIntent } from '../state/interactionTypes'
 import type { VisualAnchor } from '../dom/measurement'
@@ -15,15 +15,56 @@ export type PendingTransaction<TMessage, TOptimistic> = {
   timeoutHandle: number
   startedAt: number
   anchorRetryCount: number
+  scrollWriteCount: number
 }
 
 /**
  * 已解析但尚未启动的 motion；queued transaction 优先时用它把 settle 结果安全接力到队列 drain 之后。
  */
 export type PendingRuntimeMotion<TMessage, TOptimistic> = {
+  commitToken: ProjectionCommitToken
   settlement: Extract<TransactionScrollResolution, { kind: 'motion' }>
   scrollSource: ScrollSource
   segment: LoadedSegment<TMessage, TOptimistic>
+}
+
+export function resolveCapturedTransactionAnchor<TMessage, TOptimistic>(
+  anchor: VisualAnchor | null,
+  segment: LoadedSegment<TMessage, TOptimistic>,
+  registry: RuntimeDomRegistry,
+): VisualAnchor | null {
+  if (!anchor || segment.modifier.type !== 'remove') {
+    return anchor
+  }
+
+  const removed = segment.modifier.removed.find((entry) => entry.key === anchor.key)
+  if (!removed) {
+    return anchor
+  }
+
+  if (removed.successorKey) {
+    // successor 接管被删 anchor 的原视觉位置，因此保留 deleted row 的旧 rect/offset。
+    return anchor
+  }
+
+  if (!removed.predecessorKey) {
+    // segment 被删空；没有可恢复 visual anchor，正常以 null settle。
+    return null
+  }
+
+  const predecessor = registry.getRow(removed.predecessorKey)
+  const container = registry.snapshot().scrollContainer
+  if (!predecessor || !container) {
+    return null
+  }
+
+  const rowRect = predecessor.getBoundingClientRect()
+  const containerTop = container.getBoundingClientRect().top
+  return {
+    key: removed.predecessorKey,
+    offsetWithinMessage: Math.max(0, containerTop - rowRect.top),
+    rectTopBeforeCommit: rowRect.top,
+  }
 }
 
 export function resolveProjectionTransactionPolicy<TMessage, TOptimistic>(
@@ -51,6 +92,9 @@ export function resolveProjectionTransactionPolicy<TMessage, TOptimistic>(
       return transactionPolicy('live-append', 50, true, true)
     case 'identity-remap':
       return transactionPolicy('passive', 35, false, true)
+    case 'remove':
+      // 删除 metadata 负责 visual-anchor fallback 与 metric suffix 失效，不能被普通 patch 合并掉。
+      return transactionPolicy('passive', 40, false, true)
     case 'patch':
       return transactionPolicy('passive', 30, true, true)
     case 'trim-before':
@@ -67,7 +111,7 @@ export function shouldWaitForAnchorRef<TMessage, TOptimistic>(
     return false
   }
 
-  const key = resolveRemappedAnchorKey(pending.anchor.key, pending.segment)
+  const key = resolveTransactionAnchorKey(pending.anchor.key, pending.segment)
   return pending.segment.items.some((item) => item.key === key) &&
     !registry.getRow(key)
 }
@@ -75,7 +119,7 @@ export function shouldWaitForAnchorRef<TMessage, TOptimistic>(
 export function resolvePendingAnchorKey<TMessage, TOptimistic>(
   pending: PendingTransaction<TMessage, TOptimistic>,
 ): string {
-  return resolveRemappedAnchorKey(pending.anchor?.key ?? '', pending.segment)
+  return resolveTransactionAnchorKey(pending.anchor?.key ?? '', pending.segment)
 }
 
 export function resolveTransactionScrollSource<TMessage, TOptimistic>(

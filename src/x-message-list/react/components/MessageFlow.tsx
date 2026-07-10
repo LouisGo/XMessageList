@@ -68,8 +68,18 @@ export function MessageFlow<TMessage, TOptimistic>({
       ref={registerFlow}
       data-message-flow
       data-short-align={snapshot.segmentMeta.shortSegmentAlignment}
+      style={{
+        ...messageFlowStyle,
+        justifyContent: resolveShortSegmentAlignment(
+          snapshot.segmentMeta.shortSegmentAlignment,
+        ),
+      }}
     >
-      <div ref={registerBefore} data-edge-trigger="before">
+      <div
+        ref={registerBefore}
+        data-edge-trigger="before"
+        style={edgeMarkerStyle}
+      >
         {renderBeforeStatus?.(beforeSlotInput)}
       </div>
       {shouldRenderTopPlaceholder ? (
@@ -89,12 +99,45 @@ export function MessageFlow<TMessage, TOptimistic>({
               usesRowRenderVersion={usesRowRenderVersion}
             />
           ))}
-      <div ref={registerAfter} data-edge-trigger="after">
+      <div
+        ref={registerAfter}
+        data-edge-trigger="after"
+        style={edgeMarkerStyle}
+      >
         {renderAfterStatus?.(afterSlotInput)}
       </div>
-      <div ref={registerBottom} data-bottom-marker />
+      <div
+        ref={registerBottom}
+        data-bottom-marker
+        style={edgeMarkerStyle}
+      />
     </div>
   )
+}
+
+const messageFlowStyle = {
+  boxSizing: 'border-box',
+  display: 'flex',
+  flexDirection: 'column',
+  minWidth: 0,
+  minHeight: '100%',
+} as const
+
+const edgeMarkerStyle = {
+  flex: '0 0 auto',
+  minHeight: 1,
+} as const
+
+function resolveShortSegmentAlignment(
+  alignment: MessageListSnapshot['segmentMeta']['shortSegmentAlignment'],
+): 'flex-start' | 'center' | 'flex-end' {
+  if (alignment === 'center') {
+    return 'center'
+  }
+  if (alignment === 'end') {
+    return 'flex-end'
+  }
+  return 'flex-start'
 }
 
 function toEdgeSlotInput(

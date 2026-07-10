@@ -336,6 +336,14 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     this.rowMetrics.invalidateAfterIndex(snapshot.items, index, reason)
   }
 
+  invalidateRowMetricsFromIndex(
+    items: Array<{ key: string }>,
+    index: number,
+    reason: string,
+  ): void {
+    this.rowMetrics.invalidateFromIndex(items, index, reason)
+  }
+
   createSizeSnapshot(input: {
     sessionId: string
     generation: number
@@ -580,12 +588,7 @@ function resolveDirectScrollEdgeIntent(
   const distanceToBefore = scrollTop
   const distanceToAfter = maxScrollTop - scrollTop
 
-  if (
-    distanceToBefore <= threshold &&
-    distanceToBefore <= distanceToAfter
-  ) {
-    return 'before'
-  }
+  if (distanceToBefore <= threshold && distanceToBefore <= distanceToAfter) return 'before'
 
   if (distanceToAfter <= threshold) {
     return 'after'
