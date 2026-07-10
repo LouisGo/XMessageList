@@ -155,6 +155,21 @@ export class EdgeNeedCoordinator<TMessage, TOptimistic> {
 
     return snapshot
   }
+
+  settleEffects(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+    segment: LoadedSegment<TMessage, TOptimistic>,
+  ): MessageListSnapshot<TMessage, TOptimistic> {
+    let next = snapshot
+    for (const effect of segment.effects ?? []) {
+      if (effect.type === 'trim-before') {
+        next = clearTrimmedEdge(next, 'before')
+      } else if (effect.type === 'trim-after') {
+        next = clearTrimmedEdge(next, 'after')
+      }
+    }
+    return next
+  }
 }
 
 function createNeedMoreBefore<TMessage, TOptimistic>(

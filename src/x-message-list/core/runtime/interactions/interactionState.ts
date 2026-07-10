@@ -231,8 +231,9 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
       : segment.modifier.type === 'extend-after'
         ? 'after'
         : null
-    if (!edge) return next
-    return {
+    const projected = !edge
+      ? next
+      : {
       ...next,
       edgeState: {
         ...next.edgeState,
@@ -242,6 +243,7 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
         },
       },
     }
+    return this.edge.settleEffects(projected, segment)
   }
 
   startFollowBottom(
@@ -283,6 +285,7 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     }
 
     next = this.edge.settleSegment(next, segment)
+    next = this.edge.settleEffects(next, segment)
     next = this.destination.settleSegment(next, segment)
     next = this.followBottom.settleSegment(next, segment)
     next = this.underflow.settlePending(next, shouldSettleUnderflow)

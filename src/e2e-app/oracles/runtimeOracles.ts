@@ -72,6 +72,48 @@ export function expectModifier(
   }
 }
 
+export function expectSegmentEffect(
+  evidence: E2EEvidence,
+  effectType: 'trim-before' | 'trim-after',
+): E2EOracleResult {
+  const effects = evidence.effects ?? []
+  const ok = effects.some((effect) => effect.type === effectType)
+  return {
+    oracleId: `segment-effect-${effectType}`,
+    ok,
+    message: `effects=${effects.map((effect) => effect.type).join(',') || 'none'}`,
+  }
+}
+
+export function expectTrimReopensBeforeEdge(
+  evidence: E2EEvidence,
+): E2EOracleResult {
+  const trimmedBefore = (evidence.effects ?? []).some((effect) =>
+    effect.type === 'trim-before',
+  )
+  const ok = trimmedBefore &&
+    evidence.hasMoreBefore &&
+    evidence.edgeState.before.status === 'idle'
+  return {
+    oracleId: 'trim-reopens-before-edge',
+    ok,
+    message: `trimBefore=${trimmedBefore} hasMoreBefore=${evidence.hasMoreBefore} edge=${evidence.edgeState.before.status}`,
+  }
+}
+
+export function expectProbe(
+  evidence: E2EEvidence,
+  key: string,
+  expected: string | number | boolean | null,
+): E2EOracleResult {
+  const actual = evidence.probes[key]
+  return {
+    oracleId: `probe-${key}`,
+    ok: actual === expected,
+    message: `expected=${String(expected)} actual=${String(actual)}`,
+  }
+}
+
 export function expectIdentityRemapModifierContract(
   evidence: E2EEvidence,
 ): E2EOracleResult {

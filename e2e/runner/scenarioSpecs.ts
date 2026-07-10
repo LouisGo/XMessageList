@@ -14,6 +14,7 @@ import {
   expectNoWhiteScreen,
   expectOverlayMirrorsNative,
   expectOverlayThumbRebounded,
+  expectProbe,
   expectRuntimeIdle,
   expectRemappedAnchorPreserved,
   expectRemappedViewportAnchor,
@@ -21,10 +22,13 @@ import {
   expectScrollHeightUnchanged,
   expectScrollHeightIncreased,
   expectScrollTopIncreased,
+  expectSegmentEffect,
   expectSegmentItemCountAtMost,
   expectSessionOverlayOutsideScrollContainer,
   expectSessionOverlayVisible,
   expectUnderflowSingleFlight,
+  expectShortSegmentStartAlignment,
+  expectTrimReopensBeforeEdge,
   expectVisibleIdentity,
   expectVisibleIdentityNearCenter,
   type E2EOracleResult,
@@ -132,6 +136,7 @@ export const CORRECTNESS_SCENARIOS: ScenarioSpec[] = [
       { id: 'wait_for_ready' },
       { id: 'scroll_to_bottom' },
       { id: 'send_optimistic_message' },
+      { id: 'align_pending_optimistic_start' },
       { id: 'collect_evidence', payload: { checkpointId: 'before' }, saveAs: 'before' },
       { id: 'resolve_optimistic_remap' },
       { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
@@ -336,8 +341,74 @@ export const CORRECTNESS_SCENARIOS: ScenarioSpec[] = [
     oracles: ({ finalEvidence }) => [
       ...BASE_ORACLES(finalEvidence),
       expectSegmentItemCountAtMost(finalEvidence, 120),
-      expectModifier(finalEvidence, 'trim-before'),
+      expectSegmentEffect(finalEvidence, 'trim-before'),
       expectBottomLocked(finalEvidence, { thresholdPx: 2 }),
+    ],
+  },
+  {
+    id: 'trim.reopen-before-edge',
+    priority: 'p2',
+    actions: [
+      { id: 'wait_for_ready' },
+      { id: 'load_all_history' },
+      { id: 'append_many_force_current', payload: { count: 105 } },
+      { id: 'collect_evidence', payload: { checkpointId: 'trimmed' }, saveAs: 'trimmed' },
+      { id: 'trigger_before_edge' },
+      { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
+    ],
+    oracles: (context) => {
+      const trimmed = mustEvidence(context, 'trimmed')
+      const after = mustEvidence(context, 'after')
+      return [
+        ...BASE_ORACLES(after),
+        expectSegmentEffect(trimmed, 'trim-before'),
+        expectTrimReopensBeforeEdge(trimmed),
+        expectNeedEventCount(after, 'needMoreBefore', 1),
+      ]
+    },
+  },
+  {
+    id: 'reload-current.user-interrupt-stale',
+    priority: 'p2',
+    actions: [
+      { id: 'wait_for_ready' },
+      { id: 'reload_current_user_interrupt' },
+      { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
+    ],
+    oracles: ({ finalEvidence }) => [
+      ...BASE_ORACLES(finalEvidence),
+      expectProbe(finalEvidence, 'reloadInterruptedStatus', 'stale'),
+      expectProbe(finalEvidence, 'reloadInterruptedReason', 'navigation-changed'),
+      expectProbe(finalEvidence, 'reloadInterruptedSegmentUnchanged', true),
+      expectProbe(finalEvidence, 'reloadInterruptedScrollTopUnchangedAfterResponse', true),
+    ],
+  },
+  {
+    id: 'short-history.explicit-start',
+    priority: 'p2',
+    actions: [
+      { id: 'wait_for_ready' },
+      { id: 'reset_short_history_start' },
+      { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
+    ],
+    oracles: ({ finalEvidence }) => [
+      ...BASE_ORACLES(finalEvidence),
+      expectModifier(finalEvidence, 'reset-around'),
+      expectShortSegmentStartAlignment(finalEvidence, { maxOffsetPx: 64 }),
+    ],
+  },
+  {
+    id: 'reload-journal.patch-omitted-row',
+    priority: 'p2',
+    actions: [
+      { id: 'wait_for_ready' },
+      { id: 'reload_journal_omitted_patch' },
+      { id: 'collect_evidence', payload: { checkpointId: 'after' }, saveAs: 'after' },
+    ],
+    oracles: ({ finalEvidence }) => [
+      ...BASE_ORACLES(finalEvidence),
+      expectProbe(finalEvidence, 'reloadJournalResult', 'applied'),
+      expectProbe(finalEvidence, 'reloadJournalPatchedKeyPresent', false),
     ],
   },
   {

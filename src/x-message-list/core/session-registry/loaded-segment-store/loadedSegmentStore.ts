@@ -40,6 +40,13 @@ export type LoadedSegmentStoreApplyResult<TMessage, TOptimistic> = {
   reason?: 'stale-request'
 }
 
+/** 主 store 与 draft 之间的 compare-and-swap 基线。 */
+export type LoadedSegmentStoreRevision = {
+  generation: number
+  segmentRevision: number
+  topologyRevision: number
+}
+
 export type ResetSegmentInput<TMessage, TOptimistic> = {
   items: MessageDataItem<TMessage, TOptimistic>[]
   hasMoreBefore: boolean
@@ -105,6 +112,52 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
 
   getSegment(): LoadedSegment<TMessage, TOptimistic> {
     return this.segment
+  }
+
+  getRevision(): LoadedSegmentStoreRevision {
+    return {
+      generation: this.generation,
+      segmentRevision: this.segmentRevision,
+      topologyRevision: this.topologyRevision,
+    }
+  }
+
+  /**
+   * structural reload 在副本上构造候选窗口，主 store 在 DOM commit 前绝不前进。
+   * request token registry 不需要复制：draft 只构造 reset projection，不发真实请求。
+   */
+  forkForProjection(): LoadedSegmentStore<TMessage, TOptimistic> {
+    const fork = new LoadedSegmentStore<TMessage, TOptimistic>(this.options)
+    fork.generation = this.generation
+    fork.segmentRevision = this.segmentRevision
+    fork.topologyRevision = this.topologyRevision
+    fork.segment = this.segment
+    return fork
+  }
+
+  /**
+   * 只在 React commit ack 后采用 draft。CAS 失败说明有新 authoritative mutation
+   * 绕过了 reload cancellation gate，调用方必须撤销候选 projection 而非覆盖新数据。
+   */
+  commitProjectionFork(
+    fork: LoadedSegmentStore<TMessage, TOptimistic>,
+    base: LoadedSegmentStoreRevision,
+  ): boolean {
+    const current = this.getRevision()
+    if (
+      current.generation !== base.generation ||
+      current.segmentRevision !== base.segmentRevision ||
+      current.topologyRevision !== base.topologyRevision
+    ) {
+      return false
+    }
+
+    this.generation = fork.generation
+    this.segmentRevision = fork.segmentRevision
+    this.topologyRevision = fork.topologyRevision
+    this.segment = fork.segment
+    this.requestTokens.reset()
+    return true
   }
 
   createRequestToken(kind: LoadedSegmentRequestKind): LoadedSegmentRequestToken {

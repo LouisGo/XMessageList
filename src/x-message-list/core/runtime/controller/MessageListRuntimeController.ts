@@ -4,7 +4,7 @@ import { createViewportEvidence } from '../events/evidence'
 import type { MessageIdentityAnchor, MessageRuntimeItemKey } from '../contracts/identity'
 import type { MessageListAdapterRuntime } from '../internal'
 import { createBrowserObserverFactory, createInitialSnapshot, createSnapshotFromSegment, isSameSegmentToken, isSameToken } from './controllerHelpers'
-import { resolveCapturedTransactionAnchor, resolvePendingAnchorKey, resolveProjectionTransactionPolicy, resolveTransactionScrollSource, shouldPreservePendingIntentForSegment, shouldWaitForAnchorRef, type PendingRuntimeMotion } from './controllerTransactionHelpers'
+import { resolveCapturedTransactionAnchor, resolvePendingAnchorKey, resolveTransactionScrollSource, shouldWaitForAnchorRef, type PendingRuntimeMotion, type ProjectionStage } from './controllerTransactionHelpers'
 import { withNextProjectionRevision } from '../shared/snapshotIdentity'
 import { RuntimeDomInteractions } from '../dom/domInteractions'
 import { RuntimeDirtyRangeRegistry } from '../dom/dirtyRange'
@@ -30,6 +30,13 @@ import { emitMeasurementDiagnostics, emitSettledTransactionMeasurementDiagnostic
 import { ControllerEventPublisher } from './controllerEventPublisher'
 import { commitEdgeSlotProjection, prepareEdgeSlotProjection, type PendingEdgeSlotProjection } from './controllerEdgeSlotProjection'
 import { markSegmentDirty } from './controllerSegmentDirty'
+import {
+  applyLoadedProjectionTransaction,
+  cancelStagedProjectionTransaction,
+  rollbackStagedProjection,
+  stageLoadedProjectionTransaction,
+  type ProjectionTransactionHost,
+} from './controllerProjectionTransactions'
 export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unknown> implements MessageListAdapterRuntime<TMessage, TOptimistic> {
   private readonly scheduler: RuntimeScheduler
   private readonly sessionId: string
@@ -149,59 +156,33 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.snapshotListeners.clear()
     this.events.clear()
   }
-  applyLoadedSegment(segment: LoadedSegment<TMessage, TOptimistic>): void {
-    if (this.rejectAfterDestroy('applyLoadedSegment')) return
-    if (segment.sessionId !== this.sessionId) {
-      this.pushDiagnostic('transaction.wrongSessionSegment', 'error', {
-        runtimeSessionId: this.sessionId,
-        segmentSessionId: segment.sessionId,
-        generation: segment.generation,
-        segmentRevision: segment.segmentRevision,
-      })
-      return
-    }
-    if (!this.interactions.acceptsDestinationSegment(segment)) {
-      this.pushDiagnostic('destination.staleSegment', 'warn', {
-        sessionId: segment.sessionId,
-        generation: segment.generation,
-        segmentRevision: segment.segmentRevision,
-        requestToken: segment.modifier.type === 'reset-around'
-          ? segment.modifier.requestToken
-          : undefined,
-      })
-      return
-    }
-    const policy = resolveProjectionTransactionPolicy(segment, this.snapshot, this.interactions.hasActiveFollowBottom(this.snapshot))
-    if (this.transactions.isStaleSegment(segment, this.snapshot)) {
-      this.pushDiagnostic('transaction.staleSegment', 'warn', {
-        segmentGeneration: segment.generation, currentGeneration: this.snapshot.generation,
-        segmentRevision: segment.segmentRevision, currentSegmentRevision: this.snapshot.segmentRevision,
-      })
-      return
-    }
-    this.cancelTransactionsBeforeGeneration(segment)
-    if (this.transactions.shouldQueue() || (this.motion.isActive() && policy.queueDuringMotion)) { // pending commit 未完成时先入队；仅 motion 占用时，不允许排队的 segment 会打断 motion 启动新事务。
-      const queued = this.transactions.enqueue(segment, policy)
-      this.stateAxes.markTransactionQueued()
-      this.pushDiagnostic('transaction.queued', 'info', {
-        sessionId: segment.sessionId,
-        generation: segment.generation,
-        segmentRevision: segment.segmentRevision,
-        lane: policy.lane, queueLength: queued.queueLength, dropped: queued.dropped,
-      })
-      return
-    }
-    this.startTransaction(segment)
+  applyLoadedSegment(segment: LoadedSegment<TMessage, TOptimistic>): void { applyLoadedProjectionTransaction(this.projectionTransactionHost(), segment) }
+  /**
+   * structural reload 使用可撤销 stage：它绝不抢占当前 transaction/motion，也不会在
+   * DOM ack 前成为主 store 的 authoritative segment。
+   */
+  stageLoadedSegment(
+    segment: LoadedSegment<TMessage, TOptimistic>,
+    stage: ProjectionStage,
+  ): boolean {
+    return stageLoadedProjectionTransaction(this.projectionTransactionHost(), segment, stage)
   }
-  private startTransaction(segment: LoadedSegment<TMessage, TOptimistic>): void {
+  cancelStagedProjection(segment: Pick<ProjectionCommitToken, 'sessionId' | 'generation' | 'segmentRevision'>): boolean {
+    return cancelStagedProjectionTransaction(this.projectionTransactionHost(), segment)
+  }
+  private startTransaction(
+    segment: LoadedSegment<TMessage, TOptimistic>,
+    stage?: ProjectionStage,
+  ): void {
     this.motion.cancel('transaction-supersede')
+    const rollbackSnapshot = stage ? this.snapshot : undefined
     markSegmentDirty(segment, this.measurementHost())
     const projectionRevision = this.snapshot.projectionRevision + 1
     const token = { sessionId: segment.sessionId, generation: segment.generation, segmentRevision: segment.segmentRevision, projectionRevision }
     const anchor = resolveCapturedTransactionAnchor(captureVisualAnchor(this.registry.snapshot()), segment, this.registry) // React commit 前捕获 visual anchor；删除末尾 anchor 时 predecessor 使用自身旧几何。
     this.pendingEdgeSlotProjection = null
     const timeoutHandle = this.scheduler.setTimeout(() => this.handleCommitTimeout(token), this.options.commitTimeoutMs ?? 120)
-    this.transactions.setPending({ token, segment, anchor, timeoutHandle, startedAt: this.scheduler.now(), anchorRetryCount: 0, scrollWriteCount: 0 })
+    this.transactions.setPending({ token, segment, anchor, timeoutHandle, startedAt: this.scheduler.now(), anchorRetryCount: 0, scrollWriteCount: 0, stage, rollbackSnapshot })
     this.stateAxes.markTransactionActive()
     const previous = this.interactions.projectEdgeStateForSegment(this.snapshot, segment)
     this.snapshot = createSnapshotFromSegment(segment, { previous, projectionRevision, viewportPhase: 'PROJECTING' })
@@ -224,6 +205,12 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       return
     }
     this.scheduler.clearTimeout(pending.timeoutHandle)
+    if (pending.stage && !pending.stage.commit()) {
+      this.transactions.clearPending()
+      this.pushDiagnostic('transaction.stageCommitRejected', 'warn', token)
+      this.rollbackStagedTransaction(pending)
+      return
+    }
     this.continueCommittedTransaction(token)
   }
   private continueCommittedTransaction(token: ProjectionCommitToken): void {
@@ -310,16 +297,36 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     if (!pending) return
     this.transactions.beginAdvancing()
     try {
-      this.applyInteractionProjection(this.interactions.resetForGeneration(this.snapshot))
-      this.stateAxes.markTransactionIdle()
-      this.setViewportPhase('IDLE')
-      this.pushDiagnostic('transaction.commitTimeout', 'error', token)
-      this.emitRuntimeEvent({ type: 'viewportError', sessionId: token.sessionId, code: 'commit-timeout', message: 'Projection commit timed out.' })
-      this.emitProjectionSettled(token, 'commit-timeout')
+      if (pending.stage) {
+        this.rollbackStagedTransaction(pending)
+        this.pushDiagnostic('transaction.commitTimeout', 'error', token)
+        this.emitRuntimeEvent({ type: 'viewportError', sessionId: token.sessionId, code: 'commit-timeout', message: 'Projection commit timed out.' })
+        this.emitProjectionSettled(token, 'commit-timeout')
+      } else {
+        this.applyInteractionProjection(this.interactions.resetForGeneration(this.snapshot))
+        this.stateAxes.markTransactionIdle()
+        this.setViewportPhase('IDLE')
+        this.pushDiagnostic('transaction.commitTimeout', 'error', token)
+        this.emitRuntimeEvent({ type: 'viewportError', sessionId: token.sessionId, code: 'commit-timeout', message: 'Projection commit timed out.' })
+        this.emitProjectionSettled(token, 'commit-timeout')
+      }
     } finally {
       this.transactions.endAdvancing()
     }
     this.applySettledTransactionContinuations({ evaluatePostCommitInteractions: false })
+  }
+  private rollbackStagedTransaction(
+    pending: import('./controllerTransactionHelpers').PendingTransaction<TMessage, TOptimistic>,
+  ): void {
+    rollbackStagedProjection({
+      scheduler: this.scheduler,
+      clearPendingEdgeSlotProjection: () => { this.pendingEdgeSlotProjection = null },
+      dirtyRange: this.dirtyRange,
+      restoreSnapshot: (snapshot) => { this.snapshot = snapshot },
+      markTransactionIdle: () => this.stateAxes.markTransactionIdle(),
+      syncScrollIntentBottomLock: () => this.syncScrollIntentBottomLock(),
+      emitSnapshot: () => this.emitSnapshot(),
+    }, pending)
   }
   private applySettledTransactionContinuations(options: { evaluatePostCommitInteractions?: boolean } = {}): void { // continuation 顺序固定：队列事务 > 延迟 motion > post-commit underflow/direct-scroll。
     if (this.startNextQueuedTransaction()) return
@@ -517,7 +524,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   private startNextQueuedTransaction(): boolean {
     const next = this.transactions.dequeueReady(this.snapshot)
     if (next) {
-      this.startTransaction(next.segment)
+      this.startTransaction(next.segment, next.stage)
       return true
     }
     if (!this.transactions.hasPending()) {
@@ -525,23 +532,16 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     }
     return false
   }
-  private cancelTransactionsBeforeGeneration(
-    segment: LoadedSegment<TMessage, TOptimistic>,
-  ): void {
-    const generation = segment.generation
-    const cancelled = this.transactions.cancelPendingBeforeGeneration(generation)
-    if (cancelled) {
-      this.scheduler.clearTimeout(cancelled.timeoutHandle)
-      this.stateAxes.markTransactionIdle()
-    }
-    this.transactions.removeQueuedBeforeGeneration(generation)
-    if (
-      generation > this.snapshot.generation &&
-      !shouldPreservePendingIntentForSegment(this.snapshot, segment)
-    ) { // 新 generation 会让旧 pending intent 的 requestToken 失效；只有匹配 follow/latest 或 destination/around 时保留。
-      this.cancelPendingRuntimeMotion()
-      this.snapshot = this.interactions.resetForGeneration(this.snapshot)
-      this.syncScrollIntentBottomLock()
+  private projectionTransactionHost(): ProjectionTransactionHost<TMessage, TOptimistic> {
+    return {
+      sessionId: this.sessionId, getSnapshot: () => this.snapshot, interactions: this.interactions,
+      transactions: this.transactions, scheduler: this.scheduler, isMotionActive: () => this.motion.isActive(),
+      rejectAfterDestroy: (operation) => this.rejectAfterDestroy(operation), markTransactionIdle: () => this.stateAxes.markTransactionIdle(),
+      cancelPendingRuntimeMotion: () => this.cancelPendingRuntimeMotion(), resetSnapshot: (snapshot) => { this.snapshot = snapshot },
+      syncScrollIntentBottomLock: () => this.syncScrollIntentBottomLock(), startTransaction: (segment, stage) => this.startTransaction(segment, stage),
+      markTransactionQueued: () => this.stateAxes.markTransactionQueued(),
+      pushDiagnostic: (name, severity, details) => this.pushDiagnostic(name, severity, details),
+      rollbackStagedTransaction: (pending) => this.rollbackStagedTransaction(pending), applySettledTransactionContinuations: (options) => this.applySettledTransactionContinuations(options),
     }
   }
   private pushDiagnostic(

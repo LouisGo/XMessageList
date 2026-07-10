@@ -44,6 +44,12 @@ export function resolveScenarioTotalMessages(scenarioId: string): number {
     return 18
   }
 
+  // This fixture must exhaust before without exceeding the 64-row low-retention
+  // budget; later appends then prove trim-before reopens the edge latch.
+  if (scenarioId === 'trim.reopen-before-edge') {
+    return 64
+  }
+
   return 80
 }
 

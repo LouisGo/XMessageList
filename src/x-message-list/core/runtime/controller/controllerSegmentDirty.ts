@@ -19,14 +19,14 @@ export function markSegmentDirty<TMessage, TOptimistic>(
     case 'reset-around':
       host.dirtyRange.markAllDirty('segment')
       host.domInteractions.markAllRowMetricsDirty('segment')
-      return
+      break
     case 'trim-before':
     case 'trim-after':
       deleteRemovedMetrics(segment, host)
       if (segment.modifier.type === 'trim-before') {
         host.domInteractions.invalidateRowMetricsFromIndex(segment.items, 0, 'trim-before-shift')
       }
-      return
+      break
     case 'extend-before':
     case 'extend-after': {
       const keys = changedItemKeys(segment, host.snapshot)
@@ -34,12 +34,12 @@ export function markSegmentDirty<TMessage, TOptimistic>(
       if (segment.modifier.type === 'extend-before') {
         host.domInteractions.invalidateRowMetricsFromIndex(segment.items, 0, 'extend-before-shift')
       }
-      return
+      break
     }
     case 'patch':
       markKeys(segment.modifier.changedKeys, 'render-version', host)
       invalidateAfterFirstChanged(segment, segment.modifier.changedKeys, 'patch-suffix', host)
-      return
+      break
     case 'remove':
       for (const key of segment.modifier.removedKeys) {
         host.domInteractions.deleteRowMetric(key)
@@ -51,7 +51,7 @@ export function markSegmentDirty<TMessage, TOptimistic>(
         segment.modifier.firstAffectedIndex,
         'remove-suffix',
       )
-      return
+      break
     case 'append':
       markKeys(segment.modifier.changedKeys, 'segment', host)
       for (const retired of segment.modifier.retireKeys ?? []) {
@@ -61,16 +61,35 @@ export function markSegmentDirty<TMessage, TOptimistic>(
       if (segment.modifier.retireKeys?.length) {
         host.domInteractions.invalidateRowMetricsFromIndex(segment.items, 0, 'append-retire-shift')
       }
-      return
+      break
     case 'identity-remap':
       for (const remap of segment.modifier.remaps) {
         host.dirtyRange.markDirty(remap.nextKey, 'render-version')
         host.domInteractions.remapRowMetric(remap.previousKey, remap.nextKey)
       }
-      return
+      break
     default:
       host.dirtyRange.markAllDirty('unknown')
       host.domInteractions.markAllRowMetricsDirty('unknown')
+  }
+
+  applyTrimEffects(segment, host)
+}
+
+function applyTrimEffects<TMessage, TOptimistic>(
+  segment: LoadedSegment<TMessage, TOptimistic>,
+  host: SegmentDirtyHost<TMessage, TOptimistic>,
+): void {
+  for (const effect of segment.effects ?? []) {
+    if (effect.type !== 'trim-before' && effect.type !== 'trim-after') continue
+    deleteRemovedMetrics(segment, host)
+    if (effect.type === 'trim-before') {
+      host.domInteractions.invalidateRowMetricsFromIndex(
+        segment.items,
+        0,
+        'trim-before-shift',
+      )
+    }
   }
 }
 

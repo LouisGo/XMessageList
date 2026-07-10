@@ -2,6 +2,7 @@ export {
   LoadedSegmentStore,
   createLoadedSegmentStore,
   type LoadedSegmentStoreApplyResult,
+  type LoadedSegmentStoreRevision,
   type LoadedSegmentRequestKind,
   type LoadedSegmentRequestToken,
   type ExtendSegmentInput,

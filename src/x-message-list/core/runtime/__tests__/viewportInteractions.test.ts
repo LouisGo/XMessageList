@@ -126,6 +126,48 @@ describe('MessageList viewport interactions', () => {
       edgeState: { before: { status: 'loading' } },
     })
   })
+  it('reopens an exhausted edge when an extend transaction also trims that edge', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const sessionRuntime = getMessageListSessionRegistryRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const row = createRow('row-1', 0, 200)
+    container.append(row)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', row)
+
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    sessionRuntime.startEdgeRequest('before', 'exhaust-before')
+    const beforeToken = runtime.getSnapshot().edgeState.before.requestToken as string
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 2, {
+      hasMoreBefore: false,
+      hasMoreAfter: true,
+      modifier: { type: 'extend-before', requestToken: beforeToken },
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getSnapshot().edgeState.before.status).toBe('exhausted')
+
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 3, {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      modifier: { type: 'extend-after', requestToken: 'after-token' },
+      effects: [{ type: 'trim-before', trimToken: 'trim:3' }],
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(runtime.getSnapshot().edgeState.before.status).toBe('idle')
+    expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'IDLE',
+      pendingIntent: null,
+      segmentMeta: { hasMoreBefore: true },
+    })
+    sessionRuntime.startEdgeRequest('before', 'reopen-before')
+    expect(runtime.getSnapshot().edgeState.before.status).toBe('loading')
+  })
   it('treats direct scrollbar writes as edge-capable user input', () => {
     const observers = createFakeObservers()
     const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', observers })

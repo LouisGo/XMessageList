@@ -1,6 +1,6 @@
 # E2E 场景矩阵
 
-本文档只记录当前 `e2e/runner/scenarioSpecs.ts` 中真实存在的场景：24 个
+本文档只记录当前 `e2e/runner/scenarioSpecs.ts` 中真实存在的场景：28 个
 correctness 场景和 1 个 perf 场景。它是 runner catalog，不代表当前所有场景都已通过。
 
 执行入口：
@@ -39,6 +39,10 @@ correctness 场景和 1 个 perf 场景。它是 runner catalog，不代表当�
 | `destination.jump-outside-segment` | 目标不在当前 loaded segment 内时发一次 `needMessagesAround`，reset 后目标可见并接近 center。 |
 | `follow-bottom.partial-segment` | partial segment 下 follow bottom 发 latest need；latest reset 后进入 bottom lock。 |
 | `segment-budget.trim-after-appends` | 大量 append 后 item count 不超过预算，期望 `trim-before`，并保持 latest bottom lock。 |
+| `trim.reopen-before-edge` | before 已 exhausted 时，append 携带 `trim-before` effect 后重新开放 before edge，并可真实再发一次请求。 |
+| `reload-current.user-interrupt-stale` | reload 请求途中真实滚动打断后，延迟响应不能更改 segment 或覆盖用户的 scrollTop。 |
+| `short-history.explicit-start` | 3 条短 reset-around history 在真实 DOM 中遵守显式 `align:'start'`，不被 flex 居中。 |
+| `reload-journal.patch-omitted-row` | reload 期间 patch 的 row 若服务端新页已删除，journal 不得把它追加回窗口。 |
 
 ### P3 Lifecycle
 

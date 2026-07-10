@@ -38,7 +38,9 @@ padding、颜色和 slot 视觉样式，不能复制或覆盖这些滚动正确�
 说明：
 
 - `data-short-align="end"` 只用于 latest bootstrap、locked bottom 或明确 follow bottom。
-- around restore / jump 的短 segment 可以使用 `center` 或 `start`，不能被默认吸底语义覆盖。
+- around restore / jump 的短 segment 必须尊重显式 `start` / `end`；未指定时仍可使用
+  `center`。短内容没有 native scroll range 时，这是整个 segment 的布局 fallback，不伪造
+  spacer 来强行制造 target 的滚动坐标。
 - 一旦 rows 高度超过 viewport，浏览器按真实 DOM 高度滚动。
 - trigger 可以是 1px 或视觉隐藏元素，但必须存在于文档流。
 - root 所在 flex/grid 子树仍必须给 `MessageList` 一个确定高度；组件内已经固定

@@ -115,6 +115,26 @@ export function expectVisibleIdentityNearCenter(
   }
 }
 
+export function expectShortSegmentStartAlignment(
+  evidence: E2EEvidence,
+  options: { maxOffsetPx: number },
+): E2EOracleResult {
+  const firstTop = evidence.visibleRows.length > 0
+    ? Math.min(...evidence.visibleRows.map((row) => row.top))
+    : Number.NaN
+  const delta = Math.abs(firstTop - evidence.scrollContainerTop)
+  const ok = evidence.shortSegmentAlignment === 'start' &&
+    Number.isFinite(firstTop) &&
+    delta <= options.maxOffsetPx
+  return {
+    oracleId: 'short-segment-start-alignment',
+    ok,
+    // The before edge status occupies the first small block; a start-aligned
+    // message row follows it rather than being centered in the remaining viewport.
+    message: `alignment=${evidence.shortSegmentAlignment} delta=${delta} max=${options.maxOffsetPx}`,
+  }
+}
+
 export function expectRemappedAnchorPreserved(
   before: E2EEvidence,
   after: E2EEvidence,

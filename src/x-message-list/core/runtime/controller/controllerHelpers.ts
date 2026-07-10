@@ -76,6 +76,7 @@ export function createSnapshotFromSegment<TMessage, TOptimistic>(
       hasMoreAfter: segment.hasMoreAfter,
       context: segment.context,
       modifier: segment.modifier,
+      ...(segment.effects?.length ? { effects: segment.effects } : {}),
       anchor: segment.anchor,
       anchorStatus: segment.anchorStatus,
       shortSegmentAlignment: resolveShortSegmentAlignment(segment, options.previous),
@@ -108,17 +109,25 @@ function resolveShortSegmentAlignment<TMessage, TOptimistic>(
   segment: LoadedSegment<TMessage, TOptimistic>,
   previous: MessageListSnapshot<TMessage, TOptimistic>,
 ): MessageListSnapshot['segmentMeta']['shortSegmentAlignment'] {
+  if (segment.modifier.type === 'reset-around') {
+    // 短窗口没有额外 native scroll range 时，offset 无法靠 scrollTop 表达；此处仍应
+    // 让整个 segment 遵守 reset 的显式布局意图，而不是回退到 jump 的默认居中。
+    if (
+      segment.modifier.align === 'start' ||
+      segment.modifier.offsetWithinMessage !== undefined
+    ) {
+      return 'start'
+    }
+    if (segment.modifier.align === 'end') return 'end'
+    return 'center'
+  }
+
   if (
     previous.bottomLockState === 'LOCKED' ||
     segment.modifier.type === 'reset-latest'
   ) {
     // latest/bottom-lock 短窗口要贴底，避免首屏短内容停在顶部。
     return 'end'
-  }
-
-  if (segment.modifier.type === 'reset-around') {
-    // around 短窗口居中，更接近跳转目标的用户预期。
-    return 'center'
   }
 
   return 'start'

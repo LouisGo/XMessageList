@@ -9,7 +9,13 @@ import { createServer } from 'node:net'
 import type { Lane } from './scenarioSpecs.ts'
 
 export const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)))
-export const CHROME_APP = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+/**
+ * CI and local workstations need not install Chrome at the macOS default path.
+ * An explicit executable keeps the runner deterministic while allowing a
+ * Chromium-compatible test browser to be supplied by the environment.
+ */
+export const CHROME_APP = process.env.X_MESSAGE_LIST_E2E_CHROME ??
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
 export function assertChromeAvailable(): void {
   if (!existsSync(CHROME_APP)) {

@@ -93,6 +93,23 @@ Reset 会消费 loaded segment store 返回的整个 next segment：
 - reset 期间禁用 edge need。
 - reset 后旧 scrollTop 没有意义，必须由 identity/visual target 重新确定。
 
+### Structural Reload Draft
+
+`reloadCurrent` 不直接覆盖主 loaded segment。它先在内部 draft store 上构造 reset 和
+trim projection，再把该 projection 作为可取消 transaction 交给 runtime：
+
+```text
+capture old committed segment
+-> request + journal rebase into draft store
+-> publish cancellable React projection
+-> React commit ack: CAS adopt draft before measurement
+-> measure + one correction + settle
+-> expose new committed segment and resolve applied
+```
+
+ack 前发生 timeout、用户导航、supersede、destroy 或新的 authoritative mutation 时，runtime
+恢复旧 projection 并丢弃 draft；不允许为已 stale 的 reload 读取新 DOM 或写 `scrollTop`。
+
 ## Segment Trim
 
 Trim 是 transaction，不是数组静默裁剪：
@@ -105,6 +122,9 @@ capture visual anchor
 -> measure
 -> preserve anchor
 ```
+
+当 trim 与 extend/reset/append 同时发生时，segment 保留原主 modifier，并额外携带 trim
+effect。主 modifier 决定滚动和 anchor 策略；trim effect 负责 edge latch 重开及 metric 清理。
 
 Trim 策略：
 

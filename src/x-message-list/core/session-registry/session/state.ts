@@ -1,4 +1,5 @@
 import type {
+  LoadedSegment,
   MessageListRuntime,
   MessageListSnapshot,
 } from '../../runtime/index'
@@ -12,11 +13,14 @@ const DISTANCE_TO_BOTTOM_NOTIFY_THRESHOLD_PX = 0.5
 export function createMessageListSessionState<Row>(input: {
   sessionId: string
   runtime: MessageListRuntime<Row>
+  /** reload stage 期间仍返回最后一个完整 settle 的 authoritative segment。 */
+  getCommittedSegment: () => LoadedSegment<Row>
   getViewState: () => MessageListViewState
 }): {
   getState: () => MessageListSessionState<Row>
   subscribe: (listener: () => void) => () => void
   notifyViewChanged: () => void
+  notifyLoadedChanged: () => void
   destroy: () => void
 } {
   const listeners = new Set<() => void>()
@@ -60,6 +64,7 @@ export function createMessageListSessionState<Row>(input: {
       cachedState = createState(
         input.sessionId,
         snapshot,
+        input.getCommittedSegment(),
         viewState,
         distanceToBottom,
       )
@@ -73,6 +78,10 @@ export function createMessageListSessionState<Row>(input: {
       cachedViewState = null
       notify()
     },
+    notifyLoadedChanged: () => {
+      cachedState = null
+      notify()
+    },
     destroy: () => {
       unsubscribeRuntime()
       unsubscribeObservation()
@@ -84,19 +93,20 @@ export function createMessageListSessionState<Row>(input: {
 function createState<Row>(
   sessionId: string,
   snapshot: MessageListSnapshot<Row>,
+  committed: LoadedSegment<Row>,
   viewState: MessageListViewState,
   distanceToBottom: number,
 ): MessageListSessionState<Row> {
-  const rows = snapshot.items.map((item) => item.message as Row)
+  const rows = committed.items.map((item) => item.message as Row)
 
   return {
     sessionId,
     loaded: {
       rows,
-      keys: snapshot.items.map((item) => item.key),
-      hasMoreBefore: snapshot.segmentMeta.hasMoreBefore,
-      hasMoreAfter: snapshot.segmentMeta.hasMoreAfter,
-      context: snapshot.segmentMeta.context,
+      keys: committed.items.map((item) => item.key),
+      hasMoreBefore: committed.hasMoreBefore,
+      hasMoreAfter: committed.hasMoreAfter,
+      context: committed.context,
     },
     edge: {
       before: { status: snapshot.edgeState.before.status },

@@ -132,6 +132,44 @@ describe('MessageList React adapter', () => {
     })
   })
 
+  it('uses start layout for a short history restore projection', async () => {
+    const runtime = createFlowRuntime()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const snapshot = createFlowSnapshot({ hasMoreBefore: true })
+    snapshot.segmentMeta = {
+      ...snapshot.segmentMeta,
+      context: 'history',
+      modifier: {
+        type: 'reset-around',
+        target: { sessionId: 'source-a', stableId: 'row-1' },
+        align: 'start',
+        offsetWithinMessage: 12,
+      },
+      shortSegmentAlignment: 'start',
+    }
+
+    await act(async () => {
+      root.render(
+        <MessageFlow
+          runtime={runtime}
+          snapshot={snapshot}
+          renderRow={({ row }) => <span>{row}</span>}
+          reload={() => undefined}
+          usesRowRenderVersion={false}
+        />,
+      )
+    })
+
+    const flow = host.querySelector<HTMLElement>('[data-message-flow]')
+    expect(flow?.dataset.shortAlign).toBe('start')
+    expect(flow?.style.justifyContent).toBe('flex-start')
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
   it('uses session command for scroll-to-latest slot', async () => {
     const fixture = createSessionFixture({
       rows: ['row-1'],

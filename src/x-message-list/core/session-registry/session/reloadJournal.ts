@@ -9,7 +9,7 @@ import {
   applyIdentityRemaps,
   appendSegmentItems,
   mutateSegmentItems,
-  patchSegmentItems,
+  patchExistingSegmentItems,
 } from '../loaded-segment-store/segmentOperations'
 import type {
   MessageListIdentityRemap,
@@ -118,7 +118,7 @@ export class ReloadContentJournal<Row> {
     let rebased = items
     for (const operation of this.operations) {
       if (operation.type === 'patch') {
-        rebased = patchSegmentItems(rebased, operation.items)
+        rebased = patchExistingSegmentItems(rebased, operation.items)
         continue
       }
       if (operation.type === 'mutate') {

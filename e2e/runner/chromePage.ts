@@ -9,6 +9,12 @@ type CdpMessage = {
   error?: { message: string }
 }
 
+type CdpTarget = {
+  id: string
+  type: string
+  webSocketDebuggerUrl?: string
+}
+
 export class ChromePage {
   private nextId = 1
   private readonly socket: WebSocket
@@ -51,11 +57,7 @@ export class ChromePage {
   }
 
   static async create(chromePort: number): Promise<ChromePage> {
-    const target = await fetch(
-      `http://127.0.0.1:${chromePort}/json/new?about:blank`,
-      { method: 'PUT' },
-    ).then((response) => response.json()) as { webSocketDebuggerUrl: string }
-    const socket = new WebSocket(target.webSocketDebuggerUrl)
+    const socket = new WebSocket(await createPageTarget(chromePort))
     await once(socket as unknown as NodeJS.EventEmitter, 'open')
     const page = new ChromePage(socket)
     await page.command('Page.enable')
@@ -150,4 +152,30 @@ export class ChromePage {
       })
     })
   }
+}
+
+async function createPageTarget(chromePort: number): Promise<string> {
+  const legacyTarget = await fetch(
+    `http://127.0.0.1:${chromePort}/json/new?about:blank`,
+    { method: 'PUT' },
+  )
+  if (legacyTarget.ok) {
+    const target = await legacyTarget.json() as CdpTarget
+    if (target.webSocketDebuggerUrl) return target.webSocketDebuggerUrl
+  }
+
+  // Electron commonly exposes CDP but rejects Chrome's legacy /json/new endpoint.
+  // Its isolated runner process still has one navigable page, which Page.navigate
+  // can safely reuse for the local E2E app.
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const targets = await fetch(
+      `http://127.0.0.1:${chromePort}/json/list`,
+    ).then((response) => response.json()) as CdpTarget[]
+    const target = targets.find((candidate) =>
+      candidate.type === 'page' && Boolean(candidate.webSocketDebuggerUrl),
+    )
+    if (target?.webSocketDebuggerUrl) return target.webSocketDebuggerUrl
+    await wait(25)
+  }
+  throw new Error('CDP endpoint did not expose a navigable page target')
 }

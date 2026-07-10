@@ -1,6 +1,6 @@
 import type { LoadedSegment } from '../contracts/segment'
 import type { MessageListSnapshot, ProjectionCommitToken } from '../contracts/snapshot'
-import type { PendingTransaction } from './controllerTransactionHelpers'
+import type { PendingTransaction, ProjectionStage } from './controllerTransactionHelpers'
 
 export type ProjectionTransactionLane =
   | 'destination'
@@ -20,6 +20,7 @@ export type ProjectionTransactionPolicy = {
 export type ProjectionTransactionQueueEntry<TMessage, TOptimistic> = {
   segment: LoadedSegment<TMessage, TOptimistic>
   policy: ProjectionTransactionPolicy
+  stage?: ProjectionStage
 }
 
 export type ProjectionTransactionEnqueueResult = {
@@ -78,9 +79,10 @@ export class ProjectionTransactionQueue<TMessage, TOptimistic> {
   enqueue(
     segment: LoadedSegment<TMessage, TOptimistic>,
     policy: ProjectionTransactionPolicy,
+    stage?: ProjectionStage,
   ): ProjectionTransactionEnqueueResult {
     const dropped = this.dropSupersededQueuedSegments(segment, policy)
-    const entry = { segment, policy }
+    const entry = { segment, policy, stage }
     const index = this.queue.findIndex((queued) =>
       queued.policy.priority < policy.priority
     )
@@ -138,6 +140,20 @@ export class ProjectionTransactionQueue<TMessage, TOptimistic> {
 
   removeQueuedBeforeGeneration(generation: number): void {
     removeQueuedSegmentsBeforeGeneration(this.queue, generation)
+  }
+
+  removeQueuedStage(
+    segment: Pick<LoadedSegment<TMessage, TOptimistic>, 'sessionId' | 'generation' | 'segmentRevision'>,
+  ): boolean {
+    const index = this.queue.findIndex((entry) =>
+      Boolean(entry.stage) &&
+      entry.segment.sessionId === segment.sessionId &&
+      entry.segment.generation === segment.generation &&
+      entry.segment.segmentRevision === segment.segmentRevision
+    )
+    if (index < 0) return false
+    this.queue.splice(index, 1)
+    return true
   }
 
   isStaleSegment(

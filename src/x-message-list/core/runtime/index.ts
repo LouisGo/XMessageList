@@ -13,6 +13,7 @@ export type {
   LoadedSegmentContext,
   ResetAroundAlign,
   SegmentModifier,
+  SegmentProjectionEffect,
 } from './contracts/segment'
 export type {
   MessageListSnapshot,

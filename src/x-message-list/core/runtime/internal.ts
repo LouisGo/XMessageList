@@ -43,6 +43,14 @@ export type MessageListSessionRegistryRuntime<TMessage = unknown, TOptimistic = 
     startEdgeRequest(edge: 'before' | 'after', reason: string): void
     reportEdgeRequestStale(edge: 'before' | 'after', requestToken: string): void
     getSegmentSizeSnapshot(): RuntimeSegmentSizeSnapshot
+    /** Internal-only structural reload stage; draft store is committed by the ack gate. */
+    stageLoadedSegment(
+      segment: import('./contracts/segment').LoadedSegment<TMessage, TOptimistic>,
+      stage: { commit(): boolean },
+    ): boolean
+    cancelStagedProjection(
+      segment: Pick<ProjectionCommitToken, 'sessionId' | 'generation' | 'segmentRevision'>,
+    ): boolean
   }
 
 export function getMessageListAdapterRuntime<

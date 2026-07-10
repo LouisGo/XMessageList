@@ -419,6 +419,7 @@ describe('createMessageListSessionRegistry', () => {
         offsetWithinMessage: 18,
       }),
     )
+    expect(internals.getSnapshot().segmentMeta.shortSegmentAlignment).toBe('start')
   })
 
   it('keeps latest initial windows under the strict latest contract', async () => {
@@ -2119,9 +2120,10 @@ describe('reloadCurrent', () => {
     })
   })
 
-  it('replays patch upserts in operation order after server rows', async () => {
+  it('replays patches only for rows retained by the authoritative reload page', async () => {
     let resolveAround: ((page: MessageListPage<TestRow>) => void) | null = null
     const ids = ['middle', 'a', 'b', 'c', 'd', 'e']
+    const serverIds = ids.filter((id) => id !== 'c')
     const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
       getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
@@ -2143,26 +2145,30 @@ describe('reloadCurrent', () => {
     await waitFor(() => resolveAround !== null)
     session.rows.patch([
       { id: 'b', text: 'locally patched' },
+      { id: 'c', text: 'must-not-revive' },
       { id: 'upsert-1' },
       { id: 'upsert-2' },
     ])
     session.rows.patch([{ id: 'upsert-1', text: 'patched again' }])
     ackSessionCommit(session)
     resolveAround?.({
-      rows: ids.map((id) => ({ id, text: 'server' })),
+      rows: serverIds.map((id) => ({ id, text: 'server' })),
       hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
     })
+    ackSessionCommit(session)
     await waitFor(() =>
-      internals.getSnapshot().items.at(-1)?.key === 'upsert-2' &&
+      internals.getSnapshot().items.map((item) => item.key).join(',') ===
+        serverIds.join(',') &&
       internals.getSnapshot().items[2]?.message?.text === 'locally patched'
     )
     ackSessionCommit(session)
 
     const result = await resultPromise
     expect(result.status === 'applied' && result.page.rows.map((row) => row.id))
-      .toEqual([...ids, 'upsert-1', 'upsert-2'])
-    expect(internals.getSnapshot().items.at(-2)?.message?.text)
-      .toBe('patched again')
+      .toEqual(serverIds)
+    expect(internals.getSnapshot().items.map((item) => item.key))
+      .toEqual(serverIds)
+    expect(internals.getSnapshot().items[2]?.message?.text).toBe('locally patched')
   })
 
   it('falls back to the deletion successor when the exact target is removed', async () => {
@@ -2524,6 +2530,55 @@ describe('reloadCurrent', () => {
     expect(internals.getSnapshot().items[0]?.message?.text).toBeUndefined()
   })
 
+  it('rolls back a published reload before commit when direct scroll interrupts it', async () => {
+    const ids = ['middle', 'a', 'b', 'c', 'd', 'e']
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => Promise.resolve({
+          rows: ids.map((id) => ({ id, text: id === 'middle' ? 'fresh' : undefined })),
+          hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+        }),
+      }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    session.rows.resetAround({
+      target: { id: 'middle' }, rows: ids.map((id) => ({ id })),
+      hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
+    })
+    const { container, rows } = attachSessionRows(session, ids)
+    ackSessionCommit(session)
+    ackSessionCommit(session)
+    container.scrollTop = 75
+    positionRuntimeRows(rows, 75)
+    const beforeKeys = internals.getSnapshot().items.map((item) => item.key)
+
+    const result = session.commands.reloadCurrent({ reason: 'structural' })
+    await waitFor(() => internals.getSnapshot().items[0]?.message?.text === 'fresh')
+    const staleToken = internals.getSnapshot().commitToken
+    const runtime = getMessageListAdapterRuntime(internals.runtime)
+    runtime.beginDirectScroll()
+    runtime.writeDirectScrollTop(30)
+    runtime.endDirectScroll()
+
+    await expect(result).resolves.toMatchObject({
+      status: 'stale', staleReason: 'navigation-changed',
+    })
+    expect(internals.getSnapshot().items.map((item) => item.key)).toEqual(beforeKeys)
+    expect(internals.getSnapshot().items[0]?.message?.text).toBeUndefined()
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.key))
+      .toEqual(beforeKeys)
+    expect(session.getState().loaded.keys).toEqual(beforeKeys)
+    expect(container.scrollTop).toBe(30)
+
+    runtime.ackProjectionCommit(staleToken)
+    expect(internals.getSnapshot().items.map((item) => item.key)).toEqual(beforeKeys)
+    expect(container.scrollTop).toBe(30)
+  })
+
   it('rejects a deleted page without fallback and accepts a deterministic fallback', async () => {
     let requestCount = 0
     const loadAround = vi.fn(() => {
@@ -2594,14 +2649,25 @@ describe('reloadCurrent', () => {
       target: { id: 'middle' }, rows: ids.map((id) => ({ id })),
       hasMoreBefore: true, hasMoreAfter: true, anchor: { id: 'middle' },
     })
-    attachSessionRows(session, ids)
+    const { container, rows } = attachSessionRows(session, ids)
     ackSessionCommit(session)
     ackSessionCommit(session)
+    container.scrollTop = 75
+    positionRuntimeRows(rows, 75)
+    const beforeKeys = internals.getSnapshot().items.map((item) => item.key)
+    const beforeAnchor = internals.runtime.getViewportAnchor()
 
     await expect(session.commands.reloadCurrent({ reason: 'structural' }))
       .resolves.toMatchObject({
         status: 'failed', failureReason: 'commit-timeout',
       })
+    expect(internals.getSnapshot().items.map((item) => item.key)).toEqual(beforeKeys)
+    expect(internals.getSnapshot().items[0]?.message?.text).toBeUndefined()
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.key))
+      .toEqual(beforeKeys)
+    expect(session.getState().loaded.keys).toEqual(beforeKeys)
+    expect(internals.runtime.getViewportAnchor()).toEqual(beforeAnchor)
+    expect(container.scrollTop).toBe(75)
   })
 })
 

@@ -9,6 +9,7 @@ import {
   type E2EActionDescriptor,
   type E2EActionResult,
   type E2EEvidence,
+  type E2EProbeValue,
   type E2EOverlayEvidence,
   type E2ERuntimeEventRecord,
   type E2ESegmentEvidence,
@@ -31,16 +32,22 @@ const E2E_ACTIONS: E2EActionDescriptor[] = [
   { id: 'trigger_after_edge', label: 'Trigger after', enabled: true },
   { id: 'append_message', label: 'Append', enabled: true },
   { id: 'append_many', label: 'Append many', enabled: true },
+  { id: 'append_many_force_current', label: 'Force append current', enabled: true },
+  { id: 'load_all_history', label: 'Load all history', enabled: true },
   { id: 'prepend_history', label: 'Prepend history', enabled: true },
   { id: 'follow_bottom', label: 'Follow bottom', enabled: true },
   { id: 'jump_to_first_loaded', label: 'Jump loaded', enabled: true },
   { id: 'jump_to_identity', label: 'Jump identity', enabled: true },
   { id: 'jump_to_oldest', label: 'Jump oldest', enabled: true },
+  { id: 'reset_short_history_start', label: 'Short history start', enabled: true },
+  { id: 'reload_current_user_interrupt', label: 'Reload interrupt', enabled: true },
+  { id: 'reload_journal_omitted_patch', label: 'Reload journal patch', enabled: true },
   { id: 'toggle_dynamic_height', label: 'Dynamic height', enabled: true },
   { id: 'stream_current_row', label: 'Stream row', enabled: true },
   { id: 'send_message', label: 'Send message', enabled: true },
   { id: 'retry_failed_send', label: 'Retry send', enabled: true },
   { id: 'send_optimistic_message', label: 'Send optimistic', enabled: true },
+  { id: 'align_pending_optimistic_start', label: 'Align optimistic', enabled: true },
   { id: 'resolve_optimistic_remap', label: 'Resolve remap', enabled: true },
   { id: 'optimistic_server_remap', label: 'Remap optimistic', enabled: true },
   { id: 'switch_feed_roundtrip', label: 'Feed roundtrip', enabled: true },
@@ -63,6 +70,7 @@ export function E2EMessageListApp() {
   const scenarioRef = useRef(scenario)
   const rootRef = useRef<HTMLElement | null>(null)
   const eventLogRef = useRef<E2ERuntimeEventRecord[]>([])
+  const probeRef = useRef<Record<string, E2EProbeValue>>({})
   const [viewportRemountKey, setViewportRemountKey] = useState(0)
   const scenarioId = getScenarioId()
 
@@ -100,6 +108,7 @@ export function E2EMessageListApp() {
       segment: createSegmentEvidence(snapshot),
       events: [...eventLogRef.current],
       diagnostics: [...runtime.getDiagnostics()],
+      probes: { ...probeRef.current },
       overlay: readOverlayEvidence(rootRef.current, runtime.getEvidence()),
       sessionOverlay: readSessionOverlayEvidence(rootRef.current),
     }
@@ -126,6 +135,7 @@ export function E2EMessageListApp() {
         remountViewport: () => setViewportRemountKey((key) => key + 1),
         readEvidence,
         captureCheckpoint,
+        recordProbe: (key, value) => { probeRef.current[key] = value },
       })
       const checkpointId = typeof payload.checkpointId === 'string'
         ? payload.checkpointId
@@ -166,6 +176,7 @@ export function E2EMessageListApp() {
     getEvidence: () => readEvidence('manual'),
     resetScenario: async (nextScenarioId): Promise<E2EActionResult> => {
       eventLogRef.current = []
+      probeRef.current = {}
       await scenarioRef.current.resetE2EScenario(nextScenarioId)
       await waitForRuntimeIdle(() => readEvidence('reset'), 2_000)
       return {

@@ -16,6 +16,14 @@ export type PendingTransaction<TMessage, TOptimistic> = {
   startedAt: number
   anchorRetryCount: number
   scrollWriteCount: number
+  /** structural reload 的候选 projection；未 commit 前可以完整撤销。 */
+  stage?: ProjectionStage
+  rollbackSnapshot?: MessageListSnapshot<TMessage, TOptimistic>
+}
+
+export type ProjectionStage = {
+  /** React DOM 已 commit、runtime 尚未测量/写 scrollTop 时执行的 CAS gate。 */
+  commit(): boolean
 }
 
 /**

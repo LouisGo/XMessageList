@@ -1,6 +1,7 @@
 import type {
   LoadedSegment,
   MessageListRuntime,
+  SegmentProjectionEffect,
 } from '../../runtime/index'
 import type { LoadedSegmentStore } from '../loaded-segment-store/index'
 import {
@@ -24,6 +25,7 @@ export function prepareSessionSegmentForPublish<Row>(input: {
     rowsPerViewportEstimate: input.rowsPerViewportEstimate,
   })
   let current = input.segment
+  const effects: SegmentProjectionEffect[] = [...(input.segment.effects ?? [])]
   const maxTrimPasses = Math.max(1, current.items.length)
 
   for (let guard = 0; guard < maxTrimPasses && current.items.length > budget; guard += 1) {
@@ -34,12 +36,24 @@ export function prepareSessionSegmentForPublish<Row>(input: {
         resolveTrimProtectKey(input.runtime, input.loadedSegmentStore),
     )
     if (trimmed === current || trimmed.items.length >= previousLength) break
+    if (
+      trimmed.modifier.type === 'trim-before' ||
+      trimmed.modifier.type === 'trim-after'
+    ) {
+      effects.push(trimmed.modifier)
+    }
     current = trimmed
   }
 
+  // store 内部会用 trim modifier 记录本次裁剪；对 runtime 则保留原操作并携带 trim
+  // effect，确保 scroll/anchor 策略和 edge/metric 清理在同一个 transaction 结算。
   const projected = current.modifier === originalModifier
     ? current
-    : { ...current, modifier: originalModifier }
+    : {
+        ...current,
+        modifier: originalModifier,
+        ...(effects.length > 0 ? { effects } : {}),
+      }
   return {
     segment: projected,
     topologyChanged: hasSegmentTopologyChanged(input.previous, projected),

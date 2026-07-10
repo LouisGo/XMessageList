@@ -18,6 +18,9 @@ export function createViewportEvidence<TMessage, TOptimistic>(
     projectionRevision: snapshot.projectionRevision,
     commitToken: pendingToken ?? snapshot.commitToken,
     modifier: snapshot.segmentMeta.modifier.type,
+    ...(snapshot.segmentMeta.effects?.length
+      ? { effects: snapshot.segmentMeta.effects }
+      : {}),
     hasMoreBefore: snapshot.segmentMeta.hasMoreBefore,
     hasMoreAfter: snapshot.segmentMeta.hasMoreAfter,
     context: snapshot.segmentMeta.context,

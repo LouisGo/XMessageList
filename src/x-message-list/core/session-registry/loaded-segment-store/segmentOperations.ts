@@ -76,6 +76,20 @@ export function patchSegmentItems<TMessage, TOptimistic>(
   return dedupeItems(next)
 }
 
+/**
+ * 结构性 reload 回放 patch 时只更新 authoritative page 已包含的 row。
+ *
+ * 普通 patch 仍保留向后兼容的 upsert 行为；插入新消息必须走 tail append/reset，
+ * 不能因为旧窗口的一条 patch 把服务端已移除的消息复活到新页末尾。
+ */
+export function patchExistingSegmentItems<TMessage, TOptimistic>(
+  current: MessageDataItem<TMessage, TOptimistic>[],
+  patches: MessageDataItem<TMessage, TOptimistic>[],
+): MessageDataItem<TMessage, TOptimistic>[] {
+  const patchesByKey = new Map(patches.map((item) => [item.key, item]))
+  return current.map((item) => patchesByKey.get(item.key) ?? item)
+}
+
 export function mutateSegmentItems<TMessage, TOptimistic>(
   current: MessageDataItem<TMessage, TOptimistic>[],
   input: MutateSegmentItemsInput<TMessage, TOptimistic>,

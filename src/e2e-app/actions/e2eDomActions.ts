@@ -23,6 +23,30 @@ export function scrollContainer(
   container.dispatchEvent(new Event('scroll', { bubbles: true }))
 }
 
+/**
+ * A reload cancellation test must cross the runtime's wheel/touch user-input
+ * gate; setting scrollTop alone can be suppressed as a programmatic write.
+ */
+export function scrollContainerAsUser(
+  root: HTMLElement | null,
+  target: 'top' | 'middle' | 'bottom',
+): void {
+  const container = findScrollContainer(root)
+  const maxTop = Math.max(0, container.scrollHeight - container.clientHeight)
+  const nextTop = target === 'top'
+    ? 0
+    : target === 'bottom'
+      ? maxTop
+      : maxTop / 2
+  container.dispatchEvent(new WheelEvent('wheel', {
+    bubbles: true,
+    cancelable: true,
+    deltaY: nextTop - container.scrollTop,
+  }))
+  container.scrollTop = nextTop
+  container.dispatchEvent(new Event('scroll', { bubbles: true }))
+}
+
 export function dragScrollbarToTop(root: HTMLElement | null): void {
   const thumb = root?.querySelector<HTMLElement>('[data-message-scrollbar-thumb]')
 

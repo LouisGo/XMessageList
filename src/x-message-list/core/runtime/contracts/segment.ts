@@ -125,6 +125,22 @@ export type SegmentModifier =
       }>
     }
 
+/**
+ * 与主 modifier 同一 projection 结算的附带变更。
+ *
+ * trim 不能覆盖 extend/reset 等主操作：主操作决定 scroll/anchor 策略，effect 负责
+ * edge latch 和 row metric 的局部清理。两者必须在同一 transaction 中可见。
+ */
+export type SegmentProjectionEffect =
+  | {
+      type: 'trim-before'
+      trimToken: string
+    }
+  | {
+      type: 'trim-after'
+      trimToken: string
+    }
+
 /** data runtime 已经去重、排序并生成的不可变 segment；viewport runtime 只能消费它做投影和滚动结算。 */
 export type LoadedSegment<TMessage = unknown, TOptimistic = unknown> = {
   /** segment 所属 session。 */
@@ -155,4 +171,6 @@ export type LoadedSegment<TMessage = unknown, TOptimistic = unknown> = {
     | 'permission'
   /** 描述本次 segment 变更类型。 */
   modifier: SegmentModifier
+  /** 与主操作原子结算的附带变更；当前仅用于 trim。 */
+  effects?: SegmentProjectionEffect[]
 }

@@ -12,7 +12,7 @@ import { defineMessageListSessionInternals } from '../internal'
 import { normalizeMessageListAnchor } from '../adapters/rowAdapter'
 import { MessageListSessionLiveSemantics } from '../tail/tailSemantics'
 import { assertLatestPageContract, assertReachedLatestContract, reportContractDiagnostic } from './contractDiagnostics'
-import { reindexRows, resolveRequestTriggerFromEvent, toRuntimeScrollOptions, toSessionResetInput, type AroundRequestOptions, type RuntimeNeedEvent, type SessionOptions } from './helpers'
+import { resolveRequestTriggerFromEvent, toRuntimeScrollOptions, toSessionResetInput, type AroundRequestOptions, type RuntimeNeedEvent, type SessionOptions } from './helpers'
 import type { MessageListPage, MessageListRequestTrigger, MessageListRequestResult, MessageListSessionId, MessageListSession as PublicMessageListSession, MessageListSessionContext, MessageListSessionState, MessageListViewState } from '../contracts'
 import { MessageListAnchorMemoryWriter } from './anchorMemoryWriter'
 import { MessageListSessionReloadController } from './reloadCurrent'
@@ -20,10 +20,10 @@ import {
   createGuardedSessionMutations,
   createSessionCommands,
 } from './sessionFacade'
-import { prepareSessionSegmentForPublish } from './publishSegment'
 import { createSessionRuntimeEventRouter } from './runtimeEventRouter'
 import { applyMessageListInitialWindow } from './initialWindow'
 import { loadMessageListEdgeWindow } from './edgeWindow'
+import { MessageListSessionSegmentPublisher } from './sessionSegmentPublisher'
 type OverlayRequestOptions = { overlayRequestId?: number; requestEpoch?: number; trigger?: MessageListRequestTrigger }
 type RequestResultInput<Row, Source> = Omit<MessageListRequestResult<Row, Source>, 'sessionId' | 'source'>
 export class MessageListSession<Row, Source>
@@ -50,7 +50,7 @@ export class MessageListSession<Row, Source>
   private rowsPerViewportEstimate: number
   private measurementSnapshot: RuntimeSegmentSizeSnapshot | null = null
   private destroyed = false
-  private lastPublishedSegment: LoadedSegment<Row>
+  private readonly segmentPublisher: MessageListSessionSegmentPublisher<Row>
   lastUsedAt = Date.now()
   constructor(private readonly options: SessionOptions<Row, Source>) {
     this.sessionId = options.sessionId
@@ -101,7 +101,6 @@ export class MessageListSession<Row, Source>
     })
     this.#runtime = createMessageListRuntime<Row>({ sessionId: options.sessionId, scrollMotion: options.scrollMotion })
     this.#loadedSegmentStore = createLoadedSegmentStore<Row>({ sessionId: options.sessionId })
-    this.lastPublishedSegment = this.#loadedSegmentStore.getSegment()
     this.reloadController = new MessageListSessionReloadController({
       sessionId: this.sessionId,
       context: this.context,
@@ -109,7 +108,8 @@ export class MessageListSession<Row, Source>
       runtime: getMessageListSessionRegistryRuntime(this.#runtime),
       loadedSegmentStore: this.#loadedSegmentStore,
       getPageSize: () => this.options.defaults.pageSize,
-      publishSegment: (segment) => this.publishSegment(segment),
+      prepareStagedSegment: (segment, draftStore) => this.segmentPublisher.prepareStaged(segment, draftStore),
+      finalizeStagedSegment: (segment) => this.segmentPublisher.finalizeStaged(segment),
       reportDiagnostic: (name, severity, details) => this.reportContractDiagnostic(name, severity, details),
       onRequestResult: (result) => this.options.onRequestResult?.(result),
     })
@@ -177,12 +177,23 @@ export class MessageListSession<Row, Source>
     this.stateStore = createMessageListSessionState({
       sessionId: this.sessionId,
       runtime: this.#runtime,
+      getCommittedSegment: () => this.segmentPublisher.getCommittedSegment(),
       getViewState: () => this.getViewState(),
     })
     this.readReceipts = new MessageListReadReceiptsWorker(
       options.adapter,
       (keys) => this.getRowsByKeys(keys),
     )
+    this.segmentPublisher = new MessageListSessionSegmentPublisher({
+      initialSegment: this.#loadedSegmentStore.getSegment(),
+      runtime: this.#runtime,
+      loadedSegmentStore: this.#loadedSegmentStore,
+      defaults: this.options.defaults,
+      rowsByKey: this.rowsByKey,
+      getRowsPerViewportEstimate: () => this.rowsPerViewportEstimate,
+      settlePendingLocalForSegment: (segment) => this.liveSemantics.settlePendingLocalForSegment(segment),
+      notifyLoadedChanged: () => this.stateStore.notifyLoadedChanged(),
+    })
     const routeRuntimeEvent = createSessionRuntimeEventRouter({
       isCurrent: (generation, revision) =>
         this.isStaleSegment(generation, revision) === false,
@@ -515,22 +526,10 @@ export class MessageListSession<Row, Source>
     }
   }
   private publishSegment(segment: LoadedSegment<Row>): void {
-    const prepared = prepareSessionSegmentForPublish({
-      segment,
-      previous: this.lastPublishedSegment,
-      runtime: this.#runtime,
-      loadedSegmentStore: this.#loadedSegmentStore,
-      defaults: this.options.defaults,
-      rowsPerViewportEstimate: this.rowsPerViewportEstimate,
-    })
-    this.lastPublishedSegment = prepared.segment
-    this.applySegmentToRuntime(prepared.segment)
-    if (prepared.topologyChanged) this.reloadController.markTopologyChanged()
-  }
-  private applySegmentToRuntime(segment: LoadedSegment<Row>): void {
-    this.liveSemantics.settlePendingLocalForSegment(segment)
-    reindexRows(this.rowsByKey, segment.items)
-    this.#runtime.applyLoadedSegment(segment)
+    this.reloadController.cancelSettlingProjectionForAuthoritativePublish()
+    if (this.segmentPublisher.publish(segment)) {
+      this.reloadController.markTopologyChanged()
+    }
   }
   private publishLocalResetSegment(segment: LoadedSegment<Row>): void {
     this.overlay.bumpRequestEpoch()

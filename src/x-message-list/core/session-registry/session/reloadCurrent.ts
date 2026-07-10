@@ -7,7 +7,10 @@ import type {
   MessageListSessionRegistryRuntime,
   ProjectionCommitToken,
 } from '../../runtime/internal'
-import type { LoadedSegmentStore } from '../loaded-segment-store/index'
+import type {
+  LoadedSegmentStore,
+  LoadedSegmentStoreRevision,
+} from '../loaded-segment-store/index'
 import type {
   MessageListAdapter,
   MessageListIdentityRemap,
@@ -45,6 +48,10 @@ type ActiveReload<Row> = {
   lifecycleEpoch: number
   journal: ReloadContentJournal<Row>
   page?: MessageListPage<Row>
+  draftStore?: LoadedSegmentStore<Row>
+  draftBase?: LoadedSegmentStoreRevision
+  stagedSegment?: LoadedSegment<Row>
+  draftCommitted: boolean
   expectedSegment?: Pick<ProjectionCommitToken, 'sessionId' | 'generation' | 'segmentRevision'>
   projectionApplied: boolean
   resolution?: 'exact' | 'fallback'
@@ -68,7 +75,6 @@ export class MessageListSessionReloadController<Row, Source> {
   private navigationEpoch = 0
   private topologyEpoch = 0
   private lifecycleEpoch = 0
-  private applyingOwnSegment = false
   private applyingRebasableMutation = false
   private destroyed = false
 
@@ -79,7 +85,11 @@ export class MessageListSessionReloadController<Row, Source> {
     runtime: MessageListSessionRegistryRuntime<Row>
     loadedSegmentStore: LoadedSegmentStore<Row>
     getPageSize: () => number
-    publishSegment: (segment: LoadedSegment<Row>) => void
+    prepareStagedSegment: (
+      segment: LoadedSegment<Row>,
+      draftStore: LoadedSegmentStore<Row>,
+    ) => LoadedSegment<Row>
+    finalizeStagedSegment: (segment: LoadedSegment<Row>) => void
     reportDiagnostic: (
       name: string,
       severity: 'debug' | 'info' | 'warn' | 'error',
@@ -140,6 +150,7 @@ export class MessageListSessionReloadController<Row, Source> {
           ),
         }),
         projectionApplied: false,
+        draftCommitted: false,
         terminal: false,
         resolve,
       }
@@ -159,15 +170,22 @@ export class MessageListSessionReloadController<Row, Source> {
     this.topologyEpoch += 1
     if (
       this.active &&
-      (
-        this.applyingOwnSegment ||
-        (this.applyingRebasableMutation && this.active.phase === 'requesting')
-      )
+      this.applyingRebasableMutation && this.active.phase === 'requesting'
     ) {
       this.active.topologyEpoch = this.topologyEpoch
       return
     }
     this.invalidateActive('topology-changed')
+  }
+
+  /**
+   * 所有非 reload 的 authoritative publish 都经过这里。若 reload 已经把候选 DOM
+   * projection 排队或发布，必须先撤销它，避免旧 draft 抢在新 mutation 后 commit。
+   */
+  cancelSettlingProjectionForAuthoritativePublish(): void {
+    if (this.active?.phase === 'settling' && !this.active.draftCommitted) {
+      this.invalidateActive('topology-changed')
+    }
   }
 
   applyRowsPatch(rows: Row[], apply: () => void): void {
@@ -347,6 +365,8 @@ export class MessageListSessionReloadController<Row, Source> {
           })
 
       if (!this.isCurrent(active)) return
+      const draftStore = this.options.loadedSegmentStore.forkForProjection()
+      const draftBase = this.options.loadedSegmentStore.getRevision()
       const prepared = prepareReloadProjection({
         requestKind: active.requestKind,
         target: active.target,
@@ -356,26 +376,35 @@ export class MessageListSessionReloadController<Row, Source> {
         journal: active.journal,
         sessionId: this.options.sessionId,
         adapter: this.options.adapter,
-        loadedSegmentStore: this.options.loadedSegmentStore,
+        loadedSegmentStore: draftStore,
         reportDiagnostic: this.options.reportDiagnostic,
       })
       if (!this.isCurrent(active)) return
 
+      const stagedSegment = this.options.prepareStagedSegment(
+        prepared.segment,
+        draftStore,
+      )
       active.page = prepared.page
       active.resolution = prepared.resolution
       active.resolvedAnchor = prepared.resolvedAnchor
       active.phase = 'settling'
-      this.applyingOwnSegment = true
-      try {
-        this.options.publishSegment(prepared.segment)
-      } finally {
-        this.applyingOwnSegment = false
-      }
-      const published = this.options.loadedSegmentStore.getSegment()
+      active.draftStore = draftStore
+      active.draftBase = draftBase
+      active.stagedSegment = stagedSegment
       active.expectedSegment = {
-        sessionId: published.sessionId,
-        generation: published.generation,
-        segmentRevision: published.segmentRevision,
+        sessionId: stagedSegment.sessionId,
+        generation: stagedSegment.generation,
+        segmentRevision: stagedSegment.segmentRevision,
+      }
+      if (!this.options.runtime.stageLoadedSegment(stagedSegment, {
+        commit: () => this.commitDraft(active),
+      })) {
+        this.finish(active, {
+          status: 'stale',
+          requestKind: active.requestKind,
+          staleReason: 'topology-changed',
+        })
       }
     } catch (error) {
       if (active.terminal) return
@@ -451,6 +480,9 @@ export class MessageListSessionReloadController<Row, Source> {
     const active = this.active
     if (!active || active.terminal) return
     active.abortController.abort()
+    if (active.phase === 'settling' && active.expectedSegment && !active.draftCommitted) {
+      this.options.runtime.cancelStagedProjection(active.expectedSegment)
+    }
     this.finish(active, {
       status: 'stale',
       requestKind: active.requestKind,
@@ -460,7 +492,11 @@ export class MessageListSessionReloadController<Row, Source> {
 
   private finishApplied(active: ActiveReload<Row>): void {
     const page = active.page
-    if (!page) return
+    const segment = active.stagedSegment
+    if (!page || !segment || !active.draftCommitted) return
+    this.options.finalizeStagedSegment(segment)
+    // 成功 stage 现在成为新的 reload 版本基线；之后的请求不再与它比较旧 topology。
+    this.topologyEpoch += 1
     this.finish(active, {
       status: 'applied',
       requestKind: active.requestKind,
@@ -468,6 +504,41 @@ export class MessageListSessionReloadController<Row, Source> {
       resolvedAnchor: active.resolvedAnchor,
       resolution: active.resolution,
     })
+  }
+
+  private commitDraft(active: ActiveReload<Row>): boolean {
+    if (
+      active.terminal ||
+      this.active !== active ||
+      this.destroyed ||
+      active.lifecycleEpoch !== this.lifecycleEpoch ||
+      active.navigationEpoch !== this.navigationEpoch ||
+      active.topologyEpoch !== this.topologyEpoch ||
+      !active.draftStore ||
+      !active.draftBase
+    ) {
+      return false
+    }
+
+    const committed = this.options.loadedSegmentStore.commitProjectionFork(
+      active.draftStore,
+      active.draftBase,
+    )
+    if (!committed) {
+      this.options.reportDiagnostic(
+        'reloadCurrent.stageCommitConflict',
+        'error',
+      )
+      this.finish(active, {
+        status: 'stale',
+        requestKind: active.requestKind,
+        staleReason: 'topology-changed',
+      })
+      return false
+    }
+
+    active.draftCommitted = true
+    return true
   }
 
   private finish(

@@ -42,6 +42,9 @@ export type E2EActionResult = {
   }
 }
 
+/** Test actions may record only public session/runtime observations for an oracle. */
+export type E2EProbeValue = string | number | boolean | null
+
 export type E2EEvidence = ViewportEvidence & {
   schemaVersion: 2
   scenarioId: string
@@ -51,6 +54,7 @@ export type E2EEvidence = ViewportEvidence & {
   segment: E2ESegmentEvidence
   events: E2ERuntimeEventRecord[]
   diagnostics: ViewportDiagnosticRecord[]
+  probes: Record<string, E2EProbeValue>
   overlay: E2EOverlayEvidence | null
   sessionOverlay: E2ESessionOverlayEvidence
 }

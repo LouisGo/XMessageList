@@ -5,6 +5,7 @@ import type {
 } from './identity'
 import type {
   LoadedSegmentContext,
+  SegmentProjectionEffect,
   SegmentModifier,
 } from './segment'
 
@@ -104,6 +105,8 @@ export type MessageListSnapshot<TMessage = unknown, TOptimistic = unknown> = {
     context: LoadedSegmentContext
     /** 生成该快照的 segment 变更类型。 */
     modifier: SegmentModifier
+    /** 与主 modifier 原子结算的附带效果。 */
+    effects?: SegmentProjectionEffect[]
     /** 数据层提供的推荐锚点。 */
     anchor?: MessageIdentityAnchor
     /** 推荐锚点的可用性状态。 */
@@ -156,6 +159,8 @@ export type ViewportEvidence = {
   commitToken: ProjectionCommitToken | null
   /** 当前 segment modifier 类型。 */
   modifier: SegmentModifier['type']
+  /** 与主 modifier 同一 transaction 结算的附带效果。 */
+  effects?: SegmentProjectionEffect[]
   /** before 侧是否还有可请求数据。 */
   hasMoreBefore: boolean
   /** after 侧是否还有可请求数据。 */

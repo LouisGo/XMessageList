@@ -1,6 +1,12 @@
 import type { DemoMessageScenario } from '../../demo/scenario/demoScenarioTypes'
+import {
+  appendDemoFeedMessages,
+  readDemoFeedMessages,
+} from '../../demo/data/demoMessageApi'
+import { createMockNewestMessages } from '../../demo/scenario/demoScenarioHelpers'
 import type {
   E2EEvidence,
+  E2EProbeValue,
   E2ERuntimeEventRecord,
 } from '../bridge/e2eBridge'
 import {
@@ -13,6 +19,10 @@ import {
   releaseHeldScrollbar,
   scrollContainer,
 } from './e2eDomActions'
+import {
+  reloadCurrentUserInterrupt,
+  reloadJournalOmittedPatch,
+} from './e2eReloadActions'
 
 export type BridgeActionContext = {
   actionId: string
@@ -22,6 +32,7 @@ export type BridgeActionContext = {
   remountViewport: () => void
   readEvidence: (checkpointId: string) => E2EEvidence
   captureCheckpoint: (checkpointId: string) => E2EEvidence
+  recordProbe: (key: string, value: E2EProbeValue) => void
 }
 
 export async function runBridgeAction({
@@ -32,6 +43,7 @@ export async function runBridgeAction({
   remountViewport,
   readEvidence,
   captureCheckpoint,
+  recordProbe,
 }: BridgeActionContext): Promise<void> {
   switch (actionId) {
     case 'wait_for_ready':
@@ -74,6 +86,12 @@ export async function runBridgeAction({
     case 'append_many':
       await appendMany({ payload, scenario, readEvidence })
       return
+    case 'append_many_force_current':
+      await appendManyForceCurrent({ payload, scenario, readEvidence })
+      return
+    case 'load_all_history':
+      await loadAllHistory({ scenario, readEvidence })
+      return
     case 'prepend_history':
       scenario.loadHistoryBatch()
       await waitForRuntimeIdle(readEvidence, 1_500)
@@ -97,6 +115,28 @@ export async function runBridgeAction({
       })
       await waitForRuntimeIdle(readEvidence, 2_000)
       return
+    case 'reset_short_history_start':
+      await resetShortHistoryStart({ scenario, readEvidence })
+      return
+    case 'reload_current_user_interrupt':
+      await reloadCurrentUserInterrupt({
+        root,
+        scenario,
+        readEvidence,
+        recordProbe,
+        wait,
+        waitForRuntimeIdle,
+      })
+      return
+    case 'reload_journal_omitted_patch':
+      await reloadJournalOmittedPatch({
+        scenario,
+        readEvidence,
+        recordProbe,
+        wait,
+        waitForRuntimeIdle,
+      })
+      return
     case 'toggle_dynamic_height':
       scenario.toggleDynamicHeight()
       await waitForRuntimeIdle(readEvidence, 1_500)
@@ -119,6 +159,10 @@ export async function runBridgeAction({
       return
     case 'send_optimistic_message':
       scenario.sendOptimisticMessage()
+      await waitForRuntimeIdle(readEvidence, 1_500)
+      return
+    case 'align_pending_optimistic_start':
+      scenario.alignPendingOptimisticAtStart()
       await waitForRuntimeIdle(readEvidence, 1_500)
       return
     case 'resolve_optimistic_remap':
@@ -253,11 +297,91 @@ async function appendMany(input: {
   input.scenario.appendMessages(count)
   await waitForEvidence(
     input.readEvidence,
-    (evidence) => evidence.segment.modifier.type === 'trim-before' ||
+    (evidence) => evidence.effects?.some((effect) =>
+      effect.type === 'trim-before' || effect.type === 'trim-after'
+    ) ||
       evidence.segment.itemCount > beforeCount,
     3_000,
   )
   await waitForRuntimeIdle(input.readEvidence, 3_000)
+}
+
+async function loadAllHistory(input: {
+  scenario: DemoMessageScenario
+  readEvidence: (checkpointId: string) => E2EEvidence
+}): Promise<void> {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (!input.readEvidence('history-before').hasMoreBefore) return
+    input.scenario.loadHistoryBatch()
+    await waitForRuntimeIdle(input.readEvidence, 2_000)
+  }
+  if (input.readEvidence('history-final').hasMoreBefore) {
+    throw new E2EActionError('history_not_exhausted', 'before edge did not reach exhaustion')
+  }
+}
+
+async function appendManyForceCurrent(input: {
+  payload: Record<string, unknown>
+  scenario: DemoMessageScenario
+  readEvidence: (checkpointId: string) => E2EEvidence
+}): Promise<void> {
+  const count = Math.min(Math.max(1, Number(input.payload.count ?? 1)), 160)
+  const beforeCount = input.readEvidence('force-append-before').segment.itemCount
+  const existing = readDemoFeedMessages(input.scenario.activeFeedId)
+  const rows = createMockNewestMessages({
+    feedId: input.scenario.activeFeedId,
+    count,
+    existingMessages: existing,
+  })
+  appendDemoFeedMessages(input.scenario.activeFeedId, rows)
+  input.scenario.activeSession.tail.remote.append({
+    rows,
+    reason: 'e2e-trim-reopen-before',
+    follow: 'follow',
+  })
+  await waitForEvidence(
+    input.readEvidence,
+    (evidence) => evidence.effects?.some((effect) =>
+      effect.type === 'trim-before' || effect.type === 'trim-after'
+    ) || evidence.segment.itemCount > beforeCount,
+    3_000,
+  )
+  await waitForRuntimeIdle(input.readEvidence, 3_000)
+}
+
+async function resetShortHistoryStart(input: {
+  scenario: DemoMessageScenario
+  readEvidence: (checkpointId: string) => E2EEvidence
+}): Promise<void> {
+  const rows = input.scenario.activeSession.getState().loaded.rows
+    .slice(0, 3)
+    .map((row) => ({
+      ...row,
+      body: 'Short history row for explicit start alignment.',
+      expanded: false,
+      media: undefined,
+    }))
+  const targetRow = rows[0]
+  if (!targetRow) {
+    throw new E2EActionError('missing_short_history_rows', 'short history reset needs a row')
+  }
+  const target = {
+    id: targetRow.id,
+    sessionId: input.scenario.activeFeedId,
+    stableId: targetRow.id,
+    serverId: targetRow.id,
+  }
+  input.scenario.activeSession.rows.resetAround({
+    rows,
+    target,
+    anchor: target,
+    anchorStatus: 'normal',
+    hasMoreBefore: false,
+    hasMoreAfter: false,
+    align: 'start',
+    offsetWithinMessage: 0,
+  })
+  await waitForRuntimeIdle(input.readEvidence, 2_000)
 }
 
 async function jumpToIdentity(input: {
