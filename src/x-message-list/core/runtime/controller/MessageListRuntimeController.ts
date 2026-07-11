@@ -30,6 +30,7 @@ import { emitMeasurementDiagnostics, emitSettledTransactionMeasurementDiagnostic
 import { ControllerEventPublisher } from './controllerEventPublisher'
 import { commitEdgeSlotProjection, prepareEdgeSlotProjection, type PendingEdgeSlotProjection } from './controllerEdgeSlotProjection'
 import { markSegmentDirty } from './controllerSegmentDirty'
+import { probeInvalidateAfterSafety as probeInvalidateAfterSafetyState } from './controllerInvalidateAfterSafety'
 import {
   applyLoadedProjectionTransaction,
   cancelStagedProjectionTransaction,
@@ -393,12 +394,10 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   subscribeRuntimeEvent(listener: MessageListRuntimeEventListener): () => void { return this.events.subscribe(listener) }
   subscribeViewportObservation(listener: ViewportObservationListener): () => void { return this.subscribeRuntimeEvent((event) => { if (event.type === 'viewportObservationChanged') listener(event) }) }
   getViewportAnchor(): MessageIdentityAnchor | null { return this.lastAnchor ?? this.snapshot.segmentMeta.anchor ?? null }
-  getViewportAnchorMemory(): { anchor: MessageIdentityAnchor; offsetWithinMessage?: number } | null {
-    const resolved = this.resolveCurrentVisualAnchor()
+  getViewportAnchorMemory(): { anchor: MessageIdentityAnchor; offsetWithinMessage?: number } | null { const resolved = this.resolveCurrentVisualAnchor()
     if (!resolved.anchor) return null
-    return resolved.offsetWithinMessage === undefined
-      ? { anchor: resolved.anchor }
-      : { anchor: resolved.anchor, offsetWithinMessage: resolved.offsetWithinMessage }
+    if (resolved.offsetWithinMessage === undefined) return { anchor: resolved.anchor }
+    return { anchor: resolved.anchor, offsetWithinMessage: resolved.offsetWithinMessage }
   }
   getDiagnostics(): import('../contracts/events').ViewportDiagnosticRecord[] { return this.events.getDiagnostics() }
   getEvidence(): ViewportEvidence { return createViewportEvidence(this.snapshot, this.lastMeasurement, this.transactions.getPending()?.token ?? null) }
@@ -433,6 +432,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   reportOverlayMetricMismatch(details: Record<string, unknown>): void { this.pushDiagnostic('overlay.metricMismatch', 'warn', details) }
   reportOverlayDiagnostic(name: string, details: Record<string, unknown>): void { if (name.startsWith('overlay.')) this.pushDiagnostic(name, 'debug', details) }
   getSegmentSizeSnapshot(): RuntimeSegmentSizeSnapshot { return createSegmentSizeSnapshot(this.measurementHost()) }
+  probeInvalidateAfterSafety(input: { suffixKeys: MessageRuntimeItemKey[] }): 'safe' | 'runtime-busy' | 'visible-range-overlap' { return probeInvalidateAfterSafetyState({ suffixKeys: input.suffixKeys, isRuntimeBusy: () => this.destroyed || this.snapshot.viewportPhase !== 'IDLE' || this.transactions.isBusy() || this.motion.isActive() || this.pendingRuntimeMotion !== null || this.domInteractions.hasPendingScrollFrame() || this.domInteractions.isDirectScrollActive(), measureSuffix: (rowKeys) => measureRuntimeDom(this.registry.snapshot(), { rowKeys }) }) }
   prepareFollowBottomForLocalReset(): void { if (this.rejectAfterDestroy('prepareFollowBottomForLocalReset')) return; this.cancelCommandMotion(); this.applyInteractionUpdate(this.interactions.startFollowBottomForLocalReset(this.snapshot, this.readCurrentScrollTop())) }
   reportSessionDiagnostic(name: string, severity: 'debug' | 'info' | 'warn' | 'error', details: Record<string, unknown> = {}): void { this.pushDiagnostic(name, severity, { sessionId: this.snapshot.sessionId, ...details }) }
   private correctAnchor(

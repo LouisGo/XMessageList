@@ -119,7 +119,7 @@ function ConversationView({ sessionId }: { sessionId: string }) {
 - `MessageListSession` 仅暴露公开应用命令和本地行变更入口：`commands.scrollToLatest`、`commands.scrollToMessage`、`commands.loadBefore`、`commands.loadAfter`、`commands.reloadLatest`、`commands.reloadCurrent`、`getState`、`subscribe`、`rows.patch`、`rows.mutate`、`rows.replace`、`rows.resetLatest`、`rows.resetAround`、`rows.applyIdentityRemap`、`rows.invalidateAfter` 和 `rows.clear`。
 - Host 无法用局部 mutation 证明窗口结构正确时调用 `commands.reloadCurrent({ reason: 'structural' })`；只有返回 `applied` 才表示对应 projection 已完成 DOM settle。
 - Host 对账 latest tail 时调用 `commands.reloadLatest({ reason: 'tail-reconcile' })`；无参 `reloadLatest()` 继续保持 fire-and-forget。只有带 options 的 Promise 与该命令强关联，并在对应 projection settle 后返回。
-- Host 已知最后一个可信 row 时可调用 `rows.invalidateAfter({ boundaryKey, reason })`。该事务保留可信前缀、重开 after edge；若 suffix 与当前可见范围相交则拒绝，由 Host 降级为结构重载。
+- Host 已知最后一个可信 row 时可调用 `rows.invalidateAfter({ boundaryKey, reason })`。该事务即使没有实际 suffix 也会建立 topology barrier、保留可信前缀并重开 after edge；若 suffix 与当前可见范围相交或 viewport runtime 非空闲则拒绝，由 Host 降级为结构重载或等待 runtime settle 后重试。
 - React 是 `MessageListSession` 之上的适配器；它不得调用 request API、合并数据、持久化锚点或执行已读回执。
 - Runtime 和 Loaded Segment Store 保持为包内部实现细节。
 

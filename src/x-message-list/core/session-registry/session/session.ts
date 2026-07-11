@@ -142,13 +142,11 @@ export class MessageListSession<Row, Source>
       reloadCurrent: (reloadOptions) => this.reloadController.reloadCurrent(reloadOptions),
       loadBefore: () => {
         this.ensureBootstrapStarted()
-        getMessageListSessionRegistryRuntime(this.#runtime)
-          .startEdgeRequest('before', 'command-before')
+        getMessageListSessionRegistryRuntime(this.#runtime).startEdgeRequest('before', 'command-before')
       },
       loadAfter: () => {
         this.ensureBootstrapStarted()
-        getMessageListSessionRegistryRuntime(this.#runtime)
-          .startEdgeRequest('after', 'command-after')
+        getMessageListSessionRegistryRuntime(this.#runtime).startEdgeRequest('after', 'command-after')
       },
     })
     this.liveSemantics = new MessageListSessionLiveSemantics({
@@ -170,6 +168,7 @@ export class MessageListSession<Row, Source>
       publishLocalResetSegment: (segment) => this.publishLocalResetSegment(segment),
       clearPendingLocal: () => this.liveSemantics.clearPendingLocal(),
       getVisibleKeys: () => this.visibleKeys,
+      probeInvalidateAfterSafety: (input) => getMessageListSessionRegistryRuntime(this.#runtime).probeInvalidateAfterSafety(input),
       reportDiagnostic: (name, severity, details) => this.reportContractDiagnostic(name, severity, details),
     })
     const guarded = createGuardedSessionMutations({

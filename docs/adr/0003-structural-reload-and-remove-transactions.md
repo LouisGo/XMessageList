@@ -18,9 +18,12 @@ Host 无法通过局部 mutation 证明当前窗口仍连续时，使用
 如果 Host 已知最后一个可信 boundary，则优先使用
 `session.rows.invalidateAfter({ boundaryKey, reason })`：保留 boundary，裁剪其后的不可信
 suffix，将 latest context 降为 history，设置 `hasMoreAfter=true`，并通过 topology revision
-使失效前的 after token stale。该操作使用 trim-after maintenance transaction 维持视觉
-锚点并恢复 after latch；可见范围跨过 boundary 时同步拒绝，Host 必须改用
-`reloadCurrent({ reason: 'structural' })`。
+使失效前的 after token stale。即使 boundary 已是末项也必须推进 revision，不能把
+“没有 rows 可删”误判成无需屏障。该操作使用 trim-after maintenance transaction 维持
+视觉锚点并恢复 after latch；可见范围跨过 boundary 时同步拒绝。viewport phase 非
+`IDLE`、事务/motion/scroll frame 未结算或 direct-scroll 仍持有视口时返回
+`runtime-busy`，Host 必须改用 `reloadCurrent({ reason: 'structural' })` 或等待 runtime
+settle 后重试。
 
 真实 latest tail 对账使用
 `session.commands.reloadLatest({ reason: 'tail-reconcile' })`。其 Promise 与本次命令一一

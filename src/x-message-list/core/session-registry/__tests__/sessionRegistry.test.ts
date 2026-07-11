@@ -1871,6 +1871,7 @@ describe('rows.invalidateAfter', () => {
       hasMoreAfter: false,
     })
     ackSessionCommit(session)
+    await wait(20)
     const emitObservation = (keys: string[]) => {
       const snapshot = internals.getSnapshot()
       ;(internals.runtime as unknown as {
@@ -1893,6 +1894,10 @@ describe('rows.invalidateAfter', () => {
     expect(session.getState().loaded.keys).toEqual(['a', 'b', 'c', 'd'])
 
     emitObservation(['a', 'b'])
+    await waitFor(() =>
+      getMessageListSessionRegistryRuntime(internals.runtime)
+        .probeInvalidateAfterSafety({ suffixKeys: ['c', 'd'] }) === 'safe'
+    )
     expect(session.rows.invalidateAfter({
       boundaryKey: 'b',
       reason: 'structural-dirty',
@@ -1906,11 +1911,38 @@ describe('rows.invalidateAfter', () => {
       context: 'history',
     })
     expect(internals.getSnapshot().segmentMeta.modifier.type).toBe('trim-after')
+    ackSessionCommit(session)
 
     expect(session.rows.invalidateAfter({
       boundaryKey: 'b',
       reason: 'duplicate',
-    })).toEqual({ status: 'noop' })
+    })).toEqual({ status: 'invalidated' })
+  })
+
+  it('rejects invalidation while the viewport runtime is not idle', async () => {
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    ackSessionCommit(session)
+
+    session.rows.resetLatest({
+      rows: ['a', 'b', 'c'].map((id) => ({ id })),
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })
+    expect(internals.getSnapshot().viewportPhase).toBe('PROJECTING')
+
+    expect(session.rows.invalidateAfter({
+      boundaryKey: 'b',
+      reason: 'structural-dirty',
+    })).toEqual({ status: 'rejected', reason: 'runtime-busy' })
+    expect(internals.loadedSegmentStore.getSegment().items.map((item) => item.key))
+      .toEqual(['a', 'b', 'c'])
   })
 
   it('rejects missing boundaries and calls made after session destruction', async () => {
@@ -2928,6 +2960,100 @@ describe('MessageListReadReceiptsWorker', () => {
     worker.handleObservation(observation(['a', 'b']))
     await waitFor(() => markRead.mock.calls.length === 3)
     expect(markRead.mock.calls[2]?.[0].map((row: TestRow) => row.id)).toEqual(['b'])
+    worker.destroy()
+  })
+
+  it('dedupes repeated observations while the same key is in flight', async () => {
+    let resolveMarkRead: (() => void) | null = null
+    const markRead = vi.fn(() => new Promise<void>((resolve) => {
+      resolveMarkRead = resolve
+    }))
+    const worker = new MessageListReadReceiptsWorker(
+      createAdapter('normal', {
+        readReceipts: { batchDelayMs: 0, markRead },
+      }),
+      rowsByKey([{ id: 'a' }]),
+    )
+
+    worker.handleObservation(observation(['a']))
+    await waitFor(() => markRead.mock.calls.length === 1)
+    for (let index = 0; index < 1_000; index += 1) {
+      worker.handleObservation(observation(['a']))
+    }
+
+    resolveMarkRead?.()
+    await wait(20)
+    expect(markRead).toHaveBeenCalledTimes(1)
+    worker.destroy()
+  })
+
+  it('ignores a read result that settles after destroy', async () => {
+    let resolveMarkRead: (() => void) | null = null
+    const markRead = vi.fn(() => new Promise<void>((resolve) => {
+      resolveMarkRead = resolve
+    }))
+    const onError = vi.fn()
+    const worker = new MessageListReadReceiptsWorker(
+      createAdapter('normal', {
+        readReceipts: { batchDelayMs: 0, markRead, onError },
+      }),
+      rowsByKey([{ id: 'a' }]),
+    )
+
+    worker.handleObservation(observation(['a']))
+    await waitFor(() => markRead.mock.calls.length === 1)
+    worker.destroy()
+    resolveMarkRead?.()
+    await wait(20)
+
+    expect(markRead).toHaveBeenCalledTimes(1)
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('retries a failed read only after the next observation', async () => {
+    const onError = vi.fn()
+    const markRead = vi.fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(undefined)
+    const worker = new MessageListReadReceiptsWorker(
+      createAdapter('normal', {
+        readReceipts: { batchDelayMs: 0, markRead, onError },
+      }),
+      rowsByKey([{ id: 'a' }]),
+    )
+
+    worker.handleObservation(observation(['a']))
+    await waitFor(() => onError.mock.calls.length === 1)
+    await wait(20)
+    expect(markRead).toHaveBeenCalledTimes(1)
+
+    worker.handleObservation(observation(['a']))
+    await waitFor(() => markRead.mock.calls.length === 2)
+    worker.destroy()
+  })
+
+  it('bounds pending rows independently and lets an evicted key re-enter', async () => {
+    const markRead = vi.fn((rows: TestRow[]) => {
+      void rows
+      return Promise.resolve()
+    })
+    const worker = new MessageListReadReceiptsWorker(
+      createAdapter('normal', {
+        readReceipts: { batchDelayMs: 0, markRead },
+      }),
+      rowsByKey([{ id: 'a' }, { id: 'b' }, { id: 'c' }]),
+      1,
+      2,
+      2,
+    )
+
+    worker.handleObservation(observation(['a', 'b', 'c']))
+    // pending capacity=2 淘汰 a；再次观察后 a 重新进入，并把更旧的 b 淘汰。
+    worker.handleObservation(observation(['a']))
+    await waitFor(() => markRead.mock.calls.length === 1)
+
+    expect(markRead.mock.calls[0]?.[0].map((row: TestRow) => row.id))
+      .toEqual(['c', 'a'])
     worker.destroy()
   })
 })

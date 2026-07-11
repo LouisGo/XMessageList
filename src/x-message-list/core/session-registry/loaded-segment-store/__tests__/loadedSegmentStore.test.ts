@@ -688,6 +688,33 @@ describe('LoadedSegmentStore', () => {
     })).toMatchObject({ applied: false, reason: 'stale-request' })
   })
 
+  it('creates a topology barrier when the boundary is already the last item', () => {
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
+    store.resetAround({
+      items: [item('a'), item('b')],
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+      target: { sessionId: 'source-a', stableId: 'b' },
+    })
+    const staleAfter = store.createRequestToken('after')
+    const beforeRevision = store.getRevision()
+
+    const invalidated = store.invalidateAfter('b')
+
+    expect(invalidated?.removedKeys).toEqual([])
+    expect(invalidated?.segment.modifier.type).toBe('trim-after')
+    expect(store.getRevision()).toMatchObject({
+      segmentRevision: beforeRevision.segmentRevision + 1,
+      topologyRevision: beforeRevision.topologyRevision + 1,
+    })
+    expect(store.extendAfter({
+      requestToken: staleAfter.requestToken,
+      items: [item('must-not-return')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })).toMatchObject({ applied: false, reason: 'stale-request' })
+  })
+
   it('does not mutate when invalidateAfter cannot find its boundary', () => {
     const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
     const before = store.resetLatest({

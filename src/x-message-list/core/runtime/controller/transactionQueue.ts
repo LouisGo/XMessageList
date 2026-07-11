@@ -1,4 +1,7 @@
-import type { LoadedSegment } from '../contracts/segment'
+import type {
+  LoadedSegment,
+  SegmentProjectionEffect,
+} from '../contracts/segment'
 import type { MessageListSnapshot, ProjectionCommitToken } from '../contracts/snapshot'
 import type { PendingTransaction, ProjectionStage } from './controllerTransactionHelpers'
 
@@ -81,8 +84,8 @@ export class ProjectionTransactionQueue<TMessage, TOptimistic> {
     policy: ProjectionTransactionPolicy,
     stage?: ProjectionStage,
   ): ProjectionTransactionEnqueueResult {
-    const dropped = this.dropSupersededQueuedSegments(segment, policy)
-    const entry = { segment, policy, stage }
+    const merged = this.dropSupersededQueuedSegments(segment, policy, stage)
+    const entry = { segment: merged.segment, policy, stage }
     const index = this.queue.findIndex((queued) =>
       queued.policy.priority < policy.priority
     )
@@ -93,7 +96,7 @@ export class ProjectionTransactionQueue<TMessage, TOptimistic> {
       this.queue.push(entry)
     }
 
-    return { queueLength: this.queue.length, dropped }
+    return { queueLength: this.queue.length, dropped: merged.dropped }
   }
 
   dequeueReady(
@@ -118,6 +121,10 @@ export class ProjectionTransactionQueue<TMessage, TOptimistic> {
 
   hasPending(): boolean {
     return this.pending !== null
+  }
+
+  isBusy(): boolean {
+    return this.pending !== null || this.advancing
   }
 
   shouldQueue(): boolean {
@@ -182,20 +189,98 @@ export class ProjectionTransactionQueue<TMessage, TOptimistic> {
   private dropSupersededQueuedSegments(
     segment: LoadedSegment<TMessage, TOptimistic>,
     policy: ProjectionTransactionPolicy,
-  ): number {
+    stage?: ProjectionStage,
+  ): {
+    dropped: number
+    segment: LoadedSegment<TMessage, TOptimistic>
+  } {
+    // stage 在 CAS/commit 前没有任何 authoritative 权限：只按 priority 入队，
+    // 不得 drop、merge 或转移现有 durable entry 的 modifier/effects。
+    if (stage) return { dropped: 0, segment }
     let dropped = 0
+    let mergedSegment = segment
 
     for (let index = this.queue.length - 1; index >= 0; index -= 1) {
       const queued = this.queue[index]
-      if (!queued || !shouldDropQueuedSegment(queued, segment, policy)) {
+      if (!queued) continue
+      const supersedesPrimaryTrim =
+        doesIncomingSupersedeQueuedPrimaryTrim(queued.segment, mergedSegment)
+      if (
+        !supersedesPrimaryTrim &&
+        !shouldDropQueuedSegment(queued, mergedSegment, policy)
+      ) {
         continue
+      }
+
+      // 后续 projection 可以覆盖旧数据，但不能吞掉 trim 所携带的 edge-latch 与
+      // metric 失效语义。除完整 reset 外，先把 trim 原子转移到 successor effects 再 drop。
+      if (!canSafelySupersedeTrimEffects(mergedSegment)) {
+        mergedSegment = mergeTrimEffects(mergedSegment, queued.segment)
       }
       this.queue.splice(index, 1)
       dropped += 1
     }
 
-    return dropped
+    return { dropped, segment: mergedSegment }
   }
+}
+
+function isPrimaryTrim<TMessage, TOptimistic>(
+  segment: LoadedSegment<TMessage, TOptimistic>,
+): boolean {
+  return segment.modifier.type === 'trim-before' ||
+    segment.modifier.type === 'trim-after'
+}
+
+function doesIncomingSupersedeQueuedPrimaryTrim<TMessage, TOptimistic>(
+  queued: LoadedSegment<TMessage, TOptimistic>,
+  incoming: LoadedSegment<TMessage, TOptimistic>,
+): boolean {
+  if (
+    queued.sessionId !== incoming.sessionId ||
+    queued.generation !== incoming.generation ||
+    queued.segmentRevision >= incoming.segmentRevision
+  ) {
+    return false
+  }
+  // 只有主 modifier 是 durable trim 时才允许越过普通 coalescing policy。
+  // carrier.effects 不能反向赋予 identity/extend 等主事务“可删除”语义。
+  return isPrimaryTrim(queued)
+}
+
+function canSafelySupersedeTrimEffects<TMessage, TOptimistic>(
+  segment: LoadedSegment<TMessage, TOptimistic>,
+): boolean {
+  return segment.modifier.type === 'bootstrap' ||
+    segment.modifier.type === 'reset-around' ||
+    segment.modifier.type === 'reset-latest'
+}
+
+function mergeTrimEffects<TMessage, TOptimistic>(
+  incoming: LoadedSegment<TMessage, TOptimistic>,
+  queued: LoadedSegment<TMessage, TOptimistic>,
+): LoadedSegment<TMessage, TOptimistic> {
+  const effects: SegmentProjectionEffect[] = [...(incoming.effects ?? [])]
+  const candidates: SegmentProjectionEffect[] = [...(queued.effects ?? [])]
+  if (
+    queued.modifier.type === 'trim-before' ||
+    queued.modifier.type === 'trim-after'
+  ) {
+    candidates.push(queued.modifier)
+  }
+
+  for (const candidate of candidates) {
+    if (effects.some((effect) =>
+      effect.type === candidate.type && effect.trimToken === candidate.trimToken
+    )) {
+      continue
+    }
+    effects.push(candidate)
+  }
+
+  return effects.length === (incoming.effects?.length ?? 0)
+    ? incoming
+    : { ...incoming, effects }
 }
 
 export function removeQueuedSegmentsBeforeGeneration<TMessage, TOptimistic>(

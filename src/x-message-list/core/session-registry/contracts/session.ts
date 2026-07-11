@@ -190,6 +190,7 @@ export type MessageListRowsInvalidateAfterResult =
       reason:
         | 'boundary-missing'
         | 'visible-range-overlap'
+        | 'runtime-busy'
         | 'session-destroyed'
     }
 

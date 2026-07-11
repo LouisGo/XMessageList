@@ -120,6 +120,113 @@ describe('MessageList public runtime events', () => {
     )).toBe(false)
   })
 
+  it('rejects structural mutation during the native-scroll to rAF window', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const sessionRuntime = getMessageListSessionRegistryRuntime(runtime)
+    const container = createContainer({ height: 100 })
+
+    runtime.attachScrollContainer(container)
+    runtime.applyLoadedSegment(segment([item('a')], 1, 1, {
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
+
+    container.dispatchEvent(new Event('scroll'))
+
+    expect(sessionRuntime.probeInvalidateAfterSafety({ suffixKeys: [] }))
+      .toBe('runtime-busy')
+  })
+
+  it('keeps direct-scroll unsafe through begin, write reentry, and the final end frame', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const sessionRuntime = getMessageListSessionRegistryRuntime(runtime)
+    const container = createContainer({ height: 100 })
+
+    runtime.attachScrollContainer(container)
+    runtime.applyLoadedSegment(segment([item('a')], 1, 1, {
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    scheduler.flushFrame()
+
+    adapter.beginDirectScroll()
+    expect(sessionRuntime.probeInvalidateAfterSafety({ suffixKeys: [] }))
+      .toBe('runtime-busy')
+
+    let writeReentry: ReturnType<
+      typeof sessionRuntime.probeInvalidateAfterSafety
+    > | undefined
+    let armed = true
+    runtime.subscribeRuntimeEvent((event) => {
+      if (armed && event.type === 'viewportNavigationIntent') {
+        armed = false
+        writeReentry = sessionRuntime.probeInvalidateAfterSafety({ suffixKeys: [] })
+      }
+    })
+    expect(adapter.writeDirectScrollTop(20)).toBe(true)
+    expect(writeReentry).toBe('runtime-busy')
+
+    adapter.endDirectScroll()
+    expect(sessionRuntime.probeInvalidateAfterSafety({ suffixKeys: [] }))
+      .toBe('runtime-busy')
+    scheduler.flushFrame()
+    expect(sessionRuntime.probeInvalidateAfterSafety({ suffixKeys: [] }))
+      .toBe('safe')
+  })
+
+  it('uses live DOM visibility and rejects IDLE snapshot-listener reentry', () => {
+    const scheduler = new FakeScheduler()
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const sessionRuntime = getMessageListSessionRegistryRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rowA = createRow('a', 0, 50)
+    const rowB = createRow('b', 50, 50)
+
+    container.append(rowA, rowB)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('a', rowA)
+    adapter.registerRowElement('b', rowB)
+    runtime.applyLoadedSegment(segment([item('a'), item('b')], 1, 1, {
+      hasMoreAfter: true,
+    }))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    scheduler.flushFrame()
+
+    expect(sessionRuntime.probeInvalidateAfterSafety({ suffixKeys: ['b'] }))
+      .toBe('visible-range-overlap')
+
+    let reentrantProbe: ReturnType<
+      typeof sessionRuntime.probeInvalidateAfterSafety
+    > | undefined
+    let armed = false
+    runtime.subscribeSnapshot(() => {
+      if (
+        armed &&
+        runtime.getSnapshot().viewportPhase === 'IDLE' &&
+        reentrantProbe === undefined
+      ) {
+        reentrantProbe = sessionRuntime.probeInvalidateAfterSafety({
+          suffixKeys: [],
+        })
+      }
+    })
+    runtime.applyLoadedSegment(segment([item('a')], 1, 2, {
+      hasMoreAfter: true,
+    }))
+    armed = true
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(reentrantProbe).toBe('runtime-busy')
+    expect(sessionRuntime.probeInvalidateAfterSafety({ suffixKeys: [] }))
+      .toBe('safe')
+  })
+
   it('reports visible ratio, range, source, direction, and activity', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({

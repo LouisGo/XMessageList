@@ -43,6 +43,11 @@ export type MessageListSessionRegistryRuntime<TMessage = unknown, TOptimistic = 
     startEdgeRequest(edge: 'before' | 'after', reason: string): void
     reportEdgeRequestStale(edge: 'before' | 'after', requestToken: string): void
     getSegmentSizeSnapshot(): RuntimeSegmentSizeSnapshot
+    /** invalidateAfter 的同步原子安全探针；不改变 runtime 状态。 */
+    probeInvalidateAfterSafety(input: { suffixKeys: MessageRuntimeItemKey[] }):
+      | 'safe'
+      | 'runtime-busy'
+      | 'visible-range-overlap'
     /** Internal-only structural reload stage; draft store is committed by the ack gate. */
     stageLoadedSegment(
       segment: import('./contracts/segment').LoadedSegment<TMessage, TOptimistic>,

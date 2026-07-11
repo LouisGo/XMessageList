@@ -38,13 +38,9 @@ export type RuntimeDomInteractionsOptions = {
  */
 export class RuntimeDomInteractions<TMessage, TOptimistic> {
   private beforeIntersectionObserver: IntersectionObserver | null = null
-
   private afterIntersectionObserver: IntersectionObserver | null = null
-
   private edgeSourceActiveUntil = 0
-
   private suppressScrollUntil = 0
-
   private scrollFrame: number | null = null
 
   private readonly directScroll = new DirectScrollSession()
@@ -72,16 +68,18 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     this.cancelAttachRestore()
     this.rememberScrollTop()
     this.markEdgeSourceActive(now)
-    this.options.onUserScrollIntent()
+    // 先登记 frame 再广播 navigation intent；同步 listener 中的 safety probe
+    // 也必须看见“滚动尚未结算”，不能利用回调重入窗口修改 topology。
     this.scheduleScrollFrame()
+    this.options.onUserScrollIntent()
   }
 
   private readonly handleUserScrollInput = (): void => {
     const now = this.options.scheduler.now()
     this.cancelAttachRestore()
     this.markEdgeSourceActive(now)
-    this.options.onUserScrollIntent()
     this.scheduleScrollFrame()
+    this.options.onUserScrollIntent()
   }
 
   constructor(private readonly options: RuntimeDomInteractionsOptions) {
@@ -144,6 +142,9 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     this.afterIntersectionObserver = this.createEdgeObserver(edge, element)
   }
 
+  hasPendingScrollFrame(): boolean { return this.scrollFrame !== null || this.attachRestoreFrame !== null }
+  isDirectScrollActive(): boolean { return this.directScroll.snapshot().status !== 'IDLE' }
+
   beginDirectScroll(): void {
     this.cancelAttachRestore()
     const session = this.directScroll.begin()
@@ -160,6 +161,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     }
 
     this.cancelAttachRestore()
+    this.scheduleScrollFrame()
     this.options.onUserScrollIntent()
     this.markEdgeSourceActive(this.options.scheduler.now())
     // 直接滚动写入也要记录 edge intent，拖拽到边缘后由 post-commit 阶段统一发 needMore。
@@ -172,16 +174,16 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     this.emitDirectScrollDiagnostic('write', session, { scrollTop })
     container.scrollTop = scrollTop
     this.lastKnownScrollTop = container.scrollTop
-    this.scheduleScrollFrame()
     return true
   }
 
   endDirectScroll(): void {
     const session = this.directScroll.end()
+    // end 先登记最后一帧；同步 listener 必须等实时测量完成后才能修改 topology。
+    this.scheduleScrollFrame()
     this.emitDirectScrollDiagnostic('end', session)
     this.options.onUserScrollIntent()
     this.markEdgeSourceActive(this.options.scheduler.now())
-    this.scheduleScrollFrame()
   }
 
   getDirectScrollEdgeIntent(): RuntimeEdge | null { return this.directScroll.getConsumableEdgeIntent() }

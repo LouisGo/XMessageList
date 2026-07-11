@@ -416,14 +416,6 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
     const nextContext = this.segment.context === 'latest'
       ? 'history'
       : this.segment.context
-    if (
-      removedKeys.length === 0 &&
-      this.segment.hasMoreAfter &&
-      nextContext === this.segment.context
-    ) {
-      return { segment: this.segment, removedKeys }
-    }
-
     this.segment = this.createSegment(
       this.segment.items.slice(0, boundaryIndex + 1),
       {
@@ -436,6 +428,9 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
           type: 'trim-after',
           trimToken: `invalidate-after:${this.segmentRevision + 1}`,
         },
+        // 即使 boundary 已是末项，invalidate 仍是一个失效屏障：必须推进 topology，
+        // 让屏障之前创建的 after token 无法把旧 suffix 重新写回。
+        forceTopologyChange: true,
       },
     )
     return { segment: this.segment, removedKeys }
@@ -522,9 +517,13 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
       anchor?: MessageIdentityAnchor
       anchorStatus?: LoadedSegment['anchorStatus']
       modifier: SegmentModifier
+      forceTopologyChange?: boolean
     },
   ): LoadedSegment<TMessage, TOptimistic> {
-    if (hasBoundaryTopologyChange(this.segment, items, input)) {
+    if (
+      input.forceTopologyChange ||
+      hasBoundaryTopologyChange(this.segment, items, input)
+    ) {
       this.topologyRevision += 1
     }
     this.segmentRevision += 1

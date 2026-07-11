@@ -28,6 +28,10 @@ export function createSessionRows<Row, Source>(input: {
   publishLocalResetSegment: (segment: LoadedSegment<Row>) => void
   clearPendingLocal: () => void
   getVisibleKeys: () => string[]
+  probeInvalidateAfterSafety: (input: { suffixKeys: string[] }) =>
+    | 'safe'
+    | 'runtime-busy'
+    | 'visible-range-overlap'
   reportDiagnostic: (
     name: string,
     severity: MessageListRuntimeLogDiagnosticRecord['severity'],
@@ -129,21 +133,22 @@ export function createSessionRows<Row, Source>(input: {
         return { status: 'rejected', reason: 'boundary-missing' }
       }
 
-      const indexByKey = new Map(
-        current.items.map((item, index) => [item.key, index]),
-      )
-      const overlapsVisibleRange = input.getVisibleKeys().some((key) => {
-        const index = indexByKey.get(key)
-        return index !== undefined && index > boundaryIndex
-      })
-      if (overlapsVisibleRange) {
+      const suffixKeys = current.items
+        .slice(boundaryIndex + 1)
+        .map((item) => item.key)
+      const suffixKeySet = new Set(suffixKeys)
+      if (input.getVisibleKeys().some((key) => suffixKeySet.has(key))) {
         return { status: 'rejected', reason: 'visible-range-overlap' }
       }
 
-      const isNoop = boundaryIndex === current.items.length - 1 &&
-        current.hasMoreAfter &&
-        current.context !== 'latest'
-      if (isNoop) return { status: 'noop' }
+      // safety probe 在 runtime owner 内一次性验证 phase、事务、motion、scroll frame
+      // 和实时 DOM 可见区，避免分散 getter 之间出现 TOCTOU 窗口。
+      const safety = input.probeInvalidateAfterSafety({
+        suffixKeys,
+      })
+      if (safety !== 'safe') {
+        return { status: 'rejected', reason: safety }
+      }
 
       const invalidated = input.loadedSegmentStore.invalidateAfter(boundaryKey)
       if (!invalidated) {
