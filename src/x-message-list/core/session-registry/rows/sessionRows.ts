@@ -27,6 +27,7 @@ export function createSessionRows<Row, Source>(input: {
   publishSegment: (segment: LoadedSegment<Row>) => void
   publishLocalResetSegment: (segment: LoadedSegment<Row>) => void
   clearPendingLocal: () => void
+  getVisibleKeys: () => string[]
   reportDiagnostic: (
     name: string,
     severity: MessageListRuntimeLogDiagnosticRecord['severity'],
@@ -118,6 +119,48 @@ export function createSessionRows<Row, Source>(input: {
       input.publishSegment(input.loadedSegmentStore.applyIdentityRemap(
         toSessionIdentityRemaps(input.sessionId, remaps),
       ))
+    },
+    invalidateAfter: ({ boundaryKey, reason }) => {
+      const current = input.loadedSegmentStore.getSegment()
+      const boundaryIndex = current.items.findIndex(
+        (item) => item.key === boundaryKey,
+      )
+      if (boundaryIndex < 0) {
+        return { status: 'rejected', reason: 'boundary-missing' }
+      }
+
+      const indexByKey = new Map(
+        current.items.map((item, index) => [item.key, index]),
+      )
+      const overlapsVisibleRange = input.getVisibleKeys().some((key) => {
+        const index = indexByKey.get(key)
+        return index !== undefined && index > boundaryIndex
+      })
+      if (overlapsVisibleRange) {
+        return { status: 'rejected', reason: 'visible-range-overlap' }
+      }
+
+      const isNoop = boundaryIndex === current.items.length - 1 &&
+        current.hasMoreAfter &&
+        current.context !== 'latest'
+      if (isNoop) return { status: 'noop' }
+
+      const invalidated = input.loadedSegmentStore.invalidateAfter(boundaryKey)
+      if (!invalidated) {
+        return { status: 'rejected', reason: 'boundary-missing' }
+      }
+      input.publishSegment(invalidated.segment)
+      input.reportDiagnostic('rows.invalidateAfter.applied', 'debug', {
+        boundaryKey,
+        reason,
+        removedCount: invalidated.removedKeys.length,
+      })
+      return {
+        status: 'invalidated',
+        ...(invalidated.removedKeys.length > 0
+          ? { removedKeys: invalidated.removedKeys }
+          : {}),
+      }
     },
     clear: () => {
       input.clearPendingLocal()

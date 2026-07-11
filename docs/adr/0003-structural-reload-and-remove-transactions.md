@@ -15,6 +15,18 @@ Host 无法通过局部 mutation 证明当前窗口仍连续时，使用
 后才返回 `applied`。用户新导航、更新的 reload、topology change 或 session destroy
 使旧结果 stale。
 
+如果 Host 已知最后一个可信 boundary，则优先使用
+`session.rows.invalidateAfter({ boundaryKey, reason })`：保留 boundary，裁剪其后的不可信
+suffix，将 latest context 降为 history，设置 `hasMoreAfter=true`，并通过 topology revision
+使失效前的 after token stale。该操作使用 trim-after maintenance transaction 维持视觉
+锚点并恢复 after latch；可见范围跨过 boundary 时同步拒绝，Host 必须改用
+`reloadCurrent({ reason: 'structural' })`。
+
+真实 latest tail 对账使用
+`session.commands.reloadLatest({ reason: 'tail-reconcile' })`。其 Promise 与本次命令一一
+对应，且只在该 latest projection 完成 DOM settle 后返回 `applied`；无参 overload 仍为
+兼容旧调用方的 fire-and-forget 命令。
+
 Host 继续拥有 canonical message cache 和 structural dirty revision。XMessageList
 不保存业务 dirty journal；Host 只能在 `applied` 且 revision 未变化时条件清理。
 目标已删除时 successor/predecessor 顺序由 page 的 fallback anchor 明确表达，runtime

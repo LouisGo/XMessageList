@@ -18,6 +18,8 @@ import type {
   MessageListReloadCurrentOptions,
   MessageListReloadCurrentResult,
   MessageListReloadCurrentStaleReason,
+  MessageListReloadLatestOptions,
+  MessageListReloadLatestResult,
   MessageListLoadedContext,
   MessageListRequestResult,
   MessageListRowsMutation,
@@ -31,6 +33,7 @@ import {
   ReloadContentJournal,
 } from './reloadJournal'
 import { prepareReloadProjection } from './reloadProjection'
+import { toReloadLatestResult } from './reloadLatest'
 
 type ReloadKind = 'latest' | 'around'
 type ActivePhase = 'requesting' | 'settling'
@@ -101,8 +104,20 @@ export class MessageListSessionReloadController<Row, Source> {
   reloadCurrent(
     options: MessageListReloadCurrentOptions,
   ): Promise<MessageListReloadCurrentResult<Row>> {
+    return this.startReload(this.resolveRequestKind(), options.reason)
+  }
+
+  reloadLatest(
+    options: MessageListReloadLatestOptions,
+  ): Promise<MessageListReloadLatestResult<Row>> {
+    return this.startReload('latest', options.reason).then(toReloadLatestResult)
+  }
+
+  private startReload(
+    requestKind: ReloadKind,
+    reason: string,
+  ): Promise<MessageListReloadCurrentResult<Row>> {
     this.invalidateActive('superseded')
-    const requestKind = this.resolveRequestKind()
 
     if (this.destroyed) {
       return Promise.resolve({
@@ -155,7 +170,7 @@ export class MessageListSessionReloadController<Row, Source> {
         resolve,
       }
       this.active = active
-      void this.run(active, options)
+      void this.run(active, reason)
     })
 
     return promise
@@ -344,7 +359,7 @@ export class MessageListSessionReloadController<Row, Source> {
 
   private async run(
     active: ActiveReload<Row>,
-    options: MessageListReloadCurrentOptions,
+    reason: string,
   ): Promise<void> {
     try {
       const page = active.requestKind === 'latest'
@@ -352,14 +367,14 @@ export class MessageListSessionReloadController<Row, Source> {
             ...this.options.context,
             pageSize: this.options.getPageSize(),
             trigger: 'command',
-            reason: options.reason,
+            reason,
             signal: active.abortController.signal,
           })
         : await this.options.adapter.request.loadAround({
             ...this.options.context,
             pageSize: this.options.getPageSize(),
             trigger: 'command',
-            reason: options.reason,
+            reason,
             target: active.target,
             signal: active.abortController.signal,
           })

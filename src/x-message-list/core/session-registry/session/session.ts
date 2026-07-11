@@ -48,6 +48,7 @@ export class MessageListSession<Row, Source>
   private readonly lifecycleAbortController = new AbortController()
   private viewRetainCount = 0
   private rowsPerViewportEstimate: number
+  private visibleKeys: string[] = []
   private measurementSnapshot: RuntimeSegmentSizeSnapshot | null = null
   private destroyed = false
   private readonly segmentPublisher: MessageListSessionSegmentPublisher<Row>
@@ -128,12 +129,16 @@ export class MessageListSession<Row, Source>
           toRuntimeScrollOptions(this.sessionId, scrollOptions),
         )
       },
-      reloadLatest: () => {
+      reloadLatest: ((reloadOptions?: { reason: 'tail-reconcile' }) => {
+        if (reloadOptions) {
+          this.bootstrapController.markStarted()
+          return this.reloadController.reloadLatest(reloadOptions)
+        }
         this.reloadController.markNavigationChanged()
         this.bootstrapController.markStarted()
         this.overlay.bumpRequestEpoch()
         void this.loadLatest(undefined, { trigger: 'command' })
-      },
+      }) as PublicMessageListSession<Row>['commands']['reloadLatest'],
       reloadCurrent: (reloadOptions) => this.reloadController.reloadCurrent(reloadOptions),
       loadBefore: () => {
         this.ensureBootstrapStarted()
@@ -164,6 +169,7 @@ export class MessageListSession<Row, Source>
       publishSegment: (segment) => this.publishSegment(segment),
       publishLocalResetSegment: (segment) => this.publishLocalResetSegment(segment),
       clearPendingLocal: () => this.liveSemantics.clearPendingLocal(),
+      getVisibleKeys: () => this.visibleKeys,
       reportDiagnostic: (name, severity, details) => this.reportContractDiagnostic(name, severity, details),
     })
     const guarded = createGuardedSessionMutations({
@@ -275,6 +281,7 @@ export class MessageListSession<Row, Source>
     this.readReceipts.destroy()
     this.stateStore.destroy()
     this.#runtime.destroy()
+    this.visibleKeys = []
     this.measurementSnapshot = null
     this.viewListeners.clear()
   }
@@ -288,6 +295,7 @@ export class MessageListSession<Row, Source>
   private handleViewportObservation(
     event: Extract<MessageListRuntimeEvent, { type: 'viewportObservationChanged' }>,
   ): void {
+    this.visibleKeys = event.visibleKeys
     if (event.visibleItems.length > 0) this.rowsPerViewportEstimate = event.visibleItems.length
     this.measurementSnapshot = getMessageListSessionRegistryRuntime(this.#runtime).getSegmentSizeSnapshot()
     this.readReceipts.handleObservation(event)

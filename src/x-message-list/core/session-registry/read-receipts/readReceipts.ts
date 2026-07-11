@@ -1,6 +1,8 @@
 import type { ViewportObservationChangedEvent } from '../../runtime/index'
 import type { MessageListAdapter } from '../contracts'
 
+export const DEFAULT_READ_RECEIPT_SENT_KEY_CAPACITY = 4_096
+
 export class MessageListReadReceiptsWorker<Row, Conversation> {
   private readonly pendingRows = new Map<string, Row>()
   private readonly sentKeys = new Set<string>()
@@ -10,6 +12,7 @@ export class MessageListReadReceiptsWorker<Row, Conversation> {
   constructor(
     private readonly adapter: MessageListAdapter<Row, Conversation>,
     private readonly getRowsByKeys: (keys: string[]) => Row[],
+    private readonly sentKeyCapacity = DEFAULT_READ_RECEIPT_SENT_KEY_CAPACITY,
   ) {}
 
   handleObservation(event: ViewportObservationChangedEvent): void {
@@ -24,7 +27,12 @@ export class MessageListReadReceiptsWorker<Row, Conversation> {
     for (const row of rows) {
       const key = this.adapter.row.getKey(row)
 
-      if (this.sentKeys.has(key) || this.pendingRows.has(key)) {
+      if (this.sentKeys.has(key)) {
+        this.rememberSentKey(key)
+        continue
+      }
+
+      if (this.pendingRows.has(key)) {
         continue
       }
 
@@ -44,6 +52,7 @@ export class MessageListReadReceiptsWorker<Row, Conversation> {
     }
     this.flushTimer = null
     this.pendingRows.clear()
+    this.sentKeys.clear()
   }
 
   private scheduleFlush(): void {
@@ -85,13 +94,25 @@ export class MessageListReadReceiptsWorker<Row, Conversation> {
     try {
       await readReceipts.markRead(rows)
       for (const row of rows) {
-        this.sentKeys.add(this.adapter.row.getKey(row))
+        this.rememberSentKey(this.adapter.row.getKey(row))
       }
     } catch (error) {
       readReceipts.onError?.(error)
     } finally {
       this.inFlight = false
       this.scheduleFlush()
+    }
+  }
+
+  private rememberSentKey(key: string): void {
+    // Set 保持插入顺序；重复成功回执先删除再插入即可作为轻量 LRU 使用。
+    this.sentKeys.delete(key)
+    this.sentKeys.add(key)
+    const capacity = Math.max(1, this.sentKeyCapacity)
+    while (this.sentKeys.size > capacity) {
+      const oldest = this.sentKeys.values().next().value as string | undefined
+      if (oldest === undefined) break
+      this.sentKeys.delete(oldest)
     }
   }
 }

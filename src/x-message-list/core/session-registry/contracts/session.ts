@@ -97,6 +97,12 @@ export type MessageListReloadCurrentOptions = {
   reason: 'structural'
 }
 
+/** 强关联 latest 重载命令的选项。 */
+export type MessageListReloadLatestOptions = {
+  /** 当前只向 Host reconcile 开放，避免把普通滚动命令误当成数据对账。 */
+  reason: 'tail-reconcile'
+}
+
 /** reloadCurrent 被判定为过期的原因。 */
 export type MessageListReloadCurrentStaleReason =
   | 'superseded'
@@ -132,6 +138,59 @@ export type MessageListReloadCurrentResult<Row> =
       status: 'failed'
       failureReason: MessageListReloadCurrentFailureReason
       error?: unknown
+    }
+
+/** reloadLatest 强关联命令被判定为过期的原因。 */
+export type MessageListReloadLatestStaleReason =
+  MessageListReloadCurrentStaleReason
+
+/** reloadLatest 强关联命令失败的原因。 */
+export type MessageListReloadLatestFailureReason =
+  MessageListReloadCurrentFailureReason
+
+/**
+ * reloadLatest 强关联命令的唯一终态。
+ *
+ * Promise 只会在对应 latest projection 完成 DOM commit settle 后返回 applied；
+ * 新命令、导航、拓扑变化和销毁都会让本次命令以 stale/failed 独立结束。
+ */
+export type MessageListReloadLatestResult<Row> =
+  | {
+      status: 'applied'
+      page: MessageListPage<Row>
+    }
+  | {
+      status: 'stale'
+      staleReason: MessageListReloadLatestStaleReason
+    }
+  | {
+      status: 'failed'
+      failureReason: MessageListReloadLatestFailureReason
+      error?: unknown
+    }
+
+/** 从可信 boundary 之后裁剪不可信 suffix 的输入。 */
+export type MessageListRowsInvalidateAfterInput = {
+  /** 最后一个仍可信、必须保留的 row key。 */
+  boundaryKey: string
+  /** Host 提供的失效原因，仅用于诊断。 */
+  reason: string
+}
+
+/** invalidateAfter 的同步受理结果。 */
+export type MessageListRowsInvalidateAfterResult =
+  | {
+      status: 'invalidated'
+      /** 实际从 loaded segment 中移除的 keys。 */
+      removedKeys?: string[]
+    }
+  | { status: 'noop' }
+  | {
+      status: 'rejected'
+      reason:
+        | 'boundary-missing'
+        | 'visible-range-overlap'
+        | 'session-destroyed'
     }
 
 /** 乐观消息确认后的身份重映射。 */
@@ -237,8 +296,12 @@ export type MessageListSession<Row = unknown> = {
     loadBefore(): void
     /** 手动加载 after 侧。 */
     loadAfter(): void
-    /** 重新加载 latest 窗口。 */
+    /** 重新加载 latest 窗口；旧无参命令保持 fire-and-forget。 */
     reloadLatest(): void
+    /** 强关联地重载 latest，并在该命令对应的 projection settle 后返回唯一终态。 */
+    reloadLatest(
+      options: MessageListReloadLatestOptions,
+    ): Promise<MessageListReloadLatestResult<Row>>
     /** 静默重新读取当前用户所见窗口，并在对应 projection transaction settle 后返回。 */
     reloadCurrent(
       options: MessageListReloadCurrentOptions,
@@ -258,6 +321,10 @@ export type MessageListSession<Row = unknown> = {
     resetAround(input: MessageListRowsResetAroundInput<Row>): void
     /** 应用身份重映射。 */
     applyIdentityRemap(remaps: MessageListIdentityRemap[]): void
+    /** 保留 boundary 及其之前的 rows，并重新打开 after edge。 */
+    invalidateAfter(
+      input: MessageListRowsInvalidateAfterInput,
+    ): MessageListRowsInvalidateAfterResult
     /** 清空当前 rows。 */
     clear(): void
   }

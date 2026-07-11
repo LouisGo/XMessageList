@@ -397,6 +397,50 @@ export class LoadedSegmentStore<TMessage = unknown, TOptimistic = unknown> {
     return this.segment
   }
 
+  /**
+   * 保留 boundary 及之前的可信前缀，并重新打开 after edge。
+   * topologyRevision 会在这里前进，因此失效前创建的 after token 无法再提交旧结果。
+   */
+  invalidateAfter(boundaryKey: MessageRuntimeItemKey): {
+    segment: LoadedSegment<TMessage, TOptimistic>
+    removedKeys: MessageRuntimeItemKey[]
+  } | null {
+    const boundaryIndex = this.segment.items.findIndex(
+      (item) => item.key === boundaryKey,
+    )
+    if (boundaryIndex < 0) return null
+
+    const removedKeys = this.segment.items
+      .slice(boundaryIndex + 1)
+      .map((item) => item.key)
+    const nextContext = this.segment.context === 'latest'
+      ? 'history'
+      : this.segment.context
+    if (
+      removedKeys.length === 0 &&
+      this.segment.hasMoreAfter &&
+      nextContext === this.segment.context
+    ) {
+      return { segment: this.segment, removedKeys }
+    }
+
+    this.segment = this.createSegment(
+      this.segment.items.slice(0, boundaryIndex + 1),
+      {
+        hasMoreBefore: this.segment.hasMoreBefore,
+        hasMoreAfter: true,
+        context: nextContext,
+        anchor: this.segment.anchor,
+        anchorStatus: this.segment.anchorStatus,
+        modifier: {
+          type: 'trim-after',
+          trimToken: `invalidate-after:${this.segmentRevision + 1}`,
+        },
+      },
+    )
+    return { segment: this.segment, removedKeys }
+  }
+
   trimToBudget(
     budget: number,
     protectKey?: MessageRuntimeItemKey,

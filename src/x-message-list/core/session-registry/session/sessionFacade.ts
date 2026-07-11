@@ -9,7 +9,7 @@ export function createSessionCommands<Row>(input: {
   isDestroyed: () => boolean
   scrollToLatest: () => void
   scrollToMessage: MessageListSession<Row>['commands']['scrollToMessage']
-  reloadLatest: () => void
+  reloadLatest: MessageListSession<Row>['commands']['reloadLatest']
   reloadCurrent: MessageListSession<Row>['commands']['reloadCurrent']
   loadBefore: () => void
   loadAfter: () => void
@@ -19,7 +19,12 @@ export function createSessionCommands<Row>(input: {
     scrollToMessage: (target, options) => {
       if (!input.isDestroyed()) input.scrollToMessage(target, options)
     },
-    reloadLatest: () => { if (!input.isDestroyed()) input.reloadLatest() },
+    reloadLatest: ((options?: Parameters<
+      MessageListSession<Row>['commands']['reloadLatest']
+    >[0]) => {
+      if (options) return input.reloadLatest(options)
+      if (!input.isDestroyed()) input.reloadLatest()
+    }) as MessageListSession<Row>['commands']['reloadLatest'],
     reloadCurrent: (options) => input.reloadCurrent(options),
     loadBefore: () => { if (!input.isDestroyed()) input.loadBefore() },
     loadAfter: () => { if (!input.isDestroyed()) input.loadAfter() },
@@ -72,6 +77,12 @@ export function createGuardedSessionMutations<Row>(input: {
           remaps,
           () => input.rows.applyIdentityRemap(remaps),
         )
+      },
+      invalidateAfter: (invalidateInput) => {
+        if (input.isDestroyed()) {
+          return { status: 'rejected', reason: 'session-destroyed' }
+        }
+        return input.rows.invalidateAfter(invalidateInput)
       },
       clear: () => {
         if (input.isDestroyed()) return

@@ -5,6 +5,8 @@ import type {
   MessageListOverlayStatus,
   MessageListReloadCurrentOptions,
   MessageListReloadCurrentResult,
+  MessageListReloadLatestOptions,
+  MessageListReloadLatestResult,
   MessageListResolvedAnchor,
   MessageListScrollToMessageOptions,
   MessageListSession,
@@ -203,8 +205,12 @@ export type MessageListCommands<Row = unknown> = {
   loadBefore: () => void
   /** 手动加载 after 侧。 */
   loadAfter: () => void
-  /** 重新加载 latest 窗口。 */
-  reloadLatest: () => void
+  /** 重新加载 latest 窗口；无参调用保持 fire-and-forget。 */
+  reloadLatest(): void
+  /** 强关联地重载 latest，并等待对应 projection settle。 */
+  reloadLatest(
+    options: MessageListReloadLatestOptions,
+  ): Promise<MessageListReloadLatestResult<Row>>
   /** 静默按当前视觉锚点执行结构重载，并等待 projection settle。 */
   reloadCurrent: (
     options: MessageListReloadCurrentOptions,

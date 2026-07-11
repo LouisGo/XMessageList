@@ -661,6 +661,44 @@ describe('LoadedSegmentStore', () => {
     expect(secondTrim.hasMoreAfter).toBe(true)
     expect(secondTrim.context).toBe('history')
   })
+
+  it('invalidates only the suffix and makes an older after request stale', () => {
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
+    store.resetLatest({
+      items: ['a', 'b', 'c', 'd'].map((key) => item(key)),
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })
+    const staleAfter = store.createRequestToken('after')
+
+    const invalidated = store.invalidateAfter('b')
+
+    expect(invalidated?.removedKeys).toEqual(['c', 'd'])
+    expect(invalidated?.segment.items.map((next) => next.key)).toEqual(['a', 'b'])
+    expect(invalidated?.segment).toMatchObject({
+      hasMoreAfter: true,
+      context: 'history',
+      modifier: { type: 'trim-after' },
+    })
+    expect(store.extendAfter({
+      requestToken: staleAfter.requestToken,
+      items: [item('must-not-return')],
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })).toMatchObject({ applied: false, reason: 'stale-request' })
+  })
+
+  it('does not mutate when invalidateAfter cannot find its boundary', () => {
+    const store = createLoadedSegmentStore<string>({ sessionId: 'source-a' })
+    const before = store.resetLatest({
+      items: [item('a')],
+      hasMoreBefore: false,
+      hasMoreAfter: false,
+    })
+
+    expect(store.invalidateAfter('missing')).toBeNull()
+    expect(store.getSegment()).toBe(before)
+  })
 })
 
 function item(

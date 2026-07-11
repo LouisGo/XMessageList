@@ -1855,6 +1855,170 @@ describe('createMessageListSessionRegistry', () => {
   })
 })
 
+describe('rows.invalidateAfter', () => {
+  it('rejects a visible suffix, then invalidates it after the viewport moves away', async () => {
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items.length > 0)
+    session.rows.resetLatest({
+      rows: ['a', 'b', 'c', 'd'].map((id) => ({ id })),
+      hasMoreBefore: true,
+      hasMoreAfter: false,
+    })
+    ackSessionCommit(session)
+    const emitObservation = (keys: string[]) => {
+      const snapshot = internals.getSnapshot()
+      ;(internals.runtime as unknown as {
+        emitRuntimeEvent(event: MessageListRuntimeEvent): void
+      }).emitRuntimeEvent({
+        ...observation(keys),
+        generation: snapshot.generation,
+        segmentRevision: snapshot.segmentRevision,
+      })
+    }
+
+    emitObservation(['b', 'c'])
+    expect(session.rows.invalidateAfter({
+      boundaryKey: 'b',
+      reason: 'structural-dirty',
+    })).toEqual({
+      status: 'rejected',
+      reason: 'visible-range-overlap',
+    })
+    expect(session.getState().loaded.keys).toEqual(['a', 'b', 'c', 'd'])
+
+    emitObservation(['a', 'b'])
+    expect(session.rows.invalidateAfter({
+      boundaryKey: 'b',
+      reason: 'structural-dirty',
+    })).toEqual({
+      status: 'invalidated',
+      removedKeys: ['c', 'd'],
+    })
+    expect(session.getState().loaded).toMatchObject({
+      keys: ['a', 'b'],
+      hasMoreAfter: true,
+      context: 'history',
+    })
+    expect(internals.getSnapshot().segmentMeta.modifier.type).toBe('trim-after')
+
+    expect(session.rows.invalidateAfter({
+      boundaryKey: 'b',
+      reason: 'duplicate',
+    })).toEqual({ status: 'noop' })
+  })
+
+  it('rejects missing boundaries and calls made after session destruction', async () => {
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal'),
+    })
+    const session = registry.getSession('source-a')
+
+    expect(session.rows.invalidateAfter({
+      boundaryKey: 'missing',
+      reason: 'structural-dirty',
+    })).toEqual({ status: 'rejected', reason: 'boundary-missing' })
+
+    registry.destroySession('source-a')
+    expect(session.rows.invalidateAfter({
+      boundaryKey: 'anything',
+      reason: 'structural-dirty',
+    })).toEqual({ status: 'rejected', reason: 'session-destroyed' })
+  })
+})
+
+describe('correlated reloadLatest', () => {
+  it('resolves its applied terminal only after the matching projection settles', async () => {
+    let loadCount = 0
+    let resolveReload: ((page: MessageListPage<TestRow>) => void) | null = null
+    const loadLatest = vi.fn((context) => {
+      loadCount += 1
+      if (loadCount === 1) return Promise.resolve(page(['old']))
+      expect(context).toMatchObject({
+        trigger: 'command',
+        reason: 'tail-reconcile',
+      })
+      return new Promise<MessageListPage<TestRow>>((resolve) => {
+        resolveReload = resolve
+      })
+    })
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadLatest }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items[0]?.key === 'old')
+    attachSessionRows(session, ['old'])
+    ackSessionCommit(session)
+
+    const resultPromise = session.commands.reloadLatest({
+      reason: 'tail-reconcile',
+    })
+    await waitFor(() => resolveReload !== null)
+    resolveReload?.(page(['fresh']))
+    await waitFor(() => internals.getSnapshot().items[0]?.key === 'fresh')
+
+    let settled = false
+    void resultPromise.then(() => { settled = true })
+    await flushMicrotasks()
+    expect(settled).toBe(false)
+
+    ackSessionCommit(session)
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'applied',
+      page: { rows: [{ id: 'fresh' }] },
+    })
+  })
+
+  it('gives superseded latest commands independent stale/applied terminals', async () => {
+    let loadCount = 0
+    const pending: Array<{
+      signal?: AbortSignal
+      resolve: (value: MessageListPage<TestRow>) => void
+    }> = []
+    const loadLatest = vi.fn((context) => {
+      loadCount += 1
+      if (loadCount === 1) return Promise.resolve(page(['old']))
+      return new Promise<MessageListPage<TestRow>>((resolve) => {
+        pending.push({ signal: context.signal, resolve })
+      })
+    })
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadLatest }),
+    })
+    const session = registry.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    startSession(session)
+    await waitFor(() => internals.getSnapshot().items[0]?.key === 'old')
+    attachSessionRows(session, ['old'])
+    ackSessionCommit(session)
+
+    const first = session.commands.reloadLatest({ reason: 'tail-reconcile' })
+    await waitFor(() => pending.length === 1)
+    const second = session.commands.reloadLatest({ reason: 'tail-reconcile' })
+    await waitFor(() => pending.length === 2)
+
+    await expect(first).resolves.toEqual({
+      status: 'stale',
+      staleReason: 'superseded',
+    })
+    expect(pending[0]?.signal?.aborted).toBe(true)
+    pending[1]?.resolve(page(['second']))
+    await waitFor(() => internals.getSnapshot().items[0]?.key === 'second')
+    ackSessionCommit(session)
+    await expect(second).resolves.toMatchObject({ status: 'applied' })
+  })
+})
+
 describe('reloadCurrent', () => {
   it.each([
     { hasMoreAfter: true, expectedContext: 'history' as const },
@@ -2738,6 +2902,32 @@ describe('MessageListReadReceiptsWorker', () => {
     await waitFor(() => markRead.mock.calls.length === 2)
 
     expect(markRead.mock.calls[1][0].map((row) => row.id)).toEqual(['b'])
+    worker.destroy()
+  })
+
+  it('bounds sent-key dedupe with LRU eviction', async () => {
+    const markRead = vi.fn((rows: TestRow[]) => {
+      void rows
+      return Promise.resolve()
+    })
+    const worker = new MessageListReadReceiptsWorker(
+      createAdapter('normal', {
+        readReceipts: { batchDelayMs: 0, markRead },
+      }),
+      rowsByKey([{ id: 'a' }, { id: 'b' }, { id: 'c' }]),
+      2,
+    )
+
+    worker.handleObservation(observation(['a', 'b']))
+    await waitFor(() => markRead.mock.calls.length === 1)
+    // 再次观察 a 会刷新其 LRU 位置，因此加入 c 后应淘汰 b。
+    worker.handleObservation(observation(['a']))
+    worker.handleObservation(observation(['c']))
+    await waitFor(() => markRead.mock.calls.length === 2)
+
+    worker.handleObservation(observation(['a', 'b']))
+    await waitFor(() => markRead.mock.calls.length === 3)
+    expect(markRead.mock.calls[2]?.[0].map((row: TestRow) => row.id)).toEqual(['b'])
     worker.destroy()
   })
 })
