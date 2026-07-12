@@ -23,6 +23,7 @@ export type TransactionScrollResolution =
       allowPreposition?: boolean
       directionHint?: MessageListMotionDirection
       enforceDirectionHint?: boolean
+      recoverClampedDistance?: boolean
     }
 
 /**
@@ -126,7 +127,10 @@ export function settleTransactionScrollPosition<TMessage, TOptimistic>(options: 
         domInteractions,
         'followBottom',
         segment.anchor ?? getViewportAnchor(),
-        { enforceDirectionHint: true },
+        {
+          enforceDirectionHint: true,
+          recoverClampedDistance: true,
+        },
       )
     }
 
@@ -207,7 +211,10 @@ function settleBottomMotion<TMessage, TOptimistic>(
   domInteractions: RuntimeDomInteractions<TMessage, TOptimistic>,
   source: Extract<ScrollMotionSource, 'programmatic' | 'followBottom'>,
   anchor: MessageIdentityAnchor | null,
-  options: { enforceDirectionHint?: boolean } = {},
+  options: {
+    enforceDirectionHint?: boolean
+    recoverClampedDistance?: boolean
+  } = {},
 ): TransactionScrollResolution {
   const targetTop = domInteractions.getBottomTargetTop()
 
@@ -225,6 +232,7 @@ function settleBottomMotion<TMessage, TOptimistic>(
     directionHint: source === 'followBottom' ? 'after' : undefined,
     enforceDirectionHint: source === 'followBottom' &&
       options.enforceDirectionHint === true,
+    recoverClampedDistance: options.recoverClampedDistance === true,
   }
 }
 

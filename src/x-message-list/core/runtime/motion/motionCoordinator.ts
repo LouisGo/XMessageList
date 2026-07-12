@@ -21,6 +21,7 @@ export type MotionStartInput = {
   allowPreposition?: boolean
   directionHint?: MessageListMotionDirection
   enforceDirectionHint?: boolean
+  recoverClampedDistance?: boolean
   writeScrollTop: (scrollTop: number, source: ScrollMotionSource) => void
   onSettle: () => void
   onCancel: (reason: ScrollMotionCancelReason, source: ScrollMotionSource) => void
@@ -90,6 +91,10 @@ export class MotionCoordinator {
     const direction = input.enforceDirectionHint === true
       ? directionHintToMotionDirection(input.directionHint) ?? rawDirection
       : rawDirection
+    const canRecoverClampedDistance = Math.abs(distancePx) <= this.options.targetEpsilonPx &&
+      input.recoverClampedDistance === true &&
+      input.enforceDirectionHint === true &&
+      hasSemanticPrepositionRoom(input.container, targetTop, input.directionHint)
 
     if (
       !resolveMotionEnabled(this.options.enabled) ||
@@ -101,7 +106,10 @@ export class MotionCoordinator {
       return false
     }
 
-    if (Math.abs(distancePx) <= MIN_ANIMATED_DISTANCE_PX) {
+    if (
+      Math.abs(distancePx) <= MIN_ANIMATED_DISTANCE_PX &&
+      !canRecoverClampedDistance
+    ) {
       input.onDiagnostic('scrollMotion.decision', 'debug', {
         source: input.source,
         decision: 'tiny-settle',
@@ -223,6 +231,21 @@ function directionHintToMotionDirection(
   if (directionHint === 'before') return 'up'
   if (directionHint === 'after') return 'down'
   return null
+}
+
+function hasSemanticPrepositionRoom(
+  container: HTMLElement,
+  targetTop: number,
+  directionHint: MessageListMotionDirection | undefined,
+): boolean {
+  if (directionHint === 'after') {
+    return targetTop > MIN_ANIMATED_DISTANCE_PX
+  }
+  if (directionHint === 'before') {
+    const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+    return maxScrollTop - targetTop > MIN_ANIMATED_DISTANCE_PX
+  }
+  return false
 }
 
 function decisionToDetails(

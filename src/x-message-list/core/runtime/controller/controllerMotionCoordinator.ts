@@ -213,6 +213,7 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
       allowPreposition: resolution.allowPreposition,
       directionHint: resolution.directionHint,
       enforceDirectionHint: resolution.enforceDirectionHint,
+      recoverClampedDistance: resolution.recoverClampedDistance,
       writeScrollTop: (scrollTop, source) =>
         this.host.writeProgrammaticScroll(container, scrollTop, source),
       onSettle: () => {

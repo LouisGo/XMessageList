@@ -1275,7 +1275,7 @@ describe('MessageList viewport motion', () => {
     }))
   })
 
-  it('uses follow-bottom motion for send-style latest rebuilds', () => {
+  it('restores follow-bottom motion when a latest rebuild clamps the viewport to its new bottom', () => {
     const scheduler = new FakeScheduler()
     const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
     const adapter = getMessageListAdapterRuntime(runtime)
@@ -1305,13 +1305,30 @@ describe('MessageList viewport motion', () => {
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
 
     expect(runtime.getSnapshot()).toMatchObject({
+      viewportPhase: 'MOTION',
+      pendingIntent: null,
+      bottomLockState: 'LOCKED',
+    })
+    expect(container.scrollTop).toBe(0)
+    expect(runtime.getDiagnostics()).toContainEqual(expect.objectContaining({
+      name: 'destinationMotion.start',
+      details: expect.objectContaining({
+        source: 'followBottom',
+        currentTop: 250,
+        targetTop: 250,
+        directionHint: 'after',
+        enforceDirectionHint: true,
+      }),
+    }))
+
+    scheduler.flushFrames(40)
+
+    expect(container.scrollTop).toBe(250)
+    expect(runtime.getSnapshot()).toMatchObject({
       viewportPhase: 'IDLE',
       pendingIntent: null,
       bottomLockState: 'LOCKED',
     })
-    expect(container.scrollTop).toBe(250)
-    expect(runtime.getDiagnostics().map((record) => record.name))
-      .not.toContain('destinationMotion.start')
   })
 
   it('uses requestless follow-bottom motion for local latest rebuilds', () => {
@@ -1350,13 +1367,18 @@ describe('MessageList viewport motion', () => {
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
 
     expect(runtime.getSnapshot()).toMatchObject({
-      viewportPhase: 'IDLE',
+      viewportPhase: 'MOTION',
       pendingIntent: null,
       bottomLockState: 'LOCKED',
     })
-    expect(container.scrollTop).toBe(250)
+    expect(container.scrollTop).toBe(0)
     expect(runtime.getDiagnostics().map((record) => record.name))
-      .not.toContain('destinationMotion.start')
+      .toContain('destinationMotion.start')
+
+    scheduler.flushFrames(40)
+
+    expect(container.scrollTop).toBe(250)
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
   })
 
   it('does not apply direction hints or far preposition for cross-source jumps', () => {
