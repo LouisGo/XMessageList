@@ -13,7 +13,7 @@ import { RuntimeInteractionState, type DestinationIntent, type InteractionUpdate
 import type { MessageListRuntimeEvent, MessageListRuntimeEventListener, ViewportAnchorChangedEvent, ViewportObservationListener, ViewportObservationReason } from '../contracts/events'
 import type { LoadedSegment } from '../contracts/segment'
 import { RuntimeStateAxes } from '../state/runtimeStateAxes'
-import { createDefaultScheduler } from './scheduler'
+import { createResilientScheduler } from './scheduler'
 import { captureVisualAnchor, measureRuntimeDom, type VisualAnchor } from '../dom/measurement'
 import type { MessageListRuntimeOptions, RuntimeScheduler } from '../contracts/options'
 import type { MessageListSnapshot, MessageListSnapshotListener, ProjectionCommitToken, ViewportEvidence } from '../contracts/snapshot'
@@ -63,7 +63,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   private destroyed = false
   constructor(private readonly options: MessageListRuntimeOptions) {
     this.sessionId = options.sessionId ?? 'default'
-    this.scheduler = options.scheduler ?? createDefaultScheduler()
+    this.scheduler = createResilientScheduler(options.scheduler)
     const observerFactory = options.observers ?? createBrowserObserverFactory()
     this.events = new ControllerEventPublisher(this.scheduler, {
       getSnapshot: () => this.snapshot,

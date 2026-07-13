@@ -206,15 +206,22 @@ export class ScrollMotionEngine {
     }
 
     this.active = active
-    active.frameId = input.requestFrame((time) => this.step(id, time))
-    return true
+    return this.scheduleFrame(active)
   }
 
   cancel(reason: ScrollMotionCancelReason): void {
     const active = this.active
     if (!active) return
     this.active = null
-    if (active.frameId !== null) active.input.cancelFrame(active.frameId)
+    if (active.frameId !== null) {
+      try {
+        active.input.cancelFrame(active.frameId)
+      } catch {
+        // Cancellation must still release motion ownership and notify the
+        // controller even when an injected/host scheduler rejects the handle.
+      }
+    }
+    active.frameId = null
     active.input.onCancel(reason)
   }
 
@@ -246,7 +253,14 @@ export class ScrollMotionEngine {
     }
 
     if (Math.abs(distancePx) <= epsilon) {
-      if (active.frameId !== null) active.input.cancelFrame(active.frameId)
+      if (active.frameId !== null) {
+        try {
+          active.input.cancelFrame(active.frameId)
+        } catch {
+          // The motion is settling synchronously; a failed cancellation cannot
+          // retain ownership or block the settle callback.
+        }
+      }
       this.active = null
       active.frameId = null
       onDecision?.({
@@ -303,7 +317,26 @@ export class ScrollMotionEngine {
       return
     }
 
-    active.frameId = active.input.requestFrame((nextTime) => this.step(id, nextTime))
+    this.scheduleFrame(active)
+  }
+
+  private scheduleFrame(active: ActiveMotion): boolean {
+    try {
+      active.frameId = active.input.requestFrame((time) =>
+        this.step(active.id, time)
+      )
+      return true
+    } catch {
+      if (this.active !== active) return false
+      // A receiver-sensitive or otherwise failing frame scheduler must degrade
+      // to an instant settle. Leaving `active` installed here would permanently
+      // block all later motions and projection continuations.
+      this.active = null
+      active.frameId = null
+      active.input.onFrameWrite(active.targetTop, active.input.source)
+      active.input.onSettle()
+      return false
+    }
   }
 }
 

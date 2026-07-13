@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { FakeScheduler, createContainer } from '../../../../test/fakes'
 import {
   ScrollMotionEngine,
@@ -8,6 +8,67 @@ import {
 } from '../motion/scrollMotionEngine'
 
 describe('ScrollMotionEngine', () => {
+  it('settles immediately instead of retaining active ownership when frame scheduling throws', () => {
+    const engine = new ScrollMotionEngine()
+    const container = createContainer({ height: 100 })
+    const writes: number[] = []
+    const onSettle = vi.fn()
+
+    const active = engine.start({
+      container,
+      source: 'jump',
+      targetTop: 300,
+      maxDistancePx: 500,
+      minDurationMs: 100,
+      maxDurationMs: 200,
+      targetEpsilonPx: 1,
+      now: () => 0,
+      requestFrame: () => {
+        throw new TypeError('Illegal invocation')
+      },
+      cancelFrame: () => undefined,
+      onFrameWrite: (scrollTop) => {
+        container.scrollTop = scrollTop
+        writes.push(scrollTop)
+      },
+      onSettle,
+      onCancel: () => undefined,
+    })
+
+    expect(active).toBe(false)
+    expect(engine.isActive()).toBe(false)
+    expect(writes.at(-1)).toBe(300)
+    expect(onSettle).toHaveBeenCalledTimes(1)
+  })
+
+  it('releases motion ownership when cancelling a frame throws', () => {
+    const engine = new ScrollMotionEngine()
+    const container = createContainer({ height: 100 })
+    const onCancel = vi.fn()
+
+    engine.start({
+      container,
+      source: 'jump',
+      targetTop: 300,
+      maxDistancePx: 500,
+      minDurationMs: 100,
+      maxDurationMs: 200,
+      targetEpsilonPx: 1,
+      now: () => 0,
+      requestFrame: () => 1,
+      cancelFrame: () => {
+        throw new TypeError('Illegal invocation')
+      },
+      onFrameWrite: () => undefined,
+      onSettle: () => undefined,
+      onCancel,
+    })
+
+    expect(() => engine.cancel('user-interrupt')).not.toThrow()
+    expect(engine.isActive()).toBe(false)
+    expect(onCancel).toHaveBeenCalledWith('user-interrupt')
+  })
+
   it('prepositions far targets and preserves the motion source on writes', () => {
     const scheduler = new FakeScheduler()
     const engine = new ScrollMotionEngine()

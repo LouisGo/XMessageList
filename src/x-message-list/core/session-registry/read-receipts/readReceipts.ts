@@ -87,16 +87,21 @@ export class MessageListReadReceiptsWorker<Row, Conversation> {
   }
 
   private requestIdleFlush(): void {
-    const requestIdle = globalThis.requestIdleCallback
-
-    if (requestIdle) {
-      requestIdle(() => {
-        void this.flush()
-      }, { timeout: 50 })
-      return
+    if (typeof globalThis.requestIdleCallback === 'function') {
+      try {
+        // Call through globalThis: Chromium host functions may brand-check the
+        // receiver and throw when extracted into a standalone variable.
+        globalThis.requestIdleCallback(() => {
+          void this.flush()
+        }, { timeout: 50 })
+        return
+      } catch {
+        // Idle scheduling is an optimization, not a correctness boundary.
+        // Fall through so visible read receipts cannot remain pending forever.
+      }
     }
 
-    void this.flush()
+    void Promise.resolve().then(() => this.flush())
   }
 
   private async flush(): Promise<void> {

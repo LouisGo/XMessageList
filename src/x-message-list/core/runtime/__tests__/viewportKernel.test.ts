@@ -498,6 +498,41 @@ describe('MessageList viewport kernel', () => {
     )
   })
 
+  it('falls back without leaving projection pending when the anchor-ref frame throws', async () => {
+    class ReceiverSensitiveScheduler extends FakeScheduler {
+      override requestAnimationFrame(_callback: FrameRequestCallback): number {
+        void _callback
+        throw new TypeError('Illegal invocation')
+      }
+    }
+    const scheduler = new ReceiverSensitiveScheduler()
+    const runtime = createMessageListRuntime<string>({
+      sessionId: 'source-a',
+      scheduler,
+    })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const previousRow = createRow('row-1', 10, 40)
+    const nextRow = createRow('row-1', 30, 40)
+
+    container.scrollTop = 20
+    container.append(previousRow)
+    runtime.attachScrollContainer(container)
+    adapter.registerRowElement('row-1', previousRow)
+    runtime.applyLoadedSegment(segment([item('row-1')], 1, 1))
+    previousRow.remove()
+    adapter.registerRowElement('row-1', null)
+
+    expect(() =>
+      adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+    ).not.toThrow()
+    container.append(nextRow)
+    adapter.registerRowElement('row-1', nextRow)
+    scheduler.flushFrame()
+
+    expect(runtime.getSnapshot().viewportPhase).toBe('IDLE')
+  })
+
   it('falls back to the nearest measurable row when the captured anchor is absent', () => {
     const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
