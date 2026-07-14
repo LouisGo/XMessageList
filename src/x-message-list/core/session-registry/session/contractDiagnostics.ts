@@ -82,7 +82,7 @@ export function hasDuplicateItemKeys<Row>(
   return right.some((item) => keys.has(item.key))
 }
 
-export function assertReloadAroundPageContract<Row>(input: {
+export function assertAroundPageTargetContract<Row>(input: {
   page: MessageListPage<Row>
   target: MessageIdentityAnchor
   items: MessageDataItem<Row>[]
@@ -102,14 +102,14 @@ export function assertReloadAroundPageContract<Row>(input: {
       ))
 
   if (abnormal && !fallbackStableId) {
-    input.report('page.reloadFallbackAnchorMissing', 'error')
-    throw new MessageListContractViolation('page.reloadFallbackAnchorMissing')
+    input.report('page.aroundFallbackAnchorMissing', 'error')
+    throw new MessageListContractViolation('page.aroundFallbackAnchorMissing')
   }
 
   if (!expected) {
     const name = abnormal
-      ? 'page.reloadFallbackRowMissing'
-      : 'page.reloadTargetRowMissing'
+      ? 'page.aroundFallbackRowMissing'
+      : 'page.aroundTargetRowMissing'
     input.report(name, 'error')
     throw new MessageListContractViolation(name)
   }

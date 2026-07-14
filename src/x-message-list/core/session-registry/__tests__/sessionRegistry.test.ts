@@ -575,6 +575,14 @@ describe('createMessageListSessionRegistry', () => {
       destinationId: 'source-a:destination:1',
     })
 
+    // runtime 的 DOM commit timeout 默认是 120ms。未挂载 Session 在更长的
+    // 路由/渲染间隔内仍必须保持 pending，不能把“没有 view”误判为 commit 失败。
+    await new Promise((resolve) => setTimeout(resolve, 160))
+    expect(session.getState().destination).toMatchObject({
+      status: 'pending',
+      destinationId: 'source-a:destination:1',
+    })
+
     startSession(session)
     attachSessionRows(session, ['target'])
     ackSessionCommit(session)
@@ -587,13 +595,40 @@ describe('createMessageListSessionRegistry', () => {
     const second = session.commands.scrollToMessage({ id: 'target' })
     expect(first).toEqual({ status: 'accepted', destinationId: 'source-a:destination:1' })
     expect(second).toEqual({ status: 'accepted', destinationId: 'source-a:destination:2' })
+    await flushMicrotasks()
     expect(session.getState().destination).toMatchObject({
       status: 'settled',
       destinationId: 'source-a:destination:2',
     })
   })
 
-  it('publishes superseded before the replacement destination becomes current', async () => {
+  it('still fails a mounted destination whose DOM projection is not acknowledged', async () => {
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      scrollMotion: { enabled: false },
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => Promise.resolve(page(['target'], {
+          hasMoreBefore: true,
+          hasMoreAfter: true,
+        })),
+      }),
+    })
+    const session = manager.getSession('source-a')
+    startSession(session)
+    await waitFor(() => session.getState().loaded.keys.includes('normal-latest'))
+    attachSessionRows(session, ['normal-latest'])
+    ackSessionCommit(session)
+
+    session.commands.scrollToMessage({ id: 'target' })
+
+    await waitFor(() => session.getState().destination.status === 'failed')
+    expect(session.getState().destination).toMatchObject({
+      status: 'failed',
+      reason: 'commit-timeout',
+    })
+  })
+
+  it('publishes superseded before the replacement pending notification', async () => {
     const pendingAround: Array<(page: MessageListPage<TestRow>) => void> = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
       getSessionSource: (id) => ({ id, type: 'normal' }),
@@ -615,12 +650,138 @@ describe('createMessageListSessionRegistry', () => {
     session.commands.scrollToMessage({ id: 'first' })
     await waitFor(() => pendingAround.length === 1)
     session.commands.scrollToMessage({ id: 'second' })
+    await flushMicrotasks()
 
     expect(observed).toContain('source-a:destination:1:cancelled:superseded')
     expect(session.getState().destination).toMatchObject({
       status: 'pending',
       destinationId: 'source-a:destination:2',
     })
+  })
+
+  it('explicitly cancels only the current destination and rejects its stale around result', async () => {
+    const pendingAround: Array<(page: MessageListPage<TestRow>) => void> = []
+    const requestResults: string[] = []
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => new Promise((resolve) => pendingAround.push(resolve)),
+      }),
+      onRequestResult: (result) => requestResults.push(`${result.kind}:${result.status}`),
+    })
+    const session = manager.getSession('source-a')
+    const accepted = session.commands.scrollToMessage({ id: 'remote' })
+    if (accepted.status !== 'accepted') throw new Error('expected accepted destination')
+    await waitFor(() => pendingAround.length === 1)
+
+    expect(session.commands.cancelDestination({
+      destinationId: 'source-a:destination:stale',
+      reason: 'superseded',
+    })).toEqual({ status: 'ignored', reason: 'not-current' })
+    expect(session.getState().destination.status).toBe('pending')
+
+    expect(session.commands.cancelDestination({
+      destinationId: accepted.destinationId,
+      reason: 'superseded',
+    })).toEqual({
+      status: 'cancelled',
+      destinationId: accepted.destinationId,
+    })
+    expect(session.getState().destination).toMatchObject({
+      status: 'cancelled',
+      destinationId: accepted.destinationId,
+      reason: 'superseded',
+    })
+
+    pendingAround[0]?.(page(['remote'], {
+      hasMoreBefore: true,
+      hasMoreAfter: true,
+    }))
+    await waitFor(() => requestResults.includes('around:stale'))
+    expect(session.getState().loaded.keys).not.toContain('remote')
+    expect(session.getState().destination).toMatchObject({
+      status: 'cancelled',
+      destinationId: accepted.destinationId,
+    })
+  })
+
+  it('does not start destination work when a pending subscriber destroys the session', async () => {
+    const loadAround = vi.fn(() => new Promise<MessageListPage<TestRow>>(() => undefined))
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadAround }),
+    })
+    const session = manager.getSession('source-a')
+    const observed: string[] = []
+    session.subscribe(() => {
+      const destination = session.getState().destination
+      if (destination.status === 'idle') return
+      observed.push(`${destination.status}:${
+        destination.status === 'cancelled' ? destination.reason : ''
+      }`)
+      if (destination.status === 'pending') manager.destroySession('source-a')
+    })
+
+    const accepted = session.commands.scrollToMessage({ id: 'remote' })
+
+    expect(accepted).toEqual({
+      status: 'accepted',
+      destinationId: 'source-a:destination:1',
+    })
+    expect(observed).toEqual([])
+    await flushMicrotasks()
+    expect(observed).toEqual([
+      'pending:',
+      'cancelled:session-destroyed',
+    ])
+    expect(loadAround).not.toHaveBeenCalled()
+  })
+
+  it('serializes reentrant supersede notifications and starts only the latest destination', async () => {
+    const startedTargets: string[] = []
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: (context) => {
+          startedTargets.push(context.target?.stableId ?? 'missing')
+          return new Promise(() => undefined)
+        },
+      }),
+    })
+    const session = manager.getSession('source-a')
+    const observed: string[] = []
+    let secondDispatch: ReturnType<typeof session.commands.scrollToMessage> | null = null
+    session.subscribe(() => {
+      const destination = session.getState().destination
+      if (destination.status === 'idle') return
+      observed.push(`${destination.destinationId}:${destination.status}:${
+        destination.status === 'cancelled' ? destination.reason : ''
+      }`)
+      if (
+        destination.status === 'pending' &&
+        destination.destinationId === 'source-a:destination:1'
+      ) {
+        secondDispatch = session.commands.scrollToMessage({ id: 'second' })
+      }
+    })
+
+    const firstDispatch = session.commands.scrollToMessage({ id: 'first' })
+
+    expect(firstDispatch).toEqual({
+      status: 'accepted',
+      destinationId: 'source-a:destination:1',
+    })
+    await waitFor(() => startedTargets.length === 1)
+    expect(secondDispatch).toEqual({
+      status: 'accepted',
+      destinationId: 'source-a:destination:2',
+    })
+    expect(startedTargets).toEqual(['second'])
+    expect(observed.slice(0, 3)).toEqual([
+      'source-a:destination:1:pending:',
+      'source-a:destination:1:cancelled:superseded',
+      'source-a:destination:2:pending:',
+    ])
   })
 
   it('publishes request and contract failures for the active destination', async () => {
@@ -645,6 +806,10 @@ describe('createMessageListSessionRegistry', () => {
       reason: 'request-failed',
       error: requestFailure,
     })
+    expect(
+      getMessageListSessionInternals(failedSession).getViewState().overlayStatus
+        .status,
+    ).toBe('idle')
 
     const contractSession = manager.getSession('contract-failure')
     contractSession.commands.scrollToMessage({ id: 'target' })
@@ -653,9 +818,13 @@ describe('createMessageListSessionRegistry', () => {
       status: 'failed',
       reason: 'contract-violation',
     })
+    expect(
+      getMessageListSessionInternals(contractSession).getViewState()
+        .overlayStatus.status,
+    ).toBe('idle')
   })
 
-  it('publishes session-destroyed before subscribers are released and rejects later dispatch', () => {
+  it('publishes session-destroyed after closing command acceptance and before releasing subscribers', () => {
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
       getSessionSource: (id) => ({ id, type: 'normal' }),
       getAdapter: () => createAdapter('normal', {
@@ -664,17 +833,32 @@ describe('createMessageListSessionRegistry', () => {
     })
     const session = manager.getSession('source-a')
     const observed: string[] = []
+    let reentrantDispatch: ReturnType<typeof session.commands.scrollToMessage> | null = null
     session.subscribe(() => {
       const destination = session.getState().destination
-      if (destination.status === 'cancelled') observed.push(destination.reason)
+      if (destination.status === 'cancelled') {
+        observed.push(destination.reason)
+        reentrantDispatch = session.commands.scrollToMessage({ id: 'reentrant' })
+      }
     })
     session.commands.scrollToMessage({ id: 'remote' })
 
     manager.destroySession('source-a')
 
     expect(observed).toEqual(['session-destroyed'])
+    expect(reentrantDispatch).toEqual({
+      status: 'rejected',
+      reason: 'session-destroyed',
+    })
     expect(session.commands.scrollToMessage({ id: 'later' })).toEqual({
       status: 'rejected',
+      reason: 'session-destroyed',
+    })
+    expect(session.commands.cancelDestination({
+      destinationId: 'source-a:destination:1',
+      reason: 'superseded',
+    })).toEqual({
+      status: 'ignored',
       reason: 'session-destroyed',
     })
   })
@@ -828,6 +1012,27 @@ describe('createMessageListSessionRegistry', () => {
     expect(diagnostics).toContain('page.reachedLatestHasMoreAfter')
     expect(internals.loadedSegmentStore.getSegment().items[0]?.message?.id)
       .not.toBe('target')
+  })
+
+  it('reports a missing around target without replacing the list overlay', async () => {
+    const diagnostics: string[] = []
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => Promise.resolve(page(['other-row'])),
+      }),
+      onRuntimeEvent: (event) => {
+        if (event.diagnostic) diagnostics.push(event.diagnostic.name)
+      },
+    })
+    const session = manager.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+
+    session.commands.scrollToMessage({ id: 'missing-target' })
+    await waitFor(() => session.getState().destination.status === 'failed')
+
+    expect(diagnostics).toContain('page.aroundTargetRowMissing')
+    expect(internals.getViewState().overlayStatus.status).toBe('idle')
   })
 
   it('forwards runtime events as serializable log events', async () => {
@@ -1008,6 +1213,7 @@ describe('createMessageListSessionRegistry', () => {
 
     positionRuntimeRows(rows, 200)
     session.commands.scrollToMessage({ id: 'row-1' }, { align: 'start' })
+    await flushMicrotasks()
 
     expect(resolveMotionEnabled).toHaveBeenCalledTimes(2)
     expect(internals.getSnapshot()).toMatchObject({

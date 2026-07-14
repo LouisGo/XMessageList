@@ -112,6 +112,19 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     }
   }
 
+  /** 取消当前 destination，返回其 request token 供 Session 作废数据请求。 */
+  cancelDestination(
+    snapshot: MessageListSnapshot<TMessage, TOptimistic>,
+  ): { snapshot: MessageListSnapshot<TMessage, TOptimistic>; requestToken: string | null } {
+    const cancelled = this.destination.cancel()
+    return {
+      snapshot: snapshot.pendingIntent === 'destination'
+        ? { ...snapshot, pendingIntent: null }
+        : snapshot,
+      requestToken: cancelled?.requestToken ?? null,
+    }
+  }
+
   clearFollowBottom(): void {
     this.followBottom.clear()
   }

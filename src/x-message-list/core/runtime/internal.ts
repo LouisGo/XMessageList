@@ -29,6 +29,8 @@ export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown>
 // session-registry 只需要命令式数据/边缘请求入口，类型层不暴露 adapter 的 DOM 写入能力。
 export type MessageListSessionRegistryRuntime<TMessage = unknown, TOptimistic = unknown> =
   MessageListRuntime<TMessage, TOptimistic> & {
+    /** Session retain 生命周期决定当前 projection 是否应等待 React commit ack。 */
+    setViewRetained(retained: boolean): void
     /** session-only live anchor capture; unlike the public identity getter, this retains row-local offset. */
     getViewportAnchorMemory(): {
       anchor: MessageIdentityAnchor

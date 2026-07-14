@@ -14,7 +14,7 @@ import type {
 import {
   assertLatestPageContract,
   assertReachedLatestContract,
-  assertReloadAroundPageContract,
+  assertAroundPageTargetContract,
   MessageListContractViolation,
 } from './contractDiagnostics'
 import { toSessionResetInput } from './helpers'
@@ -68,7 +68,7 @@ export function prepareReloadProjection<Row, Source>(input: {
   assertReachedLatestContract(input.page, input.reportDiagnostic, {
     source: 'commands.reloadCurrent',
   })
-  assertReloadAroundPageContract({
+  assertAroundPageTargetContract({
     page: input.page,
     target,
     items: resetInput.items,
@@ -86,7 +86,7 @@ export function prepareReloadProjection<Row, Source>(input: {
       )
   if (!originalResolvedItem?.identity) {
     throw new MessageListContractViolation(
-      abnormal ? 'page.reloadFallbackRowMissing' : 'page.reloadTargetRowMissing',
+      abnormal ? 'page.aroundFallbackRowMissing' : 'page.aroundTargetRowMissing',
     )
   }
 

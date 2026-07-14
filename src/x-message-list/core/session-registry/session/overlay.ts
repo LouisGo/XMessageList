@@ -1,5 +1,6 @@
 import type {
   MessageListOverlayStatus,
+  MessageListRequestResult,
   MessageListViewState,
 } from '../contracts'
 
@@ -62,6 +63,20 @@ export class MessageListSessionOverlay {
     this.overlayPendingRequestId = null
     this.clearLoadingTimer()
     this.setStatus(status, error)
+  }
+
+  /** Only surface failures whose Retry callback can replay the failed operation. */
+  finishRequestResult(
+    overlayRequestId: number,
+    result: Pick<MessageListRequestResult<unknown, unknown>, 'error' | 'status'>,
+    surfaceFailure = true,
+  ): void {
+    const failed = surfaceFailure && result.status === 'failed'
+    this.finishRequest(
+      overlayRequestId,
+      failed ? 'error' : 'idle',
+      failed ? result.error : undefined,
+    )
   }
 
   cancelRequest(): void {

@@ -9,6 +9,7 @@ export function createSessionCommands<Row>(input: {
   isDestroyed: () => boolean
   scrollToLatest: () => void
   scrollToMessage: MessageListSession<Row>['commands']['scrollToMessage']
+  cancelDestination: MessageListSession<Row>['commands']['cancelDestination']
   reloadLatest: MessageListSession<Row>['commands']['reloadLatest']
   reloadCurrent: MessageListSession<Row>['commands']['reloadCurrent']
   loadBefore: () => void
@@ -18,6 +19,8 @@ export function createSessionCommands<Row>(input: {
     scrollToLatest: () => { if (!input.isDestroyed()) input.scrollToLatest() },
     // scrollToMessage 自身需要在销毁后返回显式 rejected，不能被通用 guard 吞掉。
     scrollToMessage: (target, options) => input.scrollToMessage(target, options),
+    // cancelDestination 需要区分 destroyed 与 not-current，保留其显式结果。
+    cancelDestination: (cancelInput) => input.cancelDestination(cancelInput),
     reloadLatest: ((options?: Parameters<
       MessageListSession<Row>['commands']['reloadLatest']
     >[0]) => {

@@ -25,6 +25,8 @@ export type {
 } from './base'
 export type {
   MessageListDestinationDispatchResult,
+  MessageListDestinationCancelInput,
+  MessageListDestinationCancelResult,
   MessageListDestinationState,
   MessageListIdentityRemap,
   MessageListLocalTailStageInput,

@@ -10,7 +10,7 @@ import { createMessageListSessionState } from './state'
 import { createSessionRows } from '../rows/sessionRows'
 import { defineMessageListSessionInternals } from '../internal'
 import { MessageListSessionLiveSemantics } from '../tail/tailSemantics'
-import { assertLatestPageContract, assertReachedLatestContract, assertReloadAroundPageContract, reportContractDiagnostic } from './contractDiagnostics'
+import { assertAroundPageTargetContract, assertLatestPageContract, assertReachedLatestContract, reportContractDiagnostic } from './contractDiagnostics'
 import { resolveRequestTriggerFromEvent, toRuntimeScrollOptions, toSessionResetInput, type AroundRequestOptions, type RuntimeNeedEvent, type SessionOptions } from './helpers'
 import type { MessageListPage, MessageListRequestTrigger, MessageListRequestResult, MessageListSessionId, MessageListSession as PublicMessageListSession, MessageListSessionContext, MessageListSessionState, MessageListViewState } from '../contracts'
 import { MessageListAnchorMemoryWriter } from './anchorMemoryWriter'
@@ -22,6 +22,7 @@ import { loadMessageListEdgeWindow } from './edgeWindow'
 import { MessageListSessionSegmentPublisher } from './sessionSegmentPublisher'
 import { MessageListSessionDestinationController } from './destinationController'
 import { resolveAroundPageAnchor } from './aroundPage'
+import { MessageListSessionViewRetention } from './viewRetention'
 type OverlayRequestOptions = { overlayRequestId?: number; requestEpoch?: number; trigger?: MessageListRequestTrigger }
 type RequestResultInput<Row, Source> = Omit<MessageListRequestResult<Row, Source>, 'sessionId' | 'source'>
 export class MessageListSession<Row, Source> implements PublicMessageListSession<Row> {
@@ -36,14 +37,15 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
   private readonly readReceipts: MessageListReadReceiptsWorker<Row, Source>
   private readonly overlay: MessageListSessionOverlay
   private readonly bootstrapController: MessageListSessionBootstrapController
-  private readonly viewListeners = new Set<() => void>()
+  private readonly viewRetention = new MessageListSessionViewRetention(
+    (retained) => getMessageListSessionRegistryRuntime(this.#runtime).setViewRetained(retained), () => this.touch(),
+  )
   private readonly runtimeUnsubscribe: () => void
   private readonly rowsByKey = new Map<string, Row>()
   private readonly liveSemantics: MessageListSessionLiveSemantics<Row, Source>
   private readonly reloadController: MessageListSessionReloadController<Row, Source>
   private readonly anchorMemoryWriter: MessageListAnchorMemoryWriter<Source> | null
   private readonly lifecycleAbortController = new AbortController()
-  private viewRetainCount = 0
   private rowsPerViewportEstimate: number
   private visibleKeys: string[] = []
   private measurementSnapshot: RuntimeSegmentSizeSnapshot | null = null
@@ -81,16 +83,17 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       loadAround: (target, options) => this.loadAround(target, undefined, options),
       loadLatest: (options) => this.loadLatest(undefined, options),
       finishFailure: (error, overlayRequestId) => {
-        this.finishOverlayRequest(
+        this.overlay.finishRequestResult(
+          overlayRequestId,
           this.emitRequestResult({ kind: this.options.adapter.request.loadInitial
             ? 'initial' : 'latest', status: 'failed', trigger: 'internal', error }),
-          overlayRequestId,
         )
       },
     })
     this.#runtime = createMessageListRuntime<Row>({ sessionId: options.sessionId, scrollMotion: options.scrollMotion })
+    getMessageListSessionRegistryRuntime(this.#runtime).setViewRetained(false)
     this.#loadedSegmentStore = createLoadedSegmentStore<Row>({ sessionId: options.sessionId })
-    this.destinationController = new MessageListSessionDestinationController(this.sessionId, () => this.destroyed, () => this.stateStore.notifyDestinationChanged())
+    this.destinationController = new MessageListSessionDestinationController(this.sessionId, () => this.destroyed, (state, publishOptions) => this.stateStore.notifyDestinationChanged(state, publishOptions))
     this.reloadController = new MessageListSessionReloadController({
       sessionId: this.sessionId,
       context: this.context,
@@ -118,6 +121,14 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
             toRuntimeScrollOptions(this.sessionId, scrollOptions))
         },
       ),
+      cancelDestination: (input) =>
+        this.destinationController.cancelDestination(input, () => {
+          const requestToken = this.#runtime.cancelDestination()
+          if (requestToken) {
+            this.cancelDestination(requestToken)
+          }
+          this.reloadController.markNavigationChanged()
+        }),
       reloadLatest: ((reloadOptions?: { reason: 'tail-reconcile' }) => {
         if (reloadOptions) {
           this.bootstrapController.markStarted()
@@ -221,26 +232,14 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
   getViewState(): MessageListViewState { return this.overlay.getViewState() }
   getState(): MessageListSessionState<Row> { return this.stateStore.getState() }
   subscribe(listener: () => void): () => void { return this.stateStore.subscribe(listener) }
-  subscribeView(listener: () => void): () => void {
-    this.viewListeners.add(listener)
-    return () => this.viewListeners.delete(listener)
-  }
+  subscribeView(listener: () => void): () => void { return this.viewRetention.subscribe(listener) }
   retainView(): () => void {
-    this.viewRetainCount += 1
     this.touch()
     this.ensureBootstrapStarted()
-    let released = false
-    return () => {
-      if (released) {
-        return
-      }
-      released = true
-      this.viewRetainCount = Math.max(0, this.viewRetainCount - 1)
-      this.touch()
-    }
+    return this.viewRetention.retain()
   }
-  hasRetainedView(): boolean { return this.viewRetainCount > 0 }
-  getViewRetainCount(): number { return this.viewRetainCount }
+  hasRetainedView(): boolean { return this.viewRetention.hasRetainedView() }
+  getViewRetainCount(): number { return this.viewRetention.getRetainCount() }
   getRow(item: MessageDataItem<Row>): Row | null { return item.message ?? null }
   getRowRenderVersion(item: MessageDataItem<Row>): unknown {
     const row = this.getRow(item)
@@ -258,7 +257,9 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
   }
   destroy(): void {
     if (this.destroyed) return
-    this.destinationController.destroy(); this.destroyed = true
+    // 先关闭命令受理，再向 subscriber 发布 cancellation。
+    this.destroyed = true
+    this.destinationController.destroy()
     this.lifecycleAbortController.abort()
     this.reloadController.destroy()
     this.anchorMemoryWriter?.destroy()
@@ -269,7 +270,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
     this.#runtime.destroy()
     this.visibleKeys = []
     this.measurementSnapshot = null
-    this.viewListeners.clear()
+    this.viewRetention.destroy()
   }
   ensureBootstrapStarted(): void { this.bootstrapController.ensureStarted() }
   private cancelDestination(requestToken: string): void {
@@ -342,7 +343,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
           }
       return { page: local.page, segment: applied.segment, applied: applied.applied }
     })
-    this.finishOverlayRequest(result, overlayRequestId)
+    this.overlay.finishRequestResult(overlayRequestId, result)
   }
   private async loadInitial(
     options: OverlayRequestOptions = {},
@@ -386,7 +387,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       })
       return { ...applied, applied: true }
     })
-    this.finishOverlayRequest(result, overlayRequestId)
+    this.overlay.finishRequestResult(overlayRequestId, result)
   }
   private async loadAround(
     target: MessageIdentityAnchor,
@@ -441,7 +442,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
         })
       }
       const resetInput = toSessionResetInput(this.sessionId, page, this.options.adapter)
-      assertReloadAroundPageContract({
+      assertAroundPageTargetContract({
         page,
         target,
         items: resetInput.items,
@@ -474,7 +475,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       return { page, segment: applied.segment, applied: applied.applied }
     })
     if (event) this.destinationController.finishRequest(event.requestToken, result)
-    this.finishOverlayRequest(result, overlayRequestId)
+    this.overlay.finishRequestResult(overlayRequestId, result, !event)
   }
   private async loadEdge(event: RuntimeNeedEvent): Promise<void> {
     const edge = event.type === 'needMoreBefore' ? 'before' : 'after'
@@ -593,7 +594,6 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
   private isStaleResetRequest(event: RuntimeNeedEvent | undefined, requestGeneration: number, requestSegmentRevision: number): boolean { return event ? this.#loadedSegmentStore.getSegment().generation !== event.generation : this.isStaleSegment(requestGeneration, requestSegmentRevision) }
   private isStaleSegment(generation: number, segmentRevision: number): boolean { const segment = this.#loadedSegmentStore.getSegment(); return segment.generation !== generation || segment.segmentRevision !== segmentRevision }
   private emitRequestResult(result: RequestResultInput<Row, Source>): MessageListRequestResult<Row, Source> { const next = { sessionId: this.sessionId, source: this.options.source, ...result }; this.options.onRequestResult?.(next); return next }
-  private finishOverlayRequest(result: MessageListRequestResult<Row, Source>, overlayRequestId: number): void { this.overlay.finishRequest(overlayRequestId, result.status === 'failed' ? 'error' : 'idle', result.error) }
-  private notifyViewListeners(): void { this.stateStore.notifyViewChanged(); for (const listener of this.viewListeners) listener() }
+  private notifyViewListeners(): void { this.stateStore.notifyViewChanged(); this.viewRetention.notify() }
   private touch(): void { this.lastUsedAt = Date.now() }
 }

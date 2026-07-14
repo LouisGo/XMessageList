@@ -14,6 +14,7 @@
 - 维护 `loaded.context = latest | history | around`，把 loaded rows 的语义上下文
   和 viewport `bottomLockState` 分开。
 - 暴露精简的公开 session，包含 `getState`、`subscribe`、`commands`、`tail.local`、`tail.remote` 和 `rows`；runtime 内部实现保持为包内部。
+- `commands.cancelDestination({ destinationId, reason: 'superseded' })` 只取消当前匹配的 pending destination；稳定 id 防止迟到的 host 事务取消后续命令。Session 销毁后返回 `ignored/session-destroyed`，非当前 id 返回 `ignored/not-current`。
 - 应用分页缓存、持久化和脏时间戳检查保留在宿主 store 中。`rows.mutate` 按设计仅作用于已加载数据。
 - 对 latest page、`reachedLatest`、tail local/remote 的 public contract violation
   发出稳定 diagnostic，并保持违规路径不修改 loaded rows。

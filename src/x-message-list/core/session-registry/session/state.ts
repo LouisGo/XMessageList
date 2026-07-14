@@ -11,6 +11,11 @@ import type {
 
 const DISTANCE_TO_BOTTOM_NOTIFY_THRESHOLD_PX = 0.5
 
+export type MessageListDestinationPublishOptions = {
+  defer?: boolean
+  afterNotify?: () => void
+}
+
 export function createMessageListSessionState<Row>(input: {
   sessionId: string
   runtime: MessageListRuntime<Row>
@@ -23,16 +28,59 @@ export function createMessageListSessionState<Row>(input: {
   subscribe: (listener: () => void) => () => void
   notifyViewChanged: () => void
   notifyLoadedChanged: () => void
-  notifyDestinationChanged: () => void
+  notifyDestinationChanged: (
+    destination: MessageListDestinationState,
+    options?: MessageListDestinationPublishOptions,
+  ) => void
   destroy: () => void
 } {
   const listeners = new Set<() => void>()
+  const destinationNotifications: Array<{
+    destination: MessageListDestinationState
+    afterNotify?: () => void
+  }> = []
   let cachedSnapshot: MessageListSnapshot<Row> | null = null
   let cachedViewState: MessageListViewState | null = null
   let cachedState: MessageListSessionState<Row> | null = null
+  let publishedDestination: MessageListDestinationState | null = null
+  let publishingDestination = false
+  let genericNotificationPending = false
+  let destinationFlushScheduled = false
+  let destroyAfterDestinationFlush = false
+  let destroyed = false
   let distanceToBottom = readDistanceToBottom(input.runtime)
   const notify = () => {
+    if (publishingDestination) {
+      genericNotificationPending = true
+      return
+    }
     for (const listener of listeners) listener()
+  }
+  const flushDestinationNotifications = () => {
+    destinationFlushScheduled = false
+    if (destroyed || publishingDestination) return
+
+    publishingDestination = true
+    while (destinationNotifications.length > 0) {
+      const notification = destinationNotifications.shift()
+      if (!notification) break
+      publishedDestination = notification.destination
+      cachedState = null
+      for (const listener of [...listeners]) listener()
+      publishedDestination = null
+      cachedState = null
+      notification.afterNotify?.()
+    }
+    publishingDestination = false
+
+    if (genericNotificationPending && !destroyAfterDestinationFlush) {
+      genericNotificationPending = false
+      notify()
+    }
+    if (destroyAfterDestinationFlush) {
+      destroyed = true
+      listeners.clear()
+    }
   }
   const unsubscribeRuntime = input.runtime.subscribeSnapshot(() => {
     cachedSnapshot = null
@@ -70,7 +118,7 @@ export function createMessageListSessionState<Row>(input: {
         input.getCommittedSegment(),
         viewState,
         distanceToBottom,
-        input.getDestinationState(),
+        publishedDestination ?? input.getDestinationState(),
       )
       return cachedState
     },
@@ -86,14 +134,30 @@ export function createMessageListSessionState<Row>(input: {
       cachedState = null
       notify()
     },
-    notifyDestinationChanged: () => {
+    notifyDestinationChanged: (destination, options) => {
       cachedState = null
-      notify()
+      destinationNotifications.push({
+        destination,
+        ...(options?.afterNotify ? { afterNotify: options.afterNotify } : {}),
+      })
+      if (options?.defer) {
+        if (!destinationFlushScheduled) {
+          destinationFlushScheduled = true
+          queueMicrotask(flushDestinationNotifications)
+        }
+      } else {
+        flushDestinationNotifications()
+      }
     },
     destroy: () => {
       unsubscribeRuntime()
       unsubscribeObservation()
-      listeners.clear()
+      if (publishingDestination) {
+        destroyAfterDestinationFlush = true
+      } else {
+        destroyed = true
+        listeners.clear()
+      }
     },
   }
 }

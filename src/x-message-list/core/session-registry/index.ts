@@ -4,6 +4,8 @@ export {
 } from './registry/registry'
 export type {
   MessageListDestinationDispatchResult,
+  MessageListDestinationCancelInput,
+  MessageListDestinationCancelResult,
   MessageListDestinationState,
   MessageListIdentityRemap,
   MessageListAdapter,

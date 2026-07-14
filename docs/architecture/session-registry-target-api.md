@@ -174,6 +174,10 @@ export type {
   MessageListAdapter,
   MessageListAnchor,
   MessageListAnchorMemoryValue,
+  MessageListDestinationCancelInput,
+  MessageListDestinationCancelResult,
+  MessageListDestinationDispatchResult,
+  MessageListDestinationState,
   MessageListSessionId,
   MessageListSessionSource,
   MessageListSegmentRetention,
@@ -269,6 +273,10 @@ type MessageListSession<Row> = {
       anchor: MessageListAnchor,
       options?: MessageListScrollToMessageOptions,
     ): MessageListDestinationDispatchResult
+    cancelDestination(input: {
+      destinationId: string
+      reason: 'superseded'
+    }): MessageListDestinationCancelResult
     loadBefore(): void
     loadAfter(): void
     reloadLatest(): void
@@ -312,6 +320,13 @@ type MessageListSession<Row> = {
 timeout 则进入 `failed`。新命令会先把旧命令发布为 `cancelled/superseded`，用户滚动
 和 session 销毁分别发布 `user-interrupt` 与 `session-destroyed`。命令完成不返回
 Promise，异步结果只能从 session 公共状态观察。
+
+Host 需要取代已受理但尚未完成的定位时，调用
+`cancelDestination({ destinationId, reason: 'superseded' })`。命令只在 id 与当前
+pending destination 完全匹配时取消底层 runtime intent、作废对应 around request，
+并发布 `cancelled/superseded`；迟到 id 返回 `ignored/not-current`，Session 销毁后返回
+`ignored/session-destroyed`。该能力防止未挂载 Session 日后执行过期定位，但不理解或
+存储 host 的路由、栏位和应用导航事务。
 
 Registry 只提供 session 的查询、创建、保留和销毁能力。选择目标 session、切换路由、
 打开主栏或侧栏以及维护应用级导航事务，均属于 host；XMessageList 不提供

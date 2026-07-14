@@ -5,12 +5,15 @@ import type {
 import { normalizeMessageListAnchor } from '../adapters/rowAdapter'
 import type {
   MessageListAnchor,
+  MessageListDestinationCancelInput,
+  MessageListDestinationCancelResult,
   MessageListDestinationDispatchResult,
   MessageListDestinationState,
   MessageListRequestResult,
   MessageListSessionId,
 } from '../contracts'
 import { MessageListContractViolation } from './contractDiagnostics'
+import type { MessageListDestinationPublishOptions } from './state'
 
 /** 将 viewport 的细粒度事件收敛为单个 Session 的公开 destination 生命周期。 */
 export class MessageListSessionDestinationController {
@@ -22,7 +25,10 @@ export class MessageListSessionDestinationController {
   constructor(
     private readonly sessionId: MessageListSessionId,
     private readonly isDestroyed: () => boolean,
-    private readonly notify: () => void,
+    private readonly notify: (
+      state: MessageListDestinationState,
+      options?: MessageListDestinationPublishOptions,
+    ) => void,
   ) {}
 
   getState(): MessageListDestinationState { return this.state }
@@ -35,18 +41,54 @@ export class MessageListSessionDestinationController {
       return { status: 'rejected', reason: 'session-destroyed' }
     }
 
-    this.cancel('superseded')
+    // replacement 的 cancelled 与新 pending 一并延后发布，避免旧状态发布期间的
+    // subscriber 重入插到本次 dispatch 中间，制造“受理但没有终态”的命令。
+    this.cancel('superseded', { defer: true })
     const normalizedTarget = normalizeMessageListAnchor(this.sessionId, target)
     const destinationId = `${this.sessionId}:destination:${++this.sequence}`
     this.requestToken = null
     this.projection = null
+    // 先同步受理并写入 pending，再由 Session state publisher 在当前调用栈结束后
+    // 发布该状态。只有全部 subscriber 都观察到 pending，且命令仍为 current 时，
+    // 才启动 runtime 工作；同步 destroy/supersede 因而不会泄漏旧请求。
     this.setState({
       status: 'pending',
       destinationId,
       target: normalizedTarget,
+    }, {
+      defer: true,
+      afterNotify: () => {
+        const current = this.state
+        if (
+          this.isDestroyed() ||
+          current.status !== 'pending' ||
+          current.destinationId !== destinationId
+        ) return
+        start(normalizedTarget)
+      },
     })
-    start(normalizedTarget)
     return { status: 'accepted', destinationId }
+  }
+
+  /**
+   * 只取消当前匹配的 pending destination。先停止底层工作，再发布终态，确保订阅者
+   * 看到 cancelled 时该 destination 已不可能继续 settle。
+   */
+  cancelDestination(
+    input: MessageListDestinationCancelInput,
+    stop: () => void,
+  ): MessageListDestinationCancelResult {
+    if (this.isDestroyed()) {
+      return { status: 'ignored', reason: 'session-destroyed' }
+    }
+    const current = this.state
+    if (current.status !== 'pending' || current.destinationId !== input.destinationId) {
+      return { status: 'ignored', reason: 'not-current' }
+    }
+
+    stop()
+    this.cancel(input.reason)
+    return { status: 'cancelled', destinationId: input.destinationId }
   }
 
   handleRuntimeEvent(event: MessageListRuntimeEvent): void {
@@ -119,6 +161,7 @@ export class MessageListSessionDestinationController {
 
   private cancel(
     reason: Extract<MessageListDestinationState, { status: 'cancelled' }>['reason'],
+    options?: MessageListDestinationPublishOptions,
   ): void {
     const current = this.state
     if (current.status !== 'pending') return
@@ -129,7 +172,7 @@ export class MessageListSessionDestinationController {
       destinationId: current.destinationId,
       target: current.target,
       reason,
-    })
+    }, options)
   }
 
   private fail(
@@ -149,9 +192,12 @@ export class MessageListSessionDestinationController {
     })
   }
 
-  private setState(state: MessageListDestinationState): void {
+  private setState(
+    state: MessageListDestinationState,
+    options?: MessageListDestinationPublishOptions,
+  ): void {
     this.state = state
-    this.notify()
+    this.notify(state, options)
   }
 }
 

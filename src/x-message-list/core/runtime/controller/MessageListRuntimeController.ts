@@ -38,6 +38,8 @@ import {
   stageLoadedProjectionTransaction,
   type ProjectionTransactionHost,
 } from './controllerProjectionTransactions'
+import { ViewCommitTimeoutController, type ViewCommitTimeoutHost } from './viewCommitTimeout'
+
 export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unknown> implements MessageListAdapterRuntime<TMessage, TOptimistic> {
   private readonly scheduler: RuntimeScheduler
   private readonly sessionId: string
@@ -59,11 +61,16 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   private readonly resizeObserver: ResizeObserver | null = null
   private readonly dirtyRange = new RuntimeDirtyRangeRegistry()
   private readonly rowKeyByElement = new Map<HTMLElement, MessageRuntimeItemKey>()
+  private readonly viewCommitTimeout: ViewCommitTimeoutController<TMessage, TOptimistic>
   private resizeFrame: number | null = null
   private destroyed = false
-  constructor(private readonly options: MessageListRuntimeOptions) {
+  constructor(options: MessageListRuntimeOptions) {
     this.sessionId = options.sessionId ?? 'default'
     this.scheduler = createResilientScheduler(options.scheduler)
+    const viewCommitHost = this as unknown as ViewCommitTimeoutHost<TMessage, TOptimistic>
+    this.viewCommitTimeout = new ViewCommitTimeoutController(
+      viewCommitHost, this.scheduler, options.commitTimeoutMs ?? 120,
+    )
     const observerFactory = options.observers ?? createBrowserObserverFactory()
     this.events = new ControllerEventPublisher(this.scheduler, {
       getSnapshot: () => this.snapshot,
@@ -143,7 +150,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     if (this.destroyed) return
     this.destroyed = true
     const pending = this.transactions.getPending()
-    if (pending) this.scheduler.clearTimeout(pending.timeoutHandle)
+    this.viewCommitTimeout.clear(pending?.timeoutHandle)
     if (this.resizeFrame !== null) this.scheduler.cancelAnimationFrame(this.resizeFrame)
     this.resizeObserver?.disconnect()
     this.domInteractions.detachScrollContainer()
@@ -182,7 +189,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     const token = { sessionId: segment.sessionId, generation: segment.generation, segmentRevision: segment.segmentRevision, projectionRevision }
     const anchor = resolveCapturedTransactionAnchor(captureVisualAnchor(this.registry.snapshot()), segment, this.registry) // React commit 前捕获 visual anchor；删除末尾 anchor 时 predecessor 使用自身旧几何。
     this.pendingEdgeSlotProjection = null
-    const timeoutHandle = this.scheduler.setTimeout(() => this.handleCommitTimeout(token), this.options.commitTimeoutMs ?? 120)
+    const timeoutHandle = this.viewCommitTimeout.schedule(token)
     this.transactions.setPending({ token, segment, anchor, timeoutHandle, startedAt: this.scheduler.now(), anchorRetryCount: 0, scrollWriteCount: 0, stage, rollbackSnapshot })
     this.stateAxes.markTransactionActive()
     const previous = this.interactions.projectEdgeStateForSegment(this.snapshot, segment)
@@ -205,7 +212,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.pushDiagnostic('transaction.staleCommitAck', 'warn', token)
       return
     }
-    this.scheduler.clearTimeout(pending.timeoutHandle)
+    this.viewCommitTimeout.clear(pending.timeoutHandle)
     if (pending.stage && !pending.stage.commit()) {
       this.transactions.clearPending()
       this.pushDiagnostic('transaction.stageCommitRejected', 'warn', token)
@@ -293,28 +300,9 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     }
     if (settled) this.applySettledTransactionContinuations()
   }
-  private handleCommitTimeout(token: ProjectionCommitToken): void {
-    const pending = this.transactions.clearPendingToken(token)
-    if (!pending) return
-    this.transactions.beginAdvancing()
-    try {
-      if (pending.stage) {
-        this.rollbackStagedTransaction(pending)
-        this.pushDiagnostic('transaction.commitTimeout', 'error', token)
-        this.emitRuntimeEvent({ type: 'viewportError', sessionId: token.sessionId, code: 'commit-timeout', message: 'Projection commit timed out.' })
-        this.emitProjectionSettled(token, 'commit-timeout')
-      } else {
-        this.applyInteractionProjection(this.interactions.resetForGeneration(this.snapshot))
-        this.stateAxes.markTransactionIdle()
-        this.setViewportPhase('IDLE')
-        this.pushDiagnostic('transaction.commitTimeout', 'error', token)
-        this.emitRuntimeEvent({ type: 'viewportError', sessionId: token.sessionId, code: 'commit-timeout', message: 'Projection commit timed out.' })
-        this.emitProjectionSettled(token, 'commit-timeout')
-      }
-    } finally {
-      this.transactions.endAdvancing()
-    }
-    this.applySettledTransactionContinuations({ evaluatePostCommitInteractions: false })
+  setViewRetained(retained: boolean): void {
+    if (this.rejectAfterDestroy('setViewRetained')) return
+    this.viewCommitTimeout.setRetained(retained, this.transactions.getPending())
   }
   private rollbackStagedTransaction(
     pending: import('./controllerTransactionHelpers').PendingTransaction<TMessage, TOptimistic>,
@@ -366,6 +354,17 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     const align = options.align ?? 'center'
     if (this.motion.alignLocalDestination(target, align, undefined, 'jump', options.motion)) return
     this.startDestination({ target, reason: 'jump', align, motion: options.motion })
+  }
+  cancelDestination(): string | null {
+    if (this.rejectAfterDestroy('cancelDestination')) return null
+    this.cancelPendingRuntimeMotion()
+    this.motion.cancel('command-supersede')
+    const cancelled = this.interactions.cancelDestination(this.snapshot)
+    if (cancelled.snapshot !== this.snapshot) {
+      this.applyInteractionProjection(cancelled.snapshot)
+      this.emitSnapshot()
+    }
+    return cancelled.requestToken
   }
   restoreToMessage(
     target: MessageIdentityAnchor,

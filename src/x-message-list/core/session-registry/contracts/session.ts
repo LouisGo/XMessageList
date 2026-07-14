@@ -44,6 +44,19 @@ export type MessageListDestinationDispatchResult =
   | { status: 'accepted'; destinationId: string }
   | { status: 'rejected'; reason: 'session-destroyed' }
 
+/** 显式取消单次消息定位命令的输入。 */
+export type MessageListDestinationCancelInput = {
+  /** 仅取消当前仍 pending 且 id 完全匹配的 destination。 */
+  destinationId: string
+  /** 显式取消只表达新命令取代旧命令，不承载应用级导航原因。 */
+  reason: 'superseded'
+}
+
+/** cancelDestination 的同步结果；ignored 表示当前 Session 状态未被改写。 */
+export type MessageListDestinationCancelResult =
+  | { status: 'cancelled'; destinationId: string }
+  | { status: 'ignored'; reason: 'not-current' | 'session-destroyed' }
+
 /** 单个 session 对外暴露的状态快照。 */
 export type MessageListSessionState<Row = unknown> = {
   /** 当前 session id。 */
@@ -328,6 +341,14 @@ export type MessageListSession<Row = unknown> = {
       target: MessageListAnchor,
       options?: MessageListScrollToMessageOptions,
     ): MessageListDestinationDispatchResult
+    /**
+     * 取消当前匹配的 pending destination。
+     *
+     * destinationId 防止迟到的调用取消后续命令；非当前 destination 不产生状态变化。
+     */
+    cancelDestination(
+      input: MessageListDestinationCancelInput,
+    ): MessageListDestinationCancelResult
     /** 手动加载 before 侧。 */
     loadBefore(): void
     /** 手动加载 after 侧。 */

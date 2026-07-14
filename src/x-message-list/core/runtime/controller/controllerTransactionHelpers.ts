@@ -12,7 +12,8 @@ export type PendingTransaction<TMessage, TOptimistic> = {
   token: ProjectionCommitToken
   segment: LoadedSegment<TMessage, TOptimistic>
   anchor: VisualAnchor | null
-  timeoutHandle: number
+  /** Viewless projection 尚未开始 DOM commit 计时，因此 handle 可以为空。 */
+  timeoutHandle: number | null
   startedAt: number
   anchorRetryCount: number
   scrollWriteCount: number

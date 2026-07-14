@@ -82,6 +82,16 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
     return pending
   }
 
+  /** 由上层 Session 显式取代命令；不伪装成用户输入事件。 */
+  cancel(): DestinationIntent | null {
+    const pending = this.pending
+    this.pending = null
+    this.lastDirection = null
+    this.axes.markReadyIdle()
+    this.axes.markDestinationIdle()
+    return pending
+  }
+
   acceptsSegment(segment: LoadedSegment<TMessage, TOptimistic>): boolean {
     if (segment.modifier.type !== 'reset-around' || !segment.modifier.requestToken) {
       return true

@@ -32,6 +32,10 @@ export type {
   MessageListAdapter,
   MessageListAnchor,
   MessageListAnchorMemoryValue,
+  MessageListDestinationCancelInput,
+  MessageListDestinationCancelResult,
+  MessageListDestinationDispatchResult,
+  MessageListDestinationState,
   MessageListInitialWindow,
   MessageListSessionId,
   MessageListSessionSource,
@@ -252,7 +256,14 @@ type MessageListSession<Row> = {
 
   commands: {
     scrollToLatest(): void
-    scrollToMessage(anchor, options?): void
+    scrollToMessage(
+      anchor: MessageListAnchor,
+      options?: MessageListScrollToMessageOptions,
+    ): MessageListDestinationDispatchResult
+    cancelDestination(input: {
+      destinationId: string
+      reason: 'superseded'
+    }): MessageListDestinationCancelResult
     loadBefore(): void
     loadAfter(): void
     reloadLatest(): void
@@ -283,6 +294,13 @@ type MessageListSession<Row> = {
   }
 }
 ```
+
+`scrollToMessage` 是同步 destination dispatch：每次受理都会返回新的
+`destinationId`，异步完成状态通过 `getState().destination` 观察。
+`cancelDestination` 只接受当前仍为 pending 且 id 匹配的 destination；成功时先停止
+runtime intent 并作废对应 around request，再发布 `cancelled/superseded`。非当前 id
+返回 `ignored/not-current`，销毁后的 Session 返回 `ignored/session-destroyed`，两者均
+不改写公开状态。这个命令只取消单 Session 定位，不表达路由或应用导航事务。
 
 ```ts
 type MessageListLocalTailStageInput<Row> = {

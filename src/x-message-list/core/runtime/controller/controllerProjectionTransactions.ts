@@ -146,7 +146,9 @@ function cancelTransactionsBeforeGeneration<TMessage, TOptimistic>(
 ): void {
   const cancelled = host.transactions.cancelPendingBeforeGeneration(segment.generation)
   if (cancelled) {
-    host.scheduler.clearTimeout(cancelled.timeoutHandle)
+    if (cancelled.timeoutHandle !== null) {
+      host.scheduler.clearTimeout(cancelled.timeoutHandle)
+    }
     host.markTransactionIdle()
   }
   host.transactions.removeQueuedBeforeGeneration(segment.generation)
@@ -174,7 +176,9 @@ export function rollbackStagedProjection<TMessage, TOptimistic>(
   },
   pending: PendingTransaction<TMessage, TOptimistic>,
 ): void {
-  input.scheduler.clearTimeout(pending.timeoutHandle)
+  if (pending.timeoutHandle !== null) {
+    input.scheduler.clearTimeout(pending.timeoutHandle)
+  }
   input.clearPendingEdgeSlotProjection()
   input.dirtyRange.clear()
   const rollback = pending.rollbackSnapshot

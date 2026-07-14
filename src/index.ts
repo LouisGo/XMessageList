@@ -12,6 +12,8 @@ export type {
   MessageListAnchor,
   MessageListAnchorMemoryValue,
   MessageListDestinationDispatchResult,
+  MessageListDestinationCancelInput,
+  MessageListDestinationCancelResult,
   MessageListDestinationState,
   MessageListInitialWindow,
   MessageListIdentityRemap,

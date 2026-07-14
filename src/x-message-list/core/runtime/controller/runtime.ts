@@ -32,6 +32,8 @@ export type MessageListRuntime<TMessage = unknown, TOptimistic = unknown> = {
     target: MessageIdentityAnchor,
     options?: MessageListScrollToMessageOptions,
   ): void
+  /** 停止当前 runtime destination，并返回需要由 Session 作废的 around request token。 */
+  cancelDestination(): string | null
   restoreToMessage(
     target: MessageIdentityAnchor,
     options?: MessageListRestoreOptions,
