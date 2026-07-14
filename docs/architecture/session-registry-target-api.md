@@ -265,7 +265,10 @@ type MessageListSession<Row> = {
 
   commands: {
     scrollToLatest(): void
-    scrollToMessage(anchor: MessageListAnchor, options?: MessageListScrollToMessageOptions): void
+    scrollToMessage(
+      anchor: MessageListAnchor,
+      options?: MessageListScrollToMessageOptions,
+    ): MessageListDestinationDispatchResult
     loadBefore(): void
     loadAfter(): void
     reloadLatest(): void
@@ -296,6 +299,23 @@ type MessageListSession<Row> = {
   }
 }
 ```
+
+`scrollToMessage` 是单个 session 内的同步 destination dispatch，不是跨 session
+导航命令。每次受理都会生成新的 `destinationId`，即使目标与上一次完全相同；调用方
+通过 `getState().destination` 与 `subscribe` 观察该次命令的
+`pending -> settled | cancelled | failed` 生命周期。目标已在本地窗口内时也遵循同一
+生命周期。未挂载 session 可以先请求 around window，但只有视图挂载并完成对齐后才
+进入 `settled`。
+
+`settled` 的 `resolution` 区分 `target` 与 `fallback`。后者表示 host 返回了合法替代
+锚点，仍是成功终态；request failure、page contract violation 和 projection commit
+timeout 则进入 `failed`。新命令会先把旧命令发布为 `cancelled/superseded`，用户滚动
+和 session 销毁分别发布 `user-interrupt` 与 `session-destroyed`。命令完成不返回
+Promise，异步结果只能从 session 公共状态观察。
+
+Registry 只提供 session 的查询、创建、保留和销毁能力。选择目标 session、切换路由、
+打开主栏或侧栏以及维护应用级导航事务，均属于 host；XMessageList 不提供
+`jumpToSession` 一类应用命令。
 
 `reloadCurrent` 是 host structural dirty 的对账命令，不是用户 jump 的别名：真实
 latest 且 locked 时请求 latest；其余状态捕获第一条可见消息 identity 与

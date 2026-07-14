@@ -9,25 +9,22 @@ import { toSessionRuntimeLogEvent } from './runtimeLogEvent'
 import { createMessageListSessionState } from './state'
 import { createSessionRows } from '../rows/sessionRows'
 import { defineMessageListSessionInternals } from '../internal'
-import { normalizeMessageListAnchor } from '../adapters/rowAdapter'
 import { MessageListSessionLiveSemantics } from '../tail/tailSemantics'
-import { assertLatestPageContract, assertReachedLatestContract, reportContractDiagnostic } from './contractDiagnostics'
+import { assertLatestPageContract, assertReachedLatestContract, assertReloadAroundPageContract, reportContractDiagnostic } from './contractDiagnostics'
 import { resolveRequestTriggerFromEvent, toRuntimeScrollOptions, toSessionResetInput, type AroundRequestOptions, type RuntimeNeedEvent, type SessionOptions } from './helpers'
 import type { MessageListPage, MessageListRequestTrigger, MessageListRequestResult, MessageListSessionId, MessageListSession as PublicMessageListSession, MessageListSessionContext, MessageListSessionState, MessageListViewState } from '../contracts'
 import { MessageListAnchorMemoryWriter } from './anchorMemoryWriter'
 import { MessageListSessionReloadController } from './reloadCurrent'
-import {
-  createGuardedSessionMutations,
-  createSessionCommands,
-} from './sessionFacade'
+import { createGuardedSessionMutations, createSessionCommands } from './sessionFacade'
 import { createSessionRuntimeEventRouter } from './runtimeEventRouter'
 import { applyMessageListInitialWindow } from './initialWindow'
 import { loadMessageListEdgeWindow } from './edgeWindow'
 import { MessageListSessionSegmentPublisher } from './sessionSegmentPublisher'
+import { MessageListSessionDestinationController } from './destinationController'
+import { resolveAroundPageAnchor } from './aroundPage'
 type OverlayRequestOptions = { overlayRequestId?: number; requestEpoch?: number; trigger?: MessageListRequestTrigger }
 type RequestResultInput<Row, Source> = Omit<MessageListRequestResult<Row, Source>, 'sessionId' | 'source'>
-export class MessageListSession<Row, Source>
-  implements PublicMessageListSession<Row> {
+export class MessageListSession<Row, Source> implements PublicMessageListSession<Row> {
   readonly #runtime: MessageListRuntime<Row>
   readonly #loadedSegmentStore: LoadedSegmentStore<Row>
   readonly sessionId: MessageListSessionId
@@ -51,6 +48,7 @@ export class MessageListSession<Row, Source>
   private visibleKeys: string[] = []
   private measurementSnapshot: RuntimeSegmentSizeSnapshot | null = null
   private destroyed = false
+  private readonly destinationController: MessageListSessionDestinationController
   private readonly segmentPublisher: MessageListSessionSegmentPublisher<Row>
   lastUsedAt = Date.now()
   constructor(private readonly options: SessionOptions<Row, Source>) {
@@ -60,9 +58,7 @@ export class MessageListSession<Row, Source>
     this.anchorMemoryWriter = options.adapter.anchorMemory
       ? new MessageListAnchorMemoryWriter(
           this.context, options.adapter.anchorMemory.save,
-          (error) => this.reportContractDiagnostic(
-            'anchorMemory.saveFailed', 'warn', { error },
-          ),
+          (error) => this.reportContractDiagnostic('anchorMemory.saveFailed', 'warn', { error }),
         )
       : null
     this.overlay = new MessageListSessionOverlay(
@@ -79,29 +75,22 @@ export class MessageListSession<Row, Source>
       loadAnchorMemory: () => this.options.adapter.anchorMemory?.load(this.context),
       startOverlayRequest: () => this.overlay.startRequest(),
       getRequestEpoch: () => this.overlay.getRequestEpoch(),
-      isStaleOverlayRequest: (overlayRequestId) =>
-        this.overlay.isStaleRequest(overlayRequestId),
-      isStaleRequestEpoch: (requestEpoch) =>
-        this.overlay.isStaleEpoch(requestEpoch),
-      ...(this.options.adapter.request.loadInitial
-        ? { loadInitial: (options) => this.loadInitial(options) }
-        : {}),
+      isStaleOverlayRequest: (overlayRequestId) => this.overlay.isStaleRequest(overlayRequestId),
+      isStaleRequestEpoch: (requestEpoch) => this.overlay.isStaleEpoch(requestEpoch),
+      ...(this.options.adapter.request.loadInitial ? { loadInitial: (options) => this.loadInitial(options) } : {}),
       loadAround: (target, options) => this.loadAround(target, undefined, options),
       loadLatest: (options) => this.loadLatest(undefined, options),
       finishFailure: (error, overlayRequestId) => {
         this.finishOverlayRequest(
-          this.emitRequestResult({
-            kind: this.options.adapter.request.loadInitial ? 'initial' : 'latest',
-            status: 'failed',
-            trigger: 'internal',
-            error,
-          }),
+          this.emitRequestResult({ kind: this.options.adapter.request.loadInitial
+            ? 'initial' : 'latest', status: 'failed', trigger: 'internal', error }),
           overlayRequestId,
         )
       },
     })
     this.#runtime = createMessageListRuntime<Row>({ sessionId: options.sessionId, scrollMotion: options.scrollMotion })
     this.#loadedSegmentStore = createLoadedSegmentStore<Row>({ sessionId: options.sessionId })
+    this.destinationController = new MessageListSessionDestinationController(this.sessionId, () => this.destroyed, () => this.stateStore.notifyDestinationChanged())
     this.reloadController = new MessageListSessionReloadController({
       sessionId: this.sessionId,
       context: this.context,
@@ -121,14 +110,14 @@ export class MessageListSession<Row, Source>
         this.ensureBootstrapStarted()
         this.#runtime.scrollToLatest()
       },
-      scrollToMessage: (target, scrollOptions) => {
-        this.reloadController.markNavigationChanged()
-        this.ensureBootstrapStarted()
-        this.#runtime.scrollToMessage(
-          normalizeMessageListAnchor(this.sessionId, target),
-          toRuntimeScrollOptions(this.sessionId, scrollOptions),
-        )
-      },
+      scrollToMessage: (target, scrollOptions) => this.destinationController.dispatch(
+        target, (normalizedTarget) => {
+          this.reloadController.markNavigationChanged()
+          this.ensureBootstrapStarted()
+          this.#runtime.scrollToMessage(normalizedTarget,
+            toRuntimeScrollOptions(this.sessionId, scrollOptions))
+        },
+      ),
       reloadLatest: ((reloadOptions?: { reason: 'tail-reconcile' }) => {
         if (reloadOptions) {
           this.bootstrapController.markStarted()
@@ -184,11 +173,9 @@ export class MessageListSession<Row, Source>
       runtime: this.#runtime,
       getCommittedSegment: () => this.segmentPublisher.getCommittedSegment(),
       getViewState: () => this.getViewState(),
+      getDestinationState: () => this.destinationController.getState(),
     })
-    this.readReceipts = new MessageListReadReceiptsWorker(
-      options.adapter,
-      (keys) => this.getRowsByKeys(keys),
-    )
+    this.readReceipts = new MessageListReadReceiptsWorker(options.adapter, (keys) => this.getRowsByKeys(keys))
     this.segmentPublisher = new MessageListSessionSegmentPublisher({
       initialSegment: this.#loadedSegmentStore.getSegment(),
       runtime: this.#runtime,
@@ -200,8 +187,7 @@ export class MessageListSession<Row, Source>
       notifyLoadedChanged: () => this.stateStore.notifyLoadedChanged(),
     })
     const routeRuntimeEvent = createSessionRuntimeEventRouter({
-      isCurrent: (generation, revision) =>
-        this.isStaleSegment(generation, revision) === false,
+      isCurrent: (generation, revision) => this.isStaleSegment(generation, revision) === false,
       onNavigation: () => this.reloadController.markNavigationChanged(),
       onDestinationCancelled: (requestToken) => this.cancelDestination(requestToken),
       saveAnchor: (value) => this.anchorMemoryWriter?.enqueue(value),
@@ -225,6 +211,7 @@ export class MessageListSession<Row, Source>
     this.runtimeUnsubscribe = this.#runtime.subscribeRuntimeEvent((event) => {
       this.options.onRuntimeEvent?.(toSessionRuntimeLogEvent(event))
       if (this.destroyed) return
+      this.destinationController.handleRuntimeEvent(event)
       this.reloadController.handleRuntimeEvent(event)
       this.touch()
       routeRuntimeEvent(event)
@@ -271,7 +258,7 @@ export class MessageListSession<Row, Source>
   }
   destroy(): void {
     if (this.destroyed) return
-    this.destroyed = true
+    this.destinationController.destroy(); this.destroyed = true
     this.lifecycleAbortController.abort()
     this.reloadController.destroy()
     this.anchorMemoryWriter?.destroy()
@@ -453,9 +440,19 @@ export class MessageListSession<Row, Source>
           trigger,
         })
       }
+      const resetInput = toSessionResetInput(this.sessionId, page, this.options.adapter)
+      assertReloadAroundPageContract({
+        page,
+        target,
+        items: resetInput.items,
+        report: (name, severity, details) =>
+          this.reportContractDiagnostic(name, severity, details),
+      })
+      const resolvedAnchor = resolveAroundPageAnchor(page, resetInput.items, resetInput.anchor)
       const applied = event
         ? this.#loadedSegmentStore.resetAroundFromRequest({
-            ...toSessionResetInput(this.sessionId, page, this.options.adapter),
+            ...resetInput,
+            anchor: resolvedAnchor,
             target,
             requestToken: event.requestToken,
             context,
@@ -465,15 +462,18 @@ export class MessageListSession<Row, Source>
         : {
             applied: true,
             segment: this.#loadedSegmentStore.resetAround({
-              ...toSessionResetInput(this.sessionId, page, this.options.adapter),
+              ...resetInput,
+              anchor: resolvedAnchor,
               target,
               context,
               align: options.align,
               offsetWithinMessage: options.offsetWithinMessage,
             }),
           }
+      if (event && applied.applied) this.destinationController.expectProjection(event.requestToken, applied.segment)
       return { page, segment: applied.segment, applied: applied.applied }
     })
+    if (event) this.destinationController.finishRequest(event.requestToken, result)
     this.finishOverlayRequest(result, overlayRequestId)
   }
   private async loadEdge(event: RuntimeNeedEvent): Promise<void> {

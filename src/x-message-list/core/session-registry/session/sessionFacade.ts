@@ -16,9 +16,8 @@ export function createSessionCommands<Row>(input: {
 }): MessageListSession<Row>['commands'] {
   return {
     scrollToLatest: () => { if (!input.isDestroyed()) input.scrollToLatest() },
-    scrollToMessage: (target, options) => {
-      if (!input.isDestroyed()) input.scrollToMessage(target, options)
-    },
+    // scrollToMessage 自身需要在销毁后返回显式 rejected，不能被通用 guard 吞掉。
+    scrollToMessage: (target, options) => input.scrollToMessage(target, options),
     reloadLatest: ((options?: Parameters<
       MessageListSession<Row>['commands']['reloadLatest']
     >[0]) => {

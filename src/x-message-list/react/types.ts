@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react'
 import type {
+  MessageListDestinationDispatchResult,
   MessageListAnchor,
   MessageListLoadedContext,
   MessageListOverlayStatus,
@@ -200,7 +201,7 @@ export type MessageListCommands<Row = unknown> = {
   scrollToMessage: (
     target: MessageListAnchor,
     options?: MessageListScrollToMessageOptions,
-  ) => void
+  ) => MessageListDestinationDispatchResult
   /** 手动加载 before 侧。 */
   loadBefore: () => void
   /** 手动加载 after 侧。 */

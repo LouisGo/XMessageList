@@ -24,6 +24,8 @@ export type {
   MessageListViewState,
 } from './base'
 export type {
+  MessageListDestinationDispatchResult,
+  MessageListDestinationState,
   MessageListIdentityRemap,
   MessageListLocalTailStageInput,
   MessageListRemoteTailAppendContext,

@@ -3,6 +3,8 @@ export {
   createMessageListSessionRegistry,
 } from './registry/registry'
 export type {
+  MessageListDestinationDispatchResult,
+  MessageListDestinationState,
   MessageListIdentityRemap,
   MessageListAdapter,
   MessageListAnchor,

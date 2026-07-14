@@ -28,8 +28,20 @@ The source, adapter, request route, anchor memory, read receipts, and retention 
 _Avoid_: resolver refresh, updateOptions as semantic swap, mutating a session into a different list
 
 **Session State**:
-The stable read-only public state of a Message List Session, including loaded rows, edge status, overlay status, and viewport status. It is not the viewport runtime snapshot or DOM evidence.
+The stable read-only public state of a Message List Session, including loaded rows, edge status, overlay status, destination status, and viewport status. It is not the viewport runtime snapshot or DOM evidence.
 _Avoid_: runtime snapshot as business state, DOM evidence as app state, loaded segment store exposure
+
+**Destination Command**:
+A synchronous request to locate one message anchor inside one Message List Session. Acceptance returns a unique Destination ID; completion is observed through Session State. It may load an around window before a view mounts, but it never routes the host application to another session.
+_Avoid_: completion Promise, cross-session router, reusing one ID for repeated targets
+
+**Destination State**:
+The public lifecycle of the most recently accepted Destination Command: pending, settled, cancelled, or failed. A fallback settlement is successful but remains distinguishable from an exact target settlement.
+_Avoid_: URL position as completion state, hiding fallback as exact, request logs as destination state
+
+**Destination ID**:
+A session-local unique correlation ID generated for every accepted Destination Command, including repeated commands for the same target.
+_Avoid_: message ID as command ID, target equality as command identity
 
 ### Host Boundary
 

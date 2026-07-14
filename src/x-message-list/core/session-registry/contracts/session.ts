@@ -14,6 +14,36 @@ import type {
 } from './base'
 import type { MessageListOverlayStatus } from './base'
 
+/** 单次消息定位命令的公开生命周期状态。 */
+export type MessageListDestinationState =
+  | { status: 'idle' }
+  | { status: 'pending'; destinationId: string; target: MessageListAnchor }
+  | {
+      status: 'settled'
+      destinationId: string
+      target: MessageListAnchor
+      resolution: 'target' | 'fallback'
+      resolvedTarget?: MessageListAnchor
+    }
+  | {
+      status: 'cancelled'
+      destinationId: string
+      target: MessageListAnchor
+      reason: 'superseded' | 'user-interrupt' | 'session-destroyed'
+    }
+  | {
+      status: 'failed'
+      destinationId: string
+      target: MessageListAnchor
+      reason: 'request-failed' | 'contract-violation' | 'commit-timeout'
+      error?: unknown
+    }
+
+/** scrollToMessage 的同步受理结果；完成状态通过 session state 观察。 */
+export type MessageListDestinationDispatchResult =
+  | { status: 'accepted'; destinationId: string }
+  | { status: 'rejected'; reason: 'session-destroyed' }
+
 /** 单个 session 对外暴露的状态快照。 */
 export type MessageListSessionState<Row = unknown> = {
   /** 当前 session id。 */
@@ -40,6 +70,8 @@ export type MessageListSessionState<Row = unknown> = {
   }
   /** 当前 overlay 状态。 */
   overlayStatus: MessageListOverlayStatus
+  /** 最近一次消息定位命令的生命周期状态。 */
+  destination: MessageListDestinationState
   /** 当前 viewport 状态。 */
   viewport: {
     /** 是否锁定源底部。 */
@@ -292,7 +324,10 @@ export type MessageListSession<Row = unknown> = {
     /** 滚动或加载到源最新。 */
     scrollToLatest(): void
     /** 滚动或加载到指定消息；options 未传时 align 默认 center。 */
-    scrollToMessage(target: MessageListAnchor, options?: MessageListScrollToMessageOptions): void
+    scrollToMessage(
+      target: MessageListAnchor,
+      options?: MessageListScrollToMessageOptions,
+    ): MessageListDestinationDispatchResult
     /** 手动加载 before 侧。 */
     loadBefore(): void
     /** 手动加载 after 侧。 */

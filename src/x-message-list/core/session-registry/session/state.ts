@@ -4,6 +4,7 @@ import type {
   MessageListSnapshot,
 } from '../../runtime/index'
 import type {
+  MessageListDestinationState,
   MessageListSessionState,
   MessageListViewState,
 } from '../contracts'
@@ -16,11 +17,13 @@ export function createMessageListSessionState<Row>(input: {
   /** reload stage 期间仍返回最后一个完整 settle 的 authoritative segment。 */
   getCommittedSegment: () => LoadedSegment<Row>
   getViewState: () => MessageListViewState
+  getDestinationState: () => MessageListDestinationState
 }): {
   getState: () => MessageListSessionState<Row>
   subscribe: (listener: () => void) => () => void
   notifyViewChanged: () => void
   notifyLoadedChanged: () => void
+  notifyDestinationChanged: () => void
   destroy: () => void
 } {
   const listeners = new Set<() => void>()
@@ -67,6 +70,7 @@ export function createMessageListSessionState<Row>(input: {
         input.getCommittedSegment(),
         viewState,
         distanceToBottom,
+        input.getDestinationState(),
       )
       return cachedState
     },
@@ -79,6 +83,10 @@ export function createMessageListSessionState<Row>(input: {
       notify()
     },
     notifyLoadedChanged: () => {
+      cachedState = null
+      notify()
+    },
+    notifyDestinationChanged: () => {
       cachedState = null
       notify()
     },
@@ -96,6 +104,7 @@ function createState<Row>(
   committed: LoadedSegment<Row>,
   viewState: MessageListViewState,
   distanceToBottom: number,
+  destination: MessageListDestinationState,
 ): MessageListSessionState<Row> {
   const rows = committed.items.map((item) => item.message as Row)
 
@@ -113,6 +122,7 @@ function createState<Row>(
       after: { status: snapshot.edgeState.after.status },
     },
     overlayStatus: viewState.overlayStatus,
+    destination,
     viewport: {
       bottomLockState: snapshot.bottomLockState,
       pendingIntent: snapshot.pendingIntent,

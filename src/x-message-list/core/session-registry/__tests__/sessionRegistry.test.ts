@@ -555,6 +555,186 @@ describe('createMessageListSessionRegistry', () => {
     expect(requestResults).not.toContain('around:stale')
   })
 
+  it('keeps an unmounted destination pending until mount, then accepts repeated local targets', async () => {
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      scrollMotion: { enabled: false },
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => Promise.resolve(page(['target'], {
+          hasMoreBefore: true,
+          hasMoreAfter: true,
+        })),
+      }),
+    })
+    const session = manager.getSession('source-a')
+
+    const first = session.commands.scrollToMessage({ id: 'target' })
+    await waitFor(() => session.getState().loaded.keys.includes('target'))
+    expect(session.getState().destination).toMatchObject({
+      status: 'pending',
+      destinationId: 'source-a:destination:1',
+    })
+
+    startSession(session)
+    attachSessionRows(session, ['target'])
+    ackSessionCommit(session)
+    await waitFor(() => session.getState().destination.status === 'settled')
+    expect(session.getState().destination).toMatchObject({
+      status: 'settled',
+      resolution: 'target',
+    })
+
+    const second = session.commands.scrollToMessage({ id: 'target' })
+    expect(first).toEqual({ status: 'accepted', destinationId: 'source-a:destination:1' })
+    expect(second).toEqual({ status: 'accepted', destinationId: 'source-a:destination:2' })
+    expect(session.getState().destination).toMatchObject({
+      status: 'settled',
+      destinationId: 'source-a:destination:2',
+    })
+  })
+
+  it('publishes superseded before the replacement destination becomes current', async () => {
+    const pendingAround: Array<(page: MessageListPage<TestRow>) => void> = []
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => new Promise((resolve) => pendingAround.push(resolve)),
+      }),
+    })
+    const session = manager.getSession('source-a')
+    const observed: string[] = []
+    session.subscribe(() => {
+      const destination = session.getState().destination
+      if (destination.status !== 'idle') {
+        observed.push(`${destination.destinationId}:${destination.status}:${
+          destination.status === 'cancelled' ? destination.reason : ''
+        }`)
+      }
+    })
+
+    session.commands.scrollToMessage({ id: 'first' })
+    await waitFor(() => pendingAround.length === 1)
+    session.commands.scrollToMessage({ id: 'second' })
+
+    expect(observed).toContain('source-a:destination:1:cancelled:superseded')
+    expect(session.getState().destination).toMatchObject({
+      status: 'pending',
+      destinationId: 'source-a:destination:2',
+    })
+  })
+
+  it('publishes request and contract failures for the active destination', async () => {
+    const requestFailure = new Error('around failed')
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: (source) => createAdapter('normal', {
+        loadAround: source.id === 'request-failure'
+          ? () => Promise.reject(requestFailure)
+          : () => Promise.resolve(page(['target'], {
+              reachedLatest: true,
+              hasMoreAfter: true,
+            })),
+      }),
+    })
+
+    const failedSession = manager.getSession('request-failure')
+    failedSession.commands.scrollToMessage({ id: 'target' })
+    await waitFor(() => failedSession.getState().destination.status === 'failed')
+    expect(failedSession.getState().destination).toMatchObject({
+      status: 'failed',
+      reason: 'request-failed',
+      error: requestFailure,
+    })
+
+    const contractSession = manager.getSession('contract-failure')
+    contractSession.commands.scrollToMessage({ id: 'target' })
+    await waitFor(() => contractSession.getState().destination.status === 'failed')
+    expect(contractSession.getState().destination).toMatchObject({
+      status: 'failed',
+      reason: 'contract-violation',
+    })
+  })
+
+  it('publishes session-destroyed before subscribers are released and rejects later dispatch', () => {
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => new Promise(() => undefined),
+      }),
+    })
+    const session = manager.getSession('source-a')
+    const observed: string[] = []
+    session.subscribe(() => {
+      const destination = session.getState().destination
+      if (destination.status === 'cancelled') observed.push(destination.reason)
+    })
+    session.commands.scrollToMessage({ id: 'remote' })
+
+    manager.destroySession('source-a')
+
+    expect(observed).toEqual(['session-destroyed'])
+    expect(session.commands.scrollToMessage({ id: 'later' })).toEqual({
+      status: 'rejected',
+      reason: 'session-destroyed',
+    })
+  })
+
+  it('publishes user-interrupt when a mounted viewport interrupts a pending destination', async () => {
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => new Promise(() => undefined),
+      }),
+    })
+    const session = manager.getSession('source-a')
+    startSession(session)
+    await waitFor(() => session.getState().loaded.keys.length === 1)
+    const { container } = attachSessionRows(session, ['normal-latest'])
+    ackSessionCommit(session)
+
+    session.commands.scrollToMessage({ id: 'remote' })
+    await waitFor(() => session.getState().destination.status === 'pending')
+    container.dispatchEvent(new Event('wheel'))
+
+    expect(session.getState().destination).toMatchObject({
+      status: 'cancelled',
+      reason: 'user-interrupt',
+    })
+  })
+
+  it('publishes fallback as a successful destination result', async () => {
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      scrollMotion: { enabled: false },
+      getAdapter: () => createAdapter('normal', {
+        loadAround: () => Promise.resolve({
+          rows: [{ id: 'fallback' }],
+          hasMoreBefore: true,
+          hasMoreAfter: true,
+          anchor: {
+            id: 'target',
+            fallbackStableId: 'fallback',
+            fallbackReason: 'deleted',
+          },
+          anchorStatus: 'deleted',
+        }),
+      }),
+    })
+    const session = manager.getSession('source-a')
+    session.commands.scrollToMessage({ id: 'target' })
+    await waitFor(() => session.getState().loaded.keys.includes('fallback'))
+    startSession(session)
+    attachSessionRows(session, ['fallback'])
+    ackSessionCommit(session)
+    await waitFor(() => session.getState().destination.status === 'settled')
+
+    expect(session.getState().destination).toMatchObject({
+      status: 'settled',
+      resolution: 'fallback',
+      resolvedTarget: { stableId: 'fallback' },
+    })
+  })
+
   it('keeps around context when around request reports reachedLatest', async () => {
     const diagnostics: string[] = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
