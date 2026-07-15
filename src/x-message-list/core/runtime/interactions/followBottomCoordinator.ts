@@ -4,13 +4,11 @@ import type { LoadedSegment } from '../contracts/segment'
 import type { ScrollSource } from '../scroll/scrollIntentEngine'
 import type { MessageListSnapshot } from '../contracts/snapshot'
 import type { InteractionUpdate } from '../state/interactionTypes'
-import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
 
 export class FollowBottomCoordinator<TMessage, TOptimistic> {
   private readonly active = new FollowBottomIntentTracker<TMessage, TOptimistic>()
 
   constructor(
-    private readonly axes: RuntimeStateAxes,
     private readonly nextRequestToken: (kind: string) => string,
   ) {}
 
@@ -20,12 +18,6 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
 
   clear(): void {
     this.active.clear()
-    if (this.axes.isReadySubstate('READY_FOLLOW_BOTTOM_PENDING')) {
-      this.axes.markReadyIdle()
-    }
-    if (this.axes.getDestinationState() === 'pendingData') {
-      this.axes.markDestinationIdle()
-    }
   }
 
   hasActive(
@@ -45,8 +37,6 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
       !snapshot.segmentMeta.hasMoreAfter
     ) {
       // 已在源最新端时不发 needLatest，直接锁底并把短窗口对齐到底部。
-      this.axes.markReadyIdle()
-      this.axes.markDestinationSettled()
       return {
         snapshot: {
           ...snapshot,
@@ -61,8 +51,6 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
     }
 
     const requestToken = this.nextRequestToken('latest')
-    this.axes.markFollowBottomPending()
-    this.axes.markDestinationPendingData()
     return {
       snapshot: {
         ...snapshot,
@@ -78,9 +66,6 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
     scrollTop = 0,
   ): InteractionUpdate<TMessage, TOptimistic> {
     this.active.ensure(snapshot, scrollTop)
-    this.axes.markFollowBottomPending()
-    this.axes.markDestinationPendingData()
-
     return {
       snapshot: {
         ...snapshot,
@@ -97,15 +82,6 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
     if (!isFollowBottomSettleSegment(segment) ||
       snapshot.pendingIntent !== 'follow-bottom') {
       return snapshot
-    }
-
-    if (segment.hasMoreAfter) {
-      // latest 请求仍未到源底部时继续保持 follow-bottom pending，等待下一段 reset-latest。
-      this.axes.markFollowBottomPending()
-      this.axes.markDestinationPendingData()
-    } else {
-      this.axes.markReadyIdle()
-      this.axes.markDestinationSettled()
     }
 
     return {
@@ -125,12 +101,6 @@ export class FollowBottomCoordinator<TMessage, TOptimistic> {
     source: ScrollSource,
   ): MessageListSnapshot<TMessage, TOptimistic> {
     const next = this.active.updateForScroll(snapshot, scrollTop, source)
-
-    if (next.pendingIntent !== 'follow-bottom' &&
-      this.axes.isReadySubstate('READY_FOLLOW_BOTTOM_PENDING')) {
-      this.axes.markReadyIdle()
-      this.axes.markDestinationInterrupted()
-    }
 
     return next
   }

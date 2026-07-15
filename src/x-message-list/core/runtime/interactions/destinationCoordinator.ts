@@ -3,7 +3,6 @@ import type { MessageIdentityAnchor } from '../contracts/identity'
 import type { LoadedSegment } from '../contracts/segment'
 import type { MessageListSnapshot } from '../contracts/snapshot'
 import type { DestinationIntent, InteractionUpdate, RuntimeEdge } from '../state/interactionTypes'
-import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
 
 export class DestinationCoordinator<TMessage, TOptimistic> {
   private pending: DestinationIntent | null = null
@@ -11,7 +10,6 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
   private lastDirection: RuntimeEdge | null = null
 
   constructor(
-    private readonly axes: RuntimeStateAxes,
     private readonly nextRequestToken: (kind: string) => string,
   ) {}
 
@@ -31,12 +29,6 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
   clear(): void {
     this.pending = null
     this.lastDirection = null
-    if (this.axes.isReadySubstate('READY_DESTINATION_PENDING')) {
-      this.axes.markReadyIdle()
-    }
-    if (this.axes.getDestinationState() !== 'settled') {
-      this.axes.markDestinationIdle()
-    }
   }
 
   start(
@@ -47,8 +39,6 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
     const requestToken = this.nextRequestToken('around')
     this.pending = { ...intent, requestToken }
     this.lastDirection = resolveDestinationDirection(intent)
-    this.axes.markDestinationPending()
-    this.axes.markDestinationPendingData()
     const event: NeedMessagesAroundEvent = {
       type: 'needMessagesAround',
       sessionId: snapshot.sessionId,
@@ -77,8 +67,6 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
 
     this.pending = null
     this.lastDirection = null
-    this.axes.markReadyIdle()
-    this.axes.markDestinationInterrupted()
     return pending
   }
 
@@ -87,8 +75,6 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
     const pending = this.pending
     this.pending = null
     this.lastDirection = null
-    this.axes.markReadyIdle()
-    this.axes.markDestinationIdle()
     return pending
   }
 
@@ -103,14 +89,6 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
   markLocalSettled(): void {
     this.pending = null
     this.lastDirection = null
-    this.axes.markReadyIdle()
-    this.axes.markDestinationSettled()
-  }
-
-  markResolvingDom(): void {
-    if (this.pending) {
-      this.axes.markDestinationResolvingDom()
-    }
   }
 
   settleSegment(
@@ -127,8 +105,6 @@ export class DestinationCoordinator<TMessage, TOptimistic> {
 
     this.pending = null
     this.lastDirection = null
-    this.axes.markReadyIdle()
-    this.axes.markDestinationSettled()
     return {
       ...snapshot,
       pendingIntent: null,

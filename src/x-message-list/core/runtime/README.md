@@ -7,7 +7,7 @@
 - 根文件仅保留 `index.ts`、`internal.ts` 和本 README。
 - 公开契约类型放在 `contracts/`。
 - facade/controller 编排放在 `controller/`。
-- 交互状态机放在 `interactions/`，共享轴/类型放在 `state/`。
+- 交互状态机放在 `interactions/`，共享交互类型放在 `state/`。事务阶段、pending intent 和 motion 状态由各自真实 owner 持有，不建立平行镜像轴。
 - DOM ref、测量、锚点和行度量代码放在 `dom/`。
 - 滚动源、底部锁定和直接滚动会话代码放在 `scroll/`。
 - 诊断/evidence/事件构建放在 `events/`。

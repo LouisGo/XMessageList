@@ -8,7 +8,6 @@ import { captureVisualAnchor, measureRuntimeDom, type RuntimeMeasurement, type V
 import type { RuntimeSegmentSizeSnapshot } from '../dom/rowMetricCache'
 import type { RuntimeInteractionState, RuntimeEdge } from '../interactions/interactionState'
 import type { RuntimeScrollIntentCoordinator } from '../scroll/runtimeScrollIntent'
-import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import type { ControllerMotionCoordinator } from './controllerMotionCoordinator'
 import type { ProjectionTransactionQueue } from './transactionQueue'
 import { findKeyForAnchor } from '../shared/snapshotIdentity'
@@ -26,7 +25,6 @@ export type RuntimeControllerMeasurementHost<TMessage, TOptimistic> = {
   scrollIntent: RuntimeScrollIntentCoordinator
   motion: ControllerMotionCoordinator<TMessage, TOptimistic>
   transactions: ProjectionTransactionQueue<TMessage, TOptimistic>
-  stateAxes: RuntimeStateAxes
   interactions: RuntimeInteractionState<TMessage, TOptimistic>
   snapshot: MessageListSnapshot<TMessage, TOptimistic>
   lastMeasurement: RuntimeMeasurement
@@ -127,7 +125,6 @@ export function scheduleResizeMeasurementFrame<TMessage, TOptimistic>(host: Runt
       )
     }
     host.dirtyRange.clear()
-    host.stateAxes.markTransactionSettling()
     host.pushDiagnostic('measurement.resize.dirtyKeys', 'info', {
       rowCount: host.lastMeasurement.visibleRows.length,
       dirtyKeyCount: dirtyRange.keys.size,

@@ -5,7 +5,6 @@ import type { LoadedSegment } from '../contracts/segment'
 import type { MessageListSnapshot } from '../contracts/snapshot'
 import type { ScrollSource } from '../scroll/scrollIntentEngine'
 import { UnderflowCoordinator } from './underflowCoordinator'
-import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import type {
   DestinationIntent,
   EdgeNeedOptions,
@@ -37,21 +36,17 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
   private readonly underflow: UnderflowCoordinator<TMessage, TOptimistic>
 
   constructor(
-    private readonly axes: RuntimeStateAxes,
     underflowTolerancePx = 2,
     edgeActivationMarginPx?: number,
   ) {
     this.edge = new EdgeNeedCoordinator((kind) => this.nextRequestToken(kind))
     this.followBottom = new FollowBottomCoordinator(
-      this.axes,
       (kind) => this.nextRequestToken(kind),
     )
     this.destination = new DestinationCoordinator(
-      this.axes,
       (kind) => this.nextRequestToken(kind),
     )
     this.underflow = new UnderflowCoordinator(
-      this.axes,
       underflowTolerancePx,
       edgeActivationMarginPx,
     )
@@ -63,7 +58,6 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     this.followBottom.reset()
     this.destination.reset()
     this.underflow.reset()
-    this.axes.resetIntentAxes()
     return {
       ...this.edge.reset(snapshot),
       pendingIntent: null,
@@ -73,10 +67,6 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
 
   getPendingDestination(): DestinationIntent | null {
     return this.destination.getPending()
-  }
-
-  markPendingDestinationResolvingDom(): void {
-    this.destination.markResolvingDom()
   }
 
   markLocalDestinationSettled(): void {
@@ -152,11 +142,6 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
       return null
     }
 
-    if (pendingIntent === 'underflow-fill') {
-      this.axes.markUnderflowPending()
-    } else {
-      this.axes.markEdgePending()
-    }
     return update
   }
 
@@ -173,10 +158,6 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
       { ignoreScrollSource: true },
     )
 
-    if (update) {
-      this.axes.markEdgePending()
-    }
-
     return update
   }
 
@@ -185,10 +166,6 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
     edge: RuntimeEdge,
   ): InteractionUpdate<TMessage, TOptimistic> | null {
     const update = this.edge.retry(snapshot, edge)
-
-    if (update) {
-      this.axes.markEdgePending()
-    }
 
     return update
   }
@@ -204,7 +181,6 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
       if (snapshot.pendingIntent === 'underflow-fill') {
         this.underflow.reset()
       }
-      this.axes.markReadyIdle()
     }
 
     return next
@@ -221,7 +197,6 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
       if (snapshot.pendingIntent === 'underflow-fill') {
         this.underflow.reset()
       }
-      this.axes.markReadyIdle()
     }
 
     return next
@@ -305,16 +280,6 @@ export class RuntimeInteractionState<TMessage, TOptimistic> {
 
     if (!this.followBottom.hasActive(next)) {
       this.followBottom.reset()
-    }
-
-    if (
-      !next.pendingIntent &&
-      !this.axes.isReadySubstate(
-        'READY_DESTINATION_PENDING',
-        'READY_FOLLOW_BOTTOM_PENDING',
-      )
-    ) {
-      this.axes.markReadyIdle()
     }
 
     return next

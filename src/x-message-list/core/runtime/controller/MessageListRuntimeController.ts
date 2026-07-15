@@ -12,7 +12,6 @@ import { RuntimeScrollIntentCoordinator } from '../scroll/runtimeScrollIntent'
 import { RuntimeInteractionState, type DestinationIntent, type InteractionUpdate, type RuntimeEdge } from '../interactions/interactionState'
 import type { MessageListRuntimeEvent, MessageListRuntimeEventListener, ViewportAnchorChangedEvent, ViewportObservationListener, ViewportObservationReason } from '../contracts/events'
 import type { LoadedSegment } from '../contracts/segment'
-import { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import { createResilientScheduler } from './scheduler'
 import { captureVisualAnchor, measureRuntimeDom, type VisualAnchor } from '../dom/measurement'
 import type { MessageListRuntimeOptions, RuntimeScheduler } from '../contracts/options'
@@ -46,7 +45,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   private readonly registry = new RuntimeDomRegistry()
   private readonly events: ControllerEventPublisher<TMessage, TOptimistic>
   private readonly interactions: RuntimeInteractionState<TMessage, TOptimistic>
-  private readonly stateAxes = new RuntimeStateAxes()
   private readonly scrollIntent: RuntimeScrollIntentCoordinator
   private readonly domInteractions: RuntimeDomInteractions<TMessage, TOptimistic>
   private readonly transactions = new ProjectionTransactionQueue<TMessage, TOptimistic>()
@@ -78,7 +76,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       resolveCurrentAnchor: () => this.resolveCurrentVisualAnchor(),
       setLastAnchor: (resolved) => { this.lastAnchor = resolved.anchor; this.lastAnchorOffsetWithinMessage = resolved.offsetWithinMessage },
     })
-    this.interactions = new RuntimeInteractionState(this.stateAxes, options.underflowTolerancePx, options.edgeActivationMarginPx)
+    this.interactions = new RuntimeInteractionState(options.underflowTolerancePx, options.edgeActivationMarginPx)
     this.scrollIntent = new RuntimeScrollIntentCoordinator(options)
     this.domInteractions = new RuntimeDomInteractions({
       scheduler: this.scheduler,
@@ -93,7 +91,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     })
     this.snapshot = createInitialSnapshot<TMessage, TOptimistic>(this.sessionId)
     this.motion = new ControllerMotionCoordinator({ scheduler: this.scheduler, options: options.scrollMotion, host: {
-        stateAxes: this.stateAxes,
         getSnapshot: () => this.snapshot,
         setSnapshot: (snapshot) => { this.snapshot = snapshot },
         emitSnapshot: () => this.emitSnapshot(),
@@ -191,7 +188,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.pendingEdgeSlotProjection = null
     const timeoutHandle = this.viewCommitTimeout.schedule(token)
     this.transactions.setPending({ token, segment, anchor, timeoutHandle, startedAt: this.scheduler.now(), anchorRetryCount: 0, scrollWriteCount: 0, stage, rollbackSnapshot })
-    this.stateAxes.markTransactionActive()
     const previous = this.interactions.projectEdgeStateForSegment(this.snapshot, segment)
     this.snapshot = createSnapshotFromSegment(segment, { previous, projectionRevision, viewportPhase: 'PROJECTING' })
     this.emitSnapshot()
@@ -230,7 +226,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     let settled = false
     try {
       this.scrollIntent.incrementFrame()
-      this.stateAxes.markTransactionMeasuring()
       this.setViewportPhase('MEASURING')
       const precheck = measureTransactionPrecheck({ pushDiagnostic: this.pushDiagnostic.bind(this), pending, snapshot: this.snapshot, registry: this.registry, domInteractions: this.domInteractions, dirtyRange: this.dirtyRange })
       this.lastMeasurement = precheck.measurement
@@ -245,13 +240,9 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
         })
         return
       }
-      this.stateAxes.markTransactionCorrecting()
       this.setViewportPhase('CORRECTING')
       const destination = this.interactions.getPendingDestination()
       const transactionScrollSource = resolveTransactionScrollSource({ snapshot: this.snapshot, segment: pending.segment, destination })
-      if (pending.segment.modifier.type === 'reset-around') {
-        this.interactions.markPendingDestinationResolvingDom()
-      }
       const scrollSettlement = settleTransactionScrollPosition({
         snapshot: this.snapshot,
         segment: pending.segment,
@@ -266,13 +257,11 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.lastMeasurement = finalMeasurement
       this.domInteractions.recordRowMetrics(this.lastMeasurement, createMeasurementCacheContext(this.snapshot, 'transaction'))
       this.dirtyRange.clear()
-      this.stateAxes.markTransactionSettling()
       this.snapshot = this.interactions.settleSegment(this.snapshot, pending.segment)
       if (scrollSettlement.kind === 'instant' && scrollSettlement.bottomLockState) this.snapshot = { ...this.snapshot, bottomLockState: scrollSettlement.bottomLockState }
       this.domInteractions.settleDirectScrollSegment(pending.segment.modifier)
       this.syncScrollIntentBottomLock()
       this.transactions.clearPending()
-      this.stateAxes.markTransactionIdle()
       const shouldStartRuntimeMotion = scrollSettlement.kind === 'motion'
       if (shouldStartRuntimeMotion) { // 先完成事务 settle，再让 continuation 启动 motion；队列里更高优先级事务仍可先执行。
         this.pendingRuntimeMotion = { commitToken: token, settlement: scrollSettlement, scrollSource: transactionScrollSource, segment: pending.segment }
@@ -312,7 +301,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       clearPendingEdgeSlotProjection: () => { this.pendingEdgeSlotProjection = null },
       dirtyRange: this.dirtyRange,
       restoreSnapshot: (snapshot) => { this.snapshot = snapshot },
-      markTransactionIdle: () => this.stateAxes.markTransactionIdle(),
       syncScrollIntentBottomLock: () => this.syncScrollIntentBottomLock(),
       emitSnapshot: () => this.emitSnapshot(),
     }, pending)
@@ -515,7 +503,6 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     })
   }
   private setViewportPhase(phase: MessageListSnapshot['viewportPhase']): void {
-    this.stateAxes.markTransactionForViewportPhase(phase)
     this.snapshot = { ...this.snapshot, viewportPhase: phase }
     this.emitSnapshot()
   }
@@ -526,19 +513,15 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       this.startTransaction(next.segment, next.stage)
       return true
     }
-    if (!this.transactions.hasPending()) {
-      this.stateAxes.markTransactionIdle()
-    }
     return false
   }
   private projectionTransactionHost(): ProjectionTransactionHost<TMessage, TOptimistic> {
     return {
       sessionId: this.sessionId, getSnapshot: () => this.snapshot, interactions: this.interactions,
       transactions: this.transactions, scheduler: this.scheduler, isMotionActive: () => this.motion.isActive(),
-      rejectAfterDestroy: (operation) => this.rejectAfterDestroy(operation), markTransactionIdle: () => this.stateAxes.markTransactionIdle(),
+      rejectAfterDestroy: (operation) => this.rejectAfterDestroy(operation),
       cancelPendingRuntimeMotion: () => this.cancelPendingRuntimeMotion(), resetSnapshot: (snapshot) => { this.snapshot = snapshot },
       syncScrollIntentBottomLock: () => this.syncScrollIntentBottomLock(), startTransaction: (segment, stage) => this.startTransaction(segment, stage),
-      markTransactionQueued: () => this.stateAxes.markTransactionQueued(),
       pushDiagnostic: (name, severity, details) => this.pushDiagnostic(name, severity, details),
       rollbackStagedTransaction: (pending) => this.rollbackStagedTransaction(pending), applySettledTransactionContinuations: (options) => this.applySettledTransactionContinuations(options),
     }

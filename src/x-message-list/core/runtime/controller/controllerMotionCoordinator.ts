@@ -5,14 +5,12 @@ import type { ViewportDiagnosticRecord, ViewportObservationReason } from '../con
 import type { RuntimeMeasurement } from '../dom/measurement'
 import type { DestinationIntent } from '../interactions/interactionState'
 import type { ScrollSource } from '../scroll/scrollIntentEngine'
-import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import { MotionCoordinator, type ScrollMotionCancelReason, type ScrollMotionSource } from '../motion/motionCoordinator'
 import type { TransactionScrollResolution } from '../transactions/transactionSettlement'
 
 type MotionResolution = Extract<TransactionScrollResolution, { kind: 'motion' }>
 
 type MotionHost<TMessage, TOptimistic> = {
-  stateAxes: RuntimeStateAxes
   getSnapshot: () => MessageListSnapshot<TMessage, TOptimistic>
   setSnapshot: (snapshot: MessageListSnapshot<TMessage, TOptimistic>) => void
   emitSnapshot: () => void
@@ -202,8 +200,6 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
       targetTop,
       projectionCommitToken,
     }
-    this.host.stateAxes.markMotionActive()
-    this.host.stateAxes.markDestinationMotionActive()
     this.host.setViewportPhase('MOTION')
     let settledSynchronously = false
     const isActive = this.motion.start({
@@ -230,8 +226,6 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     })
     if (!isActive && !settledSynchronously) {
       this.activeMotion = null
-      this.host.stateAxes.markReadyIdle()
-      this.host.stateAxes.markDestinationInterrupted()
       this.host.setViewportPhase('IDLE')
       return false
     }
@@ -308,8 +302,6 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
     if (resolution.source === 'followBottom') {
       this.host.clearFollowBottom()
     }
-    this.host.stateAxes.markReadyIdle()
-    this.host.stateAxes.markDestinationSettled()
     this.host.syncScrollIntentBottomLock()
     this.host.setViewportPhase('IDLE')
     this.host.pushDiagnostic('destinationMotion.settle', 'info', {
@@ -349,7 +341,6 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
       return
     }
 
-    this.host.stateAxes.markReadyIdle()
     if (
       reason === 'transaction-supersede' ||
       reason === 'restart'
@@ -363,7 +354,6 @@ export class ControllerMotionCoordinator<TMessage, TOptimistic> {
       reason === 'target-missing' ||
       reason === 'resize-during-motion'
     ) {
-      this.host.stateAxes.markDestinationInterrupted()
       this.host.clearFollowBottom()
       this.host.setSnapshot({
         ...this.host.getSnapshot(),

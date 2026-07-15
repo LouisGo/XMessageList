@@ -1,6 +1,5 @@
 import type { MessageIdentityAnchor } from '../contracts/identity'
 import type { MessageListSnapshot } from '../contracts/snapshot'
-import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import type { InteractionUpdate, RuntimeEdge, UnderflowInput } from '../state/interactionTypes'
 
 /**
@@ -12,7 +11,6 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
   private readonly requests = new Set<string>()
 
   constructor(
-    private readonly axes: RuntimeStateAxes,
     private readonly tolerancePx = 2,
     private readonly edgeActivationMarginPx?: number,
   ) {}
@@ -86,7 +84,6 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
       return null
     }
 
-    this.axes.markUnderflowPending()
     return {
       ...update,
       snapshot: {
@@ -107,7 +104,6 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
     }
 
     this.reset()
-    this.axes.markReadyIdle()
     return {
       ...snapshot,
       pendingIntent: null,
@@ -138,7 +134,6 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
       return snapshot
     }
 
-    this.axes.markReadyIdle()
     return {
       ...snapshot,
       pendingIntent: null,
@@ -150,7 +145,6 @@ export class UnderflowCoordinator<TMessage, TOptimistic> {
   ): InteractionUpdate<TMessage, TOptimistic> {
     this.lastEdge = null
     this.requests.clear()
-    this.axes.markReadyIdle()
     return {
       snapshot: {
         ...snapshot,

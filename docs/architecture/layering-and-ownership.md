@@ -101,6 +101,7 @@ Viewport runtime 负责：
 - 串行执行 projection transaction：消费 loaded segment store 发布的 segment modifier，等待 React commit，测量 DOM，执行 scroll correction。
 - commit 后同步测量并写入 anchor correction。
 - 分类 scroll source，并维护 edge latch。
+- 由 transaction queue、interaction state 和 motion coordinator 分别持有各自状态事实，不维护只用于镜像这些事实的平行状态轴。
 - 发布 viewport events、diagnostics 和 observation。
 
 Viewport runtime 不负责：

@@ -16,12 +16,10 @@ export type ProjectionTransactionHost<TMessage, TOptimistic> = {
   scheduler: RuntimeScheduler
   isMotionActive(): boolean
   rejectAfterDestroy(operation: string): boolean
-  markTransactionIdle(): void
   cancelPendingRuntimeMotion(): void
   resetSnapshot(snapshot: MessageListSnapshot<TMessage, TOptimistic>): void
   syncScrollIntentBottomLock(): void
   startTransaction(segment: LoadedSegment<TMessage, TOptimistic>, stage?: ProjectionStage): void
-  markTransactionQueued(): void
   pushDiagnostic(
     name: string,
     severity: ViewportDiagnosticRecord['severity'],
@@ -79,7 +77,6 @@ export function applyLoadedProjectionTransaction<TMessage, TOptimistic>(
   cancelTransactionsBeforeGeneration(host, segment)
   if (host.transactions.shouldQueue() || (host.isMotionActive() && policy.queueDuringMotion)) {
     const queued = host.transactions.enqueue(segment, policy)
-    host.markTransactionQueued()
     host.pushDiagnostic('transaction.queued', 'info', {
       sessionId: segment.sessionId,
       generation: segment.generation,
@@ -114,7 +111,6 @@ export function stageLoadedProjectionTransaction<TMessage, TOptimistic>(
   )
   if (host.transactions.shouldQueue() || host.isMotionActive()) {
     host.transactions.enqueue(segment, policy, stage)
-    host.markTransactionQueued()
     return true
   }
   host.startTransaction(segment, stage)
@@ -149,7 +145,6 @@ function cancelTransactionsBeforeGeneration<TMessage, TOptimistic>(
     if (cancelled.timeoutHandle !== null) {
       host.scheduler.clearTimeout(cancelled.timeoutHandle)
     }
-    host.markTransactionIdle()
   }
   host.transactions.removeQueuedBeforeGeneration(segment.generation)
   const snapshot = host.getSnapshot()
@@ -170,7 +165,6 @@ export function rollbackStagedProjection<TMessage, TOptimistic>(
     clearPendingEdgeSlotProjection(): void
     dirtyRange: RuntimeDirtyRangeRegistry
     restoreSnapshot(snapshot: MessageListSnapshot<TMessage, TOptimistic>): void
-    markTransactionIdle(): void
     syncScrollIntentBottomLock(): void
     emitSnapshot(): void
   },
@@ -188,7 +182,6 @@ export function rollbackStagedProjection<TMessage, TOptimistic>(
     ...withNextProjectionRevision({ ...rollback, viewportPhase: 'IDLE' }),
     viewportPhase: 'IDLE',
   })
-  input.markTransactionIdle()
   input.syncScrollIntentBottomLock()
   input.emitSnapshot()
 }

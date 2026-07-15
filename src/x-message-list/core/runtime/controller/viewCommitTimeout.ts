@@ -2,13 +2,11 @@ import type { MessageListRuntimeEvent } from '../contracts/events'
 import type { RuntimeScheduler } from '../contracts/options'
 import type { MessageListSnapshot, ProjectionCommitToken } from '../contracts/snapshot'
 import type { RuntimeInteractionState } from '../interactions/interactionState'
-import type { RuntimeStateAxes } from '../state/runtimeStateAxes'
 import type { PendingTransaction } from './controllerTransactionHelpers'
 import type { ProjectionTransactionQueue } from './transactionQueue'
 
 export type ViewCommitTimeoutHost<TMessage, TOptimistic> = {
   readonly transactions: ProjectionTransactionQueue<TMessage, TOptimistic>
-  readonly stateAxes: RuntimeStateAxes
   readonly interactions: RuntimeInteractionState<TMessage, TOptimistic>
   snapshot: MessageListSnapshot<TMessage, TOptimistic>
   rollbackStagedTransaction(pending: PendingTransaction<TMessage, TOptimistic>): void
@@ -67,7 +65,6 @@ export class ViewCommitTimeoutController<TMessage, TOptimistic> {
         this.host.applyInteractionProjection(
           this.host.interactions.resetForGeneration(this.host.snapshot),
         )
-        this.host.stateAxes.markTransactionIdle()
         this.host.setViewportPhase('IDLE')
       }
       this.host.pushDiagnostic('transaction.commitTimeout', 'error', token)
