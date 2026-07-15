@@ -47,17 +47,6 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
 
   private readonly rowMetrics: RuntimeRowMetricCache
 
-  private detachedScrollTop: number | null = null
-
-  private lastKnownScrollTop = 0
-
-  private attachRestoreFrame: number | null = null
-
-  private pendingAttachRestore: {
-    container: HTMLElement
-    scrollTop: number
-  } | null = null
-
   private readonly handleScroll = (): void => {
     const now = this.options.scheduler.now()
 
@@ -65,8 +54,6 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       return
     }
 
-    this.cancelAttachRestore()
-    this.rememberScrollTop()
     this.markEdgeSourceActive(now)
     // 先登记 frame 再广播 navigation intent；同步 listener 中的 safety probe
     // 也必须看见“滚动尚未结算”，不能利用回调重入窗口修改 topology。
@@ -76,7 +63,6 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
 
   private readonly handleUserScrollInput = (): void => {
     const now = this.options.scheduler.now()
-    this.cancelAttachRestore()
     this.markEdgeSourceActive(now)
     this.scheduleScrollFrame()
     this.options.onUserScrollIntent()
@@ -96,12 +82,8 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     )
     this.disconnectEdgeObservers()
     this.options.registry.setScrollContainer(container)
-    if (this.detachedScrollTop !== null) {
-      // warm attach 先恢复上次 scrollTop，下一帧再按新 scrollHeight clamp，减少切 session 白屏跳动。
-      this.restoreDetachedScrollTop(container, this.detachedScrollTop)
-    } else {
-      this.lastKnownScrollTop = container.scrollTop
-    }
+    // attach 阶段不回放原始 scrollTop。React row refs 就绪后由 runtime 按消息身份
+    // 与 row-local offset 完成一次不可见 correction，再发布 viewAttachmentSettled。
     container.addEventListener('scroll', this.handleScroll, { passive: true })
     container.addEventListener('wheel', this.handleUserScrollInput, { passive: true })
     container.addEventListener('touchstart', this.handleUserScrollInput, { passive: true })
@@ -110,11 +92,7 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
   }
 
   detachScrollContainer(): void {
-    this.cancelAttachRestore()
     const container = this.options.registry.snapshot().scrollContainer
-    this.detachedScrollTop = container
-      ? this.resolveDetachScrollTop(container)
-      : this.detachedScrollTop
     container?.removeEventListener(
       'scroll',
       this.handleScroll,
@@ -142,11 +120,10 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     this.afterIntersectionObserver = this.createEdgeObserver(edge, element)
   }
 
-  hasPendingScrollFrame(): boolean { return this.scrollFrame !== null || this.attachRestoreFrame !== null }
+  hasPendingScrollFrame(): boolean { return this.scrollFrame !== null }
   isDirectScrollActive(): boolean { return this.directScroll.snapshot().status !== 'IDLE' }
 
   beginDirectScroll(): void {
-    this.cancelAttachRestore()
     const session = this.directScroll.begin()
     this.emitDirectScrollDiagnostic('begin', session)
     this.options.onUserScrollIntent()
@@ -160,7 +137,6 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
       return false
     }
 
-    this.cancelAttachRestore()
     this.scheduleScrollFrame()
     this.options.onUserScrollIntent()
     this.markEdgeSourceActive(this.options.scheduler.now())
@@ -173,7 +149,6 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     const session = this.directScroll.recordWrite(edgeIntent)
     this.emitDirectScrollDiagnostic('write', session, { scrollTop })
     container.scrollTop = scrollTop
-    this.lastKnownScrollTop = container.scrollTop
     return true
   }
 
@@ -202,6 +177,10 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
 
     if (!resolved) {
       return false
+    }
+
+    if (Math.abs(resolved.container.scrollTop - resolved.scrollTop) <= 1) {
+      return true
     }
 
     this.writeProgrammaticScroll(resolved.container, resolved.scrollTop, source)
@@ -269,7 +248,6 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     scrollTop: number,
     source: ScrollSource = 'programmatic',
   ): void {
-    this.cancelAttachRestore()
     // 程序性写入会短暂压制原生 scroll 事件，防止 recovery/motion 被误判成用户滚动。
     this.writeSuppressedScroll(container, scrollTop, source)
   }
@@ -403,85 +381,14 @@ export class RuntimeDomInteractions<TMessage, TOptimistic> {
     )
   }
 
-  private restoreDetachedScrollTop(
-    container: HTMLElement,
-    scrollTop: number,
-  ): void {
-    this.writeSuppressedScroll(container, scrollTop, 'recovery', {
-      remember: false,
-    })
-    this.rememberRestoredScrollTop(container, scrollTop)
-    this.pendingAttachRestore = { container, scrollTop }
-    this.attachRestoreFrame = this.options.scheduler.requestAnimationFrame(() => {
-      this.attachRestoreFrame = null
-      const pending = this.pendingAttachRestore
-      this.pendingAttachRestore = null
-
-      if (
-        !pending ||
-        this.options.registry.snapshot().scrollContainer !== pending.container
-      ) {
-        return
-      }
-
-      const maxScrollTop = Math.max(
-        0,
-        pending.container.scrollHeight - pending.container.clientHeight,
-      )
-      const nextTop = Math.min(pending.scrollTop, maxScrollTop)
-
-      if (nextTop > 0 && Math.abs(pending.container.scrollTop - nextTop) > 1) {
-        this.writeSuppressedScroll(pending.container, nextTop, 'recovery')
-      }
-    })
-  }
-
-  private resolveDetachScrollTop(container: HTMLElement): number {
-    return container.scrollTop === 0 && this.lastKnownScrollTop > 0
-      ? this.lastKnownScrollTop
-      : container.scrollTop
-  }
-
-  private rememberScrollTop(): void {
-    const container = this.options.registry.snapshot().scrollContainer
-
-    if (container) {
-      this.lastKnownScrollTop = container.scrollTop
-    }
-  }
-
-  private rememberRestoredScrollTop(
-    container: HTMLElement,
-    targetScrollTop: number,
-  ): void {
-    const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
-    const expected = Math.min(targetScrollTop, maxScrollTop)
-
-    if (Math.abs(container.scrollTop - expected) <= 1) {
-      this.lastKnownScrollTop = container.scrollTop
-    }
-  }
-
-  private cancelAttachRestore(): void {
-    if (this.attachRestoreFrame !== null) {
-      this.options.scheduler.cancelAnimationFrame(this.attachRestoreFrame)
-    }
-    this.attachRestoreFrame = null
-    this.pendingAttachRestore = null
-  }
-
   private writeSuppressedScroll(
     container: HTMLElement,
     scrollTop: number,
     source: ScrollSource,
-    options: { remember?: boolean } = {},
   ): void {
     this.options.onScrollWrite(source)
     this.suppressScrollUntil = this.options.scheduler.now() + 200
     container.scrollTop = scrollTop
-    if (options.remember !== false) {
-      this.lastKnownScrollTop = container.scrollTop
-    }
     this.scheduleScrollFrame()
   }
 

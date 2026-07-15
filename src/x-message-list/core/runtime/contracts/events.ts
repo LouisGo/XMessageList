@@ -7,12 +7,14 @@ import type {
   DestinationCancelledEvent,
   DestinationSettledEvent,
   ProjectionSettledEvent,
+  ViewAttachmentSettledEvent,
   ViewportNavigationIntentEvent,
 } from './orchestrationEvents'
 export type {
   DestinationCancelledEvent,
   DestinationSettledEvent,
   ProjectionSettledEvent,
+  ViewAttachmentSettledEvent,
   ViewportNavigationIntentEvent,
 } from './orchestrationEvents'
 
@@ -259,6 +261,7 @@ export type MessageListRuntimeEvent =
   | ViewportDiagnosticEvent
   | ViewportReadyEvent
   | ProjectionSettledEvent
+  | ViewAttachmentSettledEvent
   | ViewportErrorEvent
 
 /** runtime event 订阅回调。 */

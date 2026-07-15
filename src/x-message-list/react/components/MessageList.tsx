@@ -1,7 +1,7 @@
 import {
   memo,
   useCallback,
-  useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
 } from 'react'
@@ -25,6 +25,7 @@ import { useMessageListSnapshot } from '../hooks/useMessageListSnapshot'
 import { ProjectionCommitAck } from './ProjectionCommitAck'
 import { RuntimeEventBridge } from './RuntimeEventBridge'
 import type { MessageListProps } from '../types'
+import type { ViewAttachmentToken } from '../../core/runtime/internal'
 
 const noopSubscribe = () => () => undefined
 const SCROLL_TO_LATEST_VISIBILITY_DISTANCE_PX = 200
@@ -43,6 +44,9 @@ function MessageListInner<TMessage, TOptimistic>({
   getRowRenderVersion,
   onViewportAnchorChange,
   onViewportObservationChange,
+  onViewActivationChange,
+  activationKey,
+  presentation = 'active',
   scrollbar = 'native',
 }: MessageListProps<TMessage, TOptimistic>) {
   const sessionInternals = useMemo(
@@ -53,7 +57,13 @@ function MessageListInner<TMessage, TOptimistic>({
   const snapshot = useMessageListSnapshot(resolvedRuntime)
   const viewState = useMessageListViewState(session)
   const adapterRuntime = getMessageListAdapterRuntime(resolvedRuntime)
+  const rootRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const attachmentTokenRef = useRef<ViewAttachmentToken | null>(null)
+  const presentationRef = useRef(presentation)
+  const viewRetentionRef = useRef<ReturnType<
+    MessageListSessionInternals<TMessage>['retainView']
+  > | null>(null)
   const scrollToLatestVisibleByDistance = useScrollToLatestVisibleByDistance(
     resolvedRuntime,
     Boolean(renderScrollToLatest),
@@ -96,25 +106,52 @@ function MessageListInner<TMessage, TOptimistic>({
     position: 'relative' as const,
     minWidth: 0,
     minHeight: 0,
-  }), [style])
+    pointerEvents: presentation === 'staging' ? 'none' as const : undefined,
+  }), [presentation, style])
   const attachContainer = useCallback((element: HTMLDivElement | null) => {
     containerRef.current = element
     if (element) {
-      resolvedRuntime.attachScrollContainer(element)
+      attachmentTokenRef.current = adapterRuntime.attachView(element)
       return
     }
 
+    attachmentTokenRef.current = null
     resolvedRuntime.detachScrollContainer()
-  }, [resolvedRuntime])
-  useEffect(() => {
-    const release = sessionInternals.retainView()
-    return release
+  }, [adapterRuntime, resolvedRuntime])
+  useLayoutEffect(() => {
+    presentationRef.current = presentation
+  }, [presentation])
+  useLayoutEffect(() => {
+    const retention = sessionInternals.retainView(presentationRef.current)
+    viewRetentionRef.current = retention
+    return () => {
+      viewRetentionRef.current = null
+      retention.release()
+    }
   }, [sessionInternals])
+  useLayoutEffect(() => {
+    viewRetentionRef.current?.setPresentation(presentation)
+  }, [presentation])
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    if (presentation === 'staging') root.setAttribute('inert', '')
+    else root.removeAttribute('inert')
+  }, [presentation])
+  useLayoutEffect(() => {
+    const token = attachmentTokenRef.current
+    if (!token) return
+    attachmentTokenRef.current = null
+    adapterRuntime.ackViewAttachment(token)
+  })
   return (
     <div
+      ref={rootRef}
       data-message-list
+      data-message-list-presentation={presentation}
       data-scrollbar-mode={scrollbar}
       data-custom-scrollbar={scrollbar === 'custom' ? 'true' : 'false'}
+      aria-hidden={presentation === 'staging' ? true : undefined}
       className={className}
       style={rootStyle}
     >
@@ -125,8 +162,12 @@ function MessageListInner<TMessage, TOptimistic>({
       >
         <RuntimeEventBridge
           runtime={resolvedRuntime}
+          session={session}
+          presentation={presentation}
+          activationKey={activationKey}
           onViewportAnchorChange={onViewportAnchorChange}
           onViewportObservationChange={onViewportObservationChange}
+          onViewActivationChange={onViewActivationChange}
         />
         <MessageFlow
           runtime={adapterRuntime}
@@ -225,6 +266,8 @@ function areMessageListPropsEqual<TMessage, TOptimistic>(
   if (prev.session !== next.session) return false
   if (prev.className !== next.className) return false
   if (prev.scrollbar !== next.scrollbar) return false
+  if (prev.presentation !== next.presentation) return false
+  if (prev.activationKey !== next.activationKey) return false
 
   if (prev.style !== next.style) {
     if (!prev.style || !next.style) return false
@@ -251,6 +294,7 @@ function areMessageListPropsEqual<TMessage, TOptimistic>(
   if (prev.getRowRenderVersion !== next.getRowRenderVersion) return false
   if (prev.onViewportAnchorChange !== next.onViewportAnchorChange) return false
   if (prev.onViewportObservationChange !== next.onViewportObservationChange) return false
+  if (prev.onViewActivationChange !== next.onViewActivationChange) return false
 
   return true
 }

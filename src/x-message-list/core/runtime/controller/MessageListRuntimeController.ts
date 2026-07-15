@@ -2,7 +2,7 @@ import { correctTransactionAnchor } from '../dom/anchorCorrection'
 import { RuntimeDomRegistry } from '../dom/domRegistry'
 import { createViewportEvidence } from '../events/evidence'
 import type { MessageIdentityAnchor, MessageRuntimeItemKey } from '../contracts/identity'
-import type { MessageListAdapterRuntime } from '../internal'
+import type { MessageListAdapterRuntime, ViewAttachmentToken } from '../internal'
 import { createBrowserObserverFactory, createInitialSnapshot, createSnapshotFromSegment, isSameSegmentToken, isSameToken } from './controllerHelpers'
 import { resolveCapturedTransactionAnchor, resolvePendingAnchorKey, resolveTransactionScrollSource, shouldWaitForAnchorRef, type PendingRuntimeMotion, type ProjectionStage } from './controllerTransactionHelpers'
 import { withNextProjectionRevision } from '../shared/snapshotIdentity'
@@ -38,7 +38,7 @@ import {
   type ProjectionTransactionHost,
 } from './controllerProjectionTransactions'
 import { ViewCommitTimeoutController, type ViewCommitTimeoutHost } from './viewCommitTimeout'
-
+import { ControllerViewAttachment } from './controllerViewAttachment'
 export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unknown> implements MessageListAdapterRuntime<TMessage, TOptimistic> {
   private readonly scheduler: RuntimeScheduler
   private readonly sessionId: string
@@ -60,6 +60,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
   private readonly dirtyRange = new RuntimeDirtyRangeRegistry()
   private readonly rowKeyByElement = new Map<HTMLElement, MessageRuntimeItemKey>()
   private readonly viewCommitTimeout: ViewCommitTimeoutController<TMessage, TOptimistic>
+  private readonly viewAttachment: ControllerViewAttachment<TMessage, TOptimistic>
   private resizeFrame: number | null = null
   private destroyed = false
   constructor(options: MessageListRuntimeOptions) {
@@ -89,6 +90,17 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
       edgeActivationMarginPx: options.edgeActivationMarginPx,
       onDiagnostic: (name, severity, details) => this.pushDiagnostic(name, severity, details),
     })
+    this.viewAttachment = new ControllerViewAttachment(
+      this.sessionId, this.registry, this.domInteractions, () => this.snapshot,
+      () => ({ anchor: this.lastAnchor ?? this.snapshot.segmentMeta.anchor ?? null, offsetWithinMessage: this.lastAnchorOffsetWithinMessage }),
+      () => this.transactions.isBusy() || this.snapshot.viewportPhase !== 'IDLE',
+      (measurement) => {
+        this.lastMeasurement = measurement; const resolved = this.resolveMeasuredViewportAnchor()
+        this.emitViewportObservation('transaction-settle', 'recovery', resolved); this.emitAnchorChanged('transaction-settle', resolved)
+      },
+      (measurement) => { this.lastMeasurement = measurement; this.emitViewportObservation('transaction-settle', 'programmatic') },
+      (revision, status) => this.events.emitViewAttachmentSettled(revision, status),
+    )
     this.snapshot = createInitialSnapshot<TMessage, TOptimistic>(this.sessionId)
     this.motion = new ControllerMotionCoordinator({ scheduler: this.scheduler, options: options.scrollMotion, host: {
         getSnapshot: () => this.snapshot,
@@ -130,6 +142,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     this.domInteractions.attachScrollContainer(container)
     this.resizeObserver?.observe(container)
   }
+  attachView(container: HTMLElement): ViewAttachmentToken { this.attachScrollContainer(container); return this.viewAttachment.begin() }
   detachScrollContainer(): void {
     if (this.rejectAfterDestroy('detachScrollContainer')) return
     this.cancelPendingRuntimeMotion()
@@ -142,6 +155,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     for (const row of this.registry.clearAll()) this.resizeObserver?.unobserve(row)
     this.rowKeyByElement.clear()
     this.dirtyRange.clear()
+    this.viewAttachment.detach()
   }
   destroy(): void {
     if (this.destroyed) return
@@ -274,6 +288,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
         latencyMs,
       })
       if (!shouldStartRuntimeMotion) this.emitProjectionSettled(token, 'applied')
+      this.viewAttachment.markProjectionSettled()
       this.emitViewportReadyOnce(token)
       if (shouldStartRuntimeMotion) settled = true
       else {
@@ -293,6 +308,8 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     if (this.rejectAfterDestroy('setViewRetained')) return
     this.viewCommitTimeout.setRetained(retained, this.transactions.getPending())
   }
+  ackViewAttachment(token: ViewAttachmentToken): void { if (!this.rejectAfterDestroy('ackViewAttachment')) this.viewAttachment.ack(token) }
+  publishActiveViewObservation(): void { if (!this.rejectAfterDestroy('publishActiveViewObservation') && this.snapshot.viewportPhase === 'IDLE') this.viewAttachment.publishActiveObservation() }
   private rollbackStagedTransaction(
     pending: import('./controllerTransactionHelpers').PendingTransaction<TMessage, TOptimistic>,
   ): void {
@@ -309,6 +326,7 @@ export class MessageListRuntimeController<TMessage = unknown, TOptimistic = unkn
     if (this.startNextQueuedTransaction()) return
     if (this.startPendingRuntimeMotion()) return
     if (options.evaluatePostCommitInteractions === false) return
+    this.viewAttachment.settleIfReady()
     this.motion.reservePostCommitOpportunity()
     if (
       !this.motion.consumePostCommitOpportunity() &&

@@ -5,6 +5,11 @@ import type { RuntimeSegmentSizeSnapshot } from './dom/rowMetricCache'
 
 export type { ProjectionCommitToken } from './contracts/snapshot'
 
+export type ViewAttachmentToken = {
+  sessionId: string
+  attachmentRevision: number
+}
+
 // React adapter 持有 DOM ref 和 commit ack，因此比公开 runtime 多出 DOM 注册与 direct-scroll 方法。
 export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown> =
   MessageListRuntime<TMessage, TOptimistic> & {
@@ -16,6 +21,10 @@ export type MessageListAdapterRuntime<TMessage = unknown, TOptimistic = unknown>
       key: MessageRuntimeItemKey,
       element: HTMLElement | null,
     ): void
+    /** React view mount 的 attach transaction 起点。 */
+    attachView(container: HTMLElement): ViewAttachmentToken
+    /** row refs 与当前 React layout commit 均完成后确认 attach transaction。 */
+    ackViewAttachment(token: ViewAttachmentToken): void
     ackProjectionCommit(token: ProjectionCommitToken): void
     retryEdgeRequest(edge: 'before' | 'after'): void
     reportOverlayMetricMismatch(details: Record<string, unknown>): void
@@ -31,6 +40,8 @@ export type MessageListSessionRegistryRuntime<TMessage = unknown, TOptimistic = 
   MessageListRuntime<TMessage, TOptimistic> & {
     /** Session retain 生命周期决定当前 projection 是否应等待 React commit ack。 */
     setViewRetained(retained: boolean): void
+    /** staging promotion 后发布第一份 active observation。 */
+    publishActiveViewObservation(): void
     /** session-only live anchor capture; unlike the public identity getter, this retains row-local offset. */
     getViewportAnchorMemory(): {
       anchor: MessageIdentityAnchor

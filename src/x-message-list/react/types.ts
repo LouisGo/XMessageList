@@ -81,6 +81,40 @@ export type EdgeSlotInput = {
 /** overlay slot 的输入。 */
 export type OverlayStatusInput = MessageListOverlayStatus
 
+/** MessageList view 当前是否已经成为用户正在观看的正式视图。 */
+export type MessageListPresentation =
+  | 'staging'
+  | 'active'
+
+/** 一次 view activation 的唯一终态。 */
+export type MessageListViewActivationEvent =
+  | {
+      status: 'ready'
+      activationKey: string
+      sessionId: string
+      generation: number
+      segmentRevision: number
+      projectionRevision: number
+      resolution:
+        | 'initial-latest'
+        | 'initial-restore'
+        | 'warm-restore'
+        | 'destination-target'
+        | 'destination-fallback'
+        | 'empty'
+    }
+  | {
+      status: 'failed'
+      activationKey: string
+      sessionId: string
+      reason:
+        | 'request-failed'
+        | 'contract-violation'
+        | 'anchor-unavailable'
+        | 'commit-timeout'
+      error?: unknown
+    }
+
 /** empty slot 的输入。 */
 export type EmptySlotInput = {
   /** 重新加载 latest 窗口。 */
@@ -285,6 +319,12 @@ export type MessageListProps<TMessage = unknown, TOptimistic = unknown> = {
   className?: string
   /** 根节点 style；未传时只保留组件内部必需样式。 */
   style?: CSSProperties
+  /** staging 视图允许投影和测量，但不产生已读、锚点保存等用户可见副作用。 */
+  presentation?: MessageListPresentation
+  /** 宿主分配的 view activation 关联键；未传时不发布 activation 终态。 */
+  activationKey?: string
+  /** 对应 activationKey 的 ready/failed 唯一终态。 */
+  onViewActivationChange?: (event: MessageListViewActivationEvent) => void
   /** before edge 状态 slot；未传时不渲染 before 状态入口。 */
   renderBeforeStatus?: (input: EdgeSlotInput) => ReactNode
   /** after edge 状态 slot；未传时不渲染 after 状态入口。 */

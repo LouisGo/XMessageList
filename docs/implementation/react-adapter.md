@@ -55,6 +55,27 @@ render
 
 StrictMode 下可能出现 attach/detach/attach，ack 必须带 sessionId/generation/segmentRevision/projectionRevision，runtime 只接受当前 token。
 
+## View Attachment Ack
+
+每次 scroll container callback ref 创建新的 attachment token 后，`MessageList` 自身的
+layout effect 必须在整棵子树 commit 完成后确认该 token：
+
+```text
+row refs + RuntimeEventBridge subscription
+-> projection commit ack
+-> scroll container ref creates attachment token
+-> MessageList parent layout effect
+-> runtime.ackViewAttachment(token)
+-> measure / identity restore / viewAttachmentSettled
+```
+
+attachment ack 不能放在 scroll container 的子组件 layout effect 中。React 会先执行
+子组件 layout effect，再附加父级 host ref；子组件会读到空 token，而 warm session
+又不会产生新的 `projectionRevision` 来补跑 effect。
+
+runtime 在 projection、motion 或 measurement 尚未稳定时必须保留已经确认的
+attachment token，并在恢复 idle 后 settle；不得先清除 token 再等待其他事务。
+
 ## Row Wrapper
 
 Row wrapper 必须：

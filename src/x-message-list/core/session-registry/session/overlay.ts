@@ -3,6 +3,7 @@ import type {
   MessageListRequestResult,
   MessageListViewState,
 } from '../contracts'
+import type { ProjectionSettledEvent } from '../../runtime/index'
 
 const OVERLAY_LOADING_DELAY_MS = 200
 
@@ -12,6 +13,12 @@ export class MessageListSessionOverlay {
   private overlayRequestId = 0
   private overlayLoadingTimer: ReturnType<typeof setTimeout> | null = null
   private overlayPendingRequestId: number | null = null
+  private awaitingProjection: {
+    requestId: number
+    generation: number
+    segmentRevision: number
+    surfaceFailure: boolean
+  } | null = null
   private requestEpoch = 0
 
   constructor(
@@ -36,6 +43,7 @@ export class MessageListSessionOverlay {
     this.overlayRequestId += 1
     const requestId = this.overlayRequestId
     this.overlayPendingRequestId = requestId
+    this.awaitingProjection = null
     this.clearLoadingTimer()
     if (this.overlayStatus.status !== 'idle') {
       this.setStatus('idle')
@@ -61,6 +69,7 @@ export class MessageListSessionOverlay {
     }
 
     this.overlayPendingRequestId = null
+    this.awaitingProjection = null
     this.clearLoadingTimer()
     this.setStatus(status, error)
   }
@@ -70,7 +79,24 @@ export class MessageListSessionOverlay {
     overlayRequestId: number,
     result: Pick<MessageListRequestResult<unknown, unknown>, 'error' | 'status'>,
     surfaceFailure = true,
+    projection?: { generation: number; segmentRevision: number },
   ): void {
+    if (
+      result.status === 'applied' &&
+      projection &&
+      overlayRequestId === this.overlayRequestId
+    ) {
+      this.overlayPendingRequestId = null
+      this.awaitingProjection = {
+        requestId: overlayRequestId,
+        generation: projection.generation,
+        segmentRevision: projection.segmentRevision,
+        surfaceFailure,
+      }
+      // loading timer intentionally stays armed: request success is not a visual
+      // success until the matching projection has measured and settled.
+      return
+    }
     const failed = surfaceFailure && result.status === 'failed'
     this.finishRequest(
       overlayRequestId,
@@ -79,9 +105,31 @@ export class MessageListSessionOverlay {
     )
   }
 
+  finishProjection(event: ProjectionSettledEvent): void {
+    const awaiting = this.awaitingProjection
+    if (
+      !awaiting ||
+      awaiting.requestId !== this.overlayRequestId ||
+      awaiting.generation !== event.generation ||
+      awaiting.segmentRevision !== event.segmentRevision
+    ) return
+
+    if (event.status === 'commit-timeout' && awaiting.surfaceFailure) {
+      this.finishRequest(
+        awaiting.requestId,
+        'error',
+        new Error('Message list projection commit timed out'),
+      )
+      return
+    }
+
+    this.finishRequest(awaiting.requestId, 'idle')
+  }
+
   cancelRequest(): void {
     this.overlayRequestId += 1
     this.overlayPendingRequestId = null
+    this.awaitingProjection = null
     this.clearLoadingTimer()
     if (this.overlayStatus.status !== 'idle') {
       this.setStatus('idle')
@@ -103,6 +151,7 @@ export class MessageListSessionOverlay {
   destroy(): void {
     this.overlayRequestId += 1
     this.overlayPendingRequestId = null
+    this.awaitingProjection = null
     this.requestEpoch += 1
     this.clearLoadingTimer()
   }

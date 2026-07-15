@@ -7,18 +7,26 @@ import {
 import { getMessageListAdapterRuntime } from '../internal'
 import {
   createContainer,
-  FakeScheduler,
   setElementMetrics,
 } from '../../../../test/fakes'
 
 describe('MessageList warm attach restore', () => {
-  it('restores the same runtime scrollTop when reattached to a reused container', () => {
+  it('restores a warm view by message identity and viewport offset', () => {
     const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = Array.from({ length: 4 }, (_, index) =>
       createRow(`row-${index + 1}`, index * 50, 50)
     )
+    const attachmentEvents: Array<{
+      status: 'applied' | 'anchor-unavailable'
+      attachmentRevision: number
+    }> = []
+    runtime.subscribeRuntimeEvent((event) => {
+      if (event.type === 'viewAttachmentSettled') {
+        attachmentEvents.push(event)
+      }
+    })
 
     container.append(...rows)
     runtime.attachScrollContainer(container)
@@ -31,16 +39,34 @@ describe('MessageList warm attach restore', () => {
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
 
     container.scrollTop = 75
+    rows.forEach((row, index) => {
+      setElementMetrics(row, { top: index * 50 - 75, height: 50 })
+    })
     runtime.detachScrollContainer()
     container.scrollTop = 0
-    runtime.attachScrollContainer(container)
+    rows.forEach((row, index) => {
+      setElementMetrics(row, { top: index * 50, height: 50 })
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    })
+    const token = adapter.attachView(container)
+
+    expect(container.scrollTop).toBe(0)
+    adapter.ackViewAttachment(token)
 
     expect(container.scrollTop).toBe(75)
+    expect(attachmentEvents).toEqual([{
+      status: 'applied',
+      attachmentRevision: token.attachmentRevision,
+      type: 'viewAttachmentSettled',
+      sessionId: 'source-a',
+      generation: 1,
+      segmentRevision: 1,
+      projectionRevision: 1,
+    }])
   })
 
-  it('replays warm restore after the reattached container regains scroll range', () => {
-    const scheduler = new FakeScheduler()
-    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a', scheduler })
+  it('waits for row refs before acknowledging the warm attach transaction', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
     const adapter = getMessageListAdapterRuntime(runtime)
     const container = createContainer({ height: 100 })
     const rows = Array.from({ length: 4 }, (_, index) =>
@@ -59,23 +85,73 @@ describe('MessageList warm attach restore', () => {
     adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
 
     container.scrollTop = 75
-    container.dispatchEvent(new Event('scroll'))
-    scheduler.flushFrame()
+    rows.forEach((row, index) => {
+      setElementMetrics(row, { top: index * 50 - 75, height: 50 })
+    })
     container.replaceChildren()
     container.scrollTop = 0
     runtime.detachScrollContainer()
 
-    runtime.attachScrollContainer(container)
+    const token = adapter.attachView(container)
 
     expect(container.scrollTop).toBe(0)
 
     container.append(...rows)
+    rows.forEach((row, index) => {
+      setElementMetrics(row, { top: index * 50, height: 50 })
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    })
+    adapter.ackViewAttachment(token)
+
+    expect(container.scrollTop).toBe(75)
+  })
+
+  it('settles an acknowledged attachment after an in-flight projection finishes', () => {
+    const runtime = createMessageListRuntime<string>({ sessionId: 'source-a' })
+    const adapter = getMessageListAdapterRuntime(runtime)
+    const container = createContainer({ height: 100 })
+    const rows = Array.from({ length: 4 }, (_, index) =>
+      createRow(`row-${index + 1}`, index * 50, 50)
+    )
+    const attachmentEvents: Array<{
+      status: 'applied' | 'anchor-unavailable'
+      attachmentRevision: number
+    }> = []
+    runtime.subscribeRuntimeEvent((event) => {
+      if (event.type === 'viewAttachmentSettled') {
+        attachmentEvents.push(event)
+      }
+    })
+
+    container.append(...rows)
+    runtime.attachScrollContainer(container)
     for (const row of rows) {
       adapter.registerRowElement(row.dataset.runtimeKey as string, row)
     }
-    scheduler.flushFrame()
+    runtime.applyLoadedSegment(segment(rows.map((row) =>
+      item(row.dataset.runtimeKey as string)
+    )))
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
 
-    expect(container.scrollTop).toBe(75)
+    runtime.detachScrollContainer()
+    const token = adapter.attachView(container)
+    for (const row of rows) {
+      adapter.registerRowElement(row.dataset.runtimeKey as string, row)
+    }
+    runtime.applyLoadedSegment(segment(rows.map((row) =>
+      item(row.dataset.runtimeKey as string)
+    ), 2))
+
+    adapter.ackViewAttachment(token)
+
+    expect(attachmentEvents).toEqual([])
+
+    adapter.ackProjectionCommit(runtime.getSnapshot().commitToken)
+
+    expect(attachmentEvents).toEqual([expect.objectContaining({
+      status: 'applied',
+      attachmentRevision: token.attachmentRevision,
+    })])
   })
 })
 
@@ -96,11 +172,12 @@ function item(key: string): MessageDataItem<string> {
 
 function segment(
   items: MessageDataItem<string>[],
+  segmentRevision = 1,
 ): LoadedSegment<string> {
   return {
     sessionId: 'source-a',
     generation: 1,
-    segmentRevision: 1,
+    segmentRevision,
     items,
     hasMoreBefore: false,
     hasMoreAfter: false,

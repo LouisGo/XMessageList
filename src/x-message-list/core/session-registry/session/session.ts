@@ -25,6 +25,7 @@ import { resolveAroundPageAnchor } from './aroundPage'
 import { MessageListSessionViewRetention } from './viewRetention'
 type OverlayRequestOptions = { overlayRequestId?: number; requestEpoch?: number; trigger?: MessageListRequestTrigger }
 type RequestResultInput<Row, Source> = Omit<MessageListRequestResult<Row, Source>, 'sessionId' | 'source'>
+type ViewRetentionHandle = ReturnType<MessageListSessionViewRetention['retain']>
 export class MessageListSession<Row, Source> implements PublicMessageListSession<Row> {
   readonly #runtime: MessageListRuntime<Row>
   readonly #loadedSegmentStore: LoadedSegmentStore<Row>
@@ -38,7 +39,9 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
   private readonly overlay: MessageListSessionOverlay
   private readonly bootstrapController: MessageListSessionBootstrapController
   private readonly viewRetention = new MessageListSessionViewRetention(
-    (retained) => getMessageListSessionRegistryRuntime(this.#runtime).setViewRetained(retained), () => this.touch(),
+    (retained) => getMessageListSessionRegistryRuntime(this.#runtime).setViewRetained(retained),
+    () => this.touch(),
+    (active) => { if (active) getMessageListSessionRegistryRuntime(this.#runtime).publishActiveViewObservation() },
   )
   private readonly runtimeUnsubscribe: () => void
   private readonly rowsByKey = new Map<string, Row>()
@@ -201,7 +204,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       isCurrent: (generation, revision) => this.isStaleSegment(generation, revision) === false,
       onNavigation: () => this.reloadController.markNavigationChanged(),
       onDestinationCancelled: (requestToken) => this.cancelDestination(requestToken),
-      saveAnchor: (value) => this.anchorMemoryWriter?.enqueue(value),
+      saveAnchor: (value) => { if (this.viewRetention.hasActiveView()) this.anchorMemoryWriter?.enqueue(value) },
       onObservation: (event) => this.handleViewportObservation(event),
       loadEdge: (event) => { void this.loadEdge(event) },
       loadLatest: (event) => { void this.loadLatest(event) },
@@ -213,7 +216,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       getSnapshot: () => this.getSnapshot(),
       getViewState: () => this.getViewState(),
       subscribeView: (listener) => this.subscribeView(listener),
-      retainView: () => this.retainView(),
+      retainView: (presentation) => this.retainView(presentation),
       getRow: (item) => this.getRow(item),
       getRowRenderVersion: (item) => this.getRowRenderVersion(item),
       getRowsByKeys: (keys) => this.getRowsByKeys(keys),
@@ -224,6 +227,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       if (this.destroyed) return
       this.destinationController.handleRuntimeEvent(event)
       this.reloadController.handleRuntimeEvent(event)
+      if (event.type === 'projectionSettled') this.overlay.finishProjection(event)
       this.touch()
       routeRuntimeEvent(event)
     })
@@ -233,11 +237,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
   getState(): MessageListSessionState<Row> { return this.stateStore.getState() }
   subscribe(listener: () => void): () => void { return this.stateStore.subscribe(listener) }
   subscribeView(listener: () => void): () => void { return this.viewRetention.subscribe(listener) }
-  retainView(): () => void {
-    this.touch()
-    this.ensureBootstrapStarted()
-    return this.viewRetention.retain()
-  }
+  retainView(presentation: 'staging' | 'active' = 'active'): ViewRetentionHandle { this.touch(); this.ensureBootstrapStarted(); return this.viewRetention.retain(presentation) }
   hasRetainedView(): boolean { return this.viewRetention.hasRetainedView() }
   getViewRetainCount(): number { return this.viewRetention.getRetainCount() }
   getRow(item: MessageDataItem<Row>): Row | null { return item.message ?? null }
@@ -285,7 +285,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
     this.visibleKeys = event.visibleKeys
     if (event.visibleItems.length > 0) this.rowsPerViewportEstimate = event.visibleItems.length
     this.measurementSnapshot = getMessageListSessionRegistryRuntime(this.#runtime).getSegmentSizeSnapshot()
-    this.readReceipts.handleObservation(event)
+    if (this.viewRetention.hasActiveView()) this.readReceipts.handleObservation(event)
   }
   private async loadLatest(
     event?: RuntimeNeedEvent,
@@ -343,7 +343,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
           }
       return { page: local.page, segment: applied.segment, applied: applied.applied }
     })
-    this.overlay.finishRequestResult(overlayRequestId, result)
+    this.overlay.finishRequestResult(overlayRequestId, result, true, result.status === 'applied' ? this.#loadedSegmentStore.getSegment() : undefined)
   }
   private async loadInitial(
     options: OverlayRequestOptions = {},
@@ -387,7 +387,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       })
       return { ...applied, applied: true }
     })
-    this.overlay.finishRequestResult(overlayRequestId, result)
+    this.overlay.finishRequestResult(overlayRequestId, result, true, result.status === 'applied' ? this.#loadedSegmentStore.getSegment() : undefined)
   }
   private async loadAround(
     target: MessageIdentityAnchor,
@@ -475,7 +475,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       return { page, segment: applied.segment, applied: applied.applied }
     })
     if (event) this.destinationController.finishRequest(event.requestToken, result)
-    this.overlay.finishRequestResult(overlayRequestId, result, !event)
+    this.overlay.finishRequestResult(overlayRequestId, result, !event, result.status === 'applied' ? this.#loadedSegmentStore.getSegment() : undefined)
   }
   private async loadEdge(event: RuntimeNeedEvent): Promise<void> {
     const edge = event.type === 'needMoreBefore' ? 'before' : 'after'

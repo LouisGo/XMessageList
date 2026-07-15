@@ -2184,7 +2184,7 @@ describe('createMessageListSessionRegistry', () => {
     expect(requestResults).toEqual(['latest:applied', 'latest:stale'])
   })
 
-  it('keeps overlay idle when a bootstrap request finishes before the delay', async () => {
+  it('keeps overlay idle when bootstrap projection settles before the delay', async () => {
     vi.useFakeTimers()
     const pending: Array<(page: MessageListPage<TestRow>) => void> = []
     const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
@@ -2205,6 +2205,7 @@ describe('createMessageListSessionRegistry', () => {
 
     pending[0](page(['latest']))
     await flushMicrotasks()
+    ackSessionCommit(session)
     await vi.advanceTimersByTimeAsync(250)
 
     expect(internals.getViewState().overlayStatus.status).toBe('idle')
@@ -2237,7 +2238,57 @@ describe('createMessageListSessionRegistry', () => {
     pending[0](page(['latest']))
     await flushMicrotasks()
 
+    expect(internals.getViewState().overlayStatus.status).toBe('loading')
+    ackSessionCommit(session)
+
     expect(internals.getViewState().overlayStatus.status).toBe('idle')
+  })
+
+  it('isolates staging read receipts and anchor persistence until promotion', async () => {
+    const markRead = vi.fn()
+    const saveAnchor = vi.fn()
+    const manager = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', {
+        readReceipts: { batchDelayMs: 0, markRead },
+        anchorMemory: {
+          load: () => null,
+          save: saveAnchor,
+        },
+      }),
+    })
+    const session = manager.getSession('source-a')
+    const internals = getMessageListSessionInternals(session)
+    const retention = internals.retainView('staging')
+
+    await waitFor(() => internals.getSnapshot().items.length === 1)
+    attachSessionRows(session, ['normal-latest'])
+    ackSessionCommit(session)
+    await wait(10)
+
+    expect(markRead).not.toHaveBeenCalled()
+    expect(saveAnchor).not.toHaveBeenCalled()
+
+    retention.setPresentation('active')
+    await waitFor(() => markRead.mock.calls.length === 1)
+    expect(markRead.mock.calls[0]?.[0].map((row: TestRow) => row.id))
+      .toEqual(['normal-latest'])
+
+    const snapshot = internals.getSnapshot()
+    ;(internals.runtime as unknown as {
+      emitRuntimeEvent(event: MessageListRuntimeEvent): void
+    }).emitRuntimeEvent({
+      type: 'viewportAnchorChanged',
+      sessionId: 'source-a',
+      generation: snapshot.generation,
+      segmentRevision: snapshot.segmentRevision,
+      reason: 'scroll-idle',
+      anchor: { sessionId: 'source-a', stableId: 'normal-latest' },
+    })
+    await waitFor(() => saveAnchor.mock.calls.length >= 1)
+
+    retention.release()
+    manager.destroyAll()
   })
 })
 

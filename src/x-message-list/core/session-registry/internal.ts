@@ -19,7 +19,10 @@ export type MessageListSessionInternals<Row = unknown> = {
   getSnapshot(): MessageListSnapshot<Row>
   getViewState(): MessageListViewState
   subscribeView(listener: () => void): () => void
-  retainView(): () => void
+  retainView(presentation?: 'staging' | 'active'): (() => void) & {
+    release(): void
+    setPresentation(next: 'staging' | 'active'): void
+  }
   getRow(item: MessageDataItem<Row>): Row | null
   getRowRenderVersion(item: MessageDataItem<Row>): unknown
   getRowsByKeys(keys: string[]): Row[]

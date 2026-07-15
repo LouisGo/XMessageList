@@ -65,11 +65,13 @@ export type {
   MessageListCommands,
   MessageListRenderItem,
   MessageListProps,
+  MessageListPresentation,
   MessageListRenderRowInput,
   MessageListStateEqualityFn,
   MessageListStateSelector,
   MessageListViewportAnchorChangeEvent,
   MessageListViewportObservationEvent,
+  MessageListViewActivationEvent,
   OverlayStatusInput,
   ScrollToLatestSlotInput,
 } from './x-message-list/react/index'

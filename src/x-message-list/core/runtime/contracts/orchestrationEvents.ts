@@ -37,3 +37,14 @@ export type ProjectionSettledEvent = {
   commitToken: ProjectionCommitToken
   status: 'applied' | 'commit-timeout' | 'motion-cancelled'
 }
+
+/** React view 重新挂接后，按消息身份完成恢复、测量和修正的终态。 */
+export type ViewAttachmentSettledEvent = {
+  type: 'viewAttachmentSettled'
+  sessionId: string
+  generation: number
+  segmentRevision: number
+  projectionRevision: number
+  attachmentRevision: number
+  status: 'applied' | 'anchor-unavailable'
+}

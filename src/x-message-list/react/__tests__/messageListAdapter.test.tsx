@@ -22,7 +22,10 @@ import {
 import { MessageFlow } from '../components/MessageFlow'
 import { MessageList } from '../components/MessageList'
 import { useMessageListState } from '../hooks/useMessageListState'
-import type { OverlayStatusInput } from '../types'
+import type {
+  MessageListViewActivationEvent,
+  OverlayStatusInput,
+} from '../types'
 
 describe('MessageList React adapter', () => {
   it('projects fixed DOM skeleton, rows, slots, and commit ack', async () => {
@@ -84,6 +87,117 @@ describe('MessageList React adapter', () => {
     await act(async () => {
       root.unmount()
     })
+    fixture.destroy()
+  })
+
+  it('publishes one correlated activation terminal and isolates staging input', async () => {
+    const fixture = createSessionFixture({ rows: ['row-1', 'row-2'] })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const activations: MessageListViewActivationEvent[] = []
+    const onViewportObservationChange = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <StrictMode>
+          <MessageList
+            session={fixture.session}
+            presentation="staging"
+            activationKey="activation-1"
+            onViewActivationChange={(event) => activations.push(event)}
+            onViewportObservationChange={onViewportObservationChange}
+            renderRow={({ row }) => <span>{row}</span>}
+          />
+        </StrictMode>,
+      )
+      await waitForAnimationFrame()
+    })
+
+    expect(activations).toHaveLength(1)
+    expect(activations[0]).toMatchObject({
+      status: 'ready',
+      activationKey: 'activation-1',
+      sessionId: 'source-a',
+      resolution: 'initial-latest',
+    })
+    const list = host.querySelector<HTMLElement>('[data-message-list]')
+    expect(list?.dataset.messageListPresentation).toBe('staging')
+    expect(list?.hasAttribute('inert')).toBe(true)
+    expect(list?.getAttribute('aria-hidden')).toBe('true')
+    expect(onViewportObservationChange).not.toHaveBeenCalled()
+
+    await act(async () => {
+      root.render(
+        <StrictMode>
+          <MessageList
+            session={fixture.session}
+            presentation="active"
+            activationKey="activation-1"
+            onViewActivationChange={(event) => activations.push(event)}
+            onViewportObservationChange={onViewportObservationChange}
+            renderRow={({ row }) => <span>{row}</span>}
+          />
+        </StrictMode>,
+      )
+      await waitForAnimationFrame()
+    })
+
+    expect(activations).toHaveLength(1)
+    expect(host.querySelector<HTMLElement>('[data-message-list]')
+      ?.hasAttribute('inert')).toBe(false)
+
+    await act(async () => root.unmount())
+    fixture.destroy()
+  })
+
+  it('publishes warm restore after remounting an already settled session', async () => {
+    const fixture = createSessionFixture({ rows: ['row-1', 'row-2'] })
+    const activeHost = document.createElement('div')
+    const activeRoot = createRoot(activeHost)
+
+    await act(async () => {
+      activeRoot.render(
+        <MessageList
+          session={fixture.session}
+          renderRow={({ row }) => <span>{row}</span>}
+        />,
+      )
+      await waitForAnimationFrame()
+    })
+
+    const settledProjectionRevision = fixture.runtime.getSnapshot()
+      .projectionRevision
+
+    await act(async () => activeRoot.unmount())
+
+    const stagingHost = document.createElement('div')
+    const stagingRoot = createRoot(stagingHost)
+    const activations: MessageListViewActivationEvent[] = []
+
+    await act(async () => {
+      stagingRoot.render(
+        <MessageList
+          session={fixture.session}
+          presentation="staging"
+          activationKey="warm-activation"
+          onViewActivationChange={(event) => activations.push(event)}
+          renderRow={({ row }) => <span>{row}</span>}
+        />,
+      )
+      await waitForAnimationFrame()
+    })
+
+    expect(fixture.runtime.getSnapshot().projectionRevision)
+      .toBe(settledProjectionRevision)
+    expect(stagingHost.querySelectorAll('[data-message-row]')).toHaveLength(2)
+    expect(activations).toEqual([expect.objectContaining({
+      status: 'ready',
+      activationKey: 'warm-activation',
+      sessionId: 'source-a',
+      resolution: 'warm-restore',
+    })])
+
+    await act(async () => stagingRoot.unmount())
     fixture.destroy()
   })
 

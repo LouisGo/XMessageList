@@ -132,6 +132,22 @@ export class ControllerEventPublisher<TMessage, TOptimistic> {
     })
   }
 
+  emitViewAttachmentSettled(
+    attachmentRevision: number,
+    status: 'applied' | 'anchor-unavailable',
+  ): void {
+    const snapshot = this.host.getSnapshot()
+    this.emit({
+      type: 'viewAttachmentSettled',
+      sessionId: snapshot.sessionId,
+      generation: snapshot.generation,
+      segmentRevision: snapshot.segmentRevision,
+      projectionRevision: snapshot.projectionRevision,
+      attachmentRevision,
+      status,
+    })
+  }
+
   emitSegmentTrimPressure(
     segment: LoadedSegment<TMessage, TOptimistic>,
     anchor: MessageIdentityAnchor | null,
