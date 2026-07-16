@@ -906,6 +906,106 @@ describe('MessageList React adapter', () => {
     fixtureB.destroy()
   })
 
+  it('swaps a stable scroll container once and publishes one activation per session', async () => {
+    const fixtureA = createSessionFixture({
+      sessionId: 'source-a',
+      rows: ['row-a'],
+    })
+    const fixtureB = createSessionFixture({
+      sessionId: 'source-b',
+      rows: ['row-b'],
+    })
+    const adapterA = getMessageListAdapterRuntime(fixtureA.runtime)
+    const adapterB = getMessageListAdapterRuntime(fixtureB.runtime)
+    const attachSequence: string[] = []
+    const attachAOriginal = adapterA.attachView.bind(adapterA)
+    const detachAOriginal = adapterA.detachScrollContainer.bind(adapterA)
+    const attachBOriginal = adapterB.attachView.bind(adapterB)
+    const detachBOriginal = adapterB.detachScrollContainer.bind(adapterB)
+    const attachA = vi.spyOn(adapterA, 'attachView').mockImplementation((element) => {
+      attachSequence.push('a.attach')
+      return attachAOriginal(element)
+    })
+    const detachA = vi.spyOn(adapterA, 'detachScrollContainer').mockImplementation(() => {
+      attachSequence.push('a.detach')
+      detachAOriginal()
+    })
+    const attachB = vi.spyOn(adapterB, 'attachView').mockImplementation((element) => {
+      attachSequence.push('b.attach')
+      return attachBOriginal(element)
+    })
+    const detachB = vi.spyOn(adapterB, 'detachScrollContainer').mockImplementation(() => {
+      attachSequence.push('b.detach')
+      detachBOriginal()
+    })
+    const activations: MessageListViewActivationEvent[] = []
+    const host = document.createElement('div')
+    const root = createRoot(host)
+
+    try {
+      await act(async () => {
+        root.render(
+          <MessageList
+            session={fixtureA.session}
+            activationKey="switch-a"
+            onViewActivationChange={(event) => activations.push(event)}
+            renderRow={({ row }) => <span>{row}</span>}
+          />,
+        )
+        await waitForAnimationFrame()
+      })
+
+      expect(attachSequence).toEqual(['a.attach'])
+      expect(activations).toEqual([expect.objectContaining({
+        status: 'ready',
+        activationKey: 'switch-a',
+        sessionId: 'source-a',
+      })])
+      const listRoot = host.querySelector('[data-message-list]')
+      const loadLatestB = vi.spyOn(fixtureB.adapter.request, 'loadLatest')
+
+      await act(async () => {
+        root.render(
+          <MessageList
+            session={fixtureB.session}
+            activationKey="switch-b"
+            onViewActivationChange={(event) => activations.push(event)}
+            renderRow={({ row }) => <span>{row}</span>}
+          />,
+        )
+        await waitForAnimationFrame()
+      })
+
+      expect(attachSequence).toEqual(['a.attach', 'a.detach', 'b.attach'])
+      expect(attachA).toHaveBeenCalledTimes(1)
+      expect(detachA).toHaveBeenCalledTimes(1)
+      expect(attachB).toHaveBeenCalledTimes(1)
+      expect(detachB).not.toHaveBeenCalled()
+      expect(host.querySelector('[data-message-list]')).toBe(listRoot)
+      expect(loadLatestB).not.toHaveBeenCalled()
+      expect(activations).toEqual([
+        expect.objectContaining({
+          status: 'ready',
+          activationKey: 'switch-a',
+          sessionId: 'source-a',
+        }),
+        expect.objectContaining({
+          status: 'ready',
+          activationKey: 'switch-b',
+          sessionId: 'source-b',
+        }),
+      ])
+    } finally {
+      await act(async () => root.unmount())
+      attachA.mockRestore()
+      detachA.mockRestore()
+      attachB.mockRestore()
+      detachB.mockRestore()
+      fixtureA.destroy()
+      fixtureB.destroy()
+    }
+  })
+
   it('renders custom scrollbar overlay from native metrics', async () => {
     const fixture = createSessionFixture({
       rows: ['row-1', 'row-2'],
@@ -1323,15 +1423,17 @@ function createSessionFixture(input: {
 }): {
   session: MessageListSession<string>
   runtime: MessageListRuntime<string>
+  adapter: MessageListAdapter<string>
   destroy: () => void
 } {
   const sessionId = input.sessionId ?? 'source-a'
+  const adapter = createStringAdapter(input.rows, {
+    hasMoreBefore: input.hasMoreBefore,
+    hasMoreAfter: false,
+    sessionId,
+  })
   const registry = createMessageListSessionRegistry<string>({
-    getAdapter: () => createStringAdapter(input.rows, {
-      hasMoreBefore: input.hasMoreBefore,
-      hasMoreAfter: false,
-      sessionId,
-    }),
+    getAdapter: () => adapter,
   })
   const session = registry.getSession(sessionId)
   const sessionInternals = getMessageListSessionInternals(session)
@@ -1357,6 +1459,7 @@ function createSessionFixture(input: {
   return {
     session,
     runtime,
+    adapter,
     destroy: () => registry.destroyAll(),
   }
 }

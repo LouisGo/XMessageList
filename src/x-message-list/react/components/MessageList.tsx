@@ -5,7 +5,11 @@ import {
   useMemo,
   useRef,
 } from 'react'
-import { getMessageListAdapterRuntime } from '../../core/runtime/internal'
+import {
+  getMessageListAdapterRuntime,
+  type MessageListAdapterRuntime,
+  type ViewAttachmentToken,
+} from '../../core/runtime/internal'
 import type {
   MessageDataItem,
   MessageListRuntime,
@@ -21,11 +25,11 @@ import {
 import { MessageFlow } from './MessageFlow'
 import { MessageListScrollbarOverlay } from '../scrollbar/MessageListScrollbarOverlay'
 import { useExternalStoreSource } from '../hooks/useExternalStoreSource'
+import { useLatestRef } from '../hooks/useLatestRef'
 import { useMessageListSnapshot } from '../hooks/useMessageListSnapshot'
 import { ProjectionCommitAck } from './ProjectionCommitAck'
 import { RuntimeEventBridge } from './RuntimeEventBridge'
 import type { MessageListProps } from '../types'
-import type { ViewAttachmentToken } from '../../core/runtime/internal'
 
 const noopSubscribe = () => () => undefined
 const SCROLL_TO_LATEST_VISIBILITY_DISTANCE_PX = 200
@@ -59,6 +63,8 @@ function MessageListInner<TMessage, TOptimistic>({
   const adapterRuntime = getMessageListAdapterRuntime(resolvedRuntime)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const adapterRuntimeRef = useLatestRef(adapterRuntime)
+  const attachedRuntimeRef = useRef<MessageListAdapterRuntime | null>(null)
   const attachmentTokenRef = useRef<ViewAttachmentToken | null>(null)
   const presentationRef = useRef(presentation)
   const viewRetentionRef = useRef<ReturnType<
@@ -111,13 +117,22 @@ function MessageListInner<TMessage, TOptimistic>({
   const attachContainer = useCallback((element: HTMLDivElement | null) => {
     containerRef.current = element
     if (element) {
-      attachmentTokenRef.current = adapterRuntime.attachView(element)
+      // Keep this ref callback stable across session swaps. React otherwise
+      // calls the previous callback with null before invoking the new one on
+      // the same DOM node, which makes a warm session look detached for one
+      // commit and needlessly tears down observers and scroll listeners.
+      const runtime = adapterRuntimeRef.current
+      if (attachedRuntimeRef.current === runtime) return
+      attachedRuntimeRef.current?.detachScrollContainer()
+      attachedRuntimeRef.current = runtime
+      attachmentTokenRef.current = runtime.attachView(element)
       return
     }
 
     attachmentTokenRef.current = null
-    resolvedRuntime.detachScrollContainer()
-  }, [adapterRuntime, resolvedRuntime])
+    attachedRuntimeRef.current?.detachScrollContainer()
+    attachedRuntimeRef.current = null
+  }, [adapterRuntimeRef])
   useLayoutEffect(() => {
     presentationRef.current = presentation
   }, [presentation])
@@ -139,11 +154,23 @@ function MessageListInner<TMessage, TOptimistic>({
     else root.removeAttribute('inert')
   }, [presentation])
   useLayoutEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    // A stable ref callback does not run again when only `session` changes.
+    // Swap the runtime after all child refs have registered, while React is
+    // still inside the same layout commit and before the browser can paint.
+    if (attachedRuntimeRef.current !== adapterRuntime) {
+      attachedRuntimeRef.current?.detachScrollContainer()
+      attachedRuntimeRef.current = adapterRuntime
+      attachmentTokenRef.current = adapterRuntime.attachView(container)
+    }
+
     const token = attachmentTokenRef.current
     if (!token) return
     attachmentTokenRef.current = null
     adapterRuntime.ackViewAttachment(token)
-  })
+  }, [adapterRuntime, snapshot.commitToken])
   return (
     <div
       ref={rootRef}
