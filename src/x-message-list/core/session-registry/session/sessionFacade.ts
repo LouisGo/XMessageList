@@ -7,6 +7,7 @@ import type { ReloadMutationGuard } from './reloadCurrent'
 
 export function createSessionCommands<Row>(input: {
   isDestroyed: () => boolean
+  prepare: MessageListSession<Row>['commands']['prepare']
   scrollToLatest: () => void
   scrollToMessage: MessageListSession<Row>['commands']['scrollToMessage']
   cancelDestination: MessageListSession<Row>['commands']['cancelDestination']
@@ -16,6 +17,9 @@ export function createSessionCommands<Row>(input: {
   loadAfter: () => void
 }): MessageListSession<Row>['commands'] {
   return {
+    prepare: (options) => input.isDestroyed()
+      ? Promise.resolve({ status: 'stale', reason: 'session-destroyed' })
+      : input.prepare(options),
     scrollToLatest: () => { if (!input.isDestroyed()) input.scrollToLatest() },
     // scrollToMessage 自身需要在销毁后返回显式 rejected，不能被通用 guard 吞掉。
     scrollToMessage: (target, options) => input.scrollToMessage(target, options),

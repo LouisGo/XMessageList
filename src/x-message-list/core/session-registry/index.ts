@@ -42,6 +42,8 @@ export type {
   MessageListScrollToMessageOptions,
   MessageListSegmentRetention,
   MessageListSession,
+  MessageListSessionPrepareOptions,
+  MessageListSessionPrepareResult,
   MessageListSessionContext,
   MessageListSessionId,
   MessageListSessionSource,

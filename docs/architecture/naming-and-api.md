@@ -255,6 +255,8 @@ type MessageListSession<Row> = {
   subscribe(listener): () => void
 
   commands: {
+    prepare(options?: MessageListSessionPrepareOptions):
+      Promise<MessageListSessionPrepareResult>
     scrollToLatest(): void
     scrollToMessage(
       anchor: MessageListAnchor,
@@ -294,6 +296,11 @@ type MessageListSession<Row> = {
   }
 }
 ```
+
+`prepare` 是 host 切换视图前的 data-only 边界。它共享首次 bootstrap，也可围绕
+target 准备窗口；`ready` 只证明 loaded segment 已发布，不 retain view、不创建
+destination，也不等待 DOM projection。调用方 abort 只取消等待，迟到页面仍可成为
+warm segment。
 
 `scrollToMessage` 是同步 destination dispatch：每次受理都会返回新的
 `destinationId`，异步完成状态通过 `getState().destination` 观察。

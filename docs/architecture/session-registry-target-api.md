@@ -268,6 +268,8 @@ type MessageListSession<Row> = {
   subscribe(listener: () => void): () => void
 
   commands: {
+    prepare(options?: MessageListSessionPrepareOptions):
+      Promise<MessageListSessionPrepareResult>
     scrollToLatest(): void
     scrollToMessage(
       anchor: MessageListAnchor,
@@ -307,6 +309,10 @@ type MessageListSession<Row> = {
   }
 }
 ```
+
+`prepare` 只准备 Session 数据，不构造第二个 React view。无 target 时共享首次
+bootstrap；有 target 时发布 around segment。其 `ready` 不是视觉完成信号，DOM attach、
+anchor correction 和 destination settle 仍属于随后挂载的唯一 active view。
 
 `scrollToMessage` 是单个 session 内的同步 destination dispatch，不是跨 session
 导航命令。每次受理都会生成新的 `destinationId`，即使目标与上一次完全相同；调用方

@@ -12,7 +12,7 @@ import { defineMessageListSessionInternals } from '../internal'
 import { MessageListSessionLiveSemantics } from '../tail/tailSemantics'
 import { assertAroundPageTargetContract, assertLatestPageContract, assertReachedLatestContract, reportContractDiagnostic } from './contractDiagnostics'
 import { resolveRequestTriggerFromEvent, toRuntimeScrollOptions, toSessionResetInput, type AroundRequestOptions, type RuntimeNeedEvent, type SessionOptions } from './helpers'
-import type { MessageListPage, MessageListRequestTrigger, MessageListRequestResult, MessageListSessionId, MessageListSession as PublicMessageListSession, MessageListSessionContext, MessageListSessionState, MessageListViewState } from '../contracts'
+import type { MessageListRequestTrigger, MessageListRequestResult, MessageListSessionId, MessageListSession as PublicMessageListSession, MessageListSessionContext, MessageListSessionState, MessageListViewState } from '../contracts'
 import { MessageListAnchorMemoryWriter } from './anchorMemoryWriter'
 import { MessageListSessionReloadController } from './reloadCurrent'
 import { createGuardedSessionMutations, createSessionCommands } from './sessionFacade'
@@ -23,8 +23,9 @@ import { MessageListSessionSegmentPublisher } from './sessionSegmentPublisher'
 import { MessageListSessionDestinationController } from './destinationController'
 import { resolveAroundPageAnchor } from './aroundPage'
 import { MessageListSessionViewRetention } from './viewRetention'
+import { MessageListSessionPreparation } from './sessionPreparation'
+import { MessageListSessionRequestRunner } from './sessionRequestRunner'
 type OverlayRequestOptions = { overlayRequestId?: number; requestEpoch?: number; trigger?: MessageListRequestTrigger }
-type RequestResultInput<Row, Source> = Omit<MessageListRequestResult<Row, Source>, 'sessionId' | 'source'>
 type ViewRetentionHandle = ReturnType<MessageListSessionViewRetention['retain']>
 export class MessageListSession<Row, Source> implements PublicMessageListSession<Row> {
   readonly #runtime: MessageListRuntime<Row>
@@ -38,6 +39,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
   private readonly readReceipts: MessageListReadReceiptsWorker<Row, Source>
   private readonly overlay: MessageListSessionOverlay
   private readonly bootstrapController: MessageListSessionBootstrapController
+  private readonly requestRunner: MessageListSessionRequestRunner<Row, Source>
   private readonly viewRetention = new MessageListSessionViewRetention(
     (retained) => getMessageListSessionRegistryRuntime(this.#runtime).setViewRetained(retained),
     () => this.touch(),
@@ -52,6 +54,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
   private rowsPerViewportEstimate: number
   private visibleKeys: string[] = []
   private measurementSnapshot: RuntimeSegmentSizeSnapshot | null = null
+  private readonly preparation: MessageListSessionPreparation<Row, Source>
   private destroyed = false
   private readonly destinationController: MessageListSessionDestinationController
   private readonly segmentPublisher: MessageListSessionSegmentPublisher<Row>
@@ -70,9 +73,17 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       () => this.notifyViewListeners(),
       () => {
         this.overlay.bumpRequestEpoch()
-        this.bootstrapController.restart()
+        void this.bootstrapController.restart()
       },
     )
+    this.requestRunner = new MessageListSessionRequestRunner({
+      sessionId: this.sessionId, context: this.context,
+      publishSegment: (segment) => this.publishSegment(segment),
+      reportEdgeStale: (edge, token) => this.reportEdgeRequestStale(edge, token),
+      reportEdgeFailure: (edge, token) => this.#runtime.reportEdgeRequestFailure(edge, token),
+      recordResult: (result) => this.preparation.recordRequestResult(result),
+      onRequestResult: (result) => this.options.onRequestResult?.(result),
+    })
     this.bootstrapController = createMessageListSessionBootstrapController({
       sessionId: this.sessionId,
       context: this.context,
@@ -82,13 +93,19 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       getRequestEpoch: () => this.overlay.getRequestEpoch(),
       isStaleOverlayRequest: (overlayRequestId) => this.overlay.isStaleRequest(overlayRequestId),
       isStaleRequestEpoch: (requestEpoch) => this.overlay.isStaleEpoch(requestEpoch),
-      ...(this.options.adapter.request.loadInitial ? { loadInitial: (options) => this.loadInitial(options) } : {}),
-      loadAround: (target, options) => this.loadAround(target, undefined, options),
-      loadLatest: (options) => this.loadLatest(undefined, options),
+      ...(this.options.adapter.request.loadInitial
+        ? { loadInitial: async (options) => { await this.loadInitial(options) } }
+        : {}),
+      loadAround: async (target, options) => {
+        await this.loadAround(target, undefined, options)
+      },
+      loadLatest: async (options) => {
+        await this.loadLatest(undefined, options)
+      },
       finishFailure: (error, overlayRequestId) => {
         this.overlay.finishRequestResult(
           overlayRequestId,
-          this.emitRequestResult({ kind: this.options.adapter.request.loadInitial
+          this.requestRunner.emit({ kind: this.options.adapter.request.loadInitial
             ? 'initial' : 'latest', status: 'failed', trigger: 'internal', error }),
         )
       },
@@ -109,8 +126,21 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       reportDiagnostic: (name, severity, details) => this.reportContractDiagnostic(name, severity, details),
       onRequestResult: (result) => this.options.onRequestResult?.(result),
     })
+    this.preparation = new MessageListSessionPreparation({
+      sessionId: this.sessionId,
+      isDestroyed: () => this.destroyed,
+      getSegment: () => this.#loadedSegmentStore.getSegment(),
+      hasOverlayError: () =>
+        this.overlay.getViewState().overlayStatus.status === 'error',
+      runBootstrap: (restart) => restart
+        ? this.bootstrapController.restart()
+        : this.bootstrapController.ensureStarted(),
+      loadAround: (target, prepareOptions) =>
+        this.loadAround(target, undefined, prepareOptions),
+    })
     this.commands = createSessionCommands({
       isDestroyed: () => this.destroyed,
+      prepare: (prepareOptions) => this.preparation.prepare(prepareOptions),
       scrollToLatest: () => {
         this.reloadController.markNavigationChanged()
         this.ensureBootstrapStarted()
@@ -272,7 +302,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
     this.measurementSnapshot = null
     this.viewRetention.destroy()
   }
-  ensureBootstrapStarted(): void { this.bootstrapController.ensureStarted() }
+  ensureBootstrapStarted(): void { void this.bootstrapController.ensureStarted() }
   private cancelDestination(requestToken: string): void {
     this.#loadedSegmentStore.cancelRequestToken(requestToken)
     this.overlay.bumpRequestEpoch()
@@ -290,7 +320,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
   private async loadLatest(
     event?: RuntimeNeedEvent,
     options: OverlayRequestOptions = {},
-  ): Promise<void> {
+  ): Promise<MessageListRequestResult<Row, Source>> {
     const overlayRequestId = options.overlayRequestId ?? this.overlay.startRequest()
     const requestEpoch = options.requestEpoch ?? this.overlay.getRequestEpoch()
     const requestSegment = this.#loadedSegmentStore.getSegment()
@@ -300,7 +330,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       this.adoptRequestToken(event, 'latest')
     }
     const trigger = this.resolveRequestTrigger('latest', event, options.trigger)
-    const result = await this.runRequest('latest', event, trigger, async () => {
+    const result = await this.requestRunner.run('latest', event, trigger, async () => {
       const page = await this.options.adapter.request.loadLatest({
         ...this.context,
         pageSize: this.options.defaults.pageSize,
@@ -344,20 +374,20 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       return { page: local.page, segment: applied.segment, applied: applied.applied }
     })
     this.overlay.finishRequestResult(overlayRequestId, result, true, result.status === 'applied' ? this.#loadedSegmentStore.getSegment() : undefined)
+    return result
   }
   private async loadInitial(
     options: OverlayRequestOptions = {},
-  ): Promise<void> {
+  ): Promise<MessageListRequestResult<Row, Source>> {
     const loadInitial = this.options.adapter.request.loadInitial
     if (!loadInitial) {
-      await this.loadLatest(undefined, options)
-      return
+      return this.loadLatest(undefined, options)
     }
     const overlayRequestId = options.overlayRequestId ?? this.overlay.startRequest()
     const requestEpoch = options.requestEpoch ?? this.overlay.getRequestEpoch()
     const requestSegment = this.#loadedSegmentStore.getSegment()
     const trigger = this.resolveRequestTrigger('initial', undefined, options.trigger)
-    const result = await this.runRequest('initial', undefined, trigger, async () => {
+    const result = await this.requestRunner.run('initial', undefined, trigger, async () => {
       const initial = await loadInitial({
         ...this.context,
         pageSize: this.options.defaults.pageSize,
@@ -388,12 +418,13 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       return { ...applied, applied: true }
     })
     this.overlay.finishRequestResult(overlayRequestId, result, true, result.status === 'applied' ? this.#loadedSegmentStore.getSegment() : undefined)
+    return result
   }
   private async loadAround(
     target: MessageIdentityAnchor,
     event?: RuntimeNeedEvent,
     options: AroundRequestOptions & OverlayRequestOptions = {},
-  ): Promise<void> {
+  ): Promise<MessageListRequestResult<Row, Source>> {
     const overlayRequestId = options.overlayRequestId ?? this.overlay.startRequest()
     const requestEpoch = options.requestEpoch ?? this.overlay.getRequestEpoch()
     const requestSegment = this.#loadedSegmentStore.getSegment()
@@ -404,7 +435,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
     }
     const trigger = this.resolveRequestTrigger('around', event, options.trigger)
     const context = options.context ?? 'around'
-    const result = await this.runRequest('around', event, trigger, async () => {
+    const result = await this.requestRunner.run('around', event, trigger, async () => {
       const page = await this.options.adapter.request.loadAround({
         ...this.context,
         pageSize: this.options.defaults.pageSize,
@@ -476,11 +507,12 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
     })
     if (event) this.destinationController.finishRequest(event.requestToken, result)
     this.overlay.finishRequestResult(overlayRequestId, result, !event, result.status === 'applied' ? this.#loadedSegmentStore.getSegment() : undefined)
+    return result
   }
   private async loadEdge(event: RuntimeNeedEvent): Promise<void> {
     const edge = event.type === 'needMoreBefore' ? 'before' : 'after'
     const trigger = this.resolveRequestTrigger(edge, event)
-    if (this.isStaleEvent(event)) { this.reportEdgeRequestStale(edge, event.requestToken); this.emitRequestResult({ kind: edge, status: 'stale', trigger }); return }
+    if (this.isStaleEvent(event)) { this.reportEdgeRequestStale(edge, event.requestToken); this.requestRunner.emit({ kind: edge, status: 'stale', trigger }); return }
     const segment = this.#loadedSegmentStore.getSegment()
     const boundaryItem = edge === 'before' ? segment.items[0] : segment.items.at(-1)
     const boundaryRow = boundaryItem?.message
@@ -489,7 +521,7 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
       return
     }
     this.adoptRequestToken(event, edge)
-    await this.runRequest(edge, event, trigger, () =>
+    await this.requestRunner.run(edge, event, trigger, () =>
       loadMessageListEdgeWindow({
         adapter: this.options.adapter, boundaryRow, context: this.context,
         edge, event, isStale: () => this.isStaleEvent(event),
@@ -500,38 +532,6 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
         sessionId: this.sessionId, signal: this.lifecycleAbortController.signal,
         trigger,
       }))
-  }
-  private async runRequest(
-    kind: 'initial' | 'latest' | 'before' | 'after' | 'around',
-    event: RuntimeNeedEvent | undefined,
-    trigger: MessageListRequestTrigger,
-    request: () => Promise<{
-      page: MessageListPage<Row>
-      segment: LoadedSegment<Row>
-      applied: boolean
-    }>,
-  ): Promise<MessageListRequestResult<Row, Source>> {
-    try {
-      const result = await request()
-      if (!result.applied) {
-        if (kind === 'before' || kind === 'after') {
-          this.reportEdgeRequestStale(kind, event?.requestToken ?? '')
-        }
-        return this.emitRequestResult({ kind, status: 'stale', trigger })
-      }
-      this.publishSegment(result.segment)
-      return this.emitRequestResult({
-        kind,
-        status: 'applied',
-        trigger,
-        page: result.page,
-      })
-    } catch (error) {
-      if (kind === 'before' || kind === 'after') {
-        this.#runtime.reportEdgeRequestFailure(kind, event?.requestToken ?? '')
-      }
-      return this.emitRequestResult({ kind, status: 'failed', trigger, error })
-    }
   }
   private publishSegment(segment: LoadedSegment<Row>): void {
     this.reloadController.cancelSettlingProjectionForAuthoritativePublish()
@@ -593,7 +593,6 @@ export class MessageListSession<Row, Source> implements PublicMessageListSession
   private isStaleEvent(event: RuntimeNeedEvent | undefined): boolean { if (!event) return false; return this.#loadedSegmentStore.getSegment().generation !== event.generation }
   private isStaleResetRequest(event: RuntimeNeedEvent | undefined, requestGeneration: number, requestSegmentRevision: number): boolean { return event ? this.#loadedSegmentStore.getSegment().generation !== event.generation : this.isStaleSegment(requestGeneration, requestSegmentRevision) }
   private isStaleSegment(generation: number, segmentRevision: number): boolean { const segment = this.#loadedSegmentStore.getSegment(); return segment.generation !== generation || segment.segmentRevision !== segmentRevision }
-  private emitRequestResult(result: RequestResultInput<Row, Source>): MessageListRequestResult<Row, Source> { const next = { sessionId: this.sessionId, source: this.options.source, ...result }; this.options.onRequestResult?.(next); return next }
   private notifyViewListeners(): void { this.stateStore.notifyViewChanged(); this.viewRetention.notify() }
   private touch(): void { this.lastUsedAt = Date.now() }
 }

@@ -57,6 +57,35 @@ export type MessageListDestinationCancelResult =
   | { status: 'cancelled'; destinationId: string }
   | { status: 'ignored'; reason: 'not-current' | 'session-destroyed' }
 
+/** Host 在挂载视图前准备 session 数据的输入。 */
+export type MessageListSessionPrepareOptions = {
+  /** 缺省时准备首次进入窗口；提供后准备 around target。 */
+  target?: MessageListAnchor
+  /** around target 的最终视口对齐；缺省时沿用 destination 默认值。 */
+  align?: MessageListAlign
+  /** restore 类 target 的消息内部像素偏移。 */
+  offsetWithinMessage?: number
+  /** 只取消调用方等待；session 仍可把已返回页面保留为 warm cache。 */
+  signal?: AbortSignal
+}
+
+/** Data-only prepare 的稳定终态；不代表 DOM projection 或 destination 已 settle。 */
+export type MessageListSessionPrepareResult =
+  | {
+      status: 'ready'
+      requestKind: 'initial' | 'latest' | 'around'
+      resolution: 'latest' | 'history' | 'target' | 'fallback' | 'empty'
+    }
+  | {
+      status: 'stale'
+      reason: 'aborted' | 'superseded' | 'session-destroyed'
+    }
+  | {
+      status: 'failed'
+      reason: 'request-failed' | 'contract-violation'
+      error?: unknown
+    }
+
 /** 单个 session 对外暴露的状态快照。 */
 export type MessageListSessionState<Row = unknown> = {
   /** 当前 session id。 */
@@ -334,6 +363,15 @@ export type MessageListSession<Row = unknown> = {
   subscribe(listener: () => void): () => void
   /** 用户命令。 */
   commands: {
+    /**
+     * 在不挂载 React 视图的前提下准备首次窗口或 around target。
+     *
+     * ready 只表示 loaded segment 已发布；DOM attach、anchor correction 与
+     * destination settle 仍由之后挂载的 MessageList/runtime 完成。
+     */
+    prepare(
+      options?: MessageListSessionPrepareOptions,
+    ): Promise<MessageListSessionPrepareResult>
     /** 滚动或加载到源最新。 */
     scrollToLatest(): void
     /** 滚动或加载到指定消息；options 未传时 align 默认 center。 */

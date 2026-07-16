@@ -259,7 +259,11 @@ read receipts 只由 mounted viewport observation 触发。加载、prefetch、c
 
 `anchorMemory` 按 session identity 保存，因此同一个 feed 在多窗口下默认 last-write-wins。如果未来需要每个窗口独立阅读状态，宿主必须调整 `sessionId` 模型，而不是给 anchor memory 暗中增加私有 scope。
 
-feed 切换时，可见 UI 应立即进入目标 session shell。旧 session 不应继续作为 loading placeholder 显示。warm entry 可以用 `retainSession(feedId, 'prefetch')`，但 prefetch 只用于高概率进入的 UI 工作流，不用于后台同步。
+feed 切换不应通过隐藏的第二棵 React 树预热。Host 可先调用目标 Session 的
+`commands.prepare(...)`，短请求期间保留当前 active view；数据 ready 后让同一个
+MessageList 根节点原位接管目标 Session。超过产品设定阈值时可在当前 view 上方显示
+不透明 overlay，但不得为此卸载旧根节点。`retainSession(feedId, 'prefetch')` 仍只用于
+高概率进入的 UI 工作流，不用于后台同步。
 
 ## Diagnostics
 

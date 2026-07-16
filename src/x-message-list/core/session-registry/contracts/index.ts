@@ -47,6 +47,8 @@ export type {
   MessageListRowsReplaceInput,
   MessageListRowsResetAroundInput,
   MessageListSession,
+  MessageListSessionPrepareOptions,
+  MessageListSessionPrepareResult,
   MessageListSessionRegistry,
   MessageListSessionRegistryEntry,
   MessageListSessionRegistryEntryStatus,

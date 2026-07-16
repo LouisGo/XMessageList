@@ -489,7 +489,6 @@ describe('MessageList React adapter', () => {
         />,
       )
     })
-
     await act(async () => {
       host.querySelector('button')?.dispatchEvent(
         new MouseEvent('click', { bubbles: true }),
@@ -881,6 +880,8 @@ describe('MessageList React adapter', () => {
         />,
       )
     })
+    const listRoot = host.querySelector('[data-message-list]')
+    expect(listRoot).not.toBeNull()
 
     await act(async () => {
       root.render(
@@ -895,6 +896,7 @@ describe('MessageList React adapter', () => {
       reason: 'detach',
       anchor: expect.objectContaining({ stableId: 'row-a' }),
     }))
+    expect(host.querySelector('[data-message-list]')).toBe(listRoot)
     expect(fixtureB.runtime.getSnapshot().viewportPhase).toBe('IDLE')
 
     await act(async () => {

@@ -15,8 +15,8 @@ type BootstrapOverlayOptions = {
 }
 
 export type MessageListSessionBootstrapController = {
-  ensureStarted(): void
-  restart(): void
+  ensureStarted(): Promise<void>
+  restart(): Promise<void>
   markStarted(): void
 }
 
@@ -43,6 +43,7 @@ export function createMessageListSessionBootstrapController<Source>(
   },
 ): MessageListSessionBootstrapController {
   let started = false
+  let current: Promise<void> | null = null
 
   const bootstrap = async (): Promise<void> => {
     const requestEpoch = input.getRequestEpoch()
@@ -96,20 +97,25 @@ export function createMessageListSessionBootstrapController<Source>(
 
   return {
     ensureStarted: () => {
-      if (started || input.isDestroyed()) {
-        return
+      if (input.isDestroyed()) {
+        return Promise.resolve()
+      }
+      if (started) {
+        return current ?? Promise.resolve()
       }
 
       started = true
-      void bootstrap()
+      current = bootstrap()
+      return current
     },
     restart: () => {
       if (input.isDestroyed()) {
-        return
+        return Promise.resolve()
       }
 
       started = true
-      void bootstrap()
+      current = bootstrap()
+      return current
     },
     markStarted: () => {
       started = true

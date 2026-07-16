@@ -202,6 +202,136 @@ describe('createMessageListSessionRegistry', () => {
     expect(registry.hasSession('source-a')).toBe(true)
   })
 
+  it('prepares session data without retaining a view or dispatching a destination', async () => {
+    const loadInitial = vi.fn(() => Promise.resolve<MessageListInitialWindow<TestRow>>({
+      context: 'latest',
+      page: page(['latest']),
+    }))
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadInitial }),
+    })
+    const session = registry.getSession('source-a')
+
+    const result = await session.commands.prepare()
+
+    expect(result).toMatchObject({
+      status: 'ready',
+      requestKind: 'initial',
+      resolution: 'latest',
+    })
+    expect(loadInitial).toHaveBeenCalledTimes(1)
+    expect(session.getState().loaded.keys).toEqual(['latest'])
+    expect(session.getState().destination).toEqual({ status: 'idle' })
+    expect(registry.getSessionMeta('source-a')?.mountedRetainCount).toBe(0)
+    registry.destroyAll()
+  })
+
+  it('reuses a prepared warm segment without another request', async () => {
+    const loadLatest = vi.fn(() => Promise.resolve(page(['latest'])))
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadLatest }),
+    })
+    const session = registry.getSession('source-a')
+
+    await session.commands.prepare()
+    loadLatest.mockClear()
+
+    const result = await session.commands.prepare()
+
+    expect(result).toMatchObject({
+      status: 'ready',
+      resolution: 'latest',
+    })
+    expect(loadLatest).not.toHaveBeenCalled()
+    registry.destroyAll()
+  })
+
+  it('prepares an around target without creating a destination command', async () => {
+    const loadLatest = vi.fn(() => Promise.resolve(page(['latest'])))
+    const loadAround = vi.fn(() => Promise.resolve(page(['target'], {
+      anchorId: 'target',
+    })))
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadLatest, loadAround }),
+    })
+    const session = registry.getSession('source-a')
+
+    const result = await session.commands.prepare({
+      target: { id: 'target' },
+      align: 'center',
+    })
+
+    expect(result).toMatchObject({
+      status: 'ready',
+      requestKind: 'around',
+      resolution: 'target',
+    })
+    expect(loadAround).toHaveBeenCalledWith(expect.objectContaining({
+      target: expect.objectContaining({ stableId: 'target' }),
+    }))
+    expect(loadLatest).not.toHaveBeenCalled()
+    expect(session.getState().destination).toEqual({ status: 'idle' })
+    registry.destroyAll()
+  })
+
+  it('retries a failed bootstrap when prepare is called again', async () => {
+    const error = new Error('temporary SDK failure')
+    const loadLatest = vi.fn()
+      .mockRejectedValueOnce(error)
+      .mockResolvedValueOnce(page(['latest']))
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadLatest }),
+    })
+    const session = registry.getSession('source-a')
+
+    await expect(session.commands.prepare()).resolves.toMatchObject({
+      status: 'failed',
+      reason: 'request-failed',
+      error,
+    })
+    await expect(session.commands.prepare()).resolves.toMatchObject({
+      status: 'ready',
+      resolution: 'latest',
+    })
+
+    expect(loadLatest).toHaveBeenCalledTimes(2)
+    expect(session.getState().loaded.keys).toEqual(['latest'])
+    registry.destroyAll()
+  })
+
+  it('aborts only the prepare caller while preserving the returned warm page', async () => {
+    let resolvePage!: (value: MessageListPage<TestRow>) => void
+    const loadLatest = vi.fn(() => new Promise<MessageListPage<TestRow>>(
+      (resolve) => { resolvePage = resolve },
+    ))
+    const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
+      getSessionSource: (id) => ({ id, type: 'normal' }),
+      getAdapter: () => createAdapter('normal', { loadLatest }),
+    })
+    const session = registry.getSession('source-a')
+    const controller = new AbortController()
+    const preparation = session.commands.prepare({ signal: controller.signal })
+
+    controller.abort()
+    await expect(preparation).resolves.toEqual({
+      status: 'stale',
+      reason: 'aborted',
+    })
+    resolvePage(page(['latest']))
+    await waitFor(() => session.getState().loaded.keys[0] === 'latest')
+
+    await expect(session.commands.prepare()).resolves.toMatchObject({
+      status: 'ready',
+      resolution: 'latest',
+    })
+    expect(loadLatest).toHaveBeenCalledTimes(1)
+    registry.destroyAll()
+  })
+
   it('passes sessionId and source through request context', async () => {
     const loadLatest = vi.fn((context) => Promise.resolve(page([context.source.id])))
     const registry = createMessageListSessionRegistry<TestRow, TestConversation>({
